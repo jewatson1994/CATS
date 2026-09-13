@@ -1,0 +1,14 @@
+cats_patch:
+  stage: cats_patch
+  needs:
+    - job: cats_evaluation
+      artifacts: true
+  rules:
+    - if: '$CATS_PATCH_ENABLED == "true"'
+    - when: never
+  script:
+    - cats patch --input "$CI_PROJECT_DIR/.cats/results" --output "$CI_PROJECT_DIR/.cats/patch"
+  artifacts:
+    when: always
+    paths:
+      - .cats/patch/

@@ -1,0 +1,7 @@
+<nav class="admin-tabs" aria-label="Administration sections">
+  {% if can('user.manage') %}<a class="{% if admin_section == 'accounts' %}selected{% endif %}" href="/admin">Accounts &amp; roles</a>{% endif %}
+  {% if can('user.manage') %}<a class="{% if admin_section == 'staging' %}selected{% endif %}" href="/admin/staging">Service staging</a>{% endif %}
+  {% if can('audit.view') or can('config.manage') %}<a class="{% if admin_section == 'general' %}selected{% endif %}" href="/admin/general-policy{% if selected_group_id %}?group_id={{ selected_group_id }}{% endif %}">General Policy</a>{% endif %}
+  {% if can('config.manage') %}<a class="{% if admin_section == 'compliance' %}selected{% endif %}" href="/admin/compliance-frameworks">Hardening Policy</a>{% endif %}
+  {% if can('config.manage') %}<a class="{% if admin_section == 'vulnerability' %}selected{% endif %}" href="/admin/compliance{% if selected_group_id %}?group_id={{ selected_group_id }}{% endif %}">Vulnerability Policy</a>{% endif %}
+</nav>

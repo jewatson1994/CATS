@@ -1,0 +1,8 @@
+cats_preparation:
+  stage: cats_preparation
+  script:
+    - cats prepare --source "$CI_PROJECT_DIR" --output "$CI_PROJECT_DIR/.cats"
+  artifacts:
+    when: always
+    paths:
+      - .cats/

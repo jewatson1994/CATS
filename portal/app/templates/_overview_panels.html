@@ -1,0 +1,55 @@
+<section class="normalized-overview" aria-labelledby="overview-title">
+  <p class="overview-provenance" id="overview-title">Source: {{ overview_data.source }} &middot; Showing declared configuration; runtime-observed traffic is not inferred.</p>
+  {% if overview_data.description %}<p class="overview-description">{{ overview_data.description }}</p>{% endif %}
+  {% if overview_data.warnings %}<div class="overview-render-warning" role="status"><strong>Static-analysis warning</strong>{% for warning in overview_data.warnings %}<p>{{ warning.message }}{% if warning.chart %} Chart: <code>{{ warning.chart }}</code>.{% endif %}{% if warning.source and warning.source != '—' %} Source: <code>{{ warning.source }}</code>.{% endif %}{% if warning.unrecognized_images %} Unrecognized image(s): {{ warning.unrecognized_images|join(', ') }}{% endif %}</p>{% if warning.original_error %}<details><summary>Helm diagnostic</summary><code>{{ warning.original_error }}</code></details>{% endif %}{% endfor %}</div>{% endif %}
+
+  <div class="overview-top-row">
+    <article class="overview-dashboard-card">
+      <h3>{% if overview_data.missing_evidence %}<span class="overview-icon is-bad">×</span>{% endif %}Missing Evidence</h3>
+      {% if overview_data.missing_evidence %}<div class="overview-table-wrap"><table class="overview-table overview-paginated" data-page-size="10"><thead><tr><th>Type</th><th>Item</th><th>Why It&rsquo;s Missing</th><th>Source File</th>{% if can('evidence.remove', view.service.id) %}<th>Action</th>{% endif %}</tr></thead><tbody>
+      {% for row in overview_data.missing_evidence %}<tr><td>{{ row.type }}</td><td>{{ row.item }}</td><td>{{ row.reason }}</td><td><code>{{ row.source_file or '—' }}</code></td>{% if can('evidence.remove', view.service.id) %}<td><button type="button" class="link-button" onclick="document.getElementById('remove-evidence-{{ loop.index }}').showModal()">Remove</button><dialog id="remove-evidence-{{ loop.index }}" class="review-dialog"><form method="post" action="/services/{{ view.service.service_key }}/missing-evidence/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="evidence_type" value="{{ row.type }}"><input type="hidden" name="item" value="{{ row.item }}"><input type="hidden" name="source_file" value="{{ row.source_file or '' }}"><h3>Remove missing evidence?</h3><p>{{ row.type }} · {{ row.item }} will be removed from the current service state. It will reappear if a future assessment reports it again.</p><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button class="danger-button">Remove</button></div></form></dialog></td>{% endif %}</tr>{% endfor %}
+      </tbody></table></div><div class="overview-pagination" hidden data-overview-pagination aria-label="Missing evidence pages"><span data-pagination-summary></span><span class="overview-pagination-controls"><button type="button" data-page-prev>Previous</button><span data-page-numbers></span><button type="button" data-page-next>Next</button></span></div>{% else %}<p class="overview-empty">No missing evidence.</p>{% endif %}
+    </article>
+
+    <article class="overview-dashboard-card">
+      <h3>Ports &amp; Protocols</h3>
+      {% if overview_data.ports %}<div class="overview-table-wrap"><table class="overview-table overview-paginated" data-page-size="10"><thead><tr><th>Port</th><th>Protocol</th><th>Service</th><th>Declared By</th></tr></thead><tbody>
+      {% for row in overview_data.ports %}<tr><td>{{ row.port }}</td><td>{{ row.protocol }}</td><td>{{ row.service }}</td><td title="{{ row.provenance }}">{{ row.declared_by }}</td></tr>{% endfor %}
+      </tbody></table></div><div class="overview-pagination" hidden data-overview-pagination aria-label="Ports and protocols pages"><span data-pagination-summary></span><span class="overview-pagination-controls"><button type="button" data-page-prev>Previous</button><span data-page-numbers></span><button type="button" data-page-next>Next</button></span></div>{% else %}<p class="overview-empty">Not provided</p>{% endif %}
+    </article>
+
+    <article class="overview-dashboard-card">
+      <h3>Accounts</h3>
+      {% if overview_data.accounts %}<div class="overview-table-wrap"><table class="overview-table overview-paginated" data-page-size="10"><thead><tr><th>Name</th><th>Scope</th><th>Relationships</th></tr></thead><tbody>
+      {% for row in overview_data.accounts %}<tr><td>{{ row.name }}</td><td>{{ row.scope }}</td><td>{% if row.relationships != '—' %}<ul class="overview-relationship-list">{% for relationship in row.relationships.split(';') %}<li>{{ relationship }}</li>{% endfor %}</ul>{% else %}—{% endif %}</td></tr>{% endfor %}
+      </tbody></table></div><div class="overview-pagination" hidden data-overview-pagination aria-label="Accounts pages"><span data-pagination-summary></span><span class="overview-pagination-controls"><button type="button" data-page-prev>Previous</button><span data-page-numbers></span><button type="button" data-page-next>Next</button></span></div>{% else %}<p class="overview-empty">Not provided</p>{% endif %}
+    </article>
+  </div>
+
+  <article class="overview-dashboard-card overview-full-width overview-artifacts">
+    <h3>Discovered Artifacts</h3>
+    {% if overview_data.artifacts %}<div class="overview-table-wrap"><table class="overview-table artifacts-table"><thead><tr><th>Type</th><th>Registry</th><th>Repository</th><th>Artifact</th><th>Version / Tag</th><th>Discovered From</th><th>Digest</th></tr></thead><tbody>
+    {% for row in overview_data.artifacts %}<tr><td>{{ row.type }}</td><td>{{ row.registry }}</td><td>{{ row.repository }}</td><td>{{ row.artifact }}</td><td>{{ row.version }}</td><td>{{ row.discovered_from }}</td><td class="overview-mono">{{ row.digest }}</td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<p class="overview-empty">Not provided</p>{% endif %}
+  </article>
+
+  {% if service_images %}
+  <article class="overview-dashboard-card overview-full-width overview-artifacts">
+    <h3>Container Images</h3>
+    <div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Image</th><th>Digest</th><th>Lifecycle</th><th>Actions</th></tr></thead><tbody>
+    {% for image in service_images %}<tr><td><code class="image-ref">{{ image.image_reference }}</code></td><td><code>{{ image.image_digest or '—' }}</code></td><td>{{ image.lifecycle_status|title }}{% if image.replacement_of_id %}<br><small>Replaced image lineage recorded</small>{% endif %}</td><td>{% if image.lifecycle_status == 'active' and can('archive.request', view.service.id) %}<button type="button" class="secondary-button" onclick="document.getElementById('remove-image-{{ image.id }}').showModal()">Request Removal</button><button type="button" class="secondary-button" onclick="document.getElementById('replace-image-{{ image.id }}').showModal()">Replace With</button>{% else %}&mdash;{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% for image in service_images if image.lifecycle_status == 'active' and can('archive.request', view.service.id) %}
+    <dialog id="remove-image-{{ image.id }}" class="review-dialog"><form method="post" action="/services/{{ view.service.service_key }}/images/{{ image.id }}/remove"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Request image removal</h3><p><code>{{ image.image_reference }}</code></p><label>Reason or comment<textarea name="reason" minlength="3" required placeholder="Legacy sidecar removed from deployment."></textarea></label><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Submit request</button></div></form></dialog>
+    <dialog id="replace-image-{{ image.id }}" class="review-dialog"><form method="post" action="/services/{{ view.service.service_key }}/images/{{ image.id }}/replace"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Replace image</h3><p>Current image: <code>{{ image.image_reference }}</code></p><label>Replacement image<input name="replacement_reference" required placeholder="registry.example/app:2.4"></label><label>Reason or comment<textarea name="reason" minlength="3" required></textarea></label><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Submit request</button></div></form></dialog>
+    {% endfor %}
+  </article>
+  {% endif %}
+
+  <article class="overview-dashboard-card overview-full-width overview-dependencies">
+    <h3>Dependencies</h3>
+    {% if overview_data.dependencies %}<div class="overview-table-wrap"><table class="overview-table"><thead><tr><th>Dependency</th><th>Used By</th><th>Provides</th><th>Images</th></tr></thead><tbody>
+    {% for row in overview_data.dependencies %}<tr><td>{{ row.dependency }}</td><td>{{ row.used_by }}</td><td>{{ row.provides }}</td><td class="overview-mono">{{ row.images }}</td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<p class="overview-empty">Not provided</p>{% endif %}
+  </article>
+</section>

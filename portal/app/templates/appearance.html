@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Appearance · CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ACCOUNT</p><h1>Appearance</h1><p>Choose the palette that gives you the clearest contrast and lowest visual strain. This does not affect permissions or service data.</p></div></section>
+<section class="panel padded appearance-panel">
+  {% if saved %}<div class="save-confirmation" role="status">Saved successfully.</div>{% endif %}
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <fieldset><legend>Visual accessibility themes</legend><p class="theme-note">These display options are intended to support different visual preferences. For additional accessibility, use your operating system or browser settings.</p><div class="theme-grid">
+      {% for key, label in themes.items() %}<label class="theme-option theme-preview-{{ key }}"><input type="radio" name="theme" value="{{ key }}" {% if (current_user.theme or 'cats') == key %}checked{% endif %}><span><strong>{{ label }}</strong></span></label>{% endfor %}
+    </div></fieldset>
+    <button>Save theme</button>
+  </form>
+</section>
+{% endblock %}

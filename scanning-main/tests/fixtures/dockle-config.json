@@ -1,0 +1,23 @@
+{
+  "details": [
+    {
+      "code": "CIS-DI-0001",
+      "title": "Create a user for the container",
+      "level": "FATAL",
+      "description": "The container runs without an explicit non-root user.",
+      "remediation": "Create and use a non-root user."
+    },
+    {
+      "code": "DKL-DI-0005",
+      "title": "Avoid latest tag",
+      "level": "WARN",
+      "description": "The image uses a floating tag.",
+      "remediation": "Pin the image to an immutable version."
+    },
+    {
+      "code": "PASS",
+      "title": "No issue",
+      "level": "PASS"
+    }
+  ]
+}

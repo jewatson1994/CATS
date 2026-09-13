@@ -1,0 +1,58 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "helm-rendered/demo.yaml",
+  "ArtifactType": "filesystem",
+  "Results": [
+    {
+      "Target": "demo.yaml: apps/v1/Deployment/demo-api",
+      "Class": "config",
+      "Type": "kubernetes",
+      "Misconfigurations": [
+        {
+          "Type": "Kubernetes Security Check",
+          "ID": "KSV014",
+          "AVDID": "AVD-KSV-0014",
+          "Title": "Root file system is not read-only",
+          "Description": "The container can write to its root file system.",
+          "Message": "Container 'api' should set readOnlyRootFilesystem to true",
+          "Namespace": "builtin.kubernetes.KSV014",
+          "Resolution": "Set securityContext.readOnlyRootFilesystem to true.",
+          "Severity": "HIGH",
+          "Status": "FAIL",
+          "CauseMetadata": {
+            "Resource": "api",
+            "Provider": "Kubernetes"
+          }
+        },
+        {
+          "Type": "Kubernetes Security Check",
+          "ID": "KSV020",
+          "Title": "Runs as non-root",
+          "Description": "The workload runs as a non-root user.",
+          "Severity": "LOW",
+          "Status": "PASS"
+        }
+      ]
+    },
+    {
+      "Target": "Dockerfile",
+      "Class": "config",
+      "Type": "dockerfile",
+      "Misconfigurations": [
+        {
+          "Type": "Dockerfile Security Check",
+          "ID": "DS002",
+          "Title": "Image uses the latest tag",
+          "Description": "Unpinned image tags are mutable.",
+          "Resolution": "Pin the base image to an immutable version or digest.",
+          "Severity": "MEDIUM",
+          "Status": "FAIL",
+          "CauseMetadata": {
+            "Resource": "FROM example/app:latest",
+            "Provider": "Dockerfile"
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+nameOverride: ""
+fullnameOverride: ""
+
+images:
+  frontend: nginx:1.27-alpine
+  api: ghcr.io/example/catalog-api:2.4.1
+  worker: ghcr.io/example/catalog-worker:2.4.1
+  postgres: postgres:16-alpine
+  redis: redis:7.2-alpine
+
+frontend:
+  replicas: 2
+  servicePort: 80
+
+api:
+  replicas: 3
+  servicePort: 8080
+  containerPort: 8080
+
+worker:
+  replicas: 2
+
+ingress:
+  enabled: true
+  host: catalog.demo.example
+
+persistence:
+  enabled: true
+  size: 20Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+resources: {}
+

@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "helm-diagram-demo.fullname" . }}-postgres
+  labels:
+    {{- include "helm-diagram-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  serviceName: {{ include "helm-diagram-demo.fullname" . }}-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "helm-diagram-demo.name" . }}
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "helm-diagram-demo.name" . }}
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.images.postgres }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: {{ include "helm-diagram-demo.fullname" . }}-credentials
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "helm-diagram-demo.fullname" . }}-redis
+  labels:
+    {{- include "helm-diagram-demo.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "helm-diagram-demo.name" . }}
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "helm-diagram-demo.name" . }}
+        app.kubernetes.io/component: cache
+    spec:
+      containers:
+        - name: redis
+          image: {{ .Values.images.redis }}
+          ports:
+            - name: redis
+              containerPort: 6379
+

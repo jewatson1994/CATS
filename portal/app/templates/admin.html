@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Administration · CATS{% endblock %}
+{% block content %}
+<section class="heading">
+  <div><p class="eyebrow">ADMINISTRATION</p><h1>Accounts and roles</h1><p>Identity, functional permissions, and service access are managed independently.</p></div>
+</section>
+{% set admin_section = 'accounts' %}
+{% include "_admin_tabs.html" %}
+{% if saved %}<div class="save-confirmation" role="status">Service information saved successfully.</div>{% endif %}
+
+<div class="admin-grid">
+  <section class="panel padded admin-card">
+    <h2>Create local account</h2>
+    <form method="post" action="/admin/users">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>Username<input name="username" required></label>
+      <label>Display name<input name="display_name" required></label>
+      <label>Temporary password<input type="password" name="password" minlength="14" required></label>
+      <button>Create account</button>
+    </form>
+  </section>
+
+  <section class="panel padded admin-card">
+    <h2>Assign role</h2>
+    <form method="post" action="/admin/assignments">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <label>User<select name="user_id">{% for user in users %}<option value="{{ user.id }}">{{ user.username }}</option>{% endfor %}</select></label>
+      <label>Role<select name="role_id">{% for role in roles %}<option value="{{ role.id }}">{{ role.name }}</option>{% endfor %}</select></label>
+      <label>Service scope <span class="muted">(Ctrl/Cmd-click for multiple; leave blank for group/global scope)</span><select name="service_ids" multiple size="5">{% for service in services %}<option value="{{ service.id }}">{{ service.name }}</option>{% endfor %}</select></label>
+      <label>Group scope<select name="group_id"><option value="">No group scope</option>{% for group in groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
+      <button>Assign</button>
+    </form>
+  </section>
+
+  <section class="panel padded admin-card role-builder">
+    <h2>Create custom role</h2>
+    <form method="post" action="/admin/roles">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="role-basics"><label>Name<input name="name" required></label><label>Description<input name="description"></label></div>
+      <fieldset class="permission-fieldset">
+        <legend>Permissions</legend>
+        <div class="permission-grid">
+        {% for key, description in permission_catalog.items() %}
+          <label class="permission-option" tabindex="0" title="{{ description }}">
+            <input type="checkbox" name="permissions" value="{{ key }}">
+            <span class="permission-name">{{ key }}</span>
+          </label>
+        {% endfor %}
+        </div>
+      </fieldset>
+      <button>Create role</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel padded admin-card">
+  <h2>Create service group</h2>
+  <form method="post" action="/admin/groups">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Name<input name="name" required maxlength="120"></label>
+    <label>Description<input name="description"></label>
+    <button>Create group</button>
+  </form>
+  {% if group_summaries %}
+  <div class="group-summary-grid" aria-label="Service groups">
+    {% for item in group_summaries %}
+    <article class="group-summary-card">
+      <strong>{{ item.group.name }}</strong>
+      <span>{{ item.active_services }} Active Services</span>
+      <small>{{ item.service_count }} total service{{ '' if item.service_count == 1 else 's' }}{% if item.group.description %} · {{ item.group.description }}{% endif %}</small>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel padded user-account-table">
+  <h2>User access overview</h2>
+  <p class="muted">Each account appears once. Matching numbered chips form an access chain: Role → Group → Service scope.</p>
+  <div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Status</th><th>Last Logon</th><th>Roles</th><th>Groups</th><th>Service scope</th><th>Account Actions</th></tr></thead><tbody>
+  {% for row in user_rows %}{% set user = row.user %}<tr><td><strong>{{ user.display_name }}</strong><br><code>{{ user.username }}</code></td><td>{{ user.auth_source }}</td><td>{{ 'Enabled' if user.enabled else 'Disabled' }}</td><td>{{ cats_datetime(user.last_login_at) if user.last_login_at else 'Never' }}</td><td><div class="access-list">{% for assignment in row.assignments %}<div class="access-chip"><strong>{{ assignment.role }}</strong><form class="inline-form" method="post" action="/admin/assignments/{{ assignment.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">Remove</button></form></div>{% else %}<span class="muted">None</span>{% endfor %}</div></td><td><div class="access-list">{% for assignment in row.assignments %}<span class="access-chip">{{ assignment.group }}</span>{% else %}<span class="muted">None</span>{% endfor %}</div></td><td><div class="access-list">{% for assignment in row.assignments %}<span class="access-chip">{{ assignment.service }}</span>{% else %}<span class="muted">None</span>{% endfor %}</div></td><td><div class="account-actions">{% if user.id != current_user.id %}<form method="post" action="/admin/users/{{ user.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="account-action-button">{{ 'Disable' if user.enabled else 'Enable' }}</button></form><button type="button" class="secondary-button account-action-button" onclick="document.getElementById('delete-user-{{ user.id }}').showModal()">Delete</button><dialog id="delete-user-{{ user.id }}" class="review-dialog"><form method="post" action="/admin/users/{{ user.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Delete account</h3><p>This permanently removes <strong>{{ user.display_name }}</strong> ({{ user.username }}) from CATS. Historical audit records are retained.</p><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Delete account</button></div></form></dialog>{% endif %}{% if user.auth_source == 'local' %}<button type="button" class="secondary-button account-action-button" onclick="document.getElementById('reset-password-user-{{ user.id }}').showModal()">Reset password</button><dialog id="reset-password-user-{{ user.id }}" class="review-dialog"><form method="post" action="/admin/users/{{ user.id }}/reset-password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Reset password</h3><p>Set a temporary password for {{ user.display_name }}.</p><label>Temporary password<input type="password" name="temporary_password" minlength="14" required autocomplete="new-password"></label><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Reset password</button></div></form></dialog>{% endif %}</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel padded user-role-table">
+  <h2>User access overview</h2>
+  <p class="muted">Roles and group scope are shown separately so each account’s access boundary is clear.</p>
+  <div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Status</th><th>Role</th><th>Group</th><th>Service scope</th><th>Account Actions</th></tr></thead><tbody>
+  {% for row in user_rows %}{% set user = row.user %}{% if row.assignments %}{% for assignment in row.assignments %}<tr><td><strong>{{ user.display_name }}</strong><br><code>{{ user.username }}</code></td><td>{{ user.auth_source }}</td><td>{{ 'Enabled' if user.enabled else 'Disabled' }}</td><td><strong>{{ assignment.role }}</strong></td><td>{{ assignment.group }}</td><td>{{ assignment.service }}</td><td><div class="account-actions">{% if user.id != current_user.id %}<form method="post" action="/admin/users/{{ user.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="account-action-button">{{ 'Disable' if user.enabled else 'Enable' }}</button></form>{% endif %}{% if user.auth_source == 'local' %}<button type="button" class="secondary-button account-action-button" onclick="document.getElementById('reset-password-{{ user.id }}').showModal()">Reset password</button>{% endif %}</div></td></tr>{% endfor %}{% else %}<tr><td><strong>{{ user.display_name }}</strong><br><code>{{ user.username }}</code></td><td>{{ user.auth_source }}</td><td>{{ 'Enabled' if user.enabled else 'Disabled' }}</td><td colspan="3" class="muted">No role assignment</td><td></td></tr>{% endif %}{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel padded user-overview-table">
+  <h2>User permissions overview</h2>
+  <p class="muted">Roles, scopes, and effective permissions are shown per account. Expand permissions for the detailed list.</p>
+  <div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Status</th><th>Roles and scope</th><th>Permissions</th><th>Account Actions</th></tr></thead><tbody>
+  {% for row in user_rows %}{% set user = row.user %}<tr><td><strong>{{ user.display_name }}</strong><br><code>{{ user.username }}</code></td><td>{{ user.auth_source }}</td><td>{{ 'Enabled' if user.enabled else 'Disabled' }}</td><td><div class="assignment-list">{% for assignment in row.assignments %}<div class="assignment-chip"><strong>{{ assignment.role }}</strong><span>{{ assignment.scope }}</span><form class="inline-form" method="post" action="/admin/assignments/{{ assignment.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">Remove</button></form></div>{% else %}<span class="muted">None</span>{% endfor %}</div></td><td>{% if row.permissions %}<details class="permission-details"><summary>{{ row.permissions|length }} permission{{ '' if row.permissions|length == 1 else 's' }}</summary><ul>{% for key in row.permissions %}<li><code>{{ key }}</code><span>{{ permission_catalog.get(key, '') }}</span></li>{% endfor %}</ul></details>{% else %}<span class="muted">None</span>{% endif %}</td><td><div class="account-actions">{% if user.id != current_user.id %}<form method="post" action="/admin/users/{{ user.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="account-action-button">{{ 'Disable' if user.enabled else 'Enable' }}</button></form>{% endif %}{% if user.auth_source == 'local' %}<button type="button" class="secondary-button account-action-button" onclick="document.getElementById('reset-password-overview-{{ user.id }}').showModal()">Reset password</button><dialog id="reset-password-overview-{{ user.id }}" class="review-dialog"><form method="post" action="/admin/users/{{ user.id }}/reset-password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Reset password</h3><p>Set a temporary password for {{ user.display_name }}.</p><label>Temporary password<input type="password" name="temporary_password" minlength="14" required autocomplete="new-password"></label><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Reset password</button></div></form></dialog>{% endif %}</div></td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+
+<section class="panel account-table"><div class="table-wrap"><table><thead><tr><th>User</th><th>Source</th><th>Status</th><th>Assignments</th><th>Account Actions</th></tr></thead><tbody>
+{% for user in users %}<tr><td>{{ user.display_name }}<br><code>{{ user.username }}</code></td><td>{{ user.auth_source }}</td><td>{{ 'Enabled' if user.enabled else 'Disabled' }}</td><td>{% for assignment in user.role_assignments %}<form class="inline-form" method="post" action="/admin/assignments/{{ assignment.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><span>{{ assignment.role.name }} — {{ assignment.service.name if assignment.service else 'Global' }}</span><button class="link-button">Remove</button></form>{% else %}None{% endfor %}</td><td><div class="account-actions">{% if user.id != current_user.id %}<form method="post" action="/admin/users/{{ user.id }}/toggle"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="account-action-button">{{ 'Disable' if user.enabled else 'Enable' }}</button></form>{% endif %}{% if user.auth_source == 'local' %}<button type="button" class="secondary-button account-action-button" onclick="document.getElementById('reset-password-{{ user.id }}').showModal()">Reset password</button><dialog id="reset-password-{{ user.id }}" class="review-dialog"><form method="post" action="/admin/users/{{ user.id }}/reset-password"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><h3>Reset password</h3><p>Set a temporary password for {{ user.display_name }}.</p><label>Temporary password<input type="password" name="temporary_password" minlength="14" required autocomplete="new-password"></label><div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Reset password</button></div></form></dialog>{% endif %}</div></td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

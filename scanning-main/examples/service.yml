@@ -1,0 +1,34 @@
+service:
+  id: payments-api
+  name: Payments API
+  version: 2.4.1
+  owner: Payments Engineering
+  poc: payments@example.invalid
+  groups:
+    - Application Services
+
+# This metadata is declared by the service team. Helm-rendered values and
+# runtime telemetry can enrich it later; declarations are never treated as
+# proof of runtime reachability.
+overview:
+  description: REST API for payment authorization and transaction status.
+  ports:
+    - name: HTTPS API
+      port: 8443
+      protocol: TCP
+      exposure: internal
+  ingress:
+    - host: payments.example.invalid
+      paths:
+        - /api
+  dependencies:
+    - PostgreSQL
+    - Redis
+    - Payment Gateway
+  external_endpoints:
+    - https://gateway.example.com
+  storage: []
+  rbac:
+    - service_account: payments-api
+  network_policies:
+    - allow-egress-payment-gateway

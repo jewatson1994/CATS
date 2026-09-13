@@ -1,0 +1,6 @@
+apiVersion: v2
+name: worker
+description: Vendored dependency used to prove nested chart rendering
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

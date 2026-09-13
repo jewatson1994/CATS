@@ -1,0 +1,7 @@
+image:
+  repository: example.invalid/cats/api
+  tag: latest
+worker:
+  image:
+    repository: example.invalid/cats/worker
+    tag: latest

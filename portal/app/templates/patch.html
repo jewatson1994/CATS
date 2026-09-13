@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}CATS &middot; Patch{% endblock %}
+{% block content %}
+<a class="back" href="/home">← CATS overview</a>
+<section class="heading"><div><p class="eyebrow">SELF-SERVICE WORKSPACE</p><h1>Patch</h1><p>Patch a public, private, or uploaded container image and verify the result with before-and-after vulnerability scans.</p></div></section>
+<section class="panel patch-panel">
+  <h2>Container patch inputs</h2>
+  <p class="muted patch-helper">Patch a registry image or upload an image archive.<br>Registry credentials are managed centrally by CATS.</p>
+  {% if error %}<div class="notice notice-error">{{ error }}</div>{% endif %}
+  <form method="post" action="/patch" enctype="multipart/form-data" data-patch-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <section class="patch-input-section" aria-labelledby="patch-source-title">
+      <h3 id="patch-source-title">Image source</h3>
+      <div class="patch-choice-list" role="radiogroup" aria-label="Image source type">
+        <label><input type="radio" name="source_mode" value="oci" checked data-source-mode> OCI Image</label>
+        <label><input type="radio" name="source_mode" value="upload" data-source-mode> Upload Image</label>
+      </div>
+      <div class="patch-source-option" data-source-oci>
+        <label>OCI Image<input name="source_image" placeholder="docker.io/library/nginx:1.27" data-image-input="source"></label>
+        <small class="muted">Enter a complete OCI image reference.<br>Configured OCI Registry credentials are applied automatically when available.</small>
+      </div>
+      <div class="patch-source-option" data-source-upload hidden><label>Container image archive (.tar)<input name="source_archive" type="file" accept=".tar"></label></div>
+    </section>
+    <section class="patch-input-section" aria-labelledby="patch-output-title">
+      <h3 id="patch-output-title">Patched image output</h3>
+      <div class="patch-choice-list" role="radiogroup" aria-label="Patched image output">
+        <label><input type="radio" name="output_mode" value="download" checked data-output-mode> Download patched image</label>
+        <label><input type="radio" name="output_mode" value="push" data-output-mode> Push patched image to OCI registry</label>
+      </div>
+      <div class="patch-source-option" data-output-push hidden>
+        {% if signing.enabled %}<p>Signing is required. Sign in with image-signing permission to publish. CATS signs the pushed digest and verifies the signature before completing the job.</p>{% else %}<p>Image signing is disabled in Configuration.</p>{% endif %}
+        {% if configured_registries %}<label>Destination registry<select name="destination_registry_id" data-registry-select data-registry-kind="destination"><option value="">Select a configured registry</option>{% for registry in configured_registries %}<option value="{{ registry.id }}" data-endpoint="{{ registry.endpoint }}" data-prefix="{{ registry.namespace }}">{{ registry.display_name }}</option>{% endfor %}</select></label>{% endif %}
+        <label>Image / repository / tag<input name="destination_image" placeholder="nginx:1.27-patched" data-image-input="destination"></label>
+        <small class="muted" data-resolved-destination></small>
+      </div>
+    </section>
+    {% if current_user and authenticated_services %}
+    <label class="patch-service-association">Associate completed patch with service <span class="muted">(optional)</span>
+      <select name="service_id">
+        <option value="">Do not retain this patch in a service</option>
+        {% for service in authenticated_services %}<option value="{{ service.service_key }}" {% if selected_service_id == service.service_key %}selected{% endif %}>{{ service.name }} ({{ service.service_key }})</option>{% endfor %}
+      </select>
+    </label>
+    {% endif %}
+    <button class="patch-start-button" type="submit" data-start-patch>Start patch</button>
+  </form>
+
+  {% if job_id %}<div class="patch-progress" data-patch-job="{{ job_id }}">
+    <div class="patch-pipeline">
+      {% for phase, label in [('queued','Queued'),('acquiring_image','Acquiring image'),('scanning_source','Scanning source image'),('patching_image','Patching image'),('scanning_patched','Scanning patched image'),('preparing_output','Preparing output'),('pushing_image','Pushing image'),('signing_image','Signing and verifying image'),('completed','Completed')] %}
+      <div class="patch-step" data-phase="{{ phase }}"><span class="scan-pipeline-dot"></span><strong>{{ label }}</strong><small>Waiting</small></div>
+      {% endfor %}
+    </div>
+    <p class="muted" data-patch-status>{{ job.status|title }} · {{ job.phase|replace('_', ' ')|title }}</p>
+    <div class="scan-result-actions"><a class="secondary-button is-disabled" data-patch-results aria-disabled="true">View results</a><a class="secondary-button is-disabled" data-patch-download aria-disabled="true">Download patched image</a><a class="secondary-button" href="/api/public/patch-jobs/{{ job_id }}/logs">View sanitized log</a><button type="button" class="secondary-button" data-cancel-patch>Cancel patch</button></div>
+  </div>{% endif %}
+</section>
+<script>
+(() => {
+  const sourceModes = document.querySelectorAll('[data-source-mode]');
+  const outputModes = document.querySelectorAll('[data-output-mode]');
+  const setDisabled = (container, disabled) => container?.querySelectorAll('input,select,textarea').forEach(input => { input.disabled = disabled; });
+  const update = () => {
+    const sourceMode = document.querySelector('[data-source-mode]:checked')?.value || 'oci';
+    const output = document.querySelector('[data-output-mode]:checked')?.value;
+    const ociSource = document.querySelector('[data-source-oci]');
+    const uploadSource = document.querySelector('[data-source-upload]');
+    const pushOutput = document.querySelector('[data-output-push]');
+    [[ociSource, sourceMode === 'oci'], [uploadSource, sourceMode === 'upload'], [pushOutput, output === 'push']].forEach(([container, visible]) => { if (container) { container.hidden = !visible; setDisabled(container, !visible); } });
+  };
+  const resolveDestination = () => { const select=document.querySelector('[data-registry-kind="destination"]'), input=document.querySelector('[data-image-input="destination"]'), target=document.querySelector('[data-resolved-destination]'); if(!select||!input||!target)return; const option=select.selectedOptions[0], endpoint=(option?.dataset.endpoint||'').replace(/^https?:\/\//,'').replace(/\/$/,''), prefix=(option?.dataset.prefix||'').replace(/^\/+|\/+$/g,''), image=input.value.trim().replace(/^\/+/, ''); target.textContent=endpoint && image ? `Resolved destination: ${[endpoint,prefix,image].filter(Boolean).join('/')}` : ''; };
+  [...sourceModes, ...outputModes].forEach(input => input.addEventListener('change', () => { update(); resolveDestination(); })); document.querySelectorAll('[data-registry-kind="destination"],[data-image-input="destination"]').forEach(input => ['input','change'].forEach(event => input.addEventListener(event, resolveDestination))); update(); resolveDestination();
+  const form = document.querySelector('[data-patch-form]');
+  form?.addEventListener('submit', () => { const b=form.querySelector('[data-start-patch]'); b.disabled=true; b.textContent='Queuing patch…'; });
+})();
+</script>
+{% if job_id %}<script>
+(() => {
+  const root=document.querySelector('[data-patch-job]'), jobId=root.dataset.patchJob;
+  const phases=['queued','acquiring_image','scanning_source','patching_image','scanning_patched','preparing_output','pushing_image','signing_image','completed'];
+  const status=root.querySelector('[data-patch-status]'), results=root.querySelector('[data-patch-results]'), download=root.querySelector('[data-patch-download]'), cancel=root.querySelector('[data-cancel-patch]');
+  cancel.addEventListener('click', async()=>{cancel.disabled=true; cancel.textContent='Cancelling…'; await fetch(`/api/public/patch-jobs/${jobId}/cancel`,{method:'POST'}); setTimeout(poll,250);});
+  async function poll(){
+    try {
+      const response=await fetch(`/api/public/patch-jobs/${jobId}`); if(!response.ok) throw new Error(); const job=await response.json();
+      const labels={queued:'Queued',acquiring_image:'Acquiring image',scanning_source:'Scanning source image',patching_image:'Patching image',scanning_patched:'Scanning patched image',preparing_output:'Preparing output',pushing_image:'Pushing image',signing_image:'Signing and verifying image',completed:'Completed'};
+      const terminal=['complete','failed','cancelled'].includes(job.status), stages=job.stages||{};
+      root.querySelectorAll('.patch-step').forEach(step=>{ const phase=step.dataset.phase, item=stages[phase]||{}, stageStatus=item.status||'waiting', notReached=stageStatus==='skipped' && item.reason==='not_reached'; step.classList.toggle('is-complete',stageStatus==='success'); step.classList.toggle('is-active',stageStatus==='running'); step.classList.toggle('is-error',stageStatus==='failed'); step.classList.toggle('is-skipped',stageStatus==='skipped'); step.querySelector('small').textContent=stageStatus==='success'?'Completed':stageStatus==='running'?'Running':stageStatus==='failed'?'Failed':stageStatus==='skipped'?(notReached?'Not reached':'Skipped'):(terminal?'Not reached':'Waiting'); });
+      const failedPhase=job.failed_stage||job.phase;
+      status.textContent=job.status==='failed' ? `Failed during "${labels[failedPhase]||failedPhase}"${job.error ? ` · ${job.error}` : ''}` : job.status==='complete' ? 'Completed' : `${job.status.replaceAll('_',' ')} · ${labels[job.phase]||job.phase}`;
+      if(job.result){ results.href=`/api/public/patch-jobs/${jobId}/results`; results.classList.remove('is-disabled'); results.removeAttribute('aria-disabled'); }
+      if(job.result?.artifact_available){download.href=`/api/public/patch-jobs/${jobId}/patched-image.tar`; download.classList.remove('is-disabled'); download.removeAttribute('aria-disabled');}
+      if(terminal){cancel.hidden=true; return;} setTimeout(poll,1000);
+    } catch(e){status.textContent='Unable to read patch status. Retrying…'; setTimeout(poll,2500);}
+  } poll();
+})();
+</script>{% endif %}
+{% endblock %}

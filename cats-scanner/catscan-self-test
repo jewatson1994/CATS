@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SMOKE_CHART="${CATSCAN_SMOKE_CHART:-/opt/catscan/smoke/helm}"
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+catscan-version
+catscan-validate-offline-release
+command -v dockle >/dev/null
+echo "Dockle binary present: $(dockle --version 2>/dev/null | head -n 1)"
+helm lint "$SMOKE_CHART" >/dev/null
+helm template catscan-smoke "$SMOKE_CHART" \
+  --namespace catscan-smoke \
+  --include-crds > "$WORK_DIR/rendered.yaml"
+catscan-trivy-config \
+  --format json \
+  --output "$WORK_DIR/trivy-config.json" \
+  "$WORK_DIR/rendered.yaml"
+jq -e '.Results | type == "array"' "$WORK_DIR/trivy-config.json" >/dev/null
+
+echo "CATScan Helm render and offline Trivy configuration smoke test passed."

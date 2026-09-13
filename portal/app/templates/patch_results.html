@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}CATS &middot; Patch Results{% endblock %}
+{% block content %}
+<div class="patch-results-page">
+  <a class="back" href="/patch?job_id={{ job.job_id }}">&larr; Back to patch</a>
+  {% set unresolved = result.vulnerabilities_unresolved if result.vulnerabilities_unresolved is defined else result.vulnerabilities_remaining|default(0, true) %}
+  {% set after_count = result.vulnerabilities_after|default(0, true) %}
+  {% set vulnerability_results = result.vulnerability_results|default([], true) %}
+  {% set patch_status = result.patch_status|default(('PARTIALLY_PATCHED' if after_count else 'PATCHED'), true) %}
+  {% set status_labels = {'PATCHED':'Completed', 'PARTIALLY_PATCHED':'Completed with unresolved vulnerabilities', 'NO_APPLICABLE_FIXES':'No applicable fixes', 'UNSUPPORTED':'Unsupported', 'FAILED':'Failed'} %}
+  {% set execution_label = 'Failed' if result.status == 'failed' else status_labels.get(patch_status, 'Failed') %}
+  <section class="heading"><div><p class="eyebrow">SELF-SERVICE WORKSPACE</p><h1>Patch results</h1><p>Results are verified by rescanning the patched image with Grype; comparison includes fixable vulnerabilities only.</p></div><span class="status {{ 'bad' if result.status == 'failed' or patch_status in ['FAILED', 'UNSUPPORTED'] else 'ok' }} large">{{ execution_label }}</span></section>
+
+  <section class="panel patch-result-details"><dl><dt>Source image</dt><dd><code>{{ result.source_image or job.source_image or '—' }}</code></dd><dt>Patched image</dt><dd><code>{{ result.patched_image or '—' }}</code></dd><dt>Result / reason</dt><dd>{{ result.reason or ('Fixable vulnerabilities remain after the post-patch scan.' if patch_status == 'PARTIALLY_PATCHED' else '—') }}</dd><dt>Publish status</dt><dd>{{ result.delivery_status|replace('_',' ')|title if result.delivery_status else 'Not requested' }}{% if result.delivery_error %}<br><span class="status bad">{{ result.delivery_error }}</span>{% endif %}</dd></dl></section>
+
+  <section class="panel patch-result-details"><dl><dt>Signature</dt><dd>{{ result.signature_status|default('not_configured', true)|replace('_', ' ')|title }}</dd><dt>Published digest</dt><dd><code>{{ result.immutable_destination or '—' }}</code></dd>{% if result.signature %}<dt>Signing key</dt><dd><code>{{ result.signature.key_fingerprint }}</code></dd><dt>Verified</dt><dd>{{ result.signature.verified_at }}</dd><dt>Generator</dt><dd>{{ result.signature.generator }} {{ result.signature.generator_version }}</dd>{% endif %}</dl></section>
+  <section class="metrics patch-result-metrics" aria-label="Patch vulnerability summary">
+    {% for label, value in [('Before',result.vulnerabilities_before|default(0, true)),('After',result.vulnerabilities_after|default(0, true)),('Remediated',result.vulnerabilities_removed|default(0, true)),('Unresolved',unresolved)] %}
+    <article><span>{{ label }}</span><strong>{{ value }}</strong></article>
+    {% endfor %}
+  </section>
+  <p class="muted patch-results-note">Patch comparison includes only vulnerabilities with a known fixed version.</p>
+
+  <section class="panel patch-result-delivery" aria-label="Patched artifact">
+    {% if result.output_mode == 'download' and (result.artifact_available is not defined or result.artifact_available) %}
+      <div><strong>Patched image archive</strong><p class="muted">The patched image is ready to download.</p></div>
+      <a class="primary-button" href="/api/public/patch-jobs/{{ job.job_id }}/patched-image.tar">Download patched image (.tar)</a>
+    {% elif result.delivery_status == 'failed' and (result.artifact_available is not defined or result.artifact_available) %}
+      <div><strong>OCI publishing failed</strong><p class="muted">Publication or required signing did not complete. A pushed image may already exist in the registry. The patched TAR remains available.</p></div>
+      <a class="primary-button" href="/api/public/patch-jobs/{{ job.job_id }}/patched-image.tar">Download patched image (.tar)</a>
+    {% elif result.delivery_status == 'delivered' %}
+      <div><strong>Published image</strong><p class="muted">The patched image was published to the configured OCI registry.</p></div>
+      <code class="patch-published-image">{{ result.destination_image }}</code>
+    {% else %}
+      <div><strong>Patched artifact unavailable</strong><p class="muted">{{ result.reason or 'CATS could not produce a downloadable patched image.' }}</p></div>
+    {% endif %}
+  </section>
+
+  <section class="panel patch-vulnerability-panel">
+    <div class="panel-head patch-results-head"><div><h2>Vulnerability results</h2><p>Before-and-after Grype observations for fixable vulnerabilities.</p></div></div>
+    <div class="patch-result-filters" role="group" aria-label="Filter vulnerability results">
+      <button type="button" class="patch-result-filter is-selected" data-result-filter="all" aria-pressed="true">All <span>{{ vulnerability_results|length }}</span></button>
+      <button type="button" class="patch-result-filter" data-result-filter="remediated" aria-pressed="false">Remediated <span>{{ result.vulnerabilities_removed|default(0, true) }}</span></button>
+      <button type="button" class="patch-result-filter" data-result-filter="unresolved" aria-pressed="false">Unresolved <span>{{ (vulnerability_results|length) - (result.vulnerabilities_removed|default(0, true)) }}</span></button>
+    </div>
+    <div class="table-wrap patch-results-table-wrap">
+      <table class="patch-results-table"><thead><tr><th>CVE</th><th>Severity</th><th>Package</th><th>Before</th><th>After</th><th>Result</th><th>Fixed Version</th></tr></thead><tbody>
+      {% for row in vulnerability_results %}
+      <tr data-result-row data-result-group="{{ 'remediated' if row.result == 'Remediated' else 'unresolved' }}"><td><code>{{ row.id }}</code></td><td>{{ row.severity }}</td><td>{{ row.package }}</td><td>{{ row.before_version or '—' }}</td><td>{{ row.after_version or '—' }}</td><td><span class="patch-result-badge patch-result-{{ row.result|lower|replace(' ', '-') }}">{{ row.result }}</span></td><td>{{ row.fixed_versions|join(', ') if row.fixed_versions else '—' }}</td></tr>
+      {% else %}
+      <tr><td colspan="7" class="empty">No vulnerability observations were reported.</td></tr>
+      {% endfor %}
+      </tbody></table>
+    </div>
+  </section>
+</div>
+<script>
+(() => {
+  const filters = [...document.querySelectorAll('[data-result-filter]')];
+  const rows = [...document.querySelectorAll('[data-result-row]')];
+  filters.forEach((filter) => filter.addEventListener('click', () => {
+    const selected = filter.dataset.resultFilter;
+    filters.forEach((item) => { const active = item === filter; item.classList.toggle('is-selected', active); item.setAttribute('aria-pressed', active ? 'true' : 'false'); });
+    rows.forEach((row) => { row.hidden = selected !== 'all' && row.dataset.resultGroup !== selected; });
+  }));
+})();
+</script>
+{% endblock %}

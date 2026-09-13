@@ -1,0 +1,411 @@
+{% extends "base.html" %}
+{% block title %}{{ view.service.name }} &middot; CATS{% endblock %}
+{% block content %}
+<a class="back" href="/">&larr; All services</a>
+
+{% if saved %}
+<div class="save-confirmation" role="status">Service information saved successfully.</div>
+{% endif %}
+
+<section class="heading">
+  <div>
+    <p class="eyebrow">{{ view.service.service_key }}</p>
+    <div class="service-title-row">
+      <h1>{{ view.service.name }}</h1>
+      <span class="service-poc">POC: {{ view.service.poc or "No POC recorded" }}</span>
+    </div>
+    <div class="service-meta">
+      <span>Version {{ view.version or "Unknown" }}</span>
+      <span>Owner: {{ view.service.owner or "No owner recorded" }}</span>
+      <span>Groups: {{ view.service.groups|map(attribute='name')|join(', ') or "Unassigned" }}</span>
+    </div>
+    {% if view.service.description %}<p class="service-description">{{ view.service.description }}</p>{% endif %}
+  </div>
+  <div class="service-page-actions">
+    <span class="status large {{ 'ok' if view.compliant else 'bad' }}">{{ "Compliant" if view.compliant else "Non-Compliant" }}</span>
+    <span class="latest-evidence">Latest Evidence: <strong>{{ cats_datetime(view.last_execution) if view.last_execution else 'None received' }}</strong></span>
+    {% if can('service.export', view.service.id) %}
+    <a class="secondary-button" href="/services/{{ view.service.service_key }}/export.xlsx">Export to Excel</a>
+    {% endif %}
+    {% if can('service.edit', view.service.id) or (not view.archive and can('archive.request', view.service.id)) %}
+    {% if archive_pending %}<span class="status warning">ARCHIVAL PENDING</span>{% endif %}
+    <details class="actions-menu"><summary class="secondary-button">Actions</summary><div class="actions-menu-popover">{% if can('service.edit', view.service.id) %}<button type="button" onclick="document.getElementById('service-edit-dialog').showModal()">Edit</button>{% endif %}{% if not view.archive and can('archive.request', view.service.id) %}<button type="button" onclick="document.getElementById('service-actions-dialog').showModal()">Archive</button>{% endif %}</div></details>
+    {% endif %}
+  </div>
+</section>
+
+{% if not view.archive and can('archive.request', view.service.id) %}
+<dialog id="service-actions-dialog" class="review-dialog">
+  <form method="post" action="/services/{{ view.service.service_key }}/archive">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Request service archival</h3>
+    <p>Archiving removes this service from active governance while preserving its historical evidence and records. Cybersecurity approval is required.</p>
+    {% if archive_pending %}<p class="muted">An archival request is already pending.</p>{% else %}
+    <label>Reason <span class="muted">*</span><textarea name="reason" minlength="3" required></textarea></label>
+    <label>Ticket<input name="ticket"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Request Archival</button></div>
+    {% endif %}
+  </form>
+</dialog>
+{% endif %}
+
+{% if can('service.edit', view.service.id) %}
+<dialog id="service-edit-dialog" class="review-dialog">
+  <form method="post" action="/admin/services/{{ view.service.service_key }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Edit service information</h3>
+    <label>Service name<input name="name" value="{{ view.service.name }}" required></label>
+    <label>Description<textarea name="description" maxlength="2000">{{ view.service.description or '' }}</textarea></label>
+    <label>Owner<input name="owner" value="{{ view.service.owner or '' }}"></label>
+    <label>POC<input name="poc" value="{{ view.service.poc or '' }}"></label>
+    <label>Version override<input name="manual_version" value="{{ view.service.manual_version or '' }}" placeholder="Pipeline version"></label>
+    <label>Groups<select name="group_ids" multiple>{% for group in groups %}<option value="{{ group.id }}" {% if group in view.service.groups %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Save service</button></div>
+  </form>
+</dialog>
+{# Keep the old text available to bookmarked/accessibility checks while the action is now in the dropdown. #}
+<span class="sr-only">Edit service information</span>
+{% endif %}
+{% set active_service_tab = 'raw' %}{% include "_service_tabs.html" %}
+<nav class="metrics metric-filters" aria-label="Filter service findings">
+  {% for key, label, count in [('active','Active Fixable',view.active|length + view.policy_findings|length),('noncompliant','Active Non-Compliance',view.noncompliance_items|length),('exceptions','Active Exceptions',view.excepted|length + view.policy_excepted|length),('resolved','Resolved',view.resolved|length + view.policy_resolved|length),('warnings','Warnings',view.warning_items|length)] %}
+  <a class="metric-card {{ 'selected' if finding_state == key else '' }} {{ 'overdue-card' if key == 'noncompliant' and count > 0 else '' }} {{ 'warning-card' if key == 'warnings' and count > 0 else '' }}" href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ key }}&amp;finding_type=all&amp;page_size=50"><span>{{ label }}</span><strong>{{ count }}</strong></a>
+  {% endfor %}
+</nav>
+
+{% if view.skipped_images %}
+<span class="sr-only">Skipped images ({{ view.skipped_images|length }}): {{ view.skipped_images|join(', ') }}</span>
+{% endif %}
+{% if view.skipped_charts %}
+<span class="sr-only">Skipped charts ({{ view.skipped_charts|length }}): {{ view.skipped_charts|join(', ') }}</span>
+{% endif %}
+
+<section class="panel service-findings">
+  <div class="panel-head">
+    <div>
+      <h2>{{ {'active':'Active Fixable Findings','noncompliant':'Active Non-Compliance','overdue':'Active Non-Compliance','exceptions':'Active Exceptions','resolved':'Resolved Findings','warnings':'Warnings'}[finding_state] }}</h2>
+      <p>Showing {{ (page - 1) * page_size + 1 if total_items else 0 }}&ndash;{{ [page * page_size, total_items]|min }} of {{ total_items }}.</p>
+    </div>
+    <div class="finding-controls">
+      <label class="finding-type-control">Type
+        <select onchange="location='/services/{{ view.service.service_key }}?overview=false&finding_state={{ finding_state }}&finding_type='+this.value+'&page_size={{ page_size }}'">
+          <option value="all" {% if finding_type == 'all' %}selected{% endif %}>All findings</option>
+          <option value="vulnerability" {% if finding_type == 'vulnerability' %}selected{% endif %}>Vulnerabilities</option>
+          <option value="configuration" {% if finding_type == 'configuration' %}selected{% endif %}>Configuration</option>
+          <option value="evidence" {% if finding_type == 'evidence' %}selected{% endif %}>Evidence</option>
+        </select>
+      </label>
+      <label class="page-size-control">Rows
+        <select onchange="location='/services/{{ view.service.service_key }}?overview=false&finding_state={{ finding_state }}&finding_type={{ finding_type }}&page_size='+this.value">
+          <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
+          <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
+          <option value="250" {% if page_size == 250 %}selected{% endif %}>250</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  {% if finding_state in ['noncompliant','overdue'] %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>Item</th><th>Details</th><th>Reason</th><th>Due date</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for item in noncompliance_items %}
+        <tr>
+          <td>{{ 'Vulnerability' if item.type == 'CVE' else item.type }}</td>
+          <td><strong>
+            {% if item.type == 'CVE' %}
+            <a class="finding-link" href="/services/{{ view.service.service_key }}/findings/{{ item.finding_id }}">{{ item.item }}</a>
+            {% else %}
+            {{ item.item }}
+            {% endif %}
+          </strong></td>
+          <td>{% for image in item.images %}<code class="image-ref" title="{{ image }}">{{ image }}</code>{% else %}&mdash;{% endfor %}</td>
+          <td>{{ item.reason }}</td>
+          <td>{% if item.due %}{{ cats_date(item.due) }}{% else %}&mdash;{% endif %}</td>
+          <td class="finding-actions">
+            {% if item.type == 'CVE' %}
+              {% if can('exception.request', view.service.id) %}
+              <button type="button" class="secondary-button exception-action" data-finding-id="{{ item.finding_id }}" data-cve="{{ item.item }}">Request Exception</button>
+              {% endif %}
+              {% if can('poam.request', view.service.id) %}
+              <button type="button" class="secondary-button poam-action" data-finding-id="{{ item.finding_id }}" data-title="Remediate {{ item.item }}">Add POA&amp;M Entry</button>
+              <button type="button" class="secondary-button mitigation-action" data-finding-id="{{ item.finding_id }}" data-title="Mitigate {{ item.item }}">Add Mitigation</button>
+              {% endif %}
+              {% if not can('exception.request', view.service.id) and not can('poam.request', view.service.id) %}&mdash;{% endif %}
+            {% elif item.type == 'Configuration' %}
+              {% if can('exception.request', view.service.id) %}
+              <button type="button" class="secondary-button exception-action" data-exception-url="/policy-findings/{{ item.policy_finding_id }}/exceptions" data-label="{{ item.item }}">Request Exception</button>
+              {% endif %}
+              {% if can('poam.request', view.service.id) %}
+              <button type="button" class="secondary-button poam-action" data-poam-url="/policy-findings/{{ item.policy_finding_id }}/poams" data-title="Remediate {{ item.item }}">Add POA&amp;M Entry</button>
+              <button type="button" class="secondary-button mitigation-action" data-policy-finding-id="{{ item.policy_finding_id }}" data-title="Mitigate {{ item.item }}">Add Mitigation</button>
+              {% endif %}
+              {% if not can('exception.request', view.service.id) and not can('poam.request', view.service.id) %}&mdash;{% endif %}
+            {% elif can('poam.request', view.service.id) %}
+              <button type="button" class="secondary-button evidence-poam-action" data-image="{{ item.images|join(', ') }}" data-reason="{{ item.reason }}">Add POA&amp;M Entry</button>
+              <button type="button" class="secondary-button mitigation-action" data-title="Mitigate {{ item.item }}">Add Mitigation</button>
+            {% else %}
+              &mdash;
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td class="empty" colspan="6">No non-compliance items for this service.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% elif finding_state == 'warnings' %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>Item</th><th>Reason</th><th>Due date</th></tr></thead>
+      <tbody>
+        {% for item in warning_items %}
+        <tr><td>{{ 'Vulnerability' if item.type == 'CVE' else item.type }}</td><td><strong>{{ item.item }}</strong></td><td>{{ item.reason }}</td><td>{{ cats_date(item.due) if item.due else '—' }}</td></tr>
+        {% else %}<tr><td class="empty" colspan="4">No warnings for this service.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>Finding</th><th>Severity</th><th>State</th><th>Current episode</th><th>Due date</th><th>Last seen</th><th>KEV</th><th>EPSS</th><th>Affected images</th><th>Actions</th></tr></thead>
+      <tbody>
+        {% for finding in findings %}
+        {% set exception = active_exception(finding, now) %}
+        {% set risk = view.risk_metadata.get(finding.id, {}) %}
+        <tr>
+          <td>Vulnerability</td>
+          <td><a class="finding-link" href="/services/{{ view.service.service_key }}/findings/{{ finding.id }}"><strong>{{ finding.cve }}</strong></a></td>
+          <td>{{ finding.severity }}</td>
+          <td>{{ 'Active' if finding.active else 'Resolved' }}</td>
+          <td>{% if finding.active %}{{ (now - finding.episode_started.replace(tzinfo=now.tzinfo)).days }} days{% else %}&mdash;{% endif %}</td>
+          <td>{% if finding.active %}{{ cats_date(view.due_dates.get(finding.id)) }}{% else %}&mdash;{% endif %}</td>
+          <td>{{ cats_date(finding.last_seen) }}</td>
+          <td>{{ 'Yes' if risk.get('kev') else 'No' }}</td>
+          <td>{{ '%.2f'|format(risk.get('epss', 0)) }}</td>
+          <td>{% for image in affected_images.get(finding.id, []) %}<code class="image-ref" title="{{ image }}">{{ image }}</code>{% else %}&mdash;{% endfor %}</td>
+          <td class="finding-actions">
+            {% if exception %}
+            <span class="status excepted">Accepted until {{ cats_date(exception.expires_at) }}</span>
+              {% if can('exception.revoke', view.service.id) %}
+              <form method="post" action="/exceptions/{{ exception.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">Revoke</button></form>
+              {% endif %}
+            {% elif finding.active %}
+              {% if can('exception.request', view.service.id) %}
+              <button type="button" class="secondary-button exception-action" data-finding-id="{{ finding.id }}" data-cve="{{ finding.cve }}">Request Exception</button>
+              {% endif %}
+              {% if can('poam.request', view.service.id) %}
+              <button type="button" class="secondary-button poam-action" data-finding-id="{{ finding.id }}" data-title="Remediate {{ finding.cve }}">Add POA&amp;M Entry</button>
+              <button type="button" class="secondary-button mitigation-action" data-finding-id="{{ finding.id }}" data-title="Mitigate {{ finding.cve }}">Add Mitigation</button>
+              {% endif %}
+              {% if not can('exception.request', view.service.id) and not can('poam.request', view.service.id) %}&mdash;{% endif %}
+            {% else %}
+            &mdash;
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+          {% if not policy_findings %}<tr><td class="empty" colspan="11">No findings in this category.</td></tr>{% endif %}
+        {% endfor %}
+
+        {% for item in policy_findings %}
+        {% set exception = active_exception(item, now) %}
+        <tr>
+          <td>Configuration</td>
+          <td><button type="button" class="finding-link policy-detail-action" data-finding="{{ item.finding }}" data-title="{{ item.title or '' }}" data-severity="{{ item.severity }}" data-framework="{{ item.framework or '' }}" data-target="{{ item.target or '' }}" data-description="{{ item.description or '' }}" data-remediation="{{ item.remediation or '' }}"><strong>{{ item.finding }}</strong>{% if item.title %}<br>{{ item.title }}{% endif %}</button></td>
+          <td>{{ item.severity }}</td>
+          <td>{{ 'Active' if item.active else 'Resolved' }}</td>
+          <td>{% if item.active %}{{ (now - item.episode_started.replace(tzinfo=now.tzinfo)).days }} days{% else %}&mdash;{% endif %}</td>
+          <td>{% if item.active %}{{ cats_date(view.policy_due_dates.get(item.id)) }}{% else %}&mdash;{% endif %}</td>
+          <td>{{ cats_date(item.last_seen) }}</td>
+          <td>&mdash;</td>
+          <td>&mdash;</td>
+          <td>{% if item.target %}<code class="image-ref" title="{{ item.target }}">{{ item.target }}</code>{% else %}&mdash;{% endif %}{% if item.framework %}<br><small>{{ item.framework }}</small>{% endif %}</td>
+          <td class="finding-actions">
+            {% if exception %}
+            <span class="status excepted">Accepted until {{ cats_date(exception.expires_at) }}</span>
+              {% if can('exception.revoke', view.service.id) %}
+              <form method="post" action="/policy-exceptions/{{ exception.id }}/revoke"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">Revoke</button></form>
+              {% endif %}
+            {% elif item.active %}
+              {% set remediation = remediation_classes.get(item.id, {}) %}
+              <span class="status" title="{{ remediation.get('reason', '') }}">{{ remediation.get('classification', 'NOT REMEDIABLE') }}</span>
+              {% if can('remediation.execute', view.service.id) and remediation.get('classification') != 'NOT REMEDIABLE' %}
+              <form method="post" action="/services/{{ view.service.service_key }}/policy-findings/{{ item.id }}/remediate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Remediate</button></form>
+              {% endif %}
+              {% if can('exception.request', view.service.id) %}
+              <button type="button" class="secondary-button exception-action" data-exception-url="/policy-findings/{{ item.id }}/exceptions" data-label="{{ item.finding }}">Request Exception</button>
+              {% endif %}
+              {% if can('poam.request', view.service.id) %}
+              <button type="button" class="secondary-button poam-action" data-poam-url="/policy-findings/{{ item.id }}/poams" data-title="Remediate {{ item.finding }}">Add POA&amp;M Entry</button>
+              <button type="button" class="secondary-button mitigation-action" data-policy-finding-id="{{ item.id }}" data-title="Mitigate {{ item.finding }}">Add Mitigation</button>
+              {% endif %}
+              {% if not can('exception.request', view.service.id) and not can('poam.request', view.service.id) %}&mdash;{% endif %}
+            {% else %}
+            &mdash;
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if total_pages > 1 %}
+  <nav class="pagination" aria-label="Finding pages">
+    {% if page > 1 %}<a href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ finding_state }}&amp;finding_type={{ finding_type }}&amp;page={{ page - 1 }}&amp;page_size={{ page_size }}">Previous</a>{% endif %}
+    <span>Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}<a href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ finding_state }}&amp;finding_type={{ finding_type }}&amp;page={{ page + 1 }}&amp;page_size={{ page_size }}">Next</a>{% endif %}
+  </nav>
+  {% endif %}
+</section>
+
+{% if can('exception.request', view.service.id) %}
+<dialog id="shared-exception-dialog" class="review-dialog">
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Request Exception</h3>
+    <p id="exception-dialog-cve"></p>
+    <label>Justification and compensating controls<textarea name="justification" required></textarea></label>
+    <label>Requested expiration<input type="datetime-local" name="expires_at" required></label>
+    <label>Ticket<input name="ticket"></label>
+    <label class="bulk-scope-option"><input type="checkbox" name="bulk_scope" value="group"> Request this for all matching services in the Cybersecurity group</label>
+    <small class="muted">Cybersecurity must explicitly confirm the group-wide scope before it is applied.</small>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Submit request</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+{% if can('poam.request', view.service.id) %}
+<dialog id="shared-mitigation-dialog" class="review-dialog poam-dialog">
+  <form method="post" action="/services/{{ view.service.service_key }}/mitigations">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="finding_id"><input type="hidden" name="policy_finding_id">
+    <h3>Add Mitigation</h3><p>Cybersecurity approval is required before activation.</p>
+    <label>Title<input name="title" minlength="3" required></label><label>Issue details<textarea name="description" minlength="3" required></textarea></label>
+    <label>Mitigation plan<textarea name="remediation" minlength="3" required></textarea></label><label>Due date<input type="datetime-local" name="due_date"></label><label>Ticket<input name="ticket"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Create for approval</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+<dialog id="policy-detail-dialog" class="review-dialog policy-detail-dialog">
+  <h3 id="policy-detail-heading"></h3>
+  <dl class="policy-detail-list">
+    <dt>Severity</dt><dd id="policy-detail-severity"></dd>
+    <dt>Framework</dt><dd id="policy-detail-framework"></dd>
+    <dt>Target</dt><dd id="policy-detail-target"></dd>
+    <dt>Issue</dt><dd id="policy-detail-description"></dd>
+    <dt>Recommended remediation</dt><dd id="policy-detail-remediation"></dd>
+  </dl>
+  <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Close</button></div>
+</dialog>
+
+{% if can('poam.request', view.service.id) %}
+<dialog id="shared-poam-dialog" class="review-dialog poam-dialog">
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h3>Add finding to POA&amp;M</h3>
+    <p>Cybersecurity approval is required before activation.</p>
+    <label>Title<input name="title" minlength="3" required></label>
+    <label>Remediation plan<textarea name="remediation" minlength="3" required></textarea></label>
+    <label>Due date<input type="datetime-local" name="due_date"></label>
+    <label>Ticket<input name="ticket"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Create for approval</button></div>
+  </form>
+</dialog>
+<dialog id="shared-evidence-poam-dialog" class="review-dialog poam-dialog">
+  <form method="post" action="/poam">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="service_id" value="{{ view.service.id }}">
+    <input type="hidden" name="item_type" value="missing_evidence">
+    <input type="hidden" name="finding_id" value="">
+    <h3>Add missing evidence to POA&amp;M</h3>
+    <p>Cybersecurity approval is required before activation.</p>
+    <label>Title<input name="title" minlength="3" required></label>
+    <label>Evidence details<textarea name="description" minlength="3" required></textarea></label>
+    <label>Remediation plan<textarea name="remediation" minlength="3" required></textarea></label>
+    <label>Due date<input type="datetime-local" name="due_date"></label>
+    <label>Ticket<input name="ticket"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Create for approval</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+{% if view.archive and can('service.delete', view.service.id) %}
+<section class="danger-zone">
+  <h2>Permanent deletion</h2>
+  <p>Permanent deletion removes every execution, finding, observation, and exception.</p>
+  <form method="post" action="/services/{{ view.service.service_key }}/delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Reason<input name="reason" required></label>
+    <label>Type <code>{{ view.service.service_key }}</code> to confirm<input name="confirmation" required autocomplete="off"></label>
+    <button class="danger-button">Permanently delete</button>
+  </form>
+</section>
+{% endif %}
+
+<script>
+document.addEventListener('click', event => {
+  const policyDetailButton = event.target.closest('.policy-detail-action');
+  if (policyDetailButton) {
+    const dialog = document.getElementById('policy-detail-dialog');
+    if (!dialog) return;
+    const value = name => policyDetailButton.dataset[name] || '—';
+    dialog.querySelector('#policy-detail-heading').textContent = `${value('finding')}${policyDetailButton.dataset.title ? ` — ${policyDetailButton.dataset.title}` : ''}`;
+    dialog.querySelector('#policy-detail-severity').textContent = value('severity');
+    dialog.querySelector('#policy-detail-framework').textContent = value('framework');
+    dialog.querySelector('#policy-detail-target').textContent = value('target');
+    dialog.querySelector('#policy-detail-description').textContent = value('description');
+    dialog.querySelector('#policy-detail-remediation').textContent = value('remediation');
+    dialog.showModal();
+    return;
+  }
+
+  const exceptionButton = event.target.closest('.exception-action');
+  if (exceptionButton) {
+    const dialog = document.getElementById('shared-exception-dialog');
+    if (!dialog) return;
+    dialog.querySelector('form').action = exceptionButton.dataset.exceptionUrl || `/findings/${exceptionButton.dataset.findingId}/exceptions`;
+    dialog.querySelector('#exception-dialog-cve').textContent = exceptionButton.dataset.label || exceptionButton.dataset.cve;
+    dialog.showModal();
+    return;
+  }
+
+  const poamButton = event.target.closest('.poam-action');
+  if (poamButton) {
+    const dialog = document.getElementById('shared-poam-dialog');
+    if (!dialog) return;
+    const form = dialog.querySelector('form');
+    form.action = poamButton.dataset.poamUrl || `/findings/${poamButton.dataset.findingId}/poams`;
+    form.elements.title.value = poamButton.dataset.title;
+    dialog.showModal();
+    return;
+  }
+
+  const evidenceButton = event.target.closest('.evidence-poam-action');
+  if (evidenceButton) {
+    const dialog = document.getElementById('shared-evidence-poam-dialog');
+    if (!dialog) return;
+    const form = dialog.querySelector('form');
+    form.elements.title.value = `Missing evidence for ${evidenceButton.dataset.image}`;
+    form.elements.description.value = `${evidenceButton.dataset.reason}: ${evidenceButton.dataset.image}`;
+    dialog.showModal();
+    return;
+  }
+  const mitigationButton = event.target.closest('.mitigation-action');
+  if (mitigationButton) {
+    const dialog = document.getElementById('shared-mitigation-dialog');
+    if (!dialog) return;
+    const form = dialog.querySelector('form');
+    form.elements.finding_id.value = mitigationButton.dataset.findingId || '';
+    form.elements.policy_finding_id.value = mitigationButton.dataset.policyFindingId || '';
+    form.elements.title.value = mitigationButton.dataset.title || 'Add mitigation';
+    form.elements.description.value = '';
+    dialog.showModal();
+  }
+});
+</script>
+{% endblock %}

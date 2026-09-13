@@ -1,0 +1,9 @@
+{% set nav_service = view.service if view is defined else service %}
+<nav class="service-tabs" aria-label="Service views">
+  <a class="{{ 'active' if active_service_tab == 'overview' else '' }}" href="/services/{{ nav_service.service_key }}?overview=true">Overview</a>
+  <a class="{{ 'active' if active_service_tab == 'architecture' else '' }}" href="/services/{{ nav_service.service_key }}?architecture=true">Architecture</a>
+  <a class="{{ 'active' if active_service_tab == 'raw' else '' }}" href="/services/{{ nav_service.service_key }}?overview=false">Raw Findings</a>
+  <a class="{{ 'active' if active_service_tab == 'simplified' else '' }}" href="/services/{{ nav_service.service_key }}?simplified=true">Simplified Findings</a>
+  <a class="{{ 'active' if active_service_tab == 'remediations' else '' }}" href="/services/{{ nav_service.service_key }}?remediations=true&amp;tab=pipeline">Remediations</a>
+  <a class="{{ 'active' if active_service_tab == 'activity' else '' }}" href="/services/{{ nav_service.service_key }}?activity=true">Activity</a>
+</nav>

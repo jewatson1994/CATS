@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}{{ entry.title }} &middot; POA&amp;M &middot; CATS{% endblock %}
+{% block content %}
+<a class="back" href="/poam/services/{{ entry.service.service_key }}">&larr; {{ entry.service.name }} POA&amp;M</a>
+
+<section class="heading">
+  <div>
+    <p class="eyebrow">{{ entry.item_type|replace('_',' ')|upper }}</p>
+    <h1>{{ entry.title }}</h1>
+    <p>{{ entry.description }}</p>
+  </div>
+  <span class="status large {{ 'bad' if is_overdue else ('ok' if entry.status in ['active','completed'] else '') }}">{{ 'Overdue' if is_overdue else entry.status|replace('_',' ')|title }}</span>
+</section>
+
+{% if pending_change %}
+<div class="save-confirmation">A {{ pending_change.request_type|replace('poam_','')|replace('_',' ') }} request is awaiting Cybersecurity approval.</div>
+{% endif %}
+
+<section class="poam-detail-grid">
+  <article class="panel padded">
+    <h2>Plan</h2>
+    <dl class="detail-list">
+      <dt>Service</dt><dd><a href="/services/{{ entry.service.service_key }}">{{ entry.service.name }}</a></dd>
+      <dt>Finding</dt><dd>{% if entry.finding %}{{ entry.finding.cve }}{% elif entry.policy_finding %}{{ entry.policy_finding.finding }}{% else %}&mdash;{% endif %}</dd>
+      <dt>Remediation</dt><dd>{{ entry.remediation }}</dd>
+      <dt>Due date</dt><dd>{% if entry.due_date %}{{ cats_date(entry.due_date) }}{% else %}&mdash;{% endif %}</dd>
+      <dt>Ticket</dt><dd>{{ entry.ticket or 'None' }}</dd>
+      <dt>Created by</dt><dd>{{ entry.created_by.display_name }}</dd>
+      <dt>Approved by</dt><dd>{{ entry.approved_by.display_name if entry.approved_by else 'Pending' }}</dd>
+    </dl>
+  </article>
+
+  <article class="panel padded">
+    <h2>Actions</h2>
+    {% if can_change and not pending_change %}
+    <details>
+      <summary>Request update</summary>
+      <form class="poam-action-form" method="post" action="/poam/entries/{{ entry.id }}/update">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Title<input name="title" value="{{ entry.title }}" required></label>
+        <label>Description<textarea name="description" required>{{ entry.description }}</textarea></label>
+        <label>Remediation<textarea name="remediation" required>{{ entry.remediation }}</textarea></label>
+        <label>Due date<input type="datetime-local" name="due_date" value="{{ entry.due_date.strftime('%Y-%m-%dT%H:%M') if entry.due_date else '' }}"></label>
+        <label>Ticket<input name="ticket" value="{{ entry.ticket or '' }}"></label>
+        <label>Reason for change<textarea name="reason" required></textarea></label>
+        <button>Submit for approval</button>
+      </form>
+    </details>
+    {% if entry.status == 'active' %}
+    <details>
+      <summary>Request completion</summary>
+      <form class="poam-action-form" method="post" action="/poam/entries/{{ entry.id }}/complete">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Closure note<textarea name="closure_note" required></textarea></label>
+        <label>Replacement evidence reference<input name="evidence_reference" placeholder="URL, ticket, repository path, or evidence ID" required></label>
+        <button>Submit for verification</button>
+      </form>
+    </details>
+    {% elif entry.status == 'completed' %}
+    <details>
+      <summary>Request reopen</summary>
+      <form class="poam-action-form" method="post" action="/poam/entries/{{ entry.id }}/reopen">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <label>Reason<textarea name="reason" required></textarea></label>
+        <button>Submit for approval</button>
+      </form>
+    </details>
+    {% endif %}
+    {% else %}
+    <p class="muted">No lifecycle actions are currently available.</p>
+    {% endif %}
+  </article>
+</section>
+
+<section class="panel padded">
+  <h2>History and comments</h2>
+  <form class="poam-comment-form" method="post" action="/poam/entries/{{ entry.id }}/comments">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>Add comment<textarea name="comment" minlength="3" required></textarea></label>
+    <button>Add comment</button>
+  </form>
+  <ol class="poam-history">
+    {% for event in history %}
+    <li>
+      <div><strong>{{ event.action|replace('_',' ')|title }}</strong><span>{{ event.actor.display_name if event.actor else 'System' }} &middot; {{ cats_datetime(event.created_at) }}</span></div>
+      {% if event.note %}<p>{{ event.note }}</p>{% endif %}
+      {% if event.detail %}<code>{{ event.detail }}</code>{% endif %}
+    </li>
+    {% else %}
+    <li class="empty">No history has been recorded.</li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}

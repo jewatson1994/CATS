@@ -1,0 +1,6 @@
+apiVersion: v2
+name: catscan-smoke
+description: Minimal chart used to validate CATScan's Helm and Trivy toolchain
+type: application
+version: 0.1.0
+appVersion: "1.0"

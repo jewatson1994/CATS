@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ finding.cve }} · {{ service.name }}{% endblock %}
+{% block content %}
+<a class="back" href="/services/{{ service.service_key }}">← {{ service.name }}</a>
+<section class="heading">
+  <div>
+    <p class="eyebrow">ADVISORY DETAIL</p>
+    <h1>{{ finding.cve }}</h1>
+    <p>{{ service.name }} · {{ evidence.get("namespace") or "Unknown namespace" }}</p>
+  </div>
+  <div><span class="status large {{ 'bad' if finding.active else 'ok' }}">{{ "Active" if finding.active else "Resolved" }}</span>{% if finding.active and can('remediation.execute', service.id) %}<form method="post" action="/services/{{ service.service_key }}/findings/{{ finding.id }}/remediate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Remediate</button></form>{% endif %}</div>
+</section>
+<section class="panel"><div class="panel-head"><div><h2>Remediation classification</h2><p>{{ remediation_classification.reason }}</p></div><span class="status">{{ remediation_classification.classification }}</span></div></section>
+<section class="metrics">
+  <article><span>Severity</span><strong>{{ finding.severity }}</strong></article>
+  <article><span>KEV</span><strong>{{ "Yes" if risk.get("kev") else "No" }}</strong></article>
+  <article><span>EPSS</span><strong>{{ "%.2f"|format(risk.get("epss", 0)) }}</strong></article>
+  <article><span>Current age</span><strong>{{ (age|string + " days") if age is not none else "—" }}</strong></article>
+  <article><span>First seen</span><strong class="date-value">{{ cats_date(finding.first_seen) }}</strong></article>
+  <article><span>Due date</span><strong class="date-value">{{ cats_date(due_date) if due_date else "—" }}</strong></article>
+  <article><span>Recurrences</span><strong>{{ finding.recurrence_count }}</strong></article>
+</section>
+<section class="detail-grid">
+  <article class="panel detail-panel">
+    <h2>Description</h2>
+    <p>{{ evidence.get("description") or "No description was supplied by the scanner." }}</p>
+    <dl>
+      <dt>Data source</dt><dd>{% if evidence.get("data_source") %}<a href="{{ evidence.get('data_source') }}">{{ evidence.get("data_source") }}</a>{% else %}—{% endif %}</dd>
+      <dt>Package type</dt><dd>{{ evidence.get("package_type") or "—" }}</dd>
+      <dt>Last seen</dt><dd>{{ cats_datetime(finding.last_seen) }}</dd>
+      <dt>Exception</dt><dd>{% if exception %}Accepted until {{ cats_date(exception.expires_at) }} by {{ exception.approved_by }}{% else %}None{% endif %}</dd>
+    </dl>
+  </article>
+  <article class="panel detail-panel">
+    <h2>CVSS</h2>
+    {% for score in evidence.get("cvss", []) %}
+      <div class="cvss-entry"><strong>{{ score.get("metrics", {}).get("baseScore", "—") }}</strong><code>{{ score.get("vector", "No vector") }}</code></div>
+    {% else %}<p>No CVSS data was supplied.</p>{% endfor %}
+    <h2>References</h2>
+    <ul class="reference-list">{% for url in evidence.get("urls", []) %}<li><a href="{{ url }}">{{ url }}</a></li>{% else %}<li>No references supplied.</li>{% endfor %}</ul>
+  </article>
+</section>
+<section class="panel">
+  <div class="panel-head"><div><h2>Currently affected</h2><p>Image and package evidence from the latest complete assessment.</p></div></div>
+  <div class="table-wrap"><table><thead><tr><th>Image</th><th>Package</th><th>Installed</th><th>Fixed versions</th></tr></thead><tbody>
+  {% for observation in current_observations %}<tr><td><code>{{ observation.image }}</code></td><td>{{ observation.package or "—" }}</td><td>{{ observation.installed_version or "—" }}</td><td>{{ observation.fixed_version or "—" }}</td></tr>{% else %}<tr><td colspan="4" class="empty">No current affected image.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

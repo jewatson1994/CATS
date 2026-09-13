@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}CATS · Continuous Assessment &amp; Tracking System{% endblock %}
+{% block content %}
+<section class="public-hero">
+  <p class="eyebrow">CONTINUOUS ASSESSMENT &amp; TRACKING SYSTEM</p>
+  <h1>CATS</h1>
+</section>
+<section class="public-entry-grid" aria-label="CATS workspaces">
+  <article class="public-card public-primary-entry"><span class="public-card-kicker">CATS PORTAL</span><h2>Production Services</h2><p>Manage services, findings, evidence, remediation, and continuous assessment.</p><a class="primary-button" href="/login">Sign In →</a></article>
+  <div class="public-secondary-entries">
+    <article class="public-card"><span class="public-card-kicker">SCAN</span><h2>Scan Images &amp; Charts</h2><p>Scan container images and Helm charts for vulnerabilities and configuration findings.</p><a href="/scan">Start Scan →</a></article>
+    <article class="public-card"><span class="public-card-kicker">SBOM</span><h2>Generate SBOM</h2><p>Create portable software inventories in one or more standard formats.</p><a href="/sbom">Generate SBOM →</a></article>
+    <article class="public-card"><span class="public-card-kicker">PATCH</span><h2>Patch Images</h2><p>Patch supported container vulnerabilities.</p><a href="/patch">Start Patch →</a></article>
+  </div>
+</section>
+{% endblock %}

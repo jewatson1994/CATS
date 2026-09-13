@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Configuration-only scanning does not need the vulnerability or Java DB.
+# The pinned Trivy binary contains a release-time checks bundle, so this
+# wrapper remains deterministic and makes no update/telemetry calls.
+exec trivy config \
+  --cache-dir "${TRIVY_CACHE_DIR:-/opt/catscan/trivy-cache}" \
+  --skip-check-update \
+  --skip-version-check \
+  --disable-telemetry \
+  "$@"

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ service.name }} POA&amp;M &middot; CATS{% endblock %}
+{% block content %}
+{% if embedded %}<a class="back" href="/">&larr; All services</a>{% else %}<a class="back" href="/poam">&larr; All service POA&amp;Ms</a>{% endif %}
+
+<section class="heading">
+  <div>
+    <p class="eyebrow">{{ service.service_key }}</p>
+    <h1>{{ service.name }} POA&amp;M</h1>
+    <div class="service-meta"><span>Version {{ view.version or "Unknown" }}</span><span>Owner: {{ service.owner or "No owner recorded" }}</span><span>Groups: {{ service.groups|map(attribute='name')|join(', ') or "Unassigned" }}</span><span>POC: {{ service.poc or "No POC recorded" }}</span></div>
+    <p>Track approved remediation plans for vulnerability findings and missing evidence or requirements.</p>
+  </div>
+  {% if can_create_poam %}<button type="button" onclick="document.getElementById('create-service-poam').showModal()">Create POA&amp;M entry</button>{% endif %}
+</section>
+
+{% if embedded %}{% set active_service_tab = 'remediations' %}{% include "_service_tabs.html" %}{% endif %}
+
+{% if can_create_poam %}
+<dialog id="create-service-poam" class="review-dialog poam-dialog">
+  <form method="post" action="/poam">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="service_id" value="{{ service.id }}">
+    <h3>Create {{ service.name }} POA&amp;M entry</h3>
+    <p>The entry remains pending until Cybersecurity approves it.</p>
+    <label>Item type
+      <select name="item_type" required>
+        <option value="missing_evidence">Missing evidence</option>
+        <option value="missing_requirement">Missing requirement</option>
+        <option value="vulnerability">Vulnerability finding</option>
+      </select>
+    </label>
+    <label>Finding ID <small>Required only for vulnerability findings.</small><input type="number" name="finding_id" min="1"></label>
+    <label>Title<input name="title" minlength="3" required></label>
+    <label>Finding / requirement details<textarea name="description" minlength="3" required></textarea></label>
+    <label>Remediation plan<textarea name="remediation" minlength="3" required></textarea></label>
+    <label>Due date<input type="datetime-local" name="due_date"></label>
+    <label>Ticket<input name="ticket"></label>
+    <div class="dialog-actions"><button type="button" class="secondary-button" onclick="this.closest('dialog').close()">Cancel</button><button>Create for approval</button></div>
+  </form>
+</dialog>
+{% endif %}
+
+<div class="poam-list-controls">
+  <nav class="request-tabs" aria-label="POA&amp;M status filters">
+    {% for value,label in [('all','All'),('active','Active'),('pending_approval','Pending'),('overdue','Overdue'),('completed','Completed'),('rejected','Rejected')] %}
+    <a class="{{ 'selected' if status_filter == value }}" href="{% if embedded %}/services/{{ service.service_key }}?poam=true&amp;status_filter={{ value }}&amp;sort_by={{ sort_by }}{% else %}/poam/services/{{ service.service_key }}?status_filter={{ value }}&amp;sort_by={{ sort_by }}{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <a href="/poam/services/{{ service.service_key }}/export.xlsx">Export Excel</a>
+  </nav>
+  <label>Sort
+    <select onchange="location='{% if embedded %}/services/{{ service.service_key }}?poam=true&status_filter={{ status_filter }}&sort_by={% else %}/poam/services/{{ service.service_key }}?status_filter={{ status_filter }}&sort_by={% endif %}'+this.value">
+      <option value="newest" {% if sort_by == 'newest' %}selected{% endif %}>Newest</option>
+      <option value="due" {% if sort_by == 'due' %}selected{% endif %}>Due date</option>
+      <option value="severity" {% if sort_by == 'severity' %}selected{% endif %}>Severity</option>
+    </select>
+  </label>
+</div>
+
+<section class="panel">
+  <div class="panel-heading"><div><h2>Entries</h2><p>POA&amp;M entries for {{ service.name }}.</p></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Type</th><th>Item</th><th>Remediation</th><th>Due</th><th>Status</th><th>Approval</th></tr></thead>
+      <tbody>
+        {% for item in entries %}
+        <tr>
+          <td>{{ item.item_type|replace('_',' ')|title }}</td>
+          <td>
+            <a class="finding-link" href="/poam/entries/{{ item.id }}"><strong>{{ item.title }}</strong></a><br>{{ item.description }}
+            {% if item.finding %}<br><code>{{ item.finding.cve }}</code>{% elif item.policy_finding %}<br><code>{{ item.policy_finding.finding }}</code>{% endif %}
+            {% if item.ticket %}<br><code>{{ item.ticket }}</code>{% endif %}
+          </td>
+          <td>{{ item.remediation }}</td>
+          <td>{% if item.due_date %}{{ cats_date(item.due_date) }}{% else %}&mdash;{% endif %}</td>
+          <td><span class="status {{ 'bad' if item.id in overdue_entry_ids else ('ok' if item.status in ['active','completed'] else '') }}">{{ 'Overdue' if item.id in overdue_entry_ids else item.status|replace('_',' ')|title }}</span></td>
+          <td>{% if item.approved_by %}{{ item.approved_by.display_name }}<br>{{ cats_datetime(item.approved_at) }}{% else %}Cybersecurity review required{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="empty">No matching POA&amp;M entries exist for this service.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

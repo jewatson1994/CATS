@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DB_DIR="${CATSCAN_GRYPE_DB_DIR:-/opt/catscan/grype-db}"
+DB_ARCHIVE="${DB_DIR}/grype-vuln-db.tar.zst"
+
+if [[ ! -s "$DB_ARCHIVE" ]]; then
+  echo "No bundled Grype database found at $DB_ARCHIVE; leaving the existing database unchanged."
+  exit 0
+fi
+
+mkdir -p "${GRYPE_DB_CACHE_DIR:-/tmp/grype-db}"
+echo "Importing bundled Grype database: $DB_ARCHIVE"
+grype db import "$DB_ARCHIVE"
+
+if [[ -s "$DB_DIR/latest.json" ]]; then
+  echo "Bundled database metadata:"
+  jq -r '"built=" + (.built // "unknown") + " schema=" + ((.schemaVersion // "unknown")|tostring)' "$DB_DIR/latest.json" || true
+fi
+

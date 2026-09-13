@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ view.service.name }} Architecture · CATS{% endblock %}
+{% block content %}
+<a class="back" href="/services/{{ view.service.service_key }}?overview=true">&larr; Service overview</a>
+<section class="heading">
+  <div>
+    <p class="eyebrow">{{ view.service.service_key }}</p>
+    <h1>{{ view.service.name }} Architecture</h1>
+    <p>Normalized from the latest rendered Helm/Kubernetes evidence.</p>
+  </div>
+  <div class="service-page-actions">
+    <span class="latest-evidence">Latest Evidence: <strong>{{ cats_datetime(view.last_execution) if view.last_execution else 'None received' }}</strong></span>
+  </div>
+</section>
+{% set active_service_tab = 'architecture' %}{% include "_service_tabs.html" %}
+{% if architecture_graph.incomplete %}
+<div class="architecture-warning" role="status">
+  <strong>Partial architecture</strong>
+  <span>This view shows only relationships supported by supplied evidence. Missing or unresolved items are listed below.</span>
+</div>
+{% endif %}
+<div class="architecture-toolbar">
+  <label>View
+    <select data-architecture-layer>
+      <option value="all" selected>All Resources</option>
+      <option value="configuration">Configuration</option>
+      <option value="containers">Containers</option>
+      <option value="flow">Data Flow</option>
+      <option value="network">Network</option>
+      <option value="storage">Storage</option>
+    </select>
+  </label>
+  <span class="architecture-legend"><i class="solid-line"></i> Declared / Derived <i class="dashed-line"></i> Inferred</span>
+</div>
+<section class="architecture-layout" data-architecture data-graph='{{ architecture_graph|tojson }}'>
+  <div class="architecture-canvas">
+    <div class="architecture-controls" aria-label="Graph navigation">
+      <button type="button" data-zoom-out aria-label="Zoom out">−</button>
+      <output data-zoom-level>100%</output>
+      <button type="button" data-zoom-in aria-label="Zoom in">+</button>
+      <button type="button" data-zoom-reset>Reset</button>
+      <button type="button" data-zoom-fit>Fit</button>
+    </div>
+    <p class="architecture-empty" data-architecture-empty-view hidden></p>
+    <svg class="architecture-svg" role="img" aria-label="Architecture graph" viewBox="0 0 1200 620">
+      <defs>
+        <marker id="architecture-arrow" markerWidth="5" markerHeight="5" refX="5" refY="2.5" orient="auto" markerUnits="strokeWidth" overflow="visible">
+          <path d="M0,0 L5,2.5 L0,5 z" fill="context-stroke"></path>
+        </marker>
+      </defs>
+      <g data-architecture-scene></g>
+    </svg>
+  </div>
+  <aside class="architecture-details" hidden aria-live="polite">
+    <div class="architecture-details-head">
+      <h2>Selection details</h2>
+      <button type="button" class="architecture-close" data-architecture-close aria-label="Close selection details">×</button>
+    </div>
+    <p class="overview-empty" data-architecture-empty>Select a node or relationship.</p>
+    <div data-architecture-details hidden></div>
+  </aside>
+</section>
+<section class="metrics architecture-metrics">
+  {% for key, label in [('nodes','Nodes'),('relationships','Relationships'),('unresolved','Unresolved'),('warnings','Warnings'),('ports','Ports / protocols')] %}
+  <article><span>{{ label }}</span><strong>{{ architecture_graph.summary[key] }}</strong></article>
+  {% endfor %}
+</section>
+<div class="architecture-lower">
+  <article class="overview-dashboard-card">
+    <h3>Evidence and warnings</h3>
+    {% if architecture_graph.warnings %}<ul>{% for warning in architecture_graph.warnings %}<li>{{ warning.reason or warning.message or warning.item or warning }}</li>{% endfor %}</ul>{% else %}<p class="overview-empty">No missing-evidence warnings.</p>{% endif %}
+  </article>
+  <article class="overview-dashboard-card">
+    <h3>Unresolved relationships</h3>
+    {% if architecture_graph.unresolved %}<ul>{% for item in architecture_graph.unresolved %}<li><code>{{ item.node_id }}</code> — {{ item.reason }}</li>{% endfor %}</ul>{% else %}<p class="overview-empty">None.</p>{% endif %}
+  </article>
+</div>
+<script src="/static/architecture_graph.js" defer></script>
+{% endblock %}

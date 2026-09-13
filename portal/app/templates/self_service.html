@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}CATS &middot; {{ 'SBOM' if mode == 'sbom' else 'Scan' }}{% endblock %}
+{% block content %}
+<a class="back" href="/home">← CATS overview</a>
+<section class="heading"><div><p class="eyebrow">SELF-SERVICE WORKSPACE</p><h1>{{ 'SBOM' if mode == 'sbom' else 'Scan' }}</h1><p>{{ description }}</p></div></section>
+<section class="self-service-panel panel">
+  <h2>{{ 'SBOM generator' if mode == 'sbom' else 'Public scan inputs' }}</h2>
+  <p class="muted">{% if mode == 'scan' %}Provide public images, a Helm chart archive, or both. Results are temporary and are not attached to a portal service.{% else %}Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.{% endif %}</p>
+  <form class="self-service-form" method="post" action="/{{ mode }}" enctype="multipart/form-data">
+    <label for="image-list">Images</label>
+    <textarea id="image-list" name="image_list" rows="10" placeholder="docker.io/library/nginx:1.27&#10;ghcr.io/example/app:latest">{{ image_list or '' }}</textarea>
+    <label for="image-archive">Local Docker image archive <span class="muted">(optional .tar/.tar.gz/.tgz; may contain multiple tagged images)</span></label>
+    <input id="image-archive" name="image_archive" type="file" accept=".tar,.tar.gz,.tgz">
+    {% if mode == 'scan' %}
+    <label for="chart-url">Helm chart or repository URLs <span class="muted">(archive, Helm index/repository, or public OCI reference; one per line)</span></label>
+    <textarea id="chart-url" name="chart_url" rows="3" placeholder="https://prometheus-community.github.io/helm-charts&#10;https://example.invalid/chart-two.tgz">{{ chart_url or '' }}</textarea>
+    <label for="chart-archive">Helm chart archives <span class="muted">(select one or more .tgz, .tar.gz, .tar, or .zip files)</span></label>
+    <input id="chart-archive" name="chart_archives" type="file" accept=".tgz,.tar.gz,.tar,.zip" multiple>
+    {% if archive_names %}<p class="muted upload-summary">Submitted archives: {{ archive_names|join(', ') }}. Select files again only if starting a new scan.</p>{% endif %}
+    {% if authenticated_ingest %}
+    <label for="ingest-service">Ingest completed scan into <span class="muted">(only services within your role, group, and service scope)</span></label>
+    <select id="ingest-service" name="ingest_service_id"><option value="">Do not ingest (temporary results only)</option>{% for service in authenticated_services %}<option value="{{ service.service_key }}"{% if service.service_key == ingest_service_id %} selected{% endif %}>{{ service.name }} ({{ service.service_key }})</option>{% endfor %}</select>
+    {% endif %}
+    {% endif %}
+    {% if mode == 'sbom' %}
+    <fieldset class="sbom-options">
+      <legend>Output formats</legend>
+      <p class="muted">Select one or more. CATS inventories each image once, then serializes that inventory into every selected format.</p>
+      <div class="sbom-format-grid">
+      {% for value, label in sbom_output_formats.items() %}
+        <label><input type="checkbox" name="sbom_formats" value="{{ value }}" {% if value in selected_sbom_formats %}checked{% endif %}> <span>{{ label }}</span></label>
+      {% endfor %}
+      </div>
+      <label for="cyclonedx-spec-version">CycloneDX specification version
+        <select id="cyclonedx-spec-version" name="cyclonedx_spec_version">
+        {% for version in cyclonedx_spec_versions %}<option value="{{ version }}" {% if version == cyclonedx_spec_version %}selected{% endif %}>{{ version }}</option>{% endfor %}
+        </select>
+      </label>
+    </fieldset>
+    {% endif %}
+    <div class="self-service-actions"><button type="submit" data-start-scan>{{ 'Generate SBOM' if mode == 'sbom' else 'Start scan' }}</button>{% if current_user %}<span class="muted">Signed in as {{ current_user.display_name }}</span>{% elif mode == 'scan' %}<a class="secondary-button" href="/login?next=/scan">Use authenticated mode</a>{% endif %}</div>
+  </form>
+  <div class="scan-progress" data-job-id="{{ job_id or '' }}" {% if not job_id %}hidden{% endif %}>
+    <div class="scan-pipeline" aria-label="{{ 'SBOM generation' if mode == 'sbom' else 'Scan' }} pipeline">
+      {% for phase, label in progress_phases %}
+      <div class="scan-pipeline-step" data-phase="{{ phase }}"><span class="scan-pipeline-dot"></span><strong>{{ label }}</strong><small>Waiting</small></div>
+      {% endfor %}
+    </div>
+    <p class="muted self-service-status" data-job-status>{{ status_message or ('Waiting for SBOM worker…' if mode == 'sbom' else 'Waiting for scan worker…') }}</p>
+    <div class="scan-result-actions" data-job-actions hidden>{% if mode == 'scan' %}<a class="secondary-button is-disabled" data-html-link aria-disabled="true" tabindex="-1">Open HTML overview</a><a class="secondary-button is-disabled" data-results-link aria-disabled="true" tabindex="-1">Detailed results</a><a class="secondary-button is-disabled" data-excel-link aria-disabled="true" tabindex="-1">Download Excel</a>{% endif %}<a class="secondary-button is-disabled" data-artifacts-link aria-disabled="true" tabindex="-1">{{ 'Download SBOMs' if mode == 'sbom' else 'Download artifacts' }}</a><a class="secondary-button is-disabled" data-logs-link aria-disabled="true" tabindex="-1">View debug log</a></div>
+    <div class="scan-result-actions" data-cancel-actions hidden><button type="button" class="secondary-button" data-cancel-scan>Cancel scan</button></div>
+  </div>
+  {% if not job_id %}<p class="muted self-service-status">{{ status_message or ('Generated documents are temporary and are not attached to a portal service.' if mode == 'sbom' else 'Results are temporary and are not attached to a portal service.') }}</p>{% endif %}
+</section>
+<script>
+(() => {
+  const form = document.querySelector('.self-service-form');
+  const button = form?.querySelector('[data-start-scan]');
+  if (!form || !button) return;
+  form.addEventListener('submit', () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    button.textContent = {{ ('Generating…' if mode == 'sbom' else 'Starting scan…')|tojson }};
+    button.setAttribute('aria-busy', 'true');
+  });
+})();
+</script>
+{% if job_id %}
+<script>
+(() => {
+  const root = document.querySelector('.scan-progress');
+  const jobId = root?.dataset.jobId;
+  if (!jobId) return;
+  const steps = [...root.querySelectorAll('.scan-pipeline-step')];
+  const status = root.querySelector('[data-job-status]');
+  const actions = root.querySelector('[data-job-actions]');
+  const cancelActions = root.querySelector('[data-cancel-actions]');
+  const cancelButton = root.querySelector('[data-cancel-scan]');
+  const resultLink = root.querySelector('[data-results-link]');
+  const htmlLink = root.querySelector('[data-html-link]');
+  const artifactLink = root.querySelector('[data-artifacts-link]');
+  const excelLink = root.querySelector('[data-excel-link]');
+  const logsLink = root.querySelector('[data-logs-link]');
+  const jobKind = {{ mode|tojson }};
+  const ingestServiceId = {{ ingest_service_id|tojson }};
+  let ingestStarted = false;
+  const labels = {queued:'Queued', running:'Running', complete:'Complete', incomplete:'Incomplete', error:'Error', cancelled:'Cancelled'};
+  cancelButton?.addEventListener('click', async () => {
+    cancelButton.disabled = true;
+    cancelButton.textContent = 'Cancelling…';
+    try {
+      await fetch(`/api/public/jobs/${jobId}/cancel`, {method:'POST', headers:{Accept:'application/json'}});
+    } finally {
+      window.setTimeout(poll, 250);
+    }
+  });
+  async function poll() {
+    try {
+      const response = await fetch(`/api/public/jobs/${jobId}`, {headers:{Accept:'application/json'}});
+      if (!response.ok) throw new Error('status request failed');
+      const job = await response.json();
+      const current = job.phase || 'queued';
+      const order = {{ progress_order|tojson }};
+      const currentIndex = order.indexOf(current);
+      steps.forEach((step) => {
+        const index = order.indexOf(step.dataset.phase);
+        step.classList.toggle('is-active', step.dataset.phase === current && job.status === 'running');
+        step.classList.toggle('is-complete', index >= 0 && currentIndex > index || job.status === 'complete' && index >= 0);
+        step.classList.toggle('is-error', (job.status === 'error' || job.status === 'incomplete') && step.dataset.phase === current);
+        const small = step.querySelector('small');
+        small.textContent = step.classList.contains('is-complete') ? 'Complete' : step.classList.contains('is-active') ? 'Running' : step.classList.contains('is-error') ? labels[job.status] : 'Waiting';
+      });
+      const summary = job.summary || {};
+      const skipped = (summary.skipped_images || 0) + (summary.skipped_charts || 0);
+      const phaseLabels = {
+        queued: 'Queued',
+        prepare_inputs: 'Prepare inputs',
+        generate_sboms: 'SBOM generation',
+        scan_sboms: 'SBOM scan',
+        configuration_scan: 'Configuration scans',
+        report_results: 'Report results',
+        report_to_portal: 'Portal ingest'
+      };
+      const phaseLabel = phaseLabels[current] || current.replaceAll('_', ' ');
+      const terminal = ['complete', 'incomplete', 'error', 'cancelled'].includes(job.status);
+      const showCounts = terminal || current === 'report_results';
+      if (showCounts) {
+        status.textContent = jobKind === 'sbom'
+          ? `${labels[job.status] || job.status} · ${summary.reports || 0} SBOM document(s) in ${(summary.formats || []).length} format(s)${summary.skipped_images ? `, ${summary.skipped_images} skipped image(s)` : ''}.`
+          : `${labels[job.status] || job.status} · ${phaseLabel} · ${summary.results || 0} vulnerability result(s), ${summary.configuration_findings || 0} configuration finding(s)${skipped ? `, ${summary.skipped_images || 0} skipped image(s), ${summary.skipped_charts || 0} skipped chart(s)` : ''}.`;
+      } else {
+        status.textContent = `${labels[job.status] || job.status} · ${phaseLabel}`;
+      }
+      if (['queued','running'].includes(job.status)) {
+        cancelActions.hidden = false;
+      }
+      if (['complete','incomplete','error','cancelled'].includes(job.status)) {
+        cancelActions.hidden = true;
+        actions.hidden = job.status === 'cancelled';
+        artifactLink.href = jobKind === 'sbom' ? `/api/public/jobs/${jobId}/sboms` : `/api/public/jobs/${jobId}/artifacts`;
+        logsLink.href = `/api/public/jobs/${jobId}/logs`;
+        [artifactLink, logsLink].forEach((link) => {
+          link.classList.remove('is-disabled');
+          link.removeAttribute('aria-disabled');
+          link.removeAttribute('tabindex');
+        });
+        if (jobKind === 'scan' && ['complete','incomplete'].includes(job.status)) {
+          htmlLink.href = `/api/public/jobs/${jobId}/overview.html`;
+          resultLink.href = `/api/public/jobs/${jobId}/results/view`;
+          excelLink.href = `/api/public/jobs/${jobId}/export.xlsx`;
+          [htmlLink, resultLink, excelLink].filter(Boolean).forEach((link) => {
+            link.classList.remove('is-disabled');
+            link.removeAttribute('aria-disabled');
+            link.removeAttribute('tabindex');
+          });
+        }
+        if (jobKind === 'scan' && ['complete','incomplete'].includes(job.status) && ingestServiceId && !ingestStarted) {
+          ingestStarted = true;
+          status.textContent += ' Ingesting into selected service…';
+          const response = await fetch(`/api/public/jobs/${jobId}/ingest?service_id=${encodeURIComponent(ingestServiceId)}`, {method:'POST', headers:{Accept:'application/json'}});
+          status.textContent += response.ok ? ' Ingested into selected service.' : ' Ingest failed.';
+        }
+        return;
+      }
+      window.setTimeout(poll, 1500);
+    } catch (error) {
+      status.textContent = 'Unable to read scan status. Retrying…';
+      window.setTimeout(poll, 3000);
+    }
+  }
+  poll();
+})();
+</script>
+{% endif %}
+{% endblock %}

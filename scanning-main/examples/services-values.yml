@@ -1,0 +1,22 @@
+# Optional application catalog consumed by HELM_VALUES_FILES or charts.yml
+# values_files. The enabled flag is metadata only; all Helm entries are
+# rendered so disabled applications remain visible to assessment.
+services:
+  prometheus:
+    enabled: false
+    sourceType: helm
+    helmRepo:
+      repoName: prometheus-community
+      repoUrl: https://prometheus-community.github.io/helm-charts
+      version: 27.20.0
+      chart: kube-prometheus-stack
+    valuesFiles: []
+  cert-manager:
+    enabled: true
+    sourceType: helm
+    helmRepo:
+      repoName: jetstack
+      repoUrl: https://charts.jetstack.io
+      version: v1.18.2
+      chart: cert-manager
+    valuesFiles: []

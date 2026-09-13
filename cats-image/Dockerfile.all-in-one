@@ -1,0 +1,106 @@
+# Unified CATS distribution image.
+# The scanner image remains the toolchain base; this layer adds the portal,
+# its Python runtime, and the reusable standalone scanning orchestrator.
+# Supply the environment-specific CatScan image at build time. The local
+# default avoids embedding any registry hostname in the image definition.
+ARG CATSCAN_BASE_IMAGE=catscan-base:local
+FROM ${CATSCAN_BASE_IMAGE}
+
+ARG CATS_VERSION=1.2.1
+LABEL org.opencontainers.image.title="CATS" \
+      org.opencontainers.image.version="${CATS_VERSION}" \
+      org.opencontainers.image.description="Continuous Assessment & Tracking System unified image"
+
+# The all-in-one image is also usable with a pre-existing scanner base.  Older
+# locally cached bases may contain the scanning tools but not Copa, so install
+# the pinned patcher here when it is absent.  This keeps the final image
+# self-contained without replacing a Copa already supplied by the base image.
+ARG COPA_VERSION=0.14.1
+ARG COPA_SHA256=a780f62c054f60cd1aecbbf4a4b2665a816aa852534e6b0b9592cf96a327fdc9
+ARG COSIGN_VERSION=2.6.1
+ARG COSIGN_SHA256=064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a
+
+USER root
+WORKDIR /app
+
+RUN apk add --no-cache docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
+    && python3 -m venv /opt/cats-venv
+
+# Portal signing is self-contained at runtime, including disconnected sites.
+RUN apk add --no-cache curl ca-certificates \
+    && curl --fail --location --retry 3 "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" -o /tmp/cosign \
+    && echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c - \
+    && install -m 0755 /tmp/cosign /usr/local/bin/cosign \
+    && rm /tmp/cosign
+
+COPY portal/requirements.txt /tmp/cats-portal-requirements.txt
+RUN sed -i 's/^psycopg\[binary\]==/psycopg==/' /tmp/cats-portal-requirements.txt \
+    && /opt/cats-venv/bin/pip install --no-cache-dir -r /tmp/cats-portal-requirements.txt \
+    && rm -f /tmp/cats-portal-requirements.txt
+
+COPY portal/app ./app
+COPY cats-image/policy /app/policy
+COPY scanning-main/scripts /opt/cats/scanning/scripts
+COPY cats-scanner/catscan-validate-offline-release /usr/local/bin/catscan-validate-offline-release
+COPY scanning-main/scripts/cats /usr/local/bin/cats
+
+# Fail early if an image is accidentally built from an older portal checkout.
+# These markers represent the current shared navigation, landing page, Patch
+# source selector, unified Patch Results presentation, and same-tab auth flow.
+RUN set -eux; \
+    grep -q 'Production Services' /app/app/templates/home.html; \
+    grep -q 'href="/remediations"' /app/app/templates/base.html; \
+    grep -q 'OCI Image' /app/app/templates/patch.html; \
+    grep -q 'Vulnerability results' /app/app/templates/patch_results.html; \
+    ! grep -Eq 'target[[:space:]]*=[[:space:]]*"_blank"' \
+      /app/app/templates/base.html /app/app/templates/home.html \
+      /app/app/templates/self_service.html /app/app/templates/login.html; \
+    ! grep -R -q 'window\.open(' /app/app/templates /app/app/static; \
+    echo 'CATS portal UI source validation: PASS'
+
+RUN chmod +x /opt/cats/scanning/scripts/*.sh 2>/dev/null || true
+RUN chmod 0755 /usr/local/bin/cats
+
+# Standalone API/worker entrypoint. GitLab templates are deliberately not
+# copied; the image runs the scan phases directly and leaves portal ingestion
+# as an explicit authenticated action.
+RUN ln -sf /opt/cats/scanning/scripts/run-scan.sh /usr/local/bin/cats-scan
+
+ENV PATH="/opt/cats-venv/bin:${PATH}" \
+    CATS_VERSION=${CATS_VERSION} \
+    CATS_POLICY_DATA_DIR=/app/policy \
+    CATS_SCANNING_ROOT=/opt/cats/scanning \
+    GRYPE_DB_CACHE_DIR=/opt/catscan/grype-db \
+    GRYPE_DB_AUTO_UPDATE=false \
+    GRYPE_DB_REQUIRE_UPDATE_CHECK=false \
+    GRYPE_DB_VALIDATE_AGE=false \
+    SYFT_CHECK_FOR_APP_UPDATE=false \
+    TRIVY_SKIP_CHECK_UPDATE=true \
+    GRYPE_CHECK_FOR_APP_UPDATE=false \
+    GRYPE_DB_METADATA=/opt/catscan/grype-db/latest.json \
+    CATS_PATCH_JOB_ROOT=/tmp/cats-patch-jobs \
+    CATS_PATCH_COMMAND_TIMEOUT=1800 \
+    CATS_PATCH_JOB_TIMEOUT=3600
+
+RUN if ! command -v copa >/dev/null 2>&1; then \
+      apk add --no-cache curl ca-certificates tar; \
+      archive="copa_${COPA_VERSION}_linux_amd64.tar.gz"; \
+      curl --fail --location --retry 3 \
+        "https://github.com/project-copacetic/copacetic/releases/download/v${COPA_VERSION}/${archive}" \
+        --output "/tmp/${archive}"; \
+      echo "${COPA_SHA256}  /tmp/${archive}" | sha256sum -c -; \
+      tar -xzf "/tmp/${archive}" -C /tmp copa; \
+      install -m 0755 /tmp/copa /usr/local/bin/copa; \
+      rm -f "/tmp/${archive}" /tmp/copa; \
+    fi \
+    && printf '%s\n' '#!/bin/sh' 'exec /opt/cats-venv/bin/python -m app.patch_worker "$@"' > /usr/local/bin/cats-patch \
+    && chmod 0755 /usr/local/bin/cats-patch \
+    && command -v copa \
+    && copa --version \
+    && command -v docker \
+    && docker --version \
+    && chmod 0755 /usr/local/bin/catscan-validate-offline-release \
+    && /usr/local/bin/catscan-validate-offline-release
+
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

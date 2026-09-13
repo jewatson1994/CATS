@@ -1,0 +1,16 @@
+cats_push:
+  stage: cats_push
+  when: always
+  # Portal delivery is intentionally non-blocking. The portable result stays
+  # in the artifact even when the target portal is unavailable.
+  allow_failure: true
+  needs:
+    - job: cats_evaluation
+      artifacts: true
+  script:
+    - cats push assessment --input "$CI_PROJECT_DIR/.cats/results/portal-result.json"
+  artifacts:
+    when: always
+    expire_in: never
+    paths:
+      - .cats/results/

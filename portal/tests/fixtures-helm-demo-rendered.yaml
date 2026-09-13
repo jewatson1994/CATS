@@ -1,0 +1,353 @@
+---
+# Source: helm-diagram-demo/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: helm-diagram-demo-worker
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: helm-diagram-demo/templates/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: helm-diagram-demo-credentials
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+stringData:
+  DATABASE_USER: catalog
+  DATABASE_PASSWORD: replace-me
+---
+# Source: helm-diagram-demo/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helm-diagram-demo-config
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  LOG_LEVEL: "info"
+  API_BASE_URL: "http://helm-diagram-demo-api:8080"
+  CACHE_HOST: "helm-diagram-demo-redis"
+---
+# Source: helm-diagram-demo/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: helm-diagram-demo-worker
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+---
+# Source: helm-diagram-demo/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: helm-diagram-demo-worker
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+subjects:
+  - kind: ServiceAccount
+    name: helm-diagram-demo-worker
+roleRef:
+  kind: Role
+  name: helm-diagram-demo-worker
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: helm-diagram-demo/templates/api.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: helm-diagram-demo-api
+spec:
+  selector:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+# Source: helm-diagram-demo/templates/frontend.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: helm-diagram-demo-frontend
+spec:
+  selector:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/component: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+# Source: helm-diagram-demo/templates/api.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-diagram-demo-api
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-diagram-demo
+      app.kubernetes.io/component: api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-diagram-demo
+        app.kubernetes.io/component: api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/example/catalog-api:2.4.1
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: helm-diagram-demo-config
+            - secretRef:
+                name: helm-diagram-demo-credentials
+---
+# Source: helm-diagram-demo/templates/data.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-diagram-demo-redis
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-diagram-demo
+      app.kubernetes.io/component: cache
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-diagram-demo
+        app.kubernetes.io/component: cache
+    spec:
+      containers:
+        - name: redis
+          image: redis:7.2-alpine
+          ports:
+            - name: redis
+              containerPort: 6379
+---
+# Source: helm-diagram-demo/templates/frontend.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-diagram-demo-frontend
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-diagram-demo
+      app.kubernetes.io/component: frontend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-diagram-demo
+        app.kubernetes.io/component: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: helm-diagram-demo-config
+---
+# Source: helm-diagram-demo/templates/worker.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helm-diagram-demo-worker
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-diagram-demo
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-diagram-demo
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: helm-diagram-demo-worker
+      containers:
+        - name: worker
+          image: ghcr.io/example/catalog-worker:2.4.1
+          envFrom:
+            - configMapRef:
+                name: helm-diagram-demo-config
+---
+# Source: helm-diagram-demo/templates/api.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: helm-diagram-demo-api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: helm-diagram-demo-api
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Source: helm-diagram-demo/templates/data.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: helm-diagram-demo-postgres
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: database
+spec:
+  serviceName: helm-diagram-demo-postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: helm-diagram-demo
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: helm-diagram-demo
+        app.kubernetes.io/component: database
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - name: postgres
+              containerPort: 5432
+          envFrom:
+            - secretRef:
+                name: helm-diagram-demo-credentials
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+---
+# Source: helm-diagram-demo/templates/worker.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: helm-diagram-demo-cleanup
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  schedule: "*/15 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: helm-diagram-demo
+            app.kubernetes.io/component: cleanup
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: ghcr.io/example/catalog-worker:2.4.1
+              command: ["/bin/sh", "-c", "echo cleanup"]
+---
+# Source: helm-diagram-demo/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: helm-diagram-demo
+  labels:
+    app.kubernetes.io/name: helm-diagram-demo
+    app.kubernetes.io/instance: demo
+    app.kubernetes.io/version: "1.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  rules:
+    - host: catalog.demo.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: helm-diagram-demo-frontend
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: helm-diagram-demo-api
+                port:
+                  number: 8080

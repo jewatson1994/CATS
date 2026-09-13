@@ -1,0 +1,3 @@
+images:
+  - grafana/grafana:11.2.0
+  - redis:7.2

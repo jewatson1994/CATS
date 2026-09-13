@@ -1,0 +1,55 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.env.txt
+
+# Python and test state
+.venv/
+__pycache__/
+.pytest_cache/
+.demo-scan-results/
+*.pyc
+*.db
+
+# Local builds, image exports, and bundled scanner databases
+.release-build/
+CATS Offline/
+CATS Builds/
+CATS-handoff-*/
+CATS-CI-IMAGE-PACKAGE-*
+test-grype-reports/
+*-test-results.txt
+/prometheus-*.tgz
+*.tar
+*.tar.zst
+*.zip
+
+# Keep the small Helm archives used as test/demo fixtures
+!scanning-main/examples/*.tgz
+!scanning-main/examples/**/*.tgz
+
+# Tool caches and generated scan data
+cats-scanner/trivy-cache/**
+!cats-scanner/trivy-cache/README.md
+cats-scanner/grype-db/**
+!cats-scanner/grype-db/README.md
+cats-scanner/helm-cache/**
+!cats-scanner/helm-cache/README.md
+cats-scanner/tool-archives/**
+!cats-scanner/tool-archives/README.md
+
+# Codex context and memory remain outside the repository
+.codex_context_engine/
+.codex_memory/
+.context_metrics/
+.codex_global_metrics/
+.codex_cost/
+.codex_planner/
+.codex_task_memory/
+.codex_failure_memory/
+.codex_memory_graph/
+.codex_library/
+CONTEXT_SAVINGS.md
+AGENTS.md

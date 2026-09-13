@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+
+# Public, CI-agnostic CATS scanner command. The image owns the implementation;
+# CI systems only transport the .cats workspace and invoke this stable CLI.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -f "${SCRIPT_DIR}/prepare-inputs.sh" ] && [ -f /opt/cats/scanning/scripts/prepare-inputs.sh ]; then
+  SCRIPT_DIR=/opt/cats/scanning/scripts
+fi
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  cats version
+  cats prepare --source SOURCE_DIR --output OUTPUT_DIR
+  cats evaluate --source PREPARED_DIR --output RESULTS_DIR
+  cats patch --input EVALUATION_DIR --output PATCH_DIR [--config PATCH_CONFIG]
+  cats push assessment --input PORTAL_RESULT_JSON
+  cats push patch --input PATCH_RESULT_JSON
+EOF
+}
+
+tool_version() {
+  local tool="$1"
+  case "$tool" in
+    helm) helm version --short 2>/dev/null | head -n 1 || true ;;
+    grype|syft|trivy|copa) "$tool" version 2>/dev/null | head -n 1 || "$tool" --version 2>/dev/null | head -n 1 || true ;;
+  esac
+}
+
+version() {
+  echo "CATS Image: ${CATS_VERSION:-unknown}"
+  echo "CATS Scanner: ${CATS_SCANNER_VERSION:-unknown}"
+  echo "Schema: 1.0"
+  for tool in helm grype syft trivy copa; do
+    printf '%s: %s\n' "$tool" "$(tool_version "$tool")"
+  done
+}
+
+parse_dirs() {
+  local source="" output=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --source) source="${2:?--source requires a directory}"; shift 2 ;;
+      --output) output="${2:?--output requires a directory}"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
+    esac
+  done
+  [ -n "$source" ] && [ -n "$output" ] || { usage; exit 2; }
+  [ -d "$source" ] || { echo "CATS source directory not found: $source" >&2; exit 1; }
+  source="$(cd "$source" && pwd -P)"
+  mkdir -p "$output"
+  output="$(cd "$output" && pwd -P)"
+  printf '%s\n%s\n' "$source" "$output"
+}
+
+copy_source() {
+  local source="$1" output="$2" item
+  # The standard CI layout uses SOURCE/.cats as OUTPUT. Copy only the source
+  # entries, explicitly excluding that output directory to avoid recursion.
+  for item in "$source"/* "$source"/.[!.]* "$source"/..?*; do
+    [ -e "$item" ] || continue
+    [ "$item" = "$output" ] && continue
+    cp -a "$item" "$output"/
+  done
+}
+
+prepare() {
+  local parsed source output
+  mapfile -t parsed < <(parse_dirs "$@")
+  [ "${#parsed[@]}" -eq 2 ] || { echo "Unable to parse prepare directories." >&2; exit 2; }
+  source="${parsed[0]}"; output="${parsed[1]}"
+  copy_source "$source" "$output"
+  cd "$output"
+  export CI_PROJECT_DIR="$output"
+  export CATS_SCANNING_ROOT="${CATS_SCANNING_ROOT:-/opt/cats/scanning}"
+  bash "$SCRIPT_DIR/prepare-inputs.sh"
+  jq -n --arg schema "1.0" \
+    '{schema_version:$schema, prepared_at:(now | todateiso8601)}' \
+    > preparation.json
+}
+
+evaluate() {
+  local parsed input output
+  mapfile -t parsed < <(parse_dirs "$@")
+  [ "${#parsed[@]}" -eq 2 ] || { echo "Unable to parse evaluate directories." >&2; exit 2; }
+  input="${parsed[0]}"; output="${parsed[1]}"
+  [ -d "$input" ] || { echo "CATS prepared directory not found: $input" >&2; exit 1; }
+  export CI_PROJECT_DIR="$input"
+  export CATS_SCANNING_ROOT="${CATS_SCANNING_ROOT:-/opt/cats/scanning}"
+  export TRIVY_CONFIG_SCAN_ENABLED="${TRIVY_CONFIG_SCAN_ENABLED:-true}"
+  export HELM_SCAN_ENABLED="${HELM_SCAN_ENABLED:-${CATS_HELM_ENABLED:-false}}"
+  export HELM_ALLOW_NETWORK="${HELM_ALLOW_NETWORK:-$([ "${CATS_OFFLINE:-true}" = true ] && echo false || echo true)}"
+  export TRIVY_OFFLINE="${TRIVY_OFFLINE:-$([ "${CATS_OFFLINE:-true}" = true ] && echo true || echo false)}"
+  export TRIVY_CONFIG_STRICT="${TRIVY_CONFIG_STRICT:-false}"
+  # Image configuration scanners require a Docker/containerd socket or a
+  # trusted remote registry. Keep them opt-in for socketless/offline CI;
+  # SBOM/Grype and source configuration scanning remain enabled normally.
+  export TRIVY_IMAGE_CONFIG_SCAN_ENABLED="${TRIVY_IMAGE_CONFIG_SCAN_ENABLED:-false}"
+  export DOCKLE_IMAGE_CONFIG_SCAN_ENABLED="${DOCKLE_IMAGE_CONFIG_SCAN_ENABLED:-false}"
+  export REPORT_RAW_FINDINGS="${REPORT_RAW_FINDINGS:-false}"
+  cd "$input"
+
+  if yq -e '(.images // [] | length > 0)' images.yml >/dev/null 2>&1; then
+    bash "$SCRIPT_DIR/generate-sboms.sh"
+    bash "$SCRIPT_DIR/scan-sboms.sh"
+  else
+    mkdir -p sboms results
+    : > skipped_images.txt
+  fi
+  bash "$SCRIPT_DIR/scan-configurations.sh"
+  bash "$SCRIPT_DIR/report.sh"
+  REPORT_ONLY=true bash "$SCRIPT_DIR/report-to-portal.sh"
+  bash "$SCRIPT_DIR/assemble-results.sh" "$input" "$input/results"
+
+  mkdir -p "$output"
+  if [ "$output" != "$input" ]; then
+    for directory in results sboms trivy-results helm-rendered; do
+      [ -d "$directory" ] && cp -a "$directory" "$output/" || true
+    done
+    for file in skipped_images.txt skipped_charts.txt configuration-skipped.txt \
+      helm-render-warnings.json helm-discovery.jsonl configuration-scan-status.json results-export.tar.gz; do
+      [ -f "$file" ] && cp -f "$file" "$output/" || true
+    done
+    cp -f portal-result.json "$output/portal-result.json"
+    [ -f service-overview.json ] && cp -f service-overview.json "$output/service-overview.json" || true
+    [ -f portal-policy-findings.json ] && cp -f portal-policy-findings.json "$output/configuration.json" || true
+  fi
+  jq -n --arg schema "1.0" --arg generated "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schema_version:$schema, generated_at:$generated, portal_result:"portal-result.json"}' \
+    > "$output/evaluation.json"
+}
+
+patch() {
+  local input="" output="" config=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --input) input="${2:?--input requires a directory}"; shift 2 ;;
+      --output) output="${2:?--output requires a directory}"; shift 2 ;;
+      --config) config="${2:?--config requires a file}"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
+    esac
+  done
+  [ -n "$input" ] && [ -n "$output" ] || { usage; exit 2; }
+  config="${config:-${CATS_PATCH_CONFIG:-${input}/patch-config.json}}"
+  [ -f "$config" ] || { echo "Patch configuration not found: $config" >&2; exit 1; }
+  mkdir -p "$output"
+  /usr/local/bin/cats-patch "$config" "$output"
+}
+
+push_result() {
+  local kind="$1" input="$2" endpoint ca_args=()
+  local portal_url="${CATS_PORTAL_URL:-}"
+  local portal_token="${CATS_PORTAL_TOKEN:-}"
+  local portal_ca_file="${CATS_PORTAL_CA_FILE:-${CATS_PORTAL_CA_CERT:-}}"
+  [ -f "$input" ] || { echo "${kind^} result not found: $input" >&2; exit 1; }
+  jq -e 'type == "object"' "$input" >/dev/null || { echo "Invalid result JSON: $input" >&2; exit 1; }
+  if [ "$kind" = patch ] && [ -z "${CATS_PATCH_PUSH_URL:-}" ]; then
+    echo "Patch result push skipped: set CATS_PATCH_PUSH_URL to enable delivery."
+    return 0
+  fi
+  : "${portal_url:?CATS_PORTAL_URL is required}"
+  : "${portal_token:?CATS_PORTAL_TOKEN is required}"
+  if [ -n "$portal_ca_file" ]; then
+    ca_args=(--cacert "$portal_ca_file")
+  fi
+  if [ "$kind" = assessment ]; then
+    endpoint="${CATS_ASSESSMENT_PUSH_URL:-${portal_url%/}/api/v1/pipeline-results}"
+  else
+    endpoint="${CATS_PATCH_PUSH_URL:-${portal_url%/}/api/v1/patch-results}"
+  fi
+  curl --fail-with-body --silent --show-error "${ca_args[@]}" \
+    --connect-timeout 5 --max-time 30 \
+    -X POST "$endpoint" \
+    -H "Authorization: Bearer ${portal_token}" \
+    -H "Content-Type: application/json" \
+    --data-binary "@$input"
+}
+
+command="${1:-}"
+shift || true
+case "$command" in
+  version) [ "$#" -eq 0 ] || { usage; exit 2; }; version ;;
+  prepare) prepare "$@" ;;
+  evaluate) evaluate "$@" ;;
+  patch) patch "$@" ;;
+  push)
+    kind="${1:-}"; input_flag="${2:-}"; input="${3:-}"
+    [ "$input_flag" = "--input" ] && [ -n "$input" ] && [ "$#" -eq 3 ] || { usage; exit 2; }
+    case "$kind" in assessment|patch) push_result "$kind" "$input" ;; *) usage; exit 2 ;; esac
+    ;;
+  *) usage; exit 2 ;;
+esac

@@ -1,0 +1,17 @@
+cats_patch_push:
+  stage: cats_patch_push
+  when: always
+  allow_failure: true
+  needs:
+    - job: cats_patch
+      artifacts: true
+  rules:
+    - if: '$CATS_PATCH_ENABLED == "true"'
+    - when: never
+  script:
+    - cats push patch --input "$CI_PROJECT_DIR/.cats/patch/patch-result.json"
+  artifacts:
+    when: always
+    expire_in: never
+    paths:
+      - .cats/patch/

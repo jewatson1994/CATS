@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Service Staging · CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Service staging</h1><p>Stage a service before its first pipeline submission. Cybersecurity can assign its initial group scope here.</p></div></section>
+{% set admin_section = 'staging' %}{% include "_admin_tabs.html" %}
+{% if saved %}<div class="save-confirmation" role="status">Service staged successfully.</div>{% endif %}
+<section class="panel padded admin-card stage-service-card">
+  <h2>Stage a new service</h2>
+  <p class="muted">Enter the service ID used by the pipeline. The next submission fills in the service name, owner, version, overview, and evidence.</p>
+  <form method="post" action="/admin/services/stage">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next_path" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
+    <label>Service ID<input name="service_id" required maxlength="120" placeholder="service-id"></label>
+    {% if stage_groups|length == 1 %}<input type="hidden" name="group_id" value="{{ stage_groups[0].id }}"><p class="muted">Group: <strong>{{ stage_groups[0].name }}</strong></p>{% elif stage_groups %}<label>Group<select name="group_id" required><option value="">Select a group</option>{% for group in stage_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>{% else %}<p class="muted">No eligible group is available for staging.</p>{% endif %}
+    {% if stage_groups %}<button>Stage service</button>{% endif %}
+  </form>
+</section>
+{% endblock %}

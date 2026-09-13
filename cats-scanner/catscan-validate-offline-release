@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DB_DIR="${GRYPE_DB_CACHE_DIR:-/opt/catscan/grype-db}"
+db_file="$(find "$DB_DIR" -type f -name vulnerability.db -size +0c -print -quit 2>/dev/null || true)"
+metadata_file=""
+
+# Grype v6 publishes the cache metadata as latest.json. Older/imported cache
+# layouts may also contain a versioned metadata.json, so support both while
+# preferring the file configured for runtime use.
+if [[ -s "$DB_DIR/latest.json" ]]; then
+  metadata_file="$DB_DIR/latest.json"
+else
+  metadata_file="$(find "$DB_DIR" -type f -name metadata.json -size +0c -print -quit 2>/dev/null || true)"
+fi
+
+echo "Offline release validation:"
+for tool in helm syft grype copa; do
+  if command -v "$tool" >/dev/null 2>&1; then
+    version="$($tool version 2>/dev/null | head -n 1 || true)"
+    echo "$tool binary: PASS${version:+ ($version)}"
+  else
+    echo "$tool binary: FAIL"
+    exit 1
+  fi
+done
+
+if [[ -z "$db_file" || "$(basename "$db_file")" == ".gitkeep" ]]; then
+  echo "Grype DB: FAIL (no non-empty vulnerability.db found under $DB_DIR)"
+  exit 1
+fi
+if [[ -z "$metadata_file" ]] || ! jq -e '
+  type == "object" and
+  (.built | type == "string" and length > 0) and
+  ((.schemaVersion // .version) | type == "string" and length > 0)
+' "$metadata_file" >/dev/null 2>&1; then
+  echo "Grype DB: FAIL (no structurally valid Grype metadata found; expected latest.json or metadata.json)"
+  exit 1
+fi
+echo "Grype DB: PASS ($db_file; $(du -sh "$DB_DIR" | awk '{print $1}'))"
+
+if status_output="$(GRYPE_DB_CACHE_DIR="$DB_DIR" GRYPE_DB_AUTO_UPDATE=false GRYPE_DB_REQUIRE_UPDATE_CHECK=false GRYPE_DB_VALIDATE_AGE=false GRYPE_CHECK_FOR_APP_UPDATE=false grype db status 2>&1)"; then
+  echo "$status_output"
+  echo "Grype DB usable offline: PASS"
+else
+  echo "$status_output"
+  echo "Grype DB usable offline: FAIL"
+  exit 1
+fi

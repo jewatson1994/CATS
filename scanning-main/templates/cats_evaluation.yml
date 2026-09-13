@@ -1,0 +1,11 @@
+cats_evaluation:
+  stage: cats_evaluation
+  needs:
+    - job: cats_preparation
+      artifacts: true
+  script:
+    - cats evaluate --source "$CI_PROJECT_DIR/.cats" --output "$CI_PROJECT_DIR/.cats/results"
+  artifacts:
+    when: always
+    paths:
+      - .cats/

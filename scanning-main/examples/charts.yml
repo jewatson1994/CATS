@@ -1,0 +1,35 @@
+# Optional. If this file is absent, CATS discovers root charts below
+# HELM_CHART_ROOTS ("charts" by default) and ignores vendored charts below a
+# parent chart's charts/ directory.
+# Optional values-file application catalogs. Every services.* entry with
+# sourceType: helm is processed; enabled does not disable scanning.
+# values_files:
+#   - configuration/services-values.yml
+charts:
+  - name: payments
+    path: charts/payments
+    release: payments
+    namespace: payments-prod
+    # Optional display grouping. Omit to preserve Trivy's native rule type.
+    framework: Kubernetes Security Check
+    values:
+      - charts/payments/values.yaml
+      - charts/payments/values-production.yaml
+    set:
+      global.environment: production
+    include_crds: true
+    # vendored: never resolves dependencies over the network. Every direct and
+    # nested dependency must already exist below the owning chart's charts/.
+    dependency_mode: vendored
+
+  # Remote chart use is intentionally opt-in. This entry is only permitted
+  # when HELM_ALLOW_NETWORK=true and is not suitable for disconnected runners.
+  - name: cert-manager
+    reference: cert-manager
+    repository: https://charts.jetstack.io
+    version: v1.18.2
+    release: cert-manager
+    namespace: cert-manager
+    values:
+      - configuration/cert-manager-values.yaml
+    dependency_mode: online

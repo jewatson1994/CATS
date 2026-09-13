@@ -1,0 +1,48 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "pipeline"'
+      when: always
+    - when: never
+
+default:
+  image: "$CATS_IMAGE"
+  before_script:
+    # Scanner tools and bundled trust/database assets are owned by the
+    # versioned CATS image. CI bootstrap is limited to the stable CLI.
+    - cats version
+
+variables:
+  # The image tag is the complete scanner release. Override this at the
+  # consuming project when promoting a specific immutable CATS image.
+  CATS_IMAGE: "registry.example.invalid/security/cats-tool:latest"
+  CATS_OFFLINE: "true"
+  CATS_HELM_ENABLED: "false"
+  CATS_PATCH_ENABLED: "false"
+  CATS_PATCH_CONFIG: ""
+  CATS_PORTAL_URL: ""
+  CATS_PORTAL_TOKEN: ""
+  SYFT_CHECK_FOR_APP_UPDATE: "false"
+  TRIVY_SKIP_CHECK_UPDATE: "true"
+  TRIVY_IMAGE_CONFIG_SCAN_ENABLED: "false"
+  DOCKLE_IMAGE_CONFIG_SCAN_ENABLED: "false"
+
+  # Legacy names remain accepted by the image CLI for existing projects. The
+  # pipeline itself no longer implements or invokes scanner-specific tools.
+  TRIVY_CONFIG_SEVERITIES: "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
+  HELM_CHART_ROOTS: "charts"
+  HELM_DEPENDENCY_MODE: "auto"
+  HELM_DEFAULT_NAMESPACE: "default"
+
+stages:
+  - cats_preparation
+  - cats_evaluation
+  - cats_push
+  - cats_patch
+  - cats_patch_push
+
+include:
+  - local: 'templates/cats_preparation.yml'
+  - local: 'templates/cats_evaluation.yml'
+  - local: 'templates/cats_push.yml'
+  - local: 'templates/cats_patch.yml'
+  - local: 'templates/cats_patch_push.yml'

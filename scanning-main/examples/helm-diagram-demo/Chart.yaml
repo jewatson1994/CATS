@@ -1,0 +1,7 @@
+apiVersion: v2
+name: helm-diagram-demo
+description: A deliberately busy demo chart for exercising CATS Helm evidence diagrams
+type: application
+version: 1.0.0
+appVersion: "1.0"
+

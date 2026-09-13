@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}CATS{% endblock %}</title>
+  <link rel="icon" type="image/png" href="/static/cats-icon.png">
+  <link rel="apple-touch-icon" href="/static/cats-icon.png">
+  <link rel="stylesheet" href="/static/app.css?v=20260913-sbom-workspace">
+  <script src="/static/overview-pagination.js" defer></script>
+  <script src="/static/navigation.js?v=20260825-nav-landing" defer></script>
+</head>
+<body data-theme="{{ (current_user.theme or 'cats') if current_user else 'cats' }}">
+  <header>
+    <a class="brand" href="{{ '/' if current_user else '/home' }}"><img class="brand-icon" src="{% if current_user and current_user.theme in ['blue','red','gray','light'] %}/static/cats-icon-{{ current_user.theme }}.png{% else %}/static/cats-icon.png{% endif %}" alt="">CATS <span>Continuous Assessment &amp; Tracking System</span></a>
+    {% if current_user %}
+    <nav class="account-nav" aria-label="Primary navigation">
+      <a href="/">Services</a>
+      <a class="{% if request.url.path.startswith('/scan') %}active{% endif %}" href="/scan">Scan</a>
+      <a class="{% if request.url.path.startswith('/sbom') %}active{% endif %}" href="/sbom">SBOM</a>
+      <a href="/patch">Patch</a>
+      <a class="{% if request.url.path.startswith('/remediations') %}active{% endif %}" href="/remediations">Remediations</a>
+      <details class="notification-menu"><summary aria-label="Notifications">&#128276;{% if pending_request_count %}<span class="notification-badge">{{ pending_request_count }}</span>{% endif %}</summary><div class="notification-popover"><strong>Notifications</strong>{% if actionable_notifications %}{% for item in actionable_notifications %}<a href="/requests">{{ item.label }}<small>{{ item.service }}</small></a>{% endfor %}<a class="notification-all" href="/requests">View all requests</a>{% else %}<span class="muted">No action required.</span>{% endif %}</div></details>
+      {% if can('user.manage') or can('config.manage') or can('audit.view') %}<details class="admin-menu"><summary aria-label="Administration">&#9881;</summary><div class="menu-popover">{% if can('user.manage') %}<a href="/admin">Administration</a>{% elif can('audit.view') %}<a href="/admin/general-policy">Administration</a>{% elif can('config.manage') %}<a href="/admin/configuration">Administration</a>{% endif %}{% if can('config.manage') %}<a href="/admin/configuration">Configuration</a>{% endif %}</div></details>{% endif %}
+      <details class="user-menu"><summary>{{ current_user.display_name }}</summary><div class="menu-popover"><details class="appearance-menu"><summary>Appearance</summary><form method="post" action="/account/appearance"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="next_path" value="{{ request.url.path }}"><div class="appearance-theme-grid">{% for key, label in themes.items() %}<label class="theme-option theme-preview-{{ key }}"><input type="radio" name="theme" value="{{ key }}" {% if (current_user.theme or 'cats') == key %}checked{% endif %}><span><strong>{{ label }}</strong></span></label>{% endfor %}</div><button class="appearance-apply">Apply theme</button></form></details><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="link-button">Sign out</button></form></div></details>
+    </nav>
+    {% else %}
+    <nav class="public-nav"><a href="/home">Overview</a><a href="/scan">Scan</a><a href="/sbom">SBOM</a><a href="/patch">Patch</a><a href="/login">Login</a></nav>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

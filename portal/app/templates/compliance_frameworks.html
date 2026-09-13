@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Hardening Policy &middot; CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Hardening Policy</h1><p>Configure how Helm, Kubernetes, and container hardening findings affect service posture.</p></div></section>
+{% set admin_section = 'compliance' %}
+{% include "_admin_tabs.html" %}
+<section class="panel padded">
+  <h2>Security Configuration Assessments <span class="badge">IN DEVELOPMENT</span></h2>
+  <p class="muted">Policy controls for security configuration and hardening assessment findings.</p>
+  {% if saved %}<div class="save-confirmation" role="status">Hardening policy saved successfully.</div>{% endif %}
+  <div class="group-scope-bar"><label>Group Scope<select onchange="location='/admin/compliance-frameworks?group_id='+this.value">{% for group in groups %}<option value="{{ group.id }}" {% if selected_group_id == group.id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label><span>Editing: <strong>{{ groups | selectattr('id','equalto',selected_group_id) | map(attribute='name') | first }}</strong></span></div>
+  <form method="post" action="/admin/compliance-frameworks?group_id={{ selected_group_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="group_id" value="{{ selected_group_id or '' }}">
+    <div class="config-grid">
+      <label>Hardening aging threshold (days)<input type="number" name="hardening_overdue_days" min="1" max="3650" value="{{ configuration.hardening_overdue_days }}"><small>A finding becomes overdue only after this many days without remediation.</small></label>
+      <label>Overdue hardening treatment<select name="hardening_noncompliant"><option value="true" {% if configuration.hardening_noncompliant == 'true' %}selected{% endif %}>Non-Compliant</option><option value="false" {% if configuration.hardening_noncompliant == 'false' %}selected{% endif %}>Warning only</option></select><small>Warning-only findings remain active but do not turn the service red.</small></label>
+    </div>
+    <div class="config-actions"><button>Save hardening policy</button><span>Changes are audited.</span></div>
+  </form>
+</section>
+{% endblock %}

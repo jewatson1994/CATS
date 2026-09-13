@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Audit Policy &middot; CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Audit Policy</h1><p>Configure audit retention and review the latest portal activity.</p></div></section>
+{% set admin_section = 'audit' %}
+{% include "_admin_tabs.html" %}
+<section class="panel padded configuration-panel">
+  {% if saved %}<div class="save-confirmation" role="status">Audit policy saved successfully.</div>{% endif %}
+  {% if groups %}<div class="group-scope-bar"><label>Group Scope<select onchange="location='/admin/audit?group_id='+this.value">{% for group in groups %}<option value="{{ group.id }}" {% if selected_group_id == group.id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label><span>Editing: <strong>{{ groups | selectattr('id','equalto',selected_group_id) | map(attribute='name') | first }}</strong></span></div>{% endif %}
+  {% if can('config.manage') %}<form method="post" action="/admin/audit-policy{% if selected_group_id %}?group_id={{ selected_group_id }}{% endif %}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="group_id" value="{{ selected_group_id or '' }}">
+    <div class="config-grid"><label>Audit retention (days)<input type="number" name="audit_retention_days" min="0" max="3650" value="{{ configuration.audit_retention_days }}"><small>0 keeps all events. Otherwise events older than this are outside the retained view.</small></label><label>Application logging<select name="log_level">{% for value in ['DEBUG','INFO','WARNING','ERROR'] %}<option value="{{ value }}" {% if configuration.log_level == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select><small>Controls portal operational log verbosity.</small></label><label>Tool integration<select name="audit_tool_integration"><option value="planned" selected>Not configured (planned)</option></select><small>Mattermost and email integrations can be added here later.</small></label></div>
+    <div class="config-actions"><button>Save audit policy</button><span>Changes are recorded in the audit log.</span></div>
+  </form>{% endif %}
+</section>
+<section class="panel audit-logs"><div class="panel-heading"><div><h2>Logs</h2><p>Showing {{ shown_count }} of {{ retained_count }} retained events. The latest 10 are shown by default.</p></div>{% if shown_count < retained_count %}<a class="secondary-button" href="/admin/audit?show={{ next_show }}{% if selected_group_id %}&amp;group_id={{ selected_group_id }}{% endif %}">Show older events</a>{% endif %}</div><div class="table-wrap"><table><thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr></thead><tbody>{% for event in events %}<tr><td>{{ cats_datetime(event.created_at) }}</td><td>{{ event.actor.username if event.actor else (event.detail.get('actor_username') if event.detail and event.detail.get('actor_username') else 'system') }}</td><td>{{ event.action }}</td><td>{{ event.target_type }} {{ event.target_id or '' }}</td><td><code>{{ event.detail }}</code></td></tr>{% else %}<tr><td colspan="5" class="empty">No audit events.</td></tr>{% endfor %}</tbody></table></div>{% if shown_count > 10 %}<div class="log-actions"><a class="secondary-button" href="/admin/audit{% if selected_group_id %}?group_id={{ selected_group_id }}{% endif %}">Collapse to latest 10</a></div>{% endif %}</section>
+{% endblock %}

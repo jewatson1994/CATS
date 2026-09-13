@@ -1,0 +1,13 @@
+.git
+.venv
+.pytest_cache
+**/__pycache__
+*.pyc
+*.zip
+.release-build
+CATS-*
+portal/.pytest_cache
+**/node_modules
+.env
+.env.*
+!.env.example

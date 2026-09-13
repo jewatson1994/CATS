@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Evidence Policy &middot; CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Evidence Policy</h1><p>Control how incomplete assessments and unavailable images affect service posture.</p></div></section>
+{% set admin_section = 'evidence' %}
+{% include "_admin_tabs.html" %}
+<section class="panel padded configuration-panel">
+  {% if saved %}<div class="save-confirmation" role="status">Evidence policy saved successfully.</div>{% endif %}
+  <div class="group-scope-bar"><label>Group Scope<select onchange="location='/admin/evidence-policy?group_id='+this.value">{% for group in groups %}<option value="{{ group.id }}" {% if selected_group_id == group.id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label><span>Editing: <strong>{{ groups | selectattr('id','equalto',selected_group_id) | map(attribute='name') | first }}</strong></span></div>
+  <form method="post" action="/admin/evidence-policy?group_id={{ selected_group_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="group_id" value="{{ selected_group_id or '' }}">
+    <div class="config-grid evidence-policy-grid">
+      <label>Skipped images<select name="skipped_images_incomplete"><option value="true" {% if configuration.skipped_images_incomplete == 'true' %}selected{% endif %}>Keep assessment incomplete</option><option value="false" {% if configuration.skipped_images_incomplete == 'false' %}selected{% endif %}>Allow assessment completion</option></select><small>Unavailable images remain visible in Active Non-Compliance.</small></label>
+      <label>Incomplete evidence treatment<select name="incomplete_noncompliant"><option value="true" {% if configuration.incomplete_noncompliant == 'true' %}selected{% endif %}>Non-Compliant</option><option value="false" {% if configuration.incomplete_noncompliant == 'false' %}selected{% endif %}>Warning only</option></select><small>Choose whether incomplete assessment evidence changes service compliance.</small></label>
+    </div>
+    <div class="config-actions"><button>Save evidence policy</button><span>Changes are audited. Incomplete scans never resolve prior findings.</span></div>
+  </form>
+</section>
+{% endblock %}

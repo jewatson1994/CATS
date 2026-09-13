@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Sign in · CATS{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <p class="eyebrow">CYBER INTERNAL</p>
+  <h1>Sign in to CATS</h1>
+  {% if error %}<p class="error">{{ error }}</p>{% endif %}
+  {% if local_available %}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next or '/' }}">
+    <label>Username<input name="username" autocomplete="username" required autofocus></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <button>Sign in</button>
+  </form>
+  {% endif %}
+  {% if oidc_available and local_available %}<div class="auth-divider"><span>OR</span></div>{% endif %}
+  {% if oidc_available %}<a class="button button-secondary auth-oidc-button" href="/auth/oidc/login?next={{ (next or '/')|urlencode }}">Sign in with {{ oidc_provider_name or 'organizational account' }}</a>{% endif %}
+  {% if oidc_available and local_available %}<p class="muted">Use your organizational account or a local recovery account.</p>{% elif oidc_available %}<p class="muted">Use your organizational account to continue.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Workflow Policy &middot; CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Workflow Policy</h1><p>Configure warning, exception, and approval workflow guardrails.</p></div></section>
+{% set admin_section = 'workflow' %}
+{% include "_admin_tabs.html" %}
+<section class="panel padded configuration-panel">
+  {% if saved %}<div class="save-confirmation" role="status">Workflow policy saved successfully.</div>{% endif %}
+  <div class="group-scope-bar"><label>Group Scope<select onchange="location='/admin/workflow-policy?group_id='+this.value">{% for group in groups %}<option value="{{ group.id }}" {% if selected_group_id == group.id %}selected{% endif %}>{{ group.name }}</option>{% endfor %}</select></label><span>Editing: <strong>{{ groups | selectattr('id','equalto',selected_group_id) | map(attribute='name') | first }}</strong></span></div>
+  <form method="post" action="/admin/workflow-policy?group_id={{ selected_group_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="group_id" value="{{ selected_group_id or '' }}">
+    <div class="config-grid">
+      <label>Warning window (days)<input type="number" name="warning_days" min="1" max="3650" value="{{ configuration.warning_days }}"><small>Show warnings when vulnerability due dates or active exceptions fall within this window.</small></label>
+      <label>Maximum exception duration (days)<input type="number" name="exception_max_days" min="0" max="3650" value="{{ configuration.exception_max_days }}"><small>0 permits an exception without a configured maximum duration.</small></label>
+    </div>
+    <div class="config-actions"><button>Save workflow policy</button><span>Approved exception requests must remain within this limit. Changes are audited.</span></div>
+  </form>
+</section>
+{% endblock %}

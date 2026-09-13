@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+echo "CatScan container scanning runner"
+echo "grype: $(grype version 2>/dev/null | head -n 1 || true)"
+echo "syft:  $(syft version 2>/dev/null | head -n 1 || true)"
+echo "trivy: $(trivy --version 2>/dev/null | head -n 1 || true)"
+echo "dockle:$(dockle --version 2>/dev/null | head -n 1 || true)"
+echo "helm:  $(helm version --short 2>/dev/null | head -n 1 || true)"
+echo "jq:    $(jq --version 2>/dev/null || true)"
+echo "yq:    $(yq --version 2>/dev/null || true)"
