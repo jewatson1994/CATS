@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="portal/app/static/cats-icon.png" alt="CATS logo" width="180">
+</p>
+
 # CATS — Continuous Assessment & Tracking System
 
 CATS is a container-security assessment and governance platform. It discovers
