@@ -782,6 +782,10 @@ def test_administrator_can_edit_service_metadata():
     detail = client.get("/services/payments-service").text
     assert "Edit service information" in detail
     assert "Actions" in detail and ">Edit</button>" in detail and ">Archive</button>" in detail
+    overview = client.get("/services/payments-service?overview=true").text
+    assert "Edit service information" in overview
+    assert '<details class="actions-menu">' in overview
+    assert ">Edit</button>" in overview and ">Archive</button>" in overview
     response = client.post("/admin/services/payments-service", data={
         "csrf_token": csrf(client), "name": "Payments Platform", "owner": "Cyber Team",
         "description": "Payments service metadata", "poc": "owner@example.invalid", "manual_version": "3.0",

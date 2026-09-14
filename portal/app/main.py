@@ -4185,6 +4185,7 @@ def service_detail(
             view=view, overview_data=overview_data, latest_execution=latest_execution,
             service_images=service.images,
             now=now, finding_type=finding_type, archive_pending=archive_pending,
+            groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
     if simplified:
         simplified_groups = {}
