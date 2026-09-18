@@ -51,7 +51,7 @@
       <div class="patch-step" data-phase="{{ phase }}"><span class="scan-pipeline-dot"></span><strong>{{ label }}</strong><small>Waiting</small></div>
       {% endfor %}
     </div>
-    <p class="muted" data-patch-status>{{ job.status|title }} · {{ job.phase|replace('_', ' ')|title }}</p>
+    <p class="muted" data-patch-status><span data-patch-status-text>{{ job.status|title }} · {{ job.phase|replace('_', ' ')|title }}</span><span data-patch-elapsed data-elapsed-time data-started-at="{{ job.started_at or '' }}" data-finished-at="{{ job.finished_at or '' }}" data-status="{{ job.status or '' }}"></span></p>
     <div class="scan-result-actions"><a class="secondary-button is-disabled" data-patch-results aria-disabled="true">View results</a><a class="secondary-button is-disabled" data-patch-download aria-disabled="true">Download patched image</a><a class="secondary-button" href="/api/public/patch-jobs/{{ job_id }}/logs">View sanitized log</a><button type="button" class="secondary-button" data-cancel-patch>Cancel patch</button></div>
   </div>{% endif %}
 </section>
@@ -78,20 +78,23 @@
 (() => {
   const root=document.querySelector('[data-patch-job]'), jobId=root.dataset.patchJob;
   const phases=['queued','acquiring_image','scanning_source','patching_image','scanning_patched','preparing_output','pushing_image','signing_image','completed'];
-  const status=root.querySelector('[data-patch-status]'), results=root.querySelector('[data-patch-results]'), download=root.querySelector('[data-patch-download]'), cancel=root.querySelector('[data-cancel-patch]');
+  const statusText=root.querySelector('[data-patch-status-text]'), results=root.querySelector('[data-patch-results]'), download=root.querySelector('[data-patch-download]'), cancel=root.querySelector('[data-cancel-patch]');
+  const elapsed=window.CatsElapsedTime.attach(root.querySelector('[data-patch-elapsed]'));
+  window.addEventListener('pagehide',(event)=>{if(!event.persisted)elapsed.destroy();},{once:true});
   cancel.addEventListener('click', async()=>{cancel.disabled=true; cancel.textContent='Cancelling…'; await fetch(`/api/public/patch-jobs/${jobId}/cancel`,{method:'POST'}); setTimeout(poll,250);});
   async function poll(){
     try {
       const response=await fetch(`/api/public/patch-jobs/${jobId}`); if(!response.ok) throw new Error(); const job=await response.json();
       const labels={queued:'Queued',acquiring_image:'Acquiring image',scanning_source:'Scanning source image',patching_image:'Patching image',scanning_patched:'Scanning patched image',preparing_output:'Preparing output',pushing_image:'Pushing image',signing_image:'Signing and verifying image',completed:'Completed'};
       const terminal=['complete','failed','cancelled'].includes(job.status), stages=job.stages||{};
+      elapsed.update({startedAt:job.started_at,finishedAt:job.finished_at,status:job.status});
       root.querySelectorAll('.patch-step').forEach(step=>{ const phase=step.dataset.phase, item=stages[phase]||{}, stageStatus=item.status||'waiting', notReached=stageStatus==='skipped' && item.reason==='not_reached'; step.classList.toggle('is-complete',stageStatus==='success'); step.classList.toggle('is-active',stageStatus==='running'); step.classList.toggle('is-error',stageStatus==='failed'); step.classList.toggle('is-skipped',stageStatus==='skipped'); step.querySelector('small').textContent=stageStatus==='success'?'Completed':stageStatus==='running'?'Running':stageStatus==='failed'?'Failed':stageStatus==='skipped'?(notReached?'Not reached':'Skipped'):(terminal?'Not reached':'Waiting'); });
       const failedPhase=job.failed_stage||job.phase;
-      status.textContent=job.status==='failed' ? `Failed during "${labels[failedPhase]||failedPhase}"${job.error ? ` · ${job.error}` : ''}` : job.status==='complete' ? 'Completed' : `${job.status.replaceAll('_',' ')} · ${labels[job.phase]||job.phase}`;
+      statusText.textContent=job.status==='failed' ? `Failed during "${labels[failedPhase]||failedPhase}"${job.error ? ` · ${job.error}` : ''}` : job.status==='complete' ? 'Completed' : job.status==='cancelled' ? 'Cancelled' : `${job.status==='running'?'Running':'Queued'} · ${labels[job.phase]||job.phase}`;
       if(job.result){ results.href=`/api/public/patch-jobs/${jobId}/results`; results.classList.remove('is-disabled'); results.removeAttribute('aria-disabled'); }
       if(job.result?.artifact_available){download.href=`/api/public/patch-jobs/${jobId}/patched-image.tar`; download.classList.remove('is-disabled'); download.removeAttribute('aria-disabled');}
       if(terminal){cancel.hidden=true; return;} setTimeout(poll,1000);
-    } catch(e){status.textContent='Unable to read patch status. Retrying…'; setTimeout(poll,2500);}
+    } catch(e){statusText.textContent='Unable to read patch status. Retrying…'; setTimeout(poll,2500);}
   } poll();
 })();
 </script>{% endif %}

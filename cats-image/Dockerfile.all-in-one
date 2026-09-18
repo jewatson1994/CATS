@@ -6,10 +6,11 @@
 ARG CATSCAN_BASE_IMAGE=catscan-base:local
 FROM ${CATSCAN_BASE_IMAGE}
 
-ARG CATS_VERSION=1.2.1
+ARG CATS_VERSION=""
 LABEL org.opencontainers.image.title="CATS" \
       org.opencontainers.image.version="${CATS_VERSION}" \
       org.opencontainers.image.description="Continuous Assessment & Tracking System unified image"
+ENV CATS_VERSION="${CATS_VERSION}"
 
 # The all-in-one image is also usable with a pre-existing scanner base.  Older
 # locally cached bases may contain the scanning tools but not Copa, so install
@@ -22,6 +23,16 @@ ARG COSIGN_SHA256=064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d10
 
 USER root
 WORKDIR /app
+
+# A new portal must not silently inherit a pre-capability scanner base: that
+# would reproduce the missing-provider failure in a supposedly complete image.
+RUN test -s /opt/cats/validation/loadbalancer/bundle.json \
+    && test -s /opt/cats/validation/loadbalancer/controller.tar \
+    && test -s /opt/cats/validation/loadbalancer/speaker.tar \
+    && test -s /opt/cats/validation/ingress/bundle.json \
+    && test -s /opt/cats/validation/ingress/controller.tar \
+    && test -s /opt/cats/validation/ingress/kube-webhook-certgen.tar \
+    || { echo "Rebuild catscan-base with the bundled MetalLB and ingress-nginx capabilities before building CATS." >&2; exit 1; }
 
 RUN apk add --no-cache docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
     && python3 -m venv /opt/cats-venv

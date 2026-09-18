@@ -22,6 +22,8 @@ class Service(Base):
     poc: Mapped[str | None] = mapped_column(String(240))
     manual_version: Mapped[str | None] = mapped_column(String(120))
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    staging_original_name: Mapped[str | None] = mapped_column(String(240))
+    staging_name_generated: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     executions: Mapped[list["Execution"]] = relationship(back_populates="service")
     findings: Mapped[list["Finding"]] = relationship(back_populates="service")
@@ -31,7 +33,9 @@ class Service(Base):
     policy_findings: Mapped[list["PolicyFinding"]] = relationship(back_populates="service")
     patch_executions: Mapped[list["PatchExecution"]] = relationship(back_populates="service")
     remediation_executions: Mapped[list["RemediationExecution"]] = relationship(back_populates="service")
+    deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="service")
     images: Mapped[list["ServiceImage"]] = relationship(back_populates="service")
+    artifacts: Mapped[list["ServiceArtifact"]] = relationship(back_populates="service")
 
 
 class Group(Base):
@@ -63,6 +67,59 @@ class Execution(Base):
     scanner_db_built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[dict] = mapped_column(JSON)
     service: Mapped["Service"] = relationship(back_populates="executions")
+    deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="execution")
+
+
+class DeploymentValidationRun(Base):
+    """Durable, nonsensitive evidence from one ephemeral Kubernetes attempt.
+
+    Runs are independent from static scan executions so a failed or unavailable
+    validation environment cannot change whether the authoritative scan
+    completed. ``artifact_type`` and ``artifact_reference`` intentionally keep
+    the validator reusable for original and future remediated artifacts.
+    """
+
+    __tablename__ = "deployment_validation_runs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    execution_id: Mapped[int | None] = mapped_column(ForeignKey("executions.id"), index=True)
+    artifact_revision_id: Mapped[int | None] = mapped_column(ForeignKey("service_artifact_revisions.id"), index=True)
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(24), default="ORIGINAL", index=True)
+    artifact_reference: Mapped[str | None] = mapped_column(String(240), index=True)
+    engine: Mapped[str] = mapped_column(String(30), default="kind")
+    status: Mapped[str] = mapped_column(String(40), default="NOT_ATTEMPTED", index=True)
+    phase: Mapped[str] = mapped_column(String(40), default="QUEUED")
+    reason_category: Mapped[str | None] = mapped_column(String(80), index=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    classification_reasons: Mapped[list] = mapped_column(JSON, default=list)
+    helm_result: Mapped[dict] = mapped_column(JSON, default=dict)
+    resource_summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    conditions: Mapped[dict] = mapped_column(JSON, default=dict)
+    dependencies: Mapped[dict] = mapped_column(JSON, default=dict)
+    capability_preflight: Mapped[list] = mapped_column(JSON, default=list)
+    capability_bootstrap: Mapped[dict] = mapped_column(JSON, default=dict)
+    observed_topology: Mapped[dict] = mapped_column(JSON, default=dict)
+    comparison: Mapped[dict] = mapped_column(JSON, default=dict)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    unhealthy_resources: Mapped[list] = mapped_column(JSON, default=list)
+    security_policy_violations: Mapped[list] = mapped_column(JSON, default=list)
+    resource_isolation: Mapped[dict] = mapped_column(JSON, default=dict)
+    warnings: Mapped[list] = mapped_column(JSON, default=list)
+    diagnostics: Mapped[dict] = mapped_column(JSON, default=dict)
+    cluster_name: Mapped[str | None] = mapped_column(String(120), index=True)
+    namespace: Mapped[str | None] = mapped_column(String(120))
+    cleanup_status: Mapped[str] = mapped_column(String(40), default="NOT_STARTED")
+    duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    service: Mapped["Service"] = relationship(back_populates="deployment_validation_runs")
+    execution: Mapped["Execution | None"] = relationship(back_populates="deployment_validation_runs")
+    artifact_revision: Mapped["ServiceArtifactRevision | None"] = relationship(foreign_keys=[artifact_revision_id])
+    requested_by: Mapped["User | None"] = relationship()
 
 
 class ServiceImage(Base):
@@ -79,10 +136,61 @@ class ServiceImage(Base):
     lifecycle_reason: Mapped[str | None] = mapped_column(Text)
     requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     approved_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    scan_status: Mapped[str] = mapped_column(String(20), default="never_scanned", index=True)
+    scan_job_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    scan_error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     service: Mapped["Service"] = relationship(back_populates="images")
     replacement_of: Mapped["ServiceImage | None"] = relationship(remote_side=[id], foreign_keys=[replacement_of_id])
+
+
+class ServiceArtifact(Base):
+    """A service artifact workspace that preserves immutable scan evidence.
+
+    Original Helm/Kubernetes evidence remains in ``Execution.raw_payload``.  This
+    record is only the editable workspace handle; every edit is a new immutable
+    revision below, so validation can be pointed at a specific revision later.
+    """
+
+    __tablename__ = "service_artifacts"
+    __table_args__ = (UniqueConstraint("service_id", "artifact_type", "artifact_name", name="uq_service_artifact_name"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(24), index=True)
+    artifact_name: Mapped[str] = mapped_column(String(240))
+    source_execution_id: Mapped[int | None] = mapped_column(ForeignKey("executions.id"), index=True)
+    source_reference: Mapped[str | None] = mapped_column(String(240))
+    parent_repository_id: Mapped[int | None] = mapped_column(ForeignKey("service_artifacts.id"), index=True)
+    source_type: Mapped[str | None] = mapped_column(String(30), index=True)
+    chart_name: Mapped[str | None] = mapped_column(String(240), index=True)
+    chart_version: Mapped[str | None] = mapped_column(String(120))
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    service: Mapped["Service"] = relationship(back_populates="artifacts")
+    revisions: Mapped[list["ServiceArtifactRevision"]] = relationship(back_populates="artifact", order_by="ServiceArtifactRevision.revision_number")
+
+
+class ServiceArtifactRevision(Base):
+    """Immutable bounded file snapshot for an artifact workspace revision."""
+
+    __tablename__ = "service_artifact_revisions"
+    __table_args__ = (UniqueConstraint("artifact_id", "revision_number", name="uq_service_artifact_revision"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    artifact_id: Mapped[int] = mapped_column(ForeignKey("service_artifacts.id"), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer)
+    revision_label: Mapped[str] = mapped_column(String(30), default="WORKING")
+    files: Mapped[dict] = mapped_column(JSON, default=dict)
+    checksum: Mapped[str] = mapped_column(String(64))
+    immutable: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    source_metadata: Mapped[dict] = mapped_column(JSON, default=dict)
+    artifact: Mapped["ServiceArtifact"] = relationship(back_populates="revisions")
 
 
 class PatchExecution(Base):

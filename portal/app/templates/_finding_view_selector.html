@@ -1,0 +1,4 @@
+<nav class="finding-view-selector" aria-label="Finding detail view">
+  <a class="secondary-button {{ 'active' if selected_findings_view == 'simplified' else '' }}" href="/services/{{ view.service.service_key }}?findings=true&amp;findings_view=simplified&amp;finding_state={{ finding_state|default('active') }}&amp;finding_type={{ finding_type|default('all') }}&amp;page_size={{ page_size|default(50) }}">Simplified</a>
+  <a class="secondary-button {{ 'active' if selected_findings_view == 'raw' else '' }}" href="/services/{{ view.service.service_key }}?findings=true&amp;findings_view=raw&amp;finding_state={{ finding_state|default('active') }}&amp;finding_type={{ finding_type|default('all') }}&amp;page_size={{ page_size|default(50) }}">Raw</a>
+</nav>

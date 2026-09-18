@@ -46,7 +46,7 @@
       <div class="scan-pipeline-step" data-phase="{{ phase }}"><span class="scan-pipeline-dot"></span><strong>{{ label }}</strong><small>Waiting</small></div>
       {% endfor %}
     </div>
-    <p class="muted self-service-status" data-job-status>{{ status_message or ('Waiting for SBOM worker…' if mode == 'sbom' else 'Waiting for scan worker…') }}</p>
+    <p class="muted self-service-status" data-job-status><span data-job-status-text>{{ status_message or ('Waiting for SBOM worker…' if mode == 'sbom' else 'Waiting for scan worker…') }}</span><span data-job-elapsed data-elapsed-time data-started-at="{{ job.started_at or '' }}" data-finished-at="{{ job.finished_at or '' }}" data-status="{{ job.status or '' }}"></span></p>
     <div class="scan-result-actions" data-job-actions hidden>{% if mode == 'scan' %}<a class="secondary-button is-disabled" data-html-link aria-disabled="true" tabindex="-1">Open HTML overview</a><a class="secondary-button is-disabled" data-results-link aria-disabled="true" tabindex="-1">Detailed results</a><a class="secondary-button is-disabled" data-excel-link aria-disabled="true" tabindex="-1">Download Excel</a>{% endif %}<a class="secondary-button is-disabled" data-artifacts-link aria-disabled="true" tabindex="-1">{{ 'Download SBOMs' if mode == 'sbom' else 'Download artifacts' }}</a><a class="secondary-button is-disabled" data-logs-link aria-disabled="true" tabindex="-1">View debug log</a></div>
     <div class="scan-result-actions" data-cancel-actions hidden><button type="button" class="secondary-button" data-cancel-scan>Cancel scan</button></div>
   </div>
@@ -72,7 +72,9 @@
   const jobId = root?.dataset.jobId;
   if (!jobId) return;
   const steps = [...root.querySelectorAll('.scan-pipeline-step')];
-  const status = root.querySelector('[data-job-status]');
+  const statusText = root.querySelector('[data-job-status-text]');
+  const elapsed = window.CatsElapsedTime.attach(root.querySelector('[data-job-elapsed]'));
+  window.addEventListener('pagehide', (event) => { if (!event.persisted) elapsed.destroy(); }, {once: true});
   const actions = root.querySelector('[data-job-actions]');
   const cancelActions = root.querySelector('[data-cancel-actions]');
   const cancelButton = root.querySelector('[data-cancel-scan]');
@@ -123,13 +125,14 @@
       };
       const phaseLabel = phaseLabels[current] || current.replaceAll('_', ' ');
       const terminal = ['complete', 'incomplete', 'error', 'cancelled'].includes(job.status);
+      elapsed.update({startedAt: job.started_at, finishedAt: job.finished_at, status: job.status});
       const showCounts = terminal || current === 'report_results';
       if (showCounts) {
-        status.textContent = jobKind === 'sbom'
+        statusText.textContent = jobKind === 'sbom'
           ? `${labels[job.status] || job.status} · ${summary.reports || 0} SBOM document(s) in ${(summary.formats || []).length} format(s)${summary.skipped_images ? `, ${summary.skipped_images} skipped image(s)` : ''}.`
           : `${labels[job.status] || job.status} · ${phaseLabel} · ${summary.results || 0} vulnerability result(s), ${summary.configuration_findings || 0} configuration finding(s)${skipped ? `, ${summary.skipped_images || 0} skipped image(s), ${summary.skipped_charts || 0} skipped chart(s)` : ''}.`;
       } else {
-        status.textContent = `${labels[job.status] || job.status} · ${phaseLabel}`;
+        statusText.textContent = `${labels[job.status] || job.status} · ${phaseLabel}`;
       }
       if (['queued','running'].includes(job.status)) {
         cancelActions.hidden = false;
@@ -156,15 +159,15 @@
         }
         if (jobKind === 'scan' && ['complete','incomplete'].includes(job.status) && ingestServiceId && !ingestStarted) {
           ingestStarted = true;
-          status.textContent += ' Ingesting into selected service…';
+          statusText.textContent += ' Ingesting into selected service…';
           const response = await fetch(`/api/public/jobs/${jobId}/ingest?service_id=${encodeURIComponent(ingestServiceId)}`, {method:'POST', headers:{Accept:'application/json'}});
-          status.textContent += response.ok ? ' Ingested into selected service.' : ' Ingest failed.';
+          statusText.textContent += response.ok ? ' Ingested into selected service.' : ' Ingest failed.';
         }
         return;
       }
       window.setTimeout(poll, 1500);
     } catch (error) {
-      status.textContent = 'Unable to read scan status. Retrying…';
+      statusText.textContent = 'Unable to read scan status. Retrying…';
       window.setTimeout(poll, 3000);
     }
   }

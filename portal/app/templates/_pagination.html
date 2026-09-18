@@ -1,0 +1,9 @@
+{% macro controls(label, page, total_pages, total_items, page_size, base_url, position='') %}
+<nav class="pagination pagination-{{ position }}" aria-label="{{ label }}">
+  <span>Showing {{ (page - 1) * page_size + 1 if total_items else 0 }}&ndash;{{ [page * page_size, total_items]|min }} of {{ total_items }} <span class="pagination-page" aria-current="page">· Page {{ page }} of {{ total_pages }}</span></span>
+  <span class="pagination-controls">
+    {% if page > 1 %}<a class="secondary-button" href="{{ base_url }}&amp;page={{ page - 1 }}">Previous</a>{% else %}<button class="secondary-button" type="button" disabled aria-disabled="true">Previous</button>{% endif %}
+    {% if page < total_pages %}<a class="secondary-button" href="{{ base_url }}&amp;page={{ page + 1 }}">Next</a>{% else %}<button class="secondary-button" type="button" disabled aria-disabled="true">Next</button>{% endif %}
+  </span>
+</nav>
+{% endmacro %}

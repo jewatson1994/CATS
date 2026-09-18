@@ -10,9 +10,25 @@
   </div>
   <div class="service-page-actions">
     <span class="latest-evidence">Latest Evidence: <strong>{{ cats_datetime(view.last_execution) if view.last_execution else 'None received' }}</strong></span>
+    {% set av = architecture_verification or {'state':'N/A','label':'N/A'} %}
+    <details class="architecture-verification" data-architecture-verification data-evidence-url="/api/v1/services/{{ view.service.service_key }}/architecture-evidence">
+      <summary class="status validation-status-{{ av.state|lower|replace('_','-') }}" data-architecture-badge>{{ '✓ ' if av.state == 'VERIFIED' else '' }}{{ av.label }}</summary>
+      <div class="architecture-evidence-popover" data-architecture-popover>
+        <h3>{{ av.label }} Architecture</h3>
+        {% if av.state in ['VERIFIED','PARTIALLY_VERIFIED'] %}<p><strong>{{ av.observed }} / {{ av.expected }}</strong> declared resources observed<br>{{ av.missing }} expected resources missing<br>{{ av.failed }} failed</p><p>Validation completed: {{ cats_datetime(av.completed_at) }}</p><p>Engine: <strong>{{ av.engine or 'kind' }}</strong></p>{% else %}<p>{{ av.reason }}</p>{% endif %}
+        {% if av.run_key %}<a href="/services/{{ view.service.service_key }}?validation=true&amp;validation_run={{ av.run_key }}">View Deployment Validation →</a>{% elif av.state == 'DECLARED' %}<a href="/services/{{ view.service.service_key }}?validation=true">Run Deployment Validation →</a>{% endif %}
+      </div>
+    </details>
   </div>
 </section>
 {% set active_service_tab = 'architecture' %}{% include "_service_tabs.html" %}
+{% if architecture_state == 'NO_SOURCE' %}
+<section class="panel empty-state" role="status"><h2>No architecture source is available.</h2><p>This service has no retained Helm or Kubernetes evidence to render into an architecture view.</p><a class="secondary-button" href="/services/{{ view.service.service_key }}?artifacts=true">Go to Artifacts</a></section>
+{% elif architecture_state == 'ANALYSIS_INCOMPLETE' %}
+<section class="panel empty-state" role="status"><h2>Architecture analysis has not been completed.</h2><p>The latest scan did not finish with enough evidence to build the architecture view.</p><a class="secondary-button" href="/scan?service={{ view.service.service_key }}">Run Analysis / Scan</a></section>
+{% elif architecture_state == 'NO_RELATIONSHIPS' %}
+<section class="panel empty-state" role="status"><h2>No architecture relationships were discovered.</h2><p>Static evidence exists, but CATS did not find supported Kubernetes relationships to display.</p><a class="secondary-button" href="/services/{{ view.service.service_key }}?artifacts=true">View Artifacts</a></section>
+{% endif %}
 {% if architecture_graph.incomplete %}
 <div class="architecture-warning" role="status">
   <strong>Partial architecture</strong>
@@ -23,6 +39,9 @@
   <label>View
     <select data-architecture-layer>
       <option value="all" selected>All Resources</option>
+      <option value="declared">Declared</option>
+      <option value="runtime">Runtime Observed</option>
+      <option value="differences">Differences</option>
       <option value="configuration">Configuration</option>
       <option value="containers">Containers</option>
       <option value="flow">Data Flow</option>
@@ -30,7 +49,7 @@
       <option value="storage">Storage</option>
     </select>
   </label>
-  <span class="architecture-legend"><i class="solid-line"></i> Declared / Derived <i class="dashed-line"></i> Inferred</span>
+  <span class="architecture-legend"><i class="solid-line"></i> Declared <i class="verified-line"></i> Runtime confirmed <i class="dashed-line"></i> Inferred</span>
 </div>
 <section class="architecture-layout" data-architecture data-graph='{{ architecture_graph|tojson }}'>
   <div class="architecture-canvas">

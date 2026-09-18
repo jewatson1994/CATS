@@ -1,11 +1,8 @@
 {% extends "base.html" %}
+{% from "_pagination.html" import controls as pagination_controls %}
 {% block title %}{{ view.service.name }} &middot; CATS{% endblock %}
 {% block content %}
 <a class="back" href="/">&larr; All services</a>
-
-{% if saved %}
-<div class="save-confirmation" role="status">Service information saved successfully.</div>
-{% endif %}
 
 <section class="heading">
   <div>
@@ -53,6 +50,7 @@
 <dialog id="service-edit-dialog" class="review-dialog">
   <form method="post" action="/admin/services/{{ view.service.service_key }}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="return_to" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}">
     <h3>Edit service information</h3>
     <label>Service name<input name="name" value="{{ view.service.name }}" required></label>
     <label>Description<textarea name="description" maxlength="2000">{{ view.service.description or '' }}</textarea></label>
@@ -66,13 +64,8 @@
 {# Keep the old text available to bookmarked/accessibility checks while the action is now in the dropdown. #}
 <span class="sr-only">Edit service information</span>
 {% endif %}
-{% set active_service_tab = 'raw' %}{% include "_service_tabs.html" %}
-<nav class="metrics metric-filters" aria-label="Filter service findings">
-  {% for key, label, count in [('active','Active Fixable',view.active|length + view.policy_findings|length),('noncompliant','Active Non-Compliance',view.noncompliance_items|length),('exceptions','Active Exceptions',view.excepted|length + view.policy_excepted|length),('resolved','Resolved',view.resolved|length + view.policy_resolved|length),('warnings','Warnings',view.warning_items|length)] %}
-  <a class="metric-card {{ 'selected' if finding_state == key else '' }} {{ 'overdue-card' if key == 'noncompliant' and count > 0 else '' }} {{ 'warning-card' if key == 'warnings' and count > 0 else '' }}" href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ key }}&amp;finding_type=all&amp;page_size=50"><span>{{ label }}</span><strong>{{ count }}</strong></a>
-  {% endfor %}
-</nav>
-
+{% set active_service_tab = 'findings' %}{% include "_service_tabs.html" %}
+{% include "_finding_view_selector.html" %}
 {% if view.skipped_images %}
 <span class="sr-only">Skipped images ({{ view.skipped_images|length }}): {{ view.skipped_images|join(', ') }}</span>
 {% endif %}
@@ -81,6 +74,15 @@
 {% endif %}
 
 <section class="panel service-findings">
+  <form class="finding-filters" method="get" action="/services/{{ view.service.service_key }}">
+    <input type="hidden" name="overview" value="false"><input type="hidden" name="finding_state" value="{{ finding_state }}"><input type="hidden" name="finding_type" value="{{ finding_type }}"><input type="hidden" name="page_size" value="{{ page_size }}"><input type="hidden" name="page" value="1">
+    <label class="finding-filter-field">Search findings<input name="q" value="{{ query or '' }}" placeholder="CVE, package, image, resource…" aria-label="Search findings"></label>
+    <div class="finding-filter-field"><span>Severity</span><details class="multi-select-filter"><summary>{% if severity %}{{ severity|length }} selected{% else %}All severities{% endif %}</summary><div class="multi-select-options">{% for option in severity_options %}<label><input type="checkbox" name="severity" value="{{ option }}" {% if option in severity %}checked{% endif %}>{{ option }}</label>{% endfor %}</div></details></div>
+    <label class="finding-filter-field">Resource<input name="resource" value="{{ resource or '' }}" placeholder="Image, target, namespace…" aria-label="Filter by resource"></label>
+    <button class="secondary-button" type="submit">Apply filters</button>
+    {% if query or resource or severity %}<a class="secondary-button" href="{{ clear_filters_url }}">Clear filters</a>{% endif %}
+    {% if query or resource or severity %}<span class="filter-active" role="status">Filters active</span>{% endif %}
+  </form>
   <div class="panel-head">
     <div>
       <h2>{{ {'active':'Active Fixable Findings','noncompliant':'Active Non-Compliance','overdue':'Active Non-Compliance','exceptions':'Active Exceptions','resolved':'Resolved Findings','warnings':'Warnings'}[finding_state] }}</h2>
@@ -88,7 +90,7 @@
     </div>
     <div class="finding-controls">
       <label class="finding-type-control">Type
-        <select onchange="location='/services/{{ view.service.service_key }}?overview=false&finding_state={{ finding_state }}&finding_type='+this.value+'&page_size={{ page_size }}'">
+        <select onchange="document.querySelector('.finding-filters [name=finding_type]').value=this.value;document.querySelector('.finding-filters').submit()">
           <option value="all" {% if finding_type == 'all' %}selected{% endif %}>All findings</option>
           <option value="vulnerability" {% if finding_type == 'vulnerability' %}selected{% endif %}>Vulnerabilities</option>
           <option value="configuration" {% if finding_type == 'configuration' %}selected{% endif %}>Configuration</option>
@@ -96,7 +98,7 @@
         </select>
       </label>
       <label class="page-size-control">Rows
-        <select onchange="location='/services/{{ view.service.service_key }}?overview=false&finding_state={{ finding_state }}&finding_type={{ finding_type }}&page_size='+this.value">
+        <select onchange="document.querySelector('.finding-filters [name=page_size]').value=this.value;document.querySelector('.finding-filters').submit()">
           <option value="50" {% if page_size == 50 %}selected{% endif %}>50</option>
           <option value="100" {% if page_size == 100 %}selected{% endif %}>100</option>
           <option value="250" {% if page_size == 250 %}selected{% endif %}>250</option>
@@ -105,6 +107,7 @@
     </div>
   </div>
 
+  {% if total_pages > 1 %}{{ pagination_controls('Finding pages', page, total_pages, total_items, page_size, pagination_base, 'top') }}{% endif %}
   {% if finding_state in ['noncompliant','overdue'] %}
   <div class="table-wrap">
     <table>
@@ -145,6 +148,9 @@
             {% elif can('poam.request', view.service.id) %}
               <button type="button" class="secondary-button evidence-poam-action" data-image="{{ item.images|join(', ') }}" data-reason="{{ item.reason }}">Add POA&amp;M Entry</button>
               <button type="button" class="secondary-button mitigation-action" data-title="Mitigate {{ item.item }}">Add Mitigation</button>
+              <a class="secondary-button" href="/services/{{ view.service.service_key }}?artifacts=true">Locate/Add Evidence</a>
+              <a class="secondary-button" href="/scan?service={{ view.service.service_key }}">Scan</a>
+              <a class="secondary-button" href="/services/{{ view.service.service_key }}?artifacts=true#container-images">Replace / Remove</a>
             {% else %}
               &mdash;
             {% endif %}
@@ -254,13 +260,7 @@
   </div>
   {% endif %}
 
-  {% if total_pages > 1 %}
-  <nav class="pagination" aria-label="Finding pages">
-    {% if page > 1 %}<a href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ finding_state }}&amp;finding_type={{ finding_type }}&amp;page={{ page - 1 }}&amp;page_size={{ page_size }}">Previous</a>{% endif %}
-    <span>Page {{ page }} of {{ total_pages }}</span>
-    {% if page < total_pages %}<a href="/services/{{ view.service.service_key }}?overview=false&amp;finding_state={{ finding_state }}&amp;finding_type={{ finding_type }}&amp;page={{ page + 1 }}&amp;page_size={{ page_size }}">Next</a>{% endif %}
-  </nav>
-  {% endif %}
+  {% if total_pages > 1 %}{{ pagination_controls('Finding pages', page, total_pages, total_items, page_size, pagination_base, 'bottom') }}{% endif %}
 </section>
 
 {% if can('exception.request', view.service.id) %}

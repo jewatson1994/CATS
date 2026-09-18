@@ -14,7 +14,7 @@ release image contains the portal, scanner toolchain, patch worker, policy data,
 and an offline Grype vulnerability database. PostgreSQL stores the persistent
 service and governance state.
 
-The current local release tag is **`cats:1.2.1`**.
+The current local release tag is **`cats:1.3`**.
 
 ## What CATS does
 
@@ -28,6 +28,7 @@ The current local release tag is **`cats:1.2.1`**.
 | Results and exports | Provides portal views, Excel exports, a self-contained offline HTML overview, raw scanner files, normalized results, and a manual-import bundle for DefectDojo |
 | Governance | Applies configurable Raw or Risk Based policy, finding age, CISA KEV, EPSS, evidence-completeness, exception, mitigation, POA&M, and approval workflows |
 | Architecture | Builds service architecture and data-flow views from rendered Kubernetes resources and exports the same canonical topology as SVG or workbook data |
+| Deployment Validation | Independently deploys retained Helm artifacts to disposable kind clusters, captures runtime health/events/topology, and preserves every validation attempt without changing static scan state |
 | Remediation | Runs portal-initiated image patching with Copa, rescans the result, publishes an immutable digest, and optionally signs and verifies it with Cosign |
 | Access and audit | Supports local accounts or OIDC, scoped role-based access control, audit history, trusted CAs, registry configuration, and repository policies |
 
@@ -135,7 +136,9 @@ inspect, scan, patch, and publish images.
 Helm and Kubernetes architecture details are documented in
 [Architecture layout](portal/docs/architecture-layout.md). The remediation
 contract is documented in
-[Remediation pipeline](portal/docs/remediation-pipeline.md).
+[Remediation pipeline](portal/docs/remediation-pipeline.md). Runtime Helm
+validation, its states, security boundary, offline behavior, and limits are
+documented in [Deployment Validation](portal/docs/deployment-validation.md).
 
 ## Quick start
 
@@ -143,7 +146,7 @@ contract is documented in
 
 - Docker Engine or Docker Desktop
 - Docker Compose v2
-- A locally available `cats:1.2.1` image, or access to the registry containing
+- A locally available `cats:1.3` image, or access to the registry containing
   the image configured by `CATS_IMAGE`
 
 Copy the environment template and replace every placeholder secret:
@@ -214,7 +217,7 @@ PowerShell:
 ```powershell
 $stamp = Get-Date -Format 'yyyyMMddHHmmss'
 docker build --pull --no-cache --build-arg "GRYPE_DB_REFRESH=$stamp" -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local --build-arg CATS_VERSION=1.2.1 -f cats-image/Dockerfile.all-in-one -t cats:1.2.1 .
+docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local --build-arg CATS_VERSION=1.3 -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
 ```
 
 Linux:
@@ -225,21 +228,21 @@ docker build --pull --no-cache \
   -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
 docker build \
   --build-arg CATSCAN_BASE_IMAGE=catscan-base:local \
-  --build-arg CATS_VERSION=1.2.1 \
-  -f cats-image/Dockerfile.all-in-one -t cats:1.2.1 .
+  --build-arg CATS_VERSION=1.3 \
+  -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
 ```
 
 Save the image for disconnected transfer:
 
 ```text
-docker save --output cats-1.2.1.tar cats:1.2.1
+docker save --output cats-1.3.tar cats:1.3
 ```
 
 Load it on the destination host:
 
 ```text
-docker load --input cats-1.2.1.tar
-docker image inspect cats:1.2.1
+docker load --input cats-1.3.tar
+docker image inspect cats:1.3
 ```
 
 Build details and offline-database requirements are in

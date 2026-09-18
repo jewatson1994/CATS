@@ -134,26 +134,50 @@ SERVICE_OVERVIEW=$(yq -o=json '(.overview // .runtime // {})' "$SERVICE_MANIFEST
 if [ -f service-overview.json ]; then
   SERVICE_OVERVIEW=$(jq -s '((.[0] // {}) * (.[1] // {}))' <(printf '%s\n' "$SERVICE_OVERVIEW") service-overview.json)
 fi
+# Keep large Helm evidence in files. Passing it through --argjson expands it
+# into the jq process argument vector and fails with E2BIG/"Argument list too
+# long" on charts with substantial rendered architecture evidence.
+REPORT_TMP_DIR=$(mktemp -d)
+trap 'rm -rf "$REPORT_TMP_DIR"' EXIT
+HELM_RENDER_WARNINGS_FILE="$REPORT_TMP_DIR/helm-render-warnings.json"
+HELM_DISCOVERY_FILE="$REPORT_TMP_DIR/helm-discovery.json"
+HELM_CHART_GRAPH_FILE="$REPORT_TMP_DIR/helm-chart-graph.json"
+printf '%s\n' '[]' > "$HELM_RENDER_WARNINGS_FILE"
+printf '%s\n' '[]' > "$HELM_DISCOVERY_FILE"
+printf '%s\n' '{}' > "$HELM_CHART_GRAPH_FILE"
 # jq exits successfully for an empty input file but emits no text. Slurp and
 # flatten the file so empty, array, or JSON-lines warning artifacts always
-# become valid JSON for --argjson.
-HELM_RENDER_WARNINGS='[]'
+# become one valid JSON array in a temporary file.
 if [ -s helm-render-warnings.json ]; then
-  HELM_RENDER_WARNINGS=$(jq -s -c '[.[] | if type == "array" then .[] else . end]' helm-render-warnings.json 2>/dev/null || true)
-  [ -n "$HELM_RENDER_WARNINGS" ] || HELM_RENDER_WARNINGS='[]'
+  if jq -s -c '[.[] | if type == "array" then .[] else . end]' helm-render-warnings.json > "$HELM_RENDER_WARNINGS_FILE.tmp" 2>/dev/null; then
+    mv "$HELM_RENDER_WARNINGS_FILE.tmp" "$HELM_RENDER_WARNINGS_FILE"
+  else
+    rm -f "$HELM_RENDER_WARNINGS_FILE.tmp"
+  fi
 fi
-HELM_DISCOVERY='[]'
 if [ -s helm-discovery.jsonl ]; then
-  HELM_DISCOVERY=$(jq -s -c 'map(select(type == "object"))' helm-discovery.jsonl 2>/dev/null || true)
-  [ -n "$HELM_DISCOVERY" ] || HELM_DISCOVERY='[]'
+  if jq -s -c 'map(select(type == "object"))' helm-discovery.jsonl > "$HELM_DISCOVERY_FILE.tmp" 2>/dev/null; then
+    mv "$HELM_DISCOVERY_FILE.tmp" "$HELM_DISCOVERY_FILE"
+  else
+    rm -f "$HELM_DISCOVERY_FILE.tmp"
+  fi
 fi
-HELM_CHART_GRAPH='{}'
 if [ -s .cats-helm-graph.json ]; then
-  HELM_CHART_GRAPH=$(jq -c 'select(type == "object")' .cats-helm-graph.json 2>/dev/null || true)
-  [ -n "$HELM_CHART_GRAPH" ] || HELM_CHART_GRAPH='{}'
+  if jq -s -c 'map(select(type == "object"))[0] // {}' .cats-helm-graph.json > "$HELM_CHART_GRAPH_FILE.tmp" 2>/dev/null; then
+    mv "$HELM_CHART_GRAPH_FILE.tmp" "$HELM_CHART_GRAPH_FILE"
+  else
+    rm -f "$HELM_CHART_GRAPH_FILE.tmp"
+  fi
 fi
-SERVICE_OVERVIEW=$(jq --argjson helm_warnings "$HELM_RENDER_WARNINGS" --argjson helm_discovery "$HELM_DISCOVERY" --argjson helm_chart_graph "$HELM_CHART_GRAPH" \
-  '(.rendered_resources // []) as $rendered_resources
+# The slurpfile values are one JSON document each, so unwrap the normalized
+# array/object before applying the existing overview transformation.
+SERVICE_OVERVIEW=$(jq --slurpfile helm_warnings_input "$HELM_RENDER_WARNINGS_FILE" \
+  --slurpfile helm_discovery_input "$HELM_DISCOVERY_FILE" \
+  --slurpfile helm_chart_graph_input "$HELM_CHART_GRAPH_FILE" \
+  '($helm_warnings_input[0] // []) as $helm_warnings
+   | ($helm_discovery_input[0] // []) as $helm_discovery
+   | ($helm_chart_graph_input[0] // {}) as $helm_chart_graph
+   | (.rendered_resources // []) as $rendered_resources
    | . + {
       warnings: (((.warnings // []) + $helm_warnings) | unique_by(tojson)),
       helm_components: (($helm_discovery // []) | reverse | unique_by([.chart, .path, .declared_by]) | reverse),
@@ -172,8 +196,7 @@ SERVICE_OVERVIEW=$(jq --argjson helm_warnings "$HELM_RENDER_WARNINGS" --argjson 
 
 # Keep the potentially large overview JSON out of jq's command-line arguments.
 # Architecture evidence can make this payload exceed the OS argument limit.
-SERVICE_OVERVIEW_FILE=$(mktemp)
-trap 'rm -f "$SERVICE_OVERVIEW_FILE"' EXIT
+SERVICE_OVERVIEW_FILE="$REPORT_TMP_DIR/service-overview.json"
 printf '%s\n' "$SERVICE_OVERVIEW" > "$SERVICE_OVERVIEW_FILE"
 
 jq -n \

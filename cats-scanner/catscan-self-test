@@ -8,6 +8,8 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 catscan-version
 catscan-validate-offline-release
 command -v dockle >/dev/null
+command -v kind >/dev/null
+command -v kubectl >/dev/null
 echo "Dockle binary present: $(dockle --version 2>/dev/null | head -n 1)"
 helm lint "$SMOKE_CHART" >/dev/null
 helm template catscan-smoke "$SMOKE_CHART" \

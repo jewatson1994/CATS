@@ -2,6 +2,10 @@ from io import BytesIO
 import os
 import re
 import json
+import urllib.parse
+import urllib.error
+import ssl
+import tarfile
 from zipfile import ZipFile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,6 +15,7 @@ os.environ["PIPELINE_API_TOKEN"] = "test-token"
 os.environ["CATS_BOOTSTRAP_USERNAME"] = "admin"
 os.environ["CATS_BOOTSTRAP_PASSWORD"] = "test-password-long"
 os.environ["SESSION_COOKIE_SECURE"] = "false"
+os.environ["CATS_DEPLOYMENT_VALIDATION_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
@@ -19,7 +24,7 @@ from sqlalchemy import event, select
 from app.auth import AuthContext, hash_password, seed_auth, token_hash
 from app.database import Base, SessionLocal, engine
 from app.main import app, configuration_for_service
-from app.models import AuditEvent, ExceptionRecord, Execution, Finding, Group, PoamEntry, PolicyExceptionRecord, PolicyFinding, PortalSetting, RemediationExecution, Role, Service, ServiceImage, User, UserRoleAssignment, UserSession, WorkflowRequest
+from app.models import AuditEvent, DeploymentValidationRun, ExceptionRecord, Execution, Finding, Group, PoamEntry, PolicyExceptionRecord, PolicyFinding, PortalSetting, RemediationExecution, Role, Service, ServiceArchiveEvent, ServiceArtifact, ServiceArtifactRevision, ServiceImage, User, UserRoleAssignment, UserSession, WorkflowRequest
 
 pipeline_headers = {"Authorization": "Bearer test-token"}
 
@@ -57,6 +62,13 @@ def payload(execution_id, scanned_at, cves, service_id="payments-service", compl
 def ingest(client, execution="run-1", cves=None, service_id="payments-service", complete=True, when=None, skipped_images=None):
     when = when or datetime.now(timezone.utc)
     return client.post("/api/v1/pipeline-results", json=payload(execution, when, cves or [], service_id, complete, skipped_images), headers=pipeline_headers)
+
+
+def helm_payload(execution="helm-validation", service_id="payments-service"):
+    body = payload(execution, datetime.now(timezone.utc), [], service_id)
+    body.update({"artifact_type": "helm", "helm_source_files": {"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.0.0\n"}})
+    body["service_overview"] = {"rendered_resources": [{"apiVersion": "v1", "kind": "Service", "metadata": {"name": "demo"}}]}
+    return body
 
 
 def add_user(username, role_name, service_id=None):
@@ -248,6 +260,116 @@ def test_public_results_view_handles_recursive_partial_result(monkeypatch, tmp_p
     archive = TestClient(app).get(f"/api/public/jobs/{job_id}/results-export")
     assert archive.status_code == 200
     assert archive.headers["content-type"] == "application/gzip"
+
+
+def test_public_ingest_retains_large_helm_source_set_and_is_idempotent(monkeypatch, tmp_path):
+    from app import main as portal_main
+
+    client = new_client()
+    monkeypatch.setattr(AuthContext, "accessible_service_ids", lambda self, permission: {1})
+    monkeypatch.setattr(AuthContext, "has", lambda self, permission, service_id=None: True)
+    assert ingest(client, execution="large-source-baseline").status_code == 201
+    job_id = "large-source-ingest"
+    output = tmp_path / job_id / "output"
+    charts = tmp_path / job_id / "input" / "charts"
+    output.mkdir(parents=True); charts.mkdir(parents=True)
+    body = payload("replaced-by-public-route", datetime.now(timezone.utc), ["CVE-2026-1111"] * 20)
+    body["policy_findings"] = [{"finding": f"KSV-{index}", "target": f"Deployment/item-{index}"} for index in range(25)]
+    body["service_overview"] = {"rendered_resources": [{"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "large"}}]}
+    (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
+    for index in range(734):
+        directory = charts / f"chart-{index:04d}"
+        directory.mkdir()
+        (directory / "values.yaml").write_text(f"index: {index}\n", encoding="utf-8")
+    monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+
+    first = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service")
+    assert first.status_code == 200
+    assert first.json()["accepted"] is True and first.json()["duplicate"] is False
+    assert set(first.json()["ingest_timings_ms"]) >= {"read_result", "validate_payload", "database_ingest", "total"}
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}"))
+        assert len(execution.raw_payload["helm_source_files"]) == 734
+        assert len(execution.raw_payload["findings"]) == 20
+        assert len(execution.raw_payload["policy_findings"]) == 25
+
+    second = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service")
+    assert second.status_code == 200 and second.json()["duplicate"] is True
+    with SessionLocal() as db:
+        assert len(db.scalars(select(Execution).where(Execution.execution_key == f"public:{job_id}")).all()) == 1
+
+
+def test_duplicate_execution_ignores_mutable_service_presentation_but_not_evidence():
+    client = new_client()
+    body = payload("stable-evidence-id", datetime.now(timezone.utc), ["CVE-2026-1010"])
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    presentation_change = json.loads(json.dumps(body))
+    presentation_change["service"].update({"name": "Renamed Service", "owner": "New Owner", "groups": ["Updated"]})
+    duplicate = client.post("/api/v1/pipeline-results", json=presentation_change, headers=pipeline_headers)
+    assert duplicate.status_code == 201 and duplicate.json()["duplicate"] is True
+    changed_evidence = json.loads(json.dumps(presentation_change))
+    changed_evidence["findings"][0]["fixed_version"] = "10.0"
+    conflict = client.post("/api/v1/pipeline-results", json=changed_evidence, headers=pipeline_headers)
+    assert conflict.status_code == 409
+
+
+def test_public_ingest_validation_error_is_safe_structured_and_atomic(monkeypatch, tmp_path):
+    from app import main as portal_main
+
+    client = new_client()
+    monkeypatch.setattr(AuthContext, "accessible_service_ids", lambda self, permission: {1})
+    monkeypatch.setattr(AuthContext, "has", lambda self, permission, service_id=None: True)
+    assert ingest(client, execution="atomic-baseline").status_code == 201
+    job_id = "invalid-public-ingest"
+    output = tmp_path / job_id / "output"; output.mkdir(parents=True)
+    body = payload("ignored", datetime.now(timezone.utc), [])
+    body["policy_findings"] = [{"finding": ""}]
+    (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
+    monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+    before_name = "Payments Service"
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        service.name = before_name; db.commit()
+
+    response = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service")
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert detail["code"] == "PUBLIC_INGEST_VALIDATION_ERROR"
+    assert detail["stage"] == "validate_payload" and detail["record"].startswith("policy_findings.0.finding")
+    assert "input" not in json.dumps(detail).lower()
+    with SessionLocal() as db:
+        assert db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}")) is None
+        assert db.scalar(select(Service).where(Service.service_key == "payments-service")).name == before_name
+
+
+def test_public_ingest_database_failure_rolls_back_all_partial_state(monkeypatch, tmp_path):
+    from app import main as portal_main
+
+    client = new_client()
+    monkeypatch.setattr(AuthContext, "accessible_service_ids", lambda self, permission: {1})
+    monkeypatch.setattr(AuthContext, "has", lambda self, permission, service_id=None: True)
+    assert ingest(client, execution="rollback-baseline").status_code == 201
+    job_id = "database-failure-ingest"
+    output = tmp_path / job_id / "output"; output.mkdir(parents=True)
+    body = payload("ignored", datetime.now(timezone.utc), ["CVE-2026-9898"])
+    body["service"]["name"] = "Should Roll Back"
+    body["policy_findings"] = [{"finding": "KSV-rollback"}]
+    (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
+    monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+    monkeypatch.setattr(portal_main, "sync_policy_findings", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced transaction failure")))
+
+    failing_client = TestClient(app, raise_server_exceptions=False)
+    failing_client.cookies.update(client.cookies)
+    response = failing_client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service")
+    assert response.status_code == 500
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.name == "Payments Service"
+        assert db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}")) is None
+        assert db.scalar(select(Finding).where(Finding.service_id == service.id, Finding.cve == "CVE-2026-9898")) is None
 
 
 def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
@@ -461,6 +583,12 @@ def test_account_last_login_delete_protection_and_audit_snapshot():
         user = db.scalar(select(User).where(User.username == "remove-me"))
         user_id = user.id
         assert user.last_login_at is None
+        service = Service(service_key="deleted-requester-service", name="Deleted requester service")
+        db.add(service); db.flush()
+        execution = Execution(execution_key="deleted-requester-execution", service_id=service.id, scanned_at=datetime.now(timezone.utc), complete=True, raw_payload={})
+        db.add(execution); db.flush()
+        validation_run = DeploymentValidationRun(run_key="DV-DELETED-REQUESTER", service_id=service.id, execution_id=execution.id, requested_by_id=user.id)
+        db.add(validation_run); db.commit(); validation_run_id = validation_run.id
     failed_login = TestClient(app).post("/login", data={"username": "remove-me", "password": "wrong-password"})
     assert failed_login.status_code == 401
     with SessionLocal() as db:
@@ -471,6 +599,7 @@ def test_account_last_login_delete_protection_and_audit_snapshot():
     assert client.post("/admin/users/{}/delete".format(user_id), data={"csrf_token": csrf(client)}, follow_redirects=False).status_code == 303
     with SessionLocal() as db:
         assert db.get(User, user_id) is None
+        assert db.get(DeploymentValidationRun, validation_run_id).requested_by_id is None
         deleted = db.scalar(select(AuditEvent).where(AuditEvent.action == "user.deleted", AuditEvent.detail["username"].as_string() == "remove-me"))
         assert deleted is not None
     with SessionLocal() as db:
@@ -725,6 +854,33 @@ def test_service_findings_are_paginated_and_gzip_compressed():
     assert "Page 2 of 2" in second.text
 
 
+def test_service_finding_filters_combine_and_reset_pagination():
+    client = new_client()
+    ingest(client)
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        db.add_all([
+            Finding(service_id=service.id, cve="CVE-FILTER-CRITICAL", severity="Critical", first_seen=now, episode_started=now, last_seen=now, active=True),
+            Finding(service_id=service.id, cve="CVE-FILTER-HIGH", severity="High", first_seen=now, episode_started=now, last_seen=now, active=True),
+            Finding(service_id=service.id, cve="CVE-FILTER-LOW", severity="Low", first_seen=now, episode_started=now, last_seen=now, active=True),
+            *[Finding(service_id=service.id, cve=f"CVE-BULK-CRIT-{number:03d}", severity="Critical", first_seen=now, episode_started=now, last_seen=now, active=True) for number in range(55)],
+        ])
+        db.commit()
+    response = client.get("/services/payments-service?page=4&page_size=50&severity=Critical&severity=High&q=FILTER")
+    assert response.status_code == 200
+    assert "CVE-FILTER-CRITICAL" in response.text and "CVE-FILTER-HIGH" in response.text
+    assert "CVE-FILTER-LOW" not in response.text
+    assert "Showing 1&ndash;2 of 2" in response.text
+    assert "Filters active" in response.text
+    assert response.text.count('aria-label="Finding pages"') == 0  # one page keeps the compact layout
+    response = client.get("/services/payments-service?page_size=50&severity=Critical")
+    assert response.status_code == 200
+    assert response.text.count('aria-label="Finding pages"') == 2
+    assert 'class="pagination pagination-top"' in response.text and 'class="pagination pagination-bottom"' in response.text
+    assert 'href="/services/payments-service?overview=false&amp;finding_state=active&amp;finding_type=all&amp;page_size=50&amp;severity=Critical&amp;page=2"' in response.text
+
+
 def test_risk_overlay_filters_active_findings_before_age_drives_noncompliance():
     client = new_client()
     ingest(client, cves=["CVE-KEV-MATCH", "CVE-EPSS-MATCH", "CVE-NO-MATCH"])
@@ -795,6 +951,263 @@ def test_administrator_can_edit_service_metadata():
     assert "Payments Platform" in page and "Version 3.0" in page and "Payments service metadata" in page
 
 
+def test_edit_service_preserves_service_tab_query_rename_and_confirmation():
+    client = new_client(); ingest(client)
+    destinations = [
+        "/services/payments-service?overview=true",
+        "/services/payments-service?architecture=true",
+        "/services/payments-service?artifacts=true",
+        "/services/payments-service?validation=true&validation_run=run-7",
+        "/services/payments-service?findings=true&findings_view=raw&q=openssl&severity=HIGH&page=3&page_size=25",
+        "/services/payments-service?remediations=true&tab=pipeline",
+        "/services/payments-service?activity=true",
+    ]
+    for index, destination in enumerate(destinations):
+        response = client.post("/admin/services/payments-service", data={
+            "csrf_token": csrf(client),
+            "name": f"Payments Platform {index}",
+            "return_to": destination,
+        }, follow_redirects=False)
+        assert response.status_code == 303
+        location = response.headers["location"]
+        parsed = urllib.parse.urlsplit(location)
+        assert parsed.path == "/services/payments-service"
+        expected_query = urllib.parse.parse_qsl(urllib.parse.urlsplit(destination).query, keep_blank_values=True)
+        assert urllib.parse.parse_qsl(parsed.query, keep_blank_values=True) == expected_query + [("saved", "1")]
+
+    # The display-name rename does not alter the stable service route, and the
+    # shared service shell renders confirmation on the preserved destination.
+    page = client.get(response.headers["location"])
+    assert page.status_code == 200
+    assert "Payments Platform 6" in page.text
+    assert "Service information saved successfully." in page.text
+
+
+def test_findings_filter_controls_and_view_selector_keep_expected_contract():
+    client = new_client(); ingest(client)
+    raw = client.get(
+        "/services/payments-service?findings=true&findings_view=raw&q=CVE&severity=Critical&resource=registry&page=1&page_size=50"
+    )
+    assert raw.status_code == 200
+    assert 'class="finding-filter-field">Search findings' in raw.text
+    assert '<span>Severity</span><details class="multi-select-filter">' in raw.text
+    assert 'class="finding-filter-field">Resource' in raw.text
+    assert 'name="q" value="CVE"' in raw.text
+    assert "1 selected" in raw.text
+    assert 'name="resource" value="registry"' in raw.text
+    assert '<nav class="finding-view-selector"' in raw.text
+    assert ">Simplified</a>" in raw.text and ">Raw</a>" in raw.text
+    assert 'class="secondary-button active"' in raw.text
+
+    simplified = client.get("/services/payments-service?findings=true&findings_view=simplified&page_size=50")
+    assert simplified.status_code == 200
+    assert "Simplified Findings" in simplified.text
+    assert 'class="finding-filter-field">Search findings' in simplified.text
+
+    css = (Path(__file__).parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
+    assert "--finding-filter-height:42px" in css
+    assert ".finding-view-selector{display:inline-flex" in css
+    assert "margin:0 0 .75rem" in css
+
+
+def _helm_chart_archive(name: str, extra_name: str = "templates/deployment.yaml", extra_content: str = "apiVersion: apps/v1\nkind: Deployment\n") -> bytes:
+    output = BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as bundle:
+        for path, content in {
+            f"{name}/Chart.yaml": f"apiVersion: v2\nname: {name}\nversion: 1.0.0\n",
+            f"{name}/{extra_name}": extra_content,
+        }.items():
+            data = content.encode()
+            member = tarfile.TarInfo(path)
+            member.size = len(data)
+            bundle.addfile(member, BytesIO(data))
+    return output.getvalue()
+
+
+def test_artifacts_page_exposes_first_class_helm_and_kubernetes_workflow():
+    client = new_client(); ingest(client)
+    page = client.get("/services/payments-service?artifacts=true")
+    assert page.status_code == 200
+    assert 'data-open-artifact-dialog>+ Add Artifact</button>' in page.text
+    assert 'data-artifact-type="helm_repository">+ Add Repository</button>' in page.text
+    assert 'data-artifact-type="helm_chart">+ Add Helm Chart</button>' in page.text
+    assert 'id="add-artifact-dialog"' in page.text
+    assert 'value="helm_repository" checked>' in page.text and "Helm Repository" in page.text
+    assert 'value="helm_chart">' in page.text and "Helm Chart" in page.text
+    assert 'value="kubernetes">' in page.text and "Kubernetes Manifest" in page.text
+    assert 'value="repository"' in page.text
+    assert 'value="oci">' in page.text and "OCI Registry" in page.text
+    assert 'value="upload" checked>' in page.text and "Upload Chart" in page.text
+    assert "catalog is discovered without treating the repository as a deployable chart" in page.text
+    assert 'src="/static/artifacts.js"' in page.text and 'data-artifact-table="charts"' not in page.text
+    assert "No Kubernetes manifests added." in page.text
+
+
+def test_service_artifact_acquisition_reuses_multi_chart_repository_pipeline(monkeypatch):
+    from app import main as portal_main
+    client = new_client(); ingest(client)
+    catalog = {"repository_url": "https://charts.example.invalid/helm-charts", "index_url": "https://charts.example.invalid/helm-charts/index.yaml", "api_version": "v1", "generated": "now", "charts": [
+        {"name": "alpha", "latest": {"version": "1.0.0", "url": "https://charts.example.invalid/alpha.tgz"}, "versions": [{"version": "1.0.0", "url": "https://charts.example.invalid/alpha.tgz"}]},
+        {"name": "beta", "latest": {"version": "2.0.0", "url": "https://charts.example.invalid/beta.tgz"}, "versions": [{"version": "2.0.0", "url": "https://charts.example.invalid/beta.tgz"}]},
+    ]}
+    monkeypatch.setattr(portal_main, "_discover_helm_repository", lambda reference, certificates: catalog)
+    response = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm_repository", "source_method": "repository",
+        "source_reference": "https://charts.example.invalid/helm-charts",
+    }, follow_redirects=False)
+    assert response.status_code == 303 and "artifact_added=repository" in response.headers["location"]
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        repository = db.scalar(select(ServiceArtifact).where(ServiceArtifact.service_id == service.id, ServiceArtifact.artifact_type == "helm_repository"))
+        charts = db.scalars(select(ServiceArtifact).where(ServiceArtifact.parent_repository_id == repository.id).order_by(ServiceArtifact.chart_name)).all()
+        assert repository.source_reference == catalog["repository_url"] and repository.source_metadata["chart_count"] == 2
+        assert [(chart.chart_name, chart.chart_version) for chart in charts] == [("alpha", "1.0.0"), ("beta", "2.0.0")]
+        assert all(not chart.revisions for chart in charts)
+        alpha_id = charts[0].id
+    page = client.get("/services/payments-service?artifacts=true")
+    assert "Helm Repositories" in page.text and "Helm Charts" in page.text
+    assert "alpha" in page.text and "beta" in page.text and ">2</strong> charts" in page.text
+    assert "Discovered" in page.text and "Not Validated" in page.text
+    assert "https://charts.example.invalid/helm-charts" in page.text
+    monkeypatch.setattr(portal_main, "_download_public_chart", lambda reference, certificates: [(_helm_chart_archive("alpha"), "alpha-1.0.0.tgz")])
+    materialized = client.post(f"/services/payments-service/artifacts/charts/{alpha_id}/materialize", data={"csrf_token": csrf(client), "version": "1.0.0"}, follow_redirects=False)
+    assert materialized.status_code == 303
+    with SessionLocal() as db:
+        revisions = db.scalars(select(ServiceArtifactRevision).where(ServiceArtifactRevision.artifact_id == alpha_id)).all()
+        assert len(revisions) == 1 and revisions[0].source_metadata["repository_id"] == repository.id
+        assert revisions[0].source_metadata["chart_version"] == "1.0.0"
+
+
+def test_packaged_helm_and_existing_kubernetes_uploads_are_retained_and_rbac_enforced():
+    client = new_client(); ingest(client)
+    response = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
+    }, files={"files": ("application-1.0.0.tgz", _helm_chart_archive("application"), "application/gzip")}, follow_redirects=False)
+    assert response.status_code == 303
+    manifests = client.post("/services/payments-service/artifacts/upload", data={
+        "csrf_token": csrf(client), "artifact_type": "kubernetes",
+    }, files={"files": ("deployment.yaml", b"apiVersion: apps/v1\nkind: Deployment\n", "text/yaml")}, follow_redirects=False)
+    assert manifests.status_code == 303
+    with SessionLocal() as db:
+        service_id = db.scalar(select(Service.id).where(Service.service_key == "payments-service"))
+        artifacts = db.scalars(select(ServiceArtifact).where(ServiceArtifact.service_id == service_id)).all()
+        assert {artifact.artifact_type for artifact in artifacts} == {"helm_chart", "kubernetes"}
+    add_user("artifact-viewer", "Assessor", service_id=service_id)
+    viewer = new_client("artifact-viewer")
+    denied = viewer.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(viewer), "artifact_type": "helm", "source_method": "upload",
+    }, files={"files": ("blocked.tgz", _helm_chart_archive("blocked"), "application/gzip")})
+    assert denied.status_code == 403
+
+
+def test_helm_archive_traversal_and_links_are_rejected():
+    client = new_client(); ingest(client)
+    output = BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as bundle:
+        member = tarfile.TarInfo("../../outside/Chart.yaml")
+        data = b"name: unsafe\nversion: 1\n"
+        member.size = len(data)
+        bundle.addfile(member, BytesIO(data))
+    response = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
+    }, files={"files": ("unsafe.tgz", output.getvalue(), "application/gzip")})
+    assert response.status_code == 400
+    assert "unsafe path" in response.json()["detail"]
+
+    linked = BytesIO()
+    with tarfile.open(fileobj=linked, mode="w:gz") as bundle:
+        chart = tarfile.TarInfo("unsafe/Chart.yaml")
+        chart_data = b"name: unsafe\nversion: 1\n"
+        chart.size = len(chart_data)
+        bundle.addfile(chart, BytesIO(chart_data))
+        symlink = tarfile.TarInfo("unsafe/templates/escape.yaml")
+        symlink.type = tarfile.SYMTYPE
+        symlink.linkname = "../../outside.yaml"
+        bundle.addfile(symlink)
+    response = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
+    }, files={"files": ("linked.tgz", linked.getvalue(), "application/gzip")})
+    assert response.status_code == 400
+    assert "unsafe link" in response.json()["detail"]
+
+
+def test_helm_repository_and_tls_failures_are_specific_and_secure(monkeypatch):
+    from app import main as portal_main
+    client = new_client(); ingest(client)
+    real_fetch = portal_main._fetch_public_url
+    monkeypatch.setattr(portal_main, "_fetch_public_url", lambda url, certificates=None: (b"not a helm index", url))
+    invalid = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "repository",
+        "source_reference": "https://charts.example.invalid",
+    })
+    assert invalid.status_code == 400
+    assert "valid index.yaml" in invalid.json()["detail"]
+
+    monkeypatch.setattr(portal_main, "_fetch_public_url", real_fetch)
+    def tls_failure(*_args, **_kwargs):
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("untrusted issuer"))
+    monkeypatch.setattr(portal_main.urllib.request, "urlopen", tls_failure)
+    with __import__("pytest").raises(__import__("fastapi").HTTPException) as raised:
+        portal_main._fetch_public_url("https://private.example.invalid/chart.tgz", [])
+    assert "TLS certificate verification failed" in raised.value.detail
+    source = Path(portal_main.__file__).read_text(encoding="utf-8")
+    assert "--insecure-skip-tls-verify" not in source
+
+
+def test_uploaded_helm_revision_is_directly_available_to_deployment_validation(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    submitted = []
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda run_id: submitted.append(run_id))
+    client = new_client()
+    with SessionLocal() as db:
+        db.add(Service(service_key="artifact-only", name="Artifact Only"))
+        db.commit()
+    added = client.post("/services/artifact-only/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
+    }, files={"files": ("application.tgz", _helm_chart_archive("application"), "application/gzip")}, follow_redirects=False)
+    assert added.status_code == 303
+    with SessionLocal() as db:
+        artifact = db.scalar(select(ServiceArtifact).join(Service).where(Service.service_key == "artifact-only"))
+        revision = db.scalar(select(ServiceArtifactRevision).where(ServiceArtifactRevision.artifact_id == artifact.id))
+        artifact_id, revision_id = artifact.id, revision.id
+    validation = client.post("/services/artifact-only/deployment-validations", data={
+        "csrf_token": csrf(client), "artifact_id": str(artifact_id),
+    }, follow_redirects=False)
+    assert validation.status_code == 303
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun).where(DeploymentValidationRun.service_id == select(Service.id).where(Service.service_key == "artifact-only").scalar_subquery()))
+        assert run.artifact_revision_id == revision_id and run.execution_id is None
+        assert run.status == "QUEUED" and submitted == [run.id]
+
+
+def test_artifact_validation_badge_is_exact_revision_safe(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    client = new_client()
+    with SessionLocal() as db:
+        service = Service(service_key="revision-safe", name="Revision Safe")
+        db.add(service); db.flush()
+        artifact = ServiceArtifact(service_id=service.id, artifact_type="helm_chart", artifact_name="application",
+                                   chart_name="application", chart_version="1.2.0", source_type="upload")
+        db.add(artifact); db.flush()
+        original = ServiceArtifactRevision(artifact_id=artifact.id, revision_number=1, revision_label="ORIGINAL",
+            files={"application/Chart.yaml": "name: application\nversion: 1.2.0\n"}, checksum="a" * 64)
+        db.add(original); db.flush()
+        db.add(DeploymentValidationRun(run_key="validated-original", service_id=service.id,
+            artifact_revision_id=original.id, artifact_type="WORKING", artifact_reference=f"artifact:{artifact.id}:r1",
+            status="VERIFIED", phase="COMPLETE", cleanup_status="COMPLETE"))
+        db.commit(); artifact_id = artifact.id
+    page = client.get("/services/revision-safe?artifacts=true")
+    assert "✓</span> Validated" in page.text and "Revalidate" in page.text
+    with SessionLocal() as db:
+        db.add(ServiceArtifactRevision(artifact_id=artifact_id, revision_number=2, revision_label="WORKING",
+            files={"application/Chart.yaml": "name: application\nversion: 1.2.0\n", "application/values.yaml": "replicas: 2\n"}, checksum="b" * 64))
+        db.commit()
+    page = client.get("/services/revision-safe?artifacts=true")
+    assert "Not Validated" in page.text and "✓</span> Validated" not in page.text
+    assert "WORKING · Revision 2" in page.text and "validated-original" not in page.text
+
+
 def test_service_snapshot_separates_staged_services_from_active_and_archived():
     client = new_client()
     with SessionLocal() as db:
@@ -855,6 +1268,83 @@ def test_staged_service_promotes_on_any_ingested_finding_or_evidence():
         ))
         assert promotion is not None
         assert promotion.detail["reason"] == "ingested_evidence"
+
+
+def test_generated_staged_name_is_restored_idempotently_without_changing_identity_or_evidence():
+    client = new_client()
+    with SessionLocal() as db:
+        group = Group(name="Lifecycle Identity")
+        db.add(group); db.commit()
+        group_id = group.id
+    staged = client.post("/admin/services/stage", data={
+        "csrf_token": csrf(client), "service_id": "torture-test", "group_id": str(group_id), "next_path": "/",
+    }, follow_redirects=False)
+    assert staged.status_code == 303
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "torture-test"))
+        service_id = service.id
+        assert service.name == "Staged — torture-test"
+        assert service.staging_name_generated is True and service.staging_original_name == "torture-test"
+
+    body = helm_payload("torture-lifecycle-run", "torture-test")
+    # Reproduce the reported client behavior: the submitted display name still
+    # contains CATS' generated staging label.
+    body["service"]["name"] = "Staged — torture-test"
+    body["findings"] = [{"cve": "CVE-2026-4242", "severity": "High", "image": "registry/torture:1"}]
+    response = client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
+    assert response.status_code == 201
+
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "torture-test"))
+        execution = db.scalar(select(Execution).where(Execution.service_id == service.id))
+        finding = db.scalar(select(Finding).where(Finding.service_id == service.id))
+        assert service.id == service_id and service.lifecycle_status == "active"
+        assert service.name == "torture-test"
+        assert service.staging_name_generated is False and service.staging_original_name is None
+        assert execution.service_id == service_id and finding.service_id == service_id
+        db.add(DeploymentValidationRun(
+            run_key="DV-LIFECYCLE-VERIFIED", service_id=service.id, execution_id=execution.id,
+            artifact_type="ORIGINAL", artifact_reference=execution.execution_key,
+            status="VERIFIED", phase="COMPLETE", engine="kind", completed_at=datetime.now(timezone.utc),
+            diagnostics={"classification_summary": {"expected_resources": 1, "observed_expected": 1,
+                                                       "expected_only": 0, "failed": 0}},
+        ))
+        db.commit()
+
+    evidence = client.get("/api/v1/services/torture-test/architecture-evidence")
+    assert evidence.status_code == 200 and evidence.json()["architecture"]["state"] == "VERIFIED"
+    for url in (
+        "/services/torture-test?overview=true", "/services/torture-test?architecture=true",
+        "/services/torture-test?artifacts=true", "/services/torture-test?validation=true",
+        "/services/torture-test?remediations=true",
+    ):
+        page = client.get(url)
+        assert page.status_code == 200 and "Staged — torture-test" not in page.text
+    activity = client.get("/services/torture-test?activity=true")
+    assert activity.status_code == 200 and "torture-test" in activity.text
+    assert "Staged — torture-test" in activity.text  # immutable name-at-event audit context
+
+    # A retry is idempotent and cannot modify the restored name.
+    duplicate = client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
+    assert duplicate.status_code == 201 and duplicate.json()["duplicate"] is True
+    with SessionLocal() as db:
+        service = db.get(Service, service_id)
+        assert service.name == "torture-test" and service.lifecycle_status == "active"
+
+
+def test_user_owned_staged_prefix_is_never_stripped_without_generation_metadata():
+    client = new_client()
+    with SessionLocal() as db:
+        service = Service(service_key="production-app", name="Staged — Production Application",
+                          lifecycle_status="staged", staging_name_generated=False)
+        db.add(service); db.commit(); service_id = service.id
+    body = payload("production-app-run", datetime.now(timezone.utc), [], service_id="production-app")
+    body["service"]["name"] = "Staged — Production Application"
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.get(Service, service_id)
+        assert service.lifecycle_status == "active"
+        assert service.name == "Staged — Production Application"
 
 
 def test_startup_reconciles_preexisting_staged_evidence():
@@ -1085,7 +1575,8 @@ def test_excel_export_remains_valid():
     assert "Helm rendering" in diagram.text
     assert "Ports / protocols" in diagram.text
     assert "Latest Evidence:" in service_page and "None received" not in service_page
-    assert "metric-card selected" in service_page
+    # Findings now prioritizes the table; service-level metric cards live on Overview.
+    assert "metric-card selected" not in service_page
     response = client.get("/services/payments-service/export.xlsx")
     assert response.status_code == 200
     assert load_workbook(BytesIO(response.content))["Findings"]["A2"].value == "CVE-2026-0001"
@@ -1117,6 +1608,71 @@ def test_architecture_reflow_endpoint_and_canonical_legacy_export():
     diagram = client.get("/services/payments-service/helm-diagram.svg")
     assert "CATS Architecture" in diagram.text
     assert "application-7" in diagram.text
+
+
+def test_architecture_and_overview_use_exact_persisted_validation_evidence():
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("architecture-verified"), headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun))
+        run.status = "VERIFIED"; run.phase = "COMPLETE"; run.cleanup_status = "COMPLETE"
+        run.completed_at = datetime.now(timezone.utc)
+        run.comparison = {"matched": ["Service/validation/demo"], "declared_only": [], "defaulted": [], "observed_only": [],
+                          "expected_evidence": [{"apiVersion": "v1", "kind": "Service", "namespace": "validation", "name": "demo", "matched": True}], "observed_evidence": []}
+        run.diagnostics = {"classification_summary": {"expected_resources": 1, "observed_expected": 1, "expected_only": 0, "runtime_generated": 0, "observed_only": 0, "failed": 0}}
+        db.commit()
+    architecture = client.get("/services/payments-service?architecture=true")
+    overview = client.get("/services/payments-service?overview=true")
+    evidence = client.get("/api/v1/services/payments-service/architecture-evidence").json()
+    assert 'data-architecture-badge>✓ Verified<' in architecture.text
+    assert 'data-architecture-summary-badge>Verified<' in overview.text
+    assert evidence["architecture"]["state"] == "VERIFIED"
+    assert evidence["graph"]["summary"]["runtime_verified"] == 1
+
+
+def test_new_working_revision_is_declared_until_that_exact_revision_is_verified():
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("architecture-revision"), headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        execution = db.scalar(select(Execution).where(Execution.service_id == service.id))
+        original = db.scalar(select(DeploymentValidationRun).where(DeploymentValidationRun.execution_id == execution.id))
+        original.status = "VERIFIED"; original.phase = "COMPLETE"; original.completed_at = datetime.now(timezone.utc)
+        original.diagnostics = {"classification_summary": {"expected_resources": 1, "observed_expected": 1,
+                                                               "expected_only": 0, "failed": 0}}
+        db.commit(); execution_id = execution.id; service_id = service.id
+    assert client.get("/api/v1/services/payments-service/architecture-evidence").json()["architecture"]["state"] == "VERIFIED"
+
+    assert client.post("/services/payments-service/artifacts/from-original", data={
+        "csrf_token": csrf(client), "execution_id": str(execution_id),
+    }, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        artifact = db.scalar(select(ServiceArtifact).where(ServiceArtifact.service_id == service_id))
+        artifact_id = artifact.id
+    assert client.post(f"/services/payments-service/artifacts/{artifact_id}/files", data={
+        "csrf_token": csrf(client), "path": "values.yaml", "content": "replicaCount: 2\n",
+    }, follow_redirects=False).status_code == 303
+
+    unvalidated = client.get("/api/v1/services/payments-service/architecture-evidence").json()
+    assert unvalidated["architecture"]["state"] == "DECLARED"
+    assert unvalidated["graph"]["nodes"]  # declared/static graph remains available
+    with SessionLocal() as db:
+        revision = db.scalar(select(ServiceArtifactRevision).where(
+            ServiceArtifactRevision.artifact_id == artifact_id,
+            ServiceArtifactRevision.revision_label == "WORKING",
+        ))
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        db.add(DeploymentValidationRun(
+            run_key="DV-EXACT-WORKING", service_id=service.id, execution_id=execution_id,
+            artifact_revision_id=revision.id, artifact_type="WORKING",
+            artifact_reference=f"artifact:{artifact_id}:r{revision.revision_number}", engine="kind",
+            status="VERIFIED", phase="COMPLETE", completed_at=datetime.now(timezone.utc),
+            diagnostics={"classification_summary": {"expected_resources": 1, "observed_expected": 1,
+                                                       "expected_only": 0, "failed": 0}},
+        ))
+        db.commit()
+    verified = client.get("/api/v1/services/payments-service/architecture-evidence").json()
+    assert verified["architecture"]["state"] == "VERIFIED"
 
 
 def test_service_export_contains_authoritative_overview_sheets_and_provenance():
@@ -1314,3 +1870,258 @@ def test_missing_evidence_source_file_is_preserved_in_service_overview():
     page = client.get("/services/provenance-service?overview=true")
     assert page.status_code == 200
     assert "charts/app/values.yaml" in page.text
+
+
+def test_helm_ingest_queues_deployment_validation_without_changing_static_result(monkeypatch):
+    from app import main as portal_main
+    submitted = []
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda run_id: submitted.append(run_id))
+    response = new_client().post("/api/v1/pipeline-results", json=helm_payload(), headers=pipeline_headers)
+    assert response.status_code == 201 and response.json()["accepted"] is True
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun))
+        assert run.status == "QUEUED" and submitted == [run.id]
+
+
+def test_validation_persistence_failure_cannot_roll_back_static_ingest(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_new_validation_run", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("optional store unavailable")))
+    response = new_client().post("/api/v1/pipeline-results", json=helm_payload("static-survives-validation-store"), headers=pipeline_headers)
+    assert response.status_code == 201
+    assert response.json()["deployment_validation_run_id"] is None
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution).where(Execution.execution_key == "static-survives-validation-store"))
+        assert execution is not None and execution.complete is True
+        assert db.scalar(select(DeploymentValidationRun)) is None
+
+
+def test_helm_source_limits_reject_before_persistence(monkeypatch):
+    monkeypatch.setenv("CATS_INGEST_MAX_SOURCE_BYTES", "32")
+    body = helm_payload("oversized-source")
+    body["helm_source_files"] = {"Chart.yaml": "x" * 64}
+    response = new_client().post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
+    assert response.status_code == 422
+    with SessionLocal() as db:
+        assert db.scalar(select(Execution)) is None
+
+
+def test_pipeline_content_length_limit_rejects_early():
+    from app import main as portal_main
+    response = new_client().post("/api/v1/pipeline-results", content=b"{}", headers={**pipeline_headers, "content-length": str(portal_main.PIPELINE_MAX_REQUEST_BYTES + 1)})
+    assert response.status_code == 413
+
+
+def test_pipeline_size_limit_counts_actual_body_when_header_is_misleading(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setattr(portal_main, "PIPELINE_MAX_REQUEST_BYTES", 64)
+    body = json.dumps({"padding": "x" * 200}).encode()
+    response = new_client().post("/api/v1/pipeline-results", content=body, headers={**pipeline_headers, "content-type": "application/json", "content-length": "1"})
+    assert response.status_code == 413
+
+
+def test_disabled_deployment_validation_is_not_attempted_and_static_scan_remains_visible(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("disabled-validation"), headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        assert db.scalar(select(DeploymentValidationRun)).status == "NOT_ATTEMPTED"
+    overview = client.get("/services/payments-service?overview=true")
+    details = client.get("/services/payments-service?validation=true")
+    assert overview.status_code == details.status_code == 200
+    assert "Deployment Validation" in overview.text and "Not Attempted" in overview.text
+    assert "Static Scan:" in overview.text
+    assert "authoritative static CATS scan" in details.text
+    assert "Validation history" in details.text and "Not Attempted" in details.text
+
+
+def test_helm_ingest_without_retained_sources_records_not_attempted(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    body = helm_payload("missing-validation-sources")
+    body["helm_source_files"] = {}
+    response = new_client().post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
+    assert response.status_code == 201
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun))
+        assert run.status == "NOT_ATTEMPTED"
+        assert "did not retain Helm source files" in run.reason
+
+
+def test_validation_ui_preserves_helm_provenance_after_a_later_non_helm_scan(monkeypatch):
+    from app import main as portal_main
+    submitted = []
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda run_id: submitted.append(run_id))
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("helm-provenance"), headers=pipeline_headers).status_code == 201
+    later = payload("image-evidence-later", datetime.now(timezone.utc), [], service_id="payments-service")
+    later["artifact_type"] = "image"
+    assert client.post("/api/v1/pipeline-results", json=later, headers=pipeline_headers).status_code == 201
+    response = client.post("/services/payments-service/deployment-validations", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        runs = db.scalars(select(DeploymentValidationRun).order_by(DeploymentValidationRun.id)).all()
+        assert len(runs) == 2
+        assert all(run.execution.execution_key == "helm-provenance" for run in runs)
+    overview = client.get("/services/payments-service?overview=true")
+    assert "Helm evidence:" in overview.text and "helm-provenance" in overview.text
+
+
+def test_validation_ui_reports_incomplete_linked_static_scan_and_hides_disabled_rerun(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    body = helm_payload("incomplete-static")
+    body["complete"] = False
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    details = client.get("/services/payments-service?validation=true")
+    assert "Static Scan: Incomplete" in details.text
+    assert "Deployment Validation is disabled by configuration." in details.text
+    assert "Re-run Validation" not in details.text
+
+
+def test_validation_history_links_open_the_selected_immutable_run(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("history-selection"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        first = db.scalar(select(DeploymentValidationRun))
+        first.reason = "Older run explanation"
+        second = DeploymentValidationRun(run_key="DV-NEWER-HISTORY", service_id=first.service_id, execution_id=first.execution_id,
+                                         status="COULD_NOT_VALIDATE", phase="COMPLETE", reason="Newer run explanation", artifact_reference="history-selection")
+        db.add(second); db.commit(); first_key = first.run_key
+    latest = client.get("/services/payments-service?validation=true")
+    selected = client.get(f"/services/payments-service?validation=true&validation_run={first_key}")
+    assert "Newer run explanation" in latest.text
+    assert "Older run explanation" in selected.text
+    assert f"validation_run={first_key}" in selected.text
+
+
+def test_overview_collapses_worker_phase_to_in_progress(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda _run_id: None)
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("queued-overview"), headers=pipeline_headers)
+    overview = client.get("/services/payments-service?overview=true")
+    assert "In Progress" in overview.text
+    assert ">Queued<" not in overview.text
+
+
+def test_stale_never_started_validation_recovers_as_not_attempted(monkeypatch):
+    from app import main as portal_main
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("stale-queued"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun))
+        run.status = "QUEUED"; run.started_at = None; run.cluster_name = None
+        run.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+        db.commit(); run_id = run.id
+    portal_main.recover_stale_validation_runs()
+    with SessionLocal() as db:
+        recovered = db.get(DeploymentValidationRun, run_id)
+        assert recovered.status == "NOT_ATTEMPTED"
+        assert recovered.cleanup_status == "NOT_REQUIRED"
+
+
+def test_failed_terminal_cleanup_is_retried_by_stale_recovery(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("cleanup-retry"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun))
+        run.status = "COULD_NOT_VALIDATE"; run.cleanup_status = "FAILED"; run.cluster_name = "cats-validation-cleanup-retry"
+        run.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+        db.commit(); run_id = run.id
+    monkeypatch.setattr(portal_main, "cleanup_stale_clusters", lambda names, config: {"deleted": list(names), "failed": []})
+    portal_main.recover_stale_validation_runs()
+    with SessionLocal() as db:
+        recovered = db.get(DeploymentValidationRun, run_id)
+        assert recovered.status == "COULD_NOT_VALIDATE"
+        assert recovered.cleanup_status == "COMPLETE"
+
+
+def test_rerun_creates_historical_validation_row_and_schedules_it(monkeypatch):
+    from app import main as portal_main
+    submitted = []
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda run_id: submitted.append(run_id))
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("rerun-original"), headers=pipeline_headers)
+    response = client.post("/services/payments-service/deployment-validations", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert response.status_code == 303 and "validation=true&validation_run=DV-" in response.headers["location"]
+    with SessionLocal() as db:
+        runs = db.scalars(select(DeploymentValidationRun).order_by(DeploymentValidationRun.id)).all()
+        assert len(runs) == 2 and [run.id for run in runs] == submitted
+
+
+def test_deployment_validation_json_history_and_detail_apis(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("api-validation"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        stored = db.scalar(select(DeploymentValidationRun))
+        stored.status = "PARTIALLY_VERIFIED"
+        stored.reason_category = "EXPECTED_RESOURCE_NOT_OBSERVED"
+        stored.classification_reasons = [{
+            "code": "EXPECTED_RESOURCE_NOT_OBSERVED", "resource": {"kind": "CronJob", "namespace": "demo", "name": "maintenance"},
+            "expected_state": "Observed", "observed_state": "Missing", "explanation": "Expected object was not observed.",
+        }]
+        stored.capability_preflight = [{"capability": "Configuration dependencies", "required": True, "status": "AVAILABLE"}]
+        stored.diagnostics = {"classification_summary": {"expected_resources": 2, "observed_expected": 1, "expected_only": 1, "runtime_generated": 1, "observed_only": 0, "failed": 0}}
+        db.commit()
+    history = client.get("/api/v1/services/payments-service/deployment-validations")
+    assert history.status_code == 200 and len(history.json()["runs"]) == 1
+    run = history.json()["runs"][0]
+    result = client.get(f"/api/v1/services/payments-service/deployment-validations/{run['run_key']}")
+    assert result.status_code == 200 and result.json()["status"] == "PARTIALLY_VERIFIED"
+    # The detail endpoint exposes persisted reasons and grouped capability data.
+    assert result.json()["classification_reasons"][0]["code"] == "EXPECTED_RESOURCE_NOT_OBSERVED"
+    assert result.json()["classification_summary"]["expected_only"] == 1
+    assert result.json()["capability_assessment"][0]["capability"] == "Configuration dependencies"
+    assert result.json()["checks"]["helm_template"] == "NOT_ATTEMPTED"
+    assert result.json()["terminal"] is True and result.json()["cleanup_terminal"] is True
+
+
+def test_rerun_json_response_returns_authoritative_new_run(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda _run_id: None)
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("json-rerun"), headers=pipeline_headers)
+    response = client.post("/services/payments-service/deployment-validations", data={"csrf_token": csrf(client)}, headers={"Accept": "application/json"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"].startswith("DV-")
+    assert payload["run"]["run_key"] == payload["run_id"]
+    assert payload["run"]["status"] == "QUEUED"
+    assert payload["run"]["terminal"] is False
+
+
+def test_deployment_validation_requires_permission_and_csrf(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    admin = new_client()
+    admin.post("/api/v1/pipeline-results", json=helm_payload("permission-validation"), headers=pipeline_headers)
+    assert admin.post("/services/payments-service/deployment-validations", data={}, follow_redirects=False).status_code == 422
+    with SessionLocal() as db:
+        service_id = db.scalar(select(Service.id).where(Service.service_key == "payments-service"))
+    add_user("validation-viewer", "Assessor", service_id=service_id)
+    viewer = new_client("validation-viewer")
+    assert viewer.get("/api/v1/services/payments-service/deployment-validations").status_code == 200
+    assert viewer.post("/services/payments-service/deployment-validations", data={"csrf_token": csrf(viewer)}, follow_redirects=False).status_code == 403
+
+
+def test_service_deletion_removes_deployment_validation_rows(monkeypatch):
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("delete-validation"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        db.add(ServiceArchiveEvent(service_id=service.id, action="archive", reason="test", performed_by="admin"))
+        db.commit()
+    monkeypatch.setenv("ALLOW_SERVICE_DELETE", "true")
+    response = client.post("/services/payments-service/delete", data={"confirmation": "payments-service", "reason": "Remove test service", "csrf_token": csrf(client)}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        assert db.scalar(select(DeploymentValidationRun)) is None

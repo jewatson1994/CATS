@@ -21,26 +21,26 @@ docker build -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
 docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local -f cats-image/Dockerfile.all-in-one -t cats-portal:local .
 ```
 
-The current versioned release tag is `cats:1.2.1`:
+The current versioned release tag is `cats:1.3`:
 
 ```text
 docker build -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
 docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local \
-  --build-arg CATS_VERSION=1.2.1 \
-  -f cats-image/Dockerfile.all-in-one -t cats:1.2.1 .
+  --build-arg CATS_VERSION=1.3 \
+  -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
 ```
 
 Save the versioned image as a Docker archive for transfer or offline import:
 
 ```text
-docker save --output cats-1.2.1.tar cats:1.2.1
+docker save --output cats-1.3.tar cats:1.3
 ```
 
 Verify or restore it with:
 
 ```text
-docker image inspect cats:1.2.1
-docker load --input cats-1.2.1.tar
+docker image inspect cats:1.3
+docker load --input cats-1.3.tar
 ```
 
 The scanner build pulls the current Grype database from Anchore. Always rebuild

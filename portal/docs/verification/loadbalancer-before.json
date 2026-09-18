@@ -1,0 +1,2335 @@
+{
+  "engine": "kind",
+  "status": "PARTIALLY_VERIFIED",
+  "phase": "COMPLETE",
+  "reason_category": "UNSUPPORTED_LOAD_BALANCER",
+  "reason": "Helm installed successfully and Kubernetes workload evidence was collected, but generic LoadBalancer infrastructure was unavailable, so external service behavior could not be fully validated.",
+  "helm_result": {
+    "template": "PASS",
+    "install": "PASS",
+    "release_status": "DEPLOYED",
+    "rendered_resource_count": 6,
+    "template_started_at": "2026-09-16T05:33:44.706052+00:00",
+    "template_completed_at": "2026-09-16T05:33:45.046332+00:00",
+    "template_duration_ms": 340,
+    "install_started_at": "2026-09-16T05:34:17.740215+00:00",
+    "install_completed_at": "2026-09-16T05:34:18.320861+00:00",
+    "install_duration_ms": 581,
+    "helm_total_duration_ms": 921,
+    "releases": [
+      {
+        "name": "candidate-1",
+        "status": "DEPLOYED"
+      }
+    ]
+  },
+  "resource_summary": {
+    "deployments": {
+      "ready": 0,
+      "expected": 1
+    },
+    "statefulsets": {
+      "ready": 0,
+      "expected": 0
+    },
+    "daemonsets": {
+      "ready": 0,
+      "expected": 0
+    },
+    "pods": {
+      "ready": 0,
+      "expected": 1
+    },
+    "jobs": {
+      "ready": 0,
+      "expected": 0
+    },
+    "pvcs": {
+      "bound": 0,
+      "expected": 0
+    },
+    "services": 1,
+    "ingresses": 0,
+    "cronjobs": 0,
+    "configmaps": 1,
+    "secrets": 2
+  },
+  "conditions": {
+    "crashloopbackoff": 0,
+    "imagepullbackoff": 0,
+    "oomkilled": 0,
+    "pending_pods": 1,
+    "unschedulable": 0,
+    "insufficient_cpu": 0,
+    "insufficient_memory": 0,
+    "failed_jobs": 0,
+    "probe_failures": 0,
+    "unsupported_load_balancer": 1,
+    "unsupported_ingress": 0
+  },
+  "dependencies": {
+    "missing_crds": [],
+    "missing_storage_classes": [],
+    "unavailable_images": []
+  },
+  "capability_preflight": [
+    {
+      "capability": "Kubernetes",
+      "required": true,
+      "source": "validation-engine",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "kind",
+      "status": "AVAILABLE",
+      "explanation": "The validation engine provisions an isolated kind cluster.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "LoadBalancer",
+      "required": true,
+      "source": "manifest",
+      "source_resource": "Service/cats-validation-1-nginx",
+      "source_namespace": "cats-validation-lb-before-20260916",
+      "source_field": "spec.type",
+      "provider_strategy": "configured generic provider",
+      "status": "UNAVAILABLE",
+      "explanation": "No offline LoadBalancer provider/controller manifest is configured; validation continued without claiming the capability.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {
+        "observed_resource": "Service/cats-validation-1-nginx",
+        "observed": "No usable loadBalancer.ingress status"
+      }
+    },
+    {
+      "capability": "Node scheduling",
+      "required": true,
+      "source": "manifest",
+      "source_resource": "Deployment/cats-validation-1-nginx",
+      "source_namespace": "cats-validation-lb-before-20260916",
+      "source_field": "spec.template.spec.affinity",
+      "provider_strategy": "kind node labels/taints",
+      "status": "PENDING",
+      "explanation": "Scheduling constraints will be evaluated by Kubernetes.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "Ingress",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "UNAVAILABLE",
+      "explanation": "No Ingress resource was rendered.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {
+        "observed_resource": "",
+        "observed": "No usable loadBalancer.ingress status"
+      }
+    },
+    {
+      "capability": "Storage",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No PersistentVolumeClaim was rendered.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "GPU / extended resources",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No GPU or extended device resource was requested.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "Cloud/provider-specific capabilities",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No obvious cloud-provider API group was rendered.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    }
+  ],
+  "capability_bootstrap": {
+    "provisioned": [],
+    "warnings": [
+      "LoadBalancer infrastructure was not configured for this offline validation run."
+    ],
+    "duration_ms": 0,
+    "cleanup_status": "COMPLETE"
+  },
+  "observed_topology": {
+    "nodes": [
+      {
+        "id": "Deployment/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "kind": "Deployment",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11"
+        },
+        "status": {
+          "conditions": [
+            {
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "lastUpdateTime": "2026-09-16T05:34:18Z",
+              "message": "Deployment does not have minimum availability.",
+              "reason": "MinimumReplicasUnavailable",
+              "status": "False",
+              "type": "Available"
+            },
+            {
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "lastUpdateTime": "2026-09-16T05:34:18Z",
+              "message": "ReplicaSet \"candidate-1-nginx-579dd6955d\" is progressing.",
+              "reason": "ReplicaSetUpdated",
+              "status": "True",
+              "type": "Progressing"
+            }
+          ],
+          "observedGeneration": 1,
+          "replicas": 1,
+          "terminatingReplicas": 0,
+          "unavailableReplicas": 1,
+          "updatedReplicas": 1
+        }
+      },
+      {
+        "id": "ReplicaSet/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d",
+        "kind": "ReplicaSet",
+        "name": "candidate-1-nginx-579dd6955d",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11",
+          "pod-template-hash": "579dd6955d"
+        },
+        "status": {
+          "fullyLabeledReplicas": 1,
+          "observedGeneration": 1,
+          "replicas": 1,
+          "terminatingReplicas": 0
+        }
+      },
+      {
+        "id": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "kind": "Pod",
+        "name": "candidate-1-nginx-579dd6955d-gqnvx",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11",
+          "pod-template-hash": "579dd6955d"
+        },
+        "status": {
+          "allocatedResources": {
+            "cpu": "100m",
+            "ephemeral-storage": "50Mi",
+            "memory": "128Mi"
+          },
+          "conditions": [
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "message": "no pod sandbox exists",
+              "observedGeneration": 1,
+              "reason": "PodSandboxNotReady",
+              "status": "False",
+              "type": "PodReadyToStartContainers"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "message": "containers with incomplete status: [preserve-logs-symlinks]",
+              "observedGeneration": 1,
+              "reason": "ContainersNotInitialized",
+              "status": "False",
+              "type": "Initialized"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "message": "containers with unready status: [nginx]",
+              "observedGeneration": 1,
+              "reason": "ContainersNotReady",
+              "status": "False",
+              "type": "Ready"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "message": "containers with unready status: [nginx]",
+              "observedGeneration": 1,
+              "reason": "ContainersNotReady",
+              "status": "False",
+              "type": "ContainersReady"
+            },
+            {
+              "lastProbeTime": null,
+              "lastTransitionTime": "2026-09-16T05:34:18Z",
+              "observedGeneration": 1,
+              "status": "True",
+              "type": "PodScheduled"
+            }
+          ],
+          "containerStatuses": [
+            {
+              "image": "registry-1.docker.io/bitnami/nginx:latest",
+              "imageID": "",
+              "lastState": {},
+              "name": "nginx",
+              "ready": false,
+              "restartCount": 0,
+              "started": false,
+              "state": {
+                "waiting": {
+                  "reason": "PodInitializing"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/tmp",
+                  "name": "empty-dir"
+                },
+                {
+                  "mountPath": "/opt/bitnami/nginx/conf",
+                  "name": "empty-dir"
+                },
+                {
+                  "mountPath": "/opt/bitnami/nginx/logs",
+                  "name": "empty-dir"
+                },
+                {
+                  "mountPath": "/opt/bitnami/nginx/tmp",
+                  "name": "empty-dir"
+                },
+                {
+                  "mountPath": "/certs",
+                  "name": "certificate"
+                }
+              ]
+            }
+          ],
+          "hostIP": "172.19.0.2",
+          "hostIPs": [
+            {
+              "ip": "172.19.0.2"
+            }
+          ],
+          "initContainerStatuses": [
+            {
+              "image": "registry-1.docker.io/bitnami/nginx:latest",
+              "imageID": "",
+              "lastState": {},
+              "name": "preserve-logs-symlinks",
+              "ready": false,
+              "restartCount": 0,
+              "started": false,
+              "state": {
+                "waiting": {
+                  "reason": "PodInitializing"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "mountPath": "/emptydir",
+                  "name": "empty-dir"
+                }
+              ]
+            }
+          ],
+          "observedGeneration": 1,
+          "phase": "Pending",
+          "qosClass": "Burstable",
+          "resources": {
+            "limits": {
+              "cpu": "150m",
+              "ephemeral-storage": "2Gi",
+              "memory": "192Mi"
+            },
+            "requests": {
+              "cpu": "100m",
+              "ephemeral-storage": "50Mi",
+              "memory": "128Mi"
+            }
+          },
+          "startTime": "2026-09-16T05:34:18Z"
+        }
+      },
+      {
+        "id": "Service/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "kind": "Service",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      },
+      {
+        "id": "ConfigMap/cats-validation-lb-before-20260916/kube-root-ca.crt",
+        "kind": "ConfigMap",
+        "name": "kube-root-ca.crt",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ServiceAccount/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "kind": "ServiceAccount",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11"
+        },
+        "status": {}
+      },
+      {
+        "id": "ServiceAccount/cats-validation-lb-before-20260916/default",
+        "kind": "ServiceAccount",
+        "name": "default",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "NetworkPolicy/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "kind": "NetworkPolicy",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {
+          "app.kubernetes.io/instance": "candidate-1",
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/name": "nginx",
+          "app.kubernetes.io/version": "1.31.5",
+          "helm.sh/chart": "nginx-25.1.11"
+        },
+        "status": {}
+      },
+      {
+        "id": "Namespace/default/cats-validation-lb-before-20260916",
+        "kind": "Namespace",
+        "name": "cats-validation-lb-before-20260916",
+        "namespace": "default",
+        "labels": {
+          "cats.clanhq.io/validation-infrastructure": "true",
+          "cats.clanhq.io/validation-run": "cats-validation-lb-before-20260916",
+          "kubernetes.io/metadata.name": "cats-validation-lb-before-20260916"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "Namespace/default/default",
+        "kind": "Namespace",
+        "name": "default",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/metadata.name": "default"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "Namespace/default/kube-node-lease",
+        "kind": "Namespace",
+        "name": "kube-node-lease",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/metadata.name": "kube-node-lease"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "Namespace/default/kube-public",
+        "kind": "Namespace",
+        "name": "kube-public",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/metadata.name": "kube-public"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "Namespace/default/kube-system",
+        "kind": "Namespace",
+        "name": "kube-system",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/metadata.name": "kube-system"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "Namespace/default/local-path-storage",
+        "kind": "Namespace",
+        "name": "local-path-storage",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/metadata.name": "local-path-storage"
+        },
+        "status": {
+          "phase": "Active"
+        }
+      },
+      {
+        "id": "ClusterRole/default/admin",
+        "kind": "ClusterRole",
+        "name": "admin",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/cluster-admin",
+        "kind": "ClusterRole",
+        "name": "cluster-admin",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/edit",
+        "kind": "ClusterRole",
+        "name": "edit",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults",
+          "rbac.authorization.k8s.io/aggregate-to-admin": "true"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/kindnet",
+        "kind": "ClusterRole",
+        "name": "kindnet",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/kubeadm:get-nodes",
+        "kind": "ClusterRole",
+        "name": "kubeadm:get-nodes",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/local-path-provisioner-role",
+        "kind": "ClusterRole",
+        "name": "local-path-provisioner-role",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:aggregate-to-admin",
+        "kind": "ClusterRole",
+        "name": "system:aggregate-to-admin",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults",
+          "rbac.authorization.k8s.io/aggregate-to-admin": "true"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:aggregate-to-edit",
+        "kind": "ClusterRole",
+        "name": "system:aggregate-to-edit",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults",
+          "rbac.authorization.k8s.io/aggregate-to-edit": "true"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:aggregate-to-view",
+        "kind": "ClusterRole",
+        "name": "system:aggregate-to-view",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults",
+          "rbac.authorization.k8s.io/aggregate-to-view": "true"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:auth-delegator",
+        "kind": "ClusterRole",
+        "name": "system:auth-delegator",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:basic-user",
+        "kind": "ClusterRole",
+        "name": "system:basic-user",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:certificatesigningrequests:nodeclient",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:certificatesigningrequests:nodeclient",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:certificatesigningrequests:selfnodeclient",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:certificatesigningrequests:selfnodeclient",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:kube-apiserver-client-approver",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:kube-apiserver-client-approver",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:kube-apiserver-client-kubelet-approver",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:kube-apiserver-client-kubelet-approver",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:kubelet-serving-approver",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:kubelet-serving-approver",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:certificates.k8s.io:legacy-unknown-approver",
+        "kind": "ClusterRole",
+        "name": "system:certificates.k8s.io:legacy-unknown-approver",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:cluster-trust-bundle-discovery",
+        "kind": "ClusterRole",
+        "name": "system:cluster-trust-bundle-discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:attachdetach-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:attachdetach-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:certificate-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:certificate-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:clusterrole-aggregation-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:clusterrole-aggregation-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:cronjob-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:cronjob-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:daemon-set-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:daemon-set-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:deployment-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:deployment-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:device-taint-eviction-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:device-taint-eviction-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:disruption-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:disruption-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:endpoint-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:endpoint-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:endpointslice-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:endpointslice-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:endpointslicemirroring-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:endpointslicemirroring-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:ephemeral-volume-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:ephemeral-volume-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:expand-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:expand-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:generic-garbage-collector",
+        "kind": "ClusterRole",
+        "name": "system:controller:generic-garbage-collector",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:horizontal-pod-autoscaler",
+        "kind": "ClusterRole",
+        "name": "system:controller:horizontal-pod-autoscaler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:job-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:job-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+        "kind": "ClusterRole",
+        "name": "system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:legacy-service-account-token-cleaner",
+        "kind": "ClusterRole",
+        "name": "system:controller:legacy-service-account-token-cleaner",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:namespace-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:namespace-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:node-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:node-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:persistent-volume-binder",
+        "kind": "ClusterRole",
+        "name": "system:controller:persistent-volume-binder",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:pod-garbage-collector",
+        "kind": "ClusterRole",
+        "name": "system:controller:pod-garbage-collector",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:podcertificaterequestcleaner",
+        "kind": "ClusterRole",
+        "name": "system:controller:podcertificaterequestcleaner",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:pv-protection-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:pv-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:pvc-protection-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:pvc-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:replicaset-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:replicaset-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:replication-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:replication-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:resource-claim-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:resource-claim-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:resourcequota-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:resourcequota-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:root-ca-cert-publisher",
+        "kind": "ClusterRole",
+        "name": "system:controller:root-ca-cert-publisher",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:route-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:route-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:selinux-warning-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:selinux-warning-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:service-account-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:service-account-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:service-cidrs-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:service-cidrs-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:service-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:service-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:statefulset-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:statefulset-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:storage-version-migrator-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:storage-version-migrator-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:ttl-after-finished-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:ttl-after-finished-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:ttl-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:ttl-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:validatingadmissionpolicy-status-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:validatingadmissionpolicy-status-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:controller:volumeattributesclass-protection-controller",
+        "kind": "ClusterRole",
+        "name": "system:controller:volumeattributesclass-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:coredns",
+        "kind": "ClusterRole",
+        "name": "system:coredns",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:discovery",
+        "kind": "ClusterRole",
+        "name": "system:discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:heapster",
+        "kind": "ClusterRole",
+        "name": "system:heapster",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:kube-aggregator",
+        "kind": "ClusterRole",
+        "name": "system:kube-aggregator",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:kube-controller-manager",
+        "kind": "ClusterRole",
+        "name": "system:kube-controller-manager",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:kube-dns",
+        "kind": "ClusterRole",
+        "name": "system:kube-dns",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:kube-scheduler",
+        "kind": "ClusterRole",
+        "name": "system:kube-scheduler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:kubelet-api-admin",
+        "kind": "ClusterRole",
+        "name": "system:kubelet-api-admin",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:monitoring",
+        "kind": "ClusterRole",
+        "name": "system:monitoring",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:node",
+        "kind": "ClusterRole",
+        "name": "system:node",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:node-bootstrapper",
+        "kind": "ClusterRole",
+        "name": "system:node-bootstrapper",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:node-problem-detector",
+        "kind": "ClusterRole",
+        "name": "system:node-problem-detector",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:node-proxier",
+        "kind": "ClusterRole",
+        "name": "system:node-proxier",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:persistent-volume-provisioner",
+        "kind": "ClusterRole",
+        "name": "system:persistent-volume-provisioner",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:public-info-viewer",
+        "kind": "ClusterRole",
+        "name": "system:public-info-viewer",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:service-account-issuer-discovery",
+        "kind": "ClusterRole",
+        "name": "system:service-account-issuer-discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/system:volume-scheduler",
+        "kind": "ClusterRole",
+        "name": "system:volume-scheduler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRole/default/view",
+        "kind": "ClusterRole",
+        "name": "view",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults",
+          "rbac.authorization.k8s.io/aggregate-to-edit": "true"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/cluster-admin",
+        "kind": "ClusterRoleBinding",
+        "name": "cluster-admin",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kindnet",
+        "kind": "ClusterRoleBinding",
+        "name": "kindnet",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:apiserver-kubelet-client",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:apiserver-kubelet-client",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:cluster-admins",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:cluster-admins",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:get-nodes",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:get-nodes",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:kubelet-bootstrap",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:kubelet-bootstrap",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:node-autoapprove-bootstrap",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:node-autoapprove-bootstrap",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:node-autoapprove-certificate-rotation",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:node-autoapprove-certificate-rotation",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/kubeadm:node-proxier",
+        "kind": "ClusterRoleBinding",
+        "name": "kubeadm:node-proxier",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/local-path-provisioner-bind",
+        "kind": "ClusterRoleBinding",
+        "name": "local-path-provisioner-bind",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:basic-user",
+        "kind": "ClusterRoleBinding",
+        "name": "system:basic-user",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:cluster-trust-bundle-discovery",
+        "kind": "ClusterRoleBinding",
+        "name": "system:cluster-trust-bundle-discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:attachdetach-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:attachdetach-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:certificate-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:certificate-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:clusterrole-aggregation-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:clusterrole-aggregation-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:cronjob-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:cronjob-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:daemon-set-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:daemon-set-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:deployment-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:deployment-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:device-taint-eviction-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:device-taint-eviction-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:disruption-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:disruption-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:endpoint-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:endpoint-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:endpointslice-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:endpointslice-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:endpointslicemirroring-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:endpointslicemirroring-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:ephemeral-volume-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:ephemeral-volume-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:expand-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:expand-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:generic-garbage-collector",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:generic-garbage-collector",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:horizontal-pod-autoscaler",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:horizontal-pod-autoscaler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:job-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:job-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:legacy-service-account-token-cleaner",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:legacy-service-account-token-cleaner",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:namespace-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:namespace-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:node-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:node-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:persistent-volume-binder",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:persistent-volume-binder",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:pod-garbage-collector",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:pod-garbage-collector",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:podcertificaterequestcleaner",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:podcertificaterequestcleaner",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:pv-protection-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:pv-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:pvc-protection-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:pvc-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:replicaset-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:replicaset-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:replication-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:replication-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:resource-claim-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:resource-claim-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:resourcequota-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:resourcequota-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:root-ca-cert-publisher",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:root-ca-cert-publisher",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:route-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:route-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:selinux-warning-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:selinux-warning-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:service-account-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:service-account-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:service-cidrs-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:service-cidrs-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:service-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:service-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:statefulset-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:statefulset-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:storage-version-migrator-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:storage-version-migrator-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:ttl-after-finished-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:ttl-after-finished-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:ttl-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:ttl-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:validatingadmissionpolicy-status-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:validatingadmissionpolicy-status-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:controller:volumeattributesclass-protection-controller",
+        "kind": "ClusterRoleBinding",
+        "name": "system:controller:volumeattributesclass-protection-controller",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:coredns",
+        "kind": "ClusterRoleBinding",
+        "name": "system:coredns",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:discovery",
+        "kind": "ClusterRoleBinding",
+        "name": "system:discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:kube-controller-manager",
+        "kind": "ClusterRoleBinding",
+        "name": "system:kube-controller-manager",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:kube-dns",
+        "kind": "ClusterRoleBinding",
+        "name": "system:kube-dns",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:kube-scheduler",
+        "kind": "ClusterRoleBinding",
+        "name": "system:kube-scheduler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:monitoring",
+        "kind": "ClusterRoleBinding",
+        "name": "system:monitoring",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:node",
+        "kind": "ClusterRoleBinding",
+        "name": "system:node",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:node-proxier",
+        "kind": "ClusterRoleBinding",
+        "name": "system:node-proxier",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:public-info-viewer",
+        "kind": "ClusterRoleBinding",
+        "name": "system:public-info-viewer",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:service-account-issuer-discovery",
+        "kind": "ClusterRoleBinding",
+        "name": "system:service-account-issuer-discovery",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "ClusterRoleBinding/default/system:volume-scheduler",
+        "kind": "ClusterRoleBinding",
+        "name": "system:volume-scheduler",
+        "namespace": "default",
+        "labels": {
+          "kubernetes.io/bootstrapping": "rbac-defaults"
+        },
+        "status": {}
+      },
+      {
+        "id": "StorageClass/default/standard",
+        "kind": "StorageClass",
+        "name": "standard",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "PriorityClass/default/system-cluster-critical",
+        "kind": "PriorityClass",
+        "name": "system-cluster-critical",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "PriorityClass/default/system-node-critical",
+        "kind": "PriorityClass",
+        "name": "system-node-critical",
+        "namespace": "default",
+        "labels": {},
+        "status": {}
+      },
+      {
+        "id": "Secret/cats-validation-lb-before-20260916/candidate-1-nginx-tls",
+        "kind": "Secret",
+        "name": "candidate-1-nginx-tls",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {}
+      },
+      {
+        "id": "Secret/cats-validation-lb-before-20260916/sh.helm.release.v1.candidate-1.v1",
+        "kind": "Secret",
+        "name": "sh.helm.release.v1.candidate-1.v1",
+        "namespace": "cats-validation-lb-before-20260916",
+        "labels": {}
+      },
+      {
+        "id": "Image/-/registry-1.docker.io/bitnami/nginx:latest",
+        "kind": "Image",
+        "name": "registry-1.docker.io/bitnami/nginx:latest",
+        "namespace": null,
+        "labels": {}
+      }
+    ],
+    "edges": [
+      {
+        "source": "Deployment/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "target": "ReplicaSet/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d",
+        "type": "owns"
+      },
+      {
+        "source": "ReplicaSet/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d",
+        "target": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "type": "owns"
+      },
+      {
+        "source": "Service/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "target": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "type": "selects",
+        "ports": [
+          {
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP"
+          },
+          {
+            "port": 443,
+            "targetPort": "https",
+            "protocol": "TCP"
+          }
+        ]
+      },
+      {
+        "source": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "target": "ServiceAccount/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "type": "uses"
+      },
+      {
+        "source": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "target": "Image/-/registry-1.docker.io/bitnami/nginx:latest",
+        "type": "runs"
+      },
+      {
+        "source": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "target": "Secret/cats-validation-lb-before-20260916/candidate-1-nginx-tls",
+        "type": "mounts"
+      },
+      {
+        "source": "NetworkPolicy/cats-validation-lb-before-20260916/candidate-1-nginx",
+        "target": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+        "type": "selects"
+      }
+    ]
+  },
+  "comparison": {
+    "matched": [],
+    "declared_only": [
+      "Deployment/cats-validation-lb-before-20260916/cats-validation-1-nginx",
+      "NetworkPolicy/cats-validation-lb-before-20260916/cats-validation-1-nginx",
+      "PodDisruptionBudget/cats-validation-lb-before-20260916/cats-validation-1-nginx",
+      "Secret/cats-validation-lb-before-20260916/cats-validation-1-nginx-tls",
+      "Service/cats-validation-lb-before-20260916/cats-validation-1-nginx",
+      "ServiceAccount/cats-validation-lb-before-20260916/cats-validation-1-nginx"
+    ],
+    "observed_only": [],
+    "defaulted": [
+      "ClusterRole/default/admin",
+      "ClusterRole/default/cluster-admin",
+      "ClusterRole/default/edit",
+      "ClusterRole/default/kindnet",
+      "ClusterRole/default/kubeadm:get-nodes",
+      "ClusterRole/default/local-path-provisioner-role",
+      "ClusterRole/default/system:aggregate-to-admin",
+      "ClusterRole/default/system:aggregate-to-edit",
+      "ClusterRole/default/system:aggregate-to-view",
+      "ClusterRole/default/system:auth-delegator",
+      "ClusterRole/default/system:basic-user",
+      "ClusterRole/default/system:certificates.k8s.io:certificatesigningrequests:nodeclient",
+      "ClusterRole/default/system:certificates.k8s.io:certificatesigningrequests:selfnodeclient",
+      "ClusterRole/default/system:certificates.k8s.io:kube-apiserver-client-approver",
+      "ClusterRole/default/system:certificates.k8s.io:kube-apiserver-client-kubelet-approver",
+      "ClusterRole/default/system:certificates.k8s.io:kubelet-serving-approver",
+      "ClusterRole/default/system:certificates.k8s.io:legacy-unknown-approver",
+      "ClusterRole/default/system:cluster-trust-bundle-discovery",
+      "ClusterRole/default/system:controller:attachdetach-controller",
+      "ClusterRole/default/system:controller:certificate-controller",
+      "ClusterRole/default/system:controller:clusterrole-aggregation-controller",
+      "ClusterRole/default/system:controller:cronjob-controller",
+      "ClusterRole/default/system:controller:daemon-set-controller",
+      "ClusterRole/default/system:controller:deployment-controller",
+      "ClusterRole/default/system:controller:device-taint-eviction-controller",
+      "ClusterRole/default/system:controller:disruption-controller",
+      "ClusterRole/default/system:controller:endpoint-controller",
+      "ClusterRole/default/system:controller:endpointslice-controller",
+      "ClusterRole/default/system:controller:endpointslicemirroring-controller",
+      "ClusterRole/default/system:controller:ephemeral-volume-controller",
+      "ClusterRole/default/system:controller:expand-controller",
+      "ClusterRole/default/system:controller:generic-garbage-collector",
+      "ClusterRole/default/system:controller:horizontal-pod-autoscaler",
+      "ClusterRole/default/system:controller:job-controller",
+      "ClusterRole/default/system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+      "ClusterRole/default/system:controller:legacy-service-account-token-cleaner",
+      "ClusterRole/default/system:controller:namespace-controller",
+      "ClusterRole/default/system:controller:node-controller",
+      "ClusterRole/default/system:controller:persistent-volume-binder",
+      "ClusterRole/default/system:controller:pod-garbage-collector",
+      "ClusterRole/default/system:controller:podcertificaterequestcleaner",
+      "ClusterRole/default/system:controller:pv-protection-controller",
+      "ClusterRole/default/system:controller:pvc-protection-controller",
+      "ClusterRole/default/system:controller:replicaset-controller",
+      "ClusterRole/default/system:controller:replication-controller",
+      "ClusterRole/default/system:controller:resource-claim-controller",
+      "ClusterRole/default/system:controller:resourcequota-controller",
+      "ClusterRole/default/system:controller:root-ca-cert-publisher",
+      "ClusterRole/default/system:controller:route-controller",
+      "ClusterRole/default/system:controller:selinux-warning-controller",
+      "ClusterRole/default/system:controller:service-account-controller",
+      "ClusterRole/default/system:controller:service-cidrs-controller",
+      "ClusterRole/default/system:controller:service-controller",
+      "ClusterRole/default/system:controller:statefulset-controller",
+      "ClusterRole/default/system:controller:storage-version-migrator-controller",
+      "ClusterRole/default/system:controller:ttl-after-finished-controller",
+      "ClusterRole/default/system:controller:ttl-controller",
+      "ClusterRole/default/system:controller:validatingadmissionpolicy-status-controller",
+      "ClusterRole/default/system:controller:volumeattributesclass-protection-controller",
+      "ClusterRole/default/system:coredns",
+      "ClusterRole/default/system:discovery",
+      "ClusterRole/default/system:heapster",
+      "ClusterRole/default/system:kube-aggregator",
+      "ClusterRole/default/system:kube-controller-manager",
+      "ClusterRole/default/system:kube-dns",
+      "ClusterRole/default/system:kube-scheduler",
+      "ClusterRole/default/system:kubelet-api-admin",
+      "ClusterRole/default/system:monitoring",
+      "ClusterRole/default/system:node",
+      "ClusterRole/default/system:node-bootstrapper",
+      "ClusterRole/default/system:node-problem-detector",
+      "ClusterRole/default/system:node-proxier",
+      "ClusterRole/default/system:persistent-volume-provisioner",
+      "ClusterRole/default/system:public-info-viewer",
+      "ClusterRole/default/system:service-account-issuer-discovery",
+      "ClusterRole/default/system:volume-scheduler",
+      "ClusterRole/default/view",
+      "ClusterRoleBinding/default/cluster-admin",
+      "ClusterRoleBinding/default/kindnet",
+      "ClusterRoleBinding/default/kubeadm:apiserver-kubelet-client",
+      "ClusterRoleBinding/default/kubeadm:cluster-admins",
+      "ClusterRoleBinding/default/kubeadm:get-nodes",
+      "ClusterRoleBinding/default/kubeadm:kubelet-bootstrap",
+      "ClusterRoleBinding/default/kubeadm:node-autoapprove-bootstrap",
+      "ClusterRoleBinding/default/kubeadm:node-autoapprove-certificate-rotation",
+      "ClusterRoleBinding/default/kubeadm:node-proxier",
+      "ClusterRoleBinding/default/local-path-provisioner-bind",
+      "ClusterRoleBinding/default/system:basic-user",
+      "ClusterRoleBinding/default/system:cluster-trust-bundle-discovery",
+      "ClusterRoleBinding/default/system:controller:attachdetach-controller",
+      "ClusterRoleBinding/default/system:controller:certificate-controller",
+      "ClusterRoleBinding/default/system:controller:clusterrole-aggregation-controller",
+      "ClusterRoleBinding/default/system:controller:cronjob-controller",
+      "ClusterRoleBinding/default/system:controller:daemon-set-controller",
+      "ClusterRoleBinding/default/system:controller:deployment-controller",
+      "ClusterRoleBinding/default/system:controller:device-taint-eviction-controller",
+      "ClusterRoleBinding/default/system:controller:disruption-controller",
+      "ClusterRoleBinding/default/system:controller:endpoint-controller",
+      "ClusterRoleBinding/default/system:controller:endpointslice-controller",
+      "ClusterRoleBinding/default/system:controller:endpointslicemirroring-controller",
+      "ClusterRoleBinding/default/system:controller:ephemeral-volume-controller",
+      "ClusterRoleBinding/default/system:controller:expand-controller",
+      "ClusterRoleBinding/default/system:controller:generic-garbage-collector",
+      "ClusterRoleBinding/default/system:controller:horizontal-pod-autoscaler",
+      "ClusterRoleBinding/default/system:controller:job-controller",
+      "ClusterRoleBinding/default/system:controller:kube-apiserver-serving-clustertrustbundle-publisher",
+      "ClusterRoleBinding/default/system:controller:legacy-service-account-token-cleaner",
+      "ClusterRoleBinding/default/system:controller:namespace-controller",
+      "ClusterRoleBinding/default/system:controller:node-controller",
+      "ClusterRoleBinding/default/system:controller:persistent-volume-binder",
+      "ClusterRoleBinding/default/system:controller:pod-garbage-collector",
+      "ClusterRoleBinding/default/system:controller:podcertificaterequestcleaner",
+      "ClusterRoleBinding/default/system:controller:pv-protection-controller",
+      "ClusterRoleBinding/default/system:controller:pvc-protection-controller",
+      "ClusterRoleBinding/default/system:controller:replicaset-controller",
+      "ClusterRoleBinding/default/system:controller:replication-controller",
+      "ClusterRoleBinding/default/system:controller:resource-claim-controller",
+      "ClusterRoleBinding/default/system:controller:resourcequota-controller",
+      "ClusterRoleBinding/default/system:controller:root-ca-cert-publisher",
+      "ClusterRoleBinding/default/system:controller:route-controller",
+      "ClusterRoleBinding/default/system:controller:selinux-warning-controller",
+      "ClusterRoleBinding/default/system:controller:service-account-controller",
+      "ClusterRoleBinding/default/system:controller:service-cidrs-controller",
+      "ClusterRoleBinding/default/system:controller:service-controller",
+      "ClusterRoleBinding/default/system:controller:statefulset-controller",
+      "ClusterRoleBinding/default/system:controller:storage-version-migrator-controller",
+      "ClusterRoleBinding/default/system:controller:ttl-after-finished-controller",
+      "ClusterRoleBinding/default/system:controller:ttl-controller",
+      "ClusterRoleBinding/default/system:controller:validatingadmissionpolicy-status-controller",
+      "ClusterRoleBinding/default/system:controller:volumeattributesclass-protection-controller",
+      "ClusterRoleBinding/default/system:coredns",
+      "ClusterRoleBinding/default/system:discovery",
+      "ClusterRoleBinding/default/system:kube-controller-manager",
+      "ClusterRoleBinding/default/system:kube-dns",
+      "ClusterRoleBinding/default/system:kube-scheduler",
+      "ClusterRoleBinding/default/system:monitoring",
+      "ClusterRoleBinding/default/system:node",
+      "ClusterRoleBinding/default/system:node-proxier",
+      "ClusterRoleBinding/default/system:public-info-viewer",
+      "ClusterRoleBinding/default/system:service-account-issuer-discovery",
+      "ClusterRoleBinding/default/system:volume-scheduler",
+      "ConfigMap/cats-validation-lb-before-20260916/kube-root-ca.crt",
+      "Deployment/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "Namespace/default/cats-validation-lb-before-20260916",
+      "Namespace/default/default",
+      "Namespace/default/kube-node-lease",
+      "Namespace/default/kube-public",
+      "Namespace/default/kube-system",
+      "Namespace/default/local-path-storage",
+      "NetworkPolicy/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+      "PriorityClass/default/system-cluster-critical",
+      "PriorityClass/default/system-node-critical",
+      "ReplicaSet/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d",
+      "Secret/cats-validation-lb-before-20260916/candidate-1-nginx-tls",
+      "Secret/cats-validation-lb-before-20260916/sh.helm.release.v1.candidate-1.v1",
+      "Service/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "ServiceAccount/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "ServiceAccount/cats-validation-lb-before-20260916/default",
+      "StorageClass/default/standard"
+    ],
+    "changed": [],
+    "unresolved": []
+  },
+  "events": [
+    {
+      "type": "Normal",
+      "reason": "Scheduled",
+      "message": "Technical event message withheld",
+      "condition": "",
+      "count": 1,
+      "firstTimestamp": "2026-09-16T05:34:18Z",
+      "lastTimestamp": "2026-09-16T05:34:18Z",
+      "involvedObject": {
+        "kind": "Pod",
+        "name": "candidate-1-nginx-579dd6955d-gqnvx",
+        "namespace": "cats-validation-lb-before-20260916"
+      }
+    },
+    {
+      "type": "Normal",
+      "reason": "SuccessfulCreate",
+      "message": "Technical event message withheld",
+      "condition": "",
+      "count": 1,
+      "firstTimestamp": "2026-09-16T05:34:18Z",
+      "lastTimestamp": "2026-09-16T05:34:18Z",
+      "involvedObject": {
+        "kind": "ReplicaSet",
+        "name": "candidate-1-nginx-579dd6955d",
+        "namespace": "cats-validation-lb-before-20260916"
+      }
+    },
+    {
+      "type": "Normal",
+      "reason": "NoPods",
+      "message": "Technical event message withheld",
+      "condition": "",
+      "count": 2,
+      "firstTimestamp": "2026-09-16T05:34:18Z",
+      "lastTimestamp": "2026-09-16T05:34:18Z",
+      "involvedObject": {
+        "kind": "PodDisruptionBudget",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916"
+      }
+    },
+    {
+      "type": "Normal",
+      "reason": "ScalingReplicaSet",
+      "message": "Technical event message withheld",
+      "condition": "",
+      "count": 1,
+      "firstTimestamp": "2026-09-16T05:34:18Z",
+      "lastTimestamp": "2026-09-16T05:34:18Z",
+      "involvedObject": {
+        "kind": "Deployment",
+        "name": "candidate-1-nginx",
+        "namespace": "cats-validation-lb-before-20260916"
+      }
+    }
+  ],
+  "unhealthy_resources": [
+    {
+      "resource": "Deployment/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "state": "NotReady",
+      "detail": "0/1 replicas ready"
+    },
+    {
+      "resource": "Pod/cats-validation-lb-before-20260916/candidate-1-nginx-579dd6955d-gqnvx",
+      "state": "PodInitializing ",
+      "detail": "Pod did not become Ready"
+    },
+    {
+      "resource": "Service/cats-validation-lb-before-20260916/candidate-1-nginx",
+      "state": "Pending",
+      "detail": "LoadBalancer address is unavailable in kind"
+    }
+  ],
+  "security_policy_violations": [],
+  "policy_violations": [],
+  "resource_isolation": {
+    "overall": "BEST_EFFORT",
+    "classification": "RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE",
+    "cpu": {
+      "status": "ENFORCED",
+      "configured_limit": "4"
+    },
+    "memory": {
+      "status": "FAILED",
+      "configured_limit": "8g",
+      "reason": "Error response from daemon: Cannot update container a650928ece67738fefed7a1586969f2819a11cc048d66d9ce0684980294e1968: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time"
+    },
+    "pids": {
+      "status": "ENFORCED",
+      "configured_limit": 2048
+    },
+    "warnings": [
+      "memory: Error response from daemon: Cannot update container a650928ece67738fefed7a1586969f2819a11cc048d66d9ce0684980294e1968: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time"
+    ]
+  },
+  "warnings": [
+    "Optional resource control unavailable: memory: Error response from daemon: Cannot update container a650928ece67738fefed7a1586969f2819a11cc048d66d9ce0684980294e1968: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time",
+    "One or more locally available workload images could not be loaded into kind; Helm/Kubernetes will attempt the deployment anyway.",
+    "LoadBalancer infrastructure was not configured for this offline validation run."
+  ],
+  "diagnostics": {
+    "helm_lint_1": "exit_code=0; output_bytes=95; output_sha256=c6a979b7d51bfb99ecf9c247ddf0a799b754c3e55aa911c84a8cc8076e728005",
+    "helm_template_1": "exit_code=0; output_bytes=13918; output_sha256=b75efdd2a1028006ec8d49c236d801b4a29211bacdc24ccf27d726952758145f",
+    "kind_node_image": "exit_code=0; output_bytes=1936; output_sha256=9442f10baf327fa19b36b97d9f2949487087f29a1b242fc6ff081310db088ea2",
+    "network_create": "exit_code=0; output_bytes=65; output_sha256=33bae91240e03ebd2a1776edfa08a9b49d1e6a2011aa2f162a056f82c29671ea",
+    "kind_create": "exit_code=0; output_bytes=1036; output_sha256=79cff3e1754ab3f4e07bbd393c75e39cf5b614f1d8731949ee799cf3d9927530",
+    "resource_isolation": {
+      "cpu": {
+        "status": "ENFORCED",
+        "configured_limit": "4"
+      },
+      "memory": {
+        "status": "FAILED",
+        "configured_limit": "8g",
+        "reason": "Error response from daemon: Cannot update container a650928ece67738fefed7a1586969f2819a11cc048d66d9ce0684980294e1968: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time"
+      },
+      "pids": {
+        "status": "ENFORCED",
+        "configured_limit": 2048
+      }
+    },
+    "warnings": [
+      "Optional resource control unavailable: memory: Error response from daemon: Cannot update container a650928ece67738fefed7a1586969f2819a11cc048d66d9ce0684980294e1968: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time",
+      "One or more locally available workload images could not be loaded into kind; Helm/Kubernetes will attempt the deployment anyway.",
+      "LoadBalancer infrastructure was not configured for this offline validation run."
+    ],
+    "kind_load_images": "exit_code=1; output_bytes=577; output_sha256=e46b164fe894e49ea3cf4e8b36227e3651907d7219fd2fbfb7b5a42c2733b5cd",
+    "namespace_create": "exit_code=0; output_bytes=53; output_sha256=7e6eaddb4279ce581a6d817a1e8f9f2ae8918d30c905679e32fdf5e2daa92f6f",
+    "namespace_label": "exit_code=0; output_bytes=53; output_sha256=2ada4426bd323777800c08bf0007027ad3628b680b0360e354539b96ccb83153",
+    "resource_policy": "exit_code=0; output_bytes=89; output_sha256=32f36adc89a07c4261933ca85a7fecee41c7fc4046b581a181ea32dd6244be5b",
+    "helm_install_1": "exit_code=0; output_bytes=2842; output_sha256=da54e05c4f389874af7d97f9d3a1013f1fad13da6de8c9f0fe701490534d177d",
+    "helm_status_1": "exit_code=0; output_bytes=51672; output_sha256=fa6405216b61e04d348804176a602c62b1a8c9629d103319cadac693e371e3d9",
+    "readiness_1": "exit_code=1; output_bytes=73; output_sha256=bb2a1c7089107d3a4d4229ed2e78543222cd0bbb52a2a62dd6c10e9983fd5d61",
+    "resource_collection": "exit_code=0; output_bytes=55181; output_sha256=74e911c7dfec3e3683e91d4a4c2732c7e28fa37f2011f3f46f1ec758e61efc67",
+    "cluster_resource_collection": "exit_code=0; output_bytes=293207; output_sha256=3cdde381e34ee23f8bc27f51df04b30c4d06db05c0ce3ad12b59e0233262edb0",
+    "event_collection": "exit_code=0; output_bytes=5248; output_sha256=2145a860b706545a1db6319111bf42dd357a17c7734afcc49bef652eea471655",
+    "kind_delete": "exit_code=0; output_bytes=125; output_sha256=9947dc0466dcde525ba8c9cc03dce0abf808df62be4e53947d96fcd3e25a25e6",
+    "network_delete": "exit_code=0; output_bytes=43; output_sha256=6cb7b635b3419dc4a74571f4d43f7dace7c48bace518d0e515d6cc148088044c"
+  },
+  "cluster_name": "cats-validation-lb-before-20260916",
+  "namespace": "cats-validation-lb-before-20260916",
+  "cleanup_status": "COMPLETE",
+  "duration_seconds": 35
+}

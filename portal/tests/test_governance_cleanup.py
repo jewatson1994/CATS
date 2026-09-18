@@ -11,6 +11,19 @@ def test_service_navigation_is_shared_and_uses_remediations_label():
     assert "?poam=true" not in partial
 
 
+def test_deployment_validation_ui_contract_is_always_available():
+    tabs = (ROOT / "app" / "templates" / "_service_tabs.html").read_text(encoding="utf-8")
+    overview = (ROOT / "app" / "templates" / "service_overview.html").read_text(encoding="utf-8")
+    validation = (ROOT / "app" / "templates" / "service_validation.html").read_text(encoding="utf-8")
+    assert "Deployment Validation" in tabs
+    assert "deployment_validation is defined" not in tabs
+    assert "?validation=true" in tabs
+    assert "deployment_validation.status" in overview
+    assert "View Validation" in overview
+    assert "validation_runs" in validation
+    assert "Validation history" in validation
+
+
 def test_administration_tabs_consolidate_general_policy_and_hide_configuration():
     tabs = (ROOT / "app" / "templates" / "_admin_tabs.html").read_text(encoding="utf-8")
     assert "General Policy" in tabs

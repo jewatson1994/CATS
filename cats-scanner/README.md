@@ -61,11 +61,57 @@ tool-archives/
   trivy_0.69.3_Linux-64bit.tar.gz
   dockle_0.4.15_Linux-64bit.tar.gz
   helm-v4.2.3-linux-amd64.tar.gz
+  kind-v0.33.0-linux-amd64
+  kubectl-v1.37.0-linux-amd64
 ```
 
 The same pinned checksum verification runs for local archives. The Docker build
 still requires access to the configured Alpine package repositories unless the
 base image already contains or internally mirrors those packages.
+
+## Built-in offline LoadBalancer bundle
+
+The scanner image includes MetalLB `0.16.1` native Layer 2 controller and speaker
+archives under `/opt/cats/validation/loadbalancer`. No operator manifest is
+required for automatic generic LoadBalancer validation. The bundle is installed
+only into the disposable validation cluster, not the deployment target.
+
+`build-loadbalancer-bundle.py` pins the upstream manifest SHA-256 and both
+linux/amd64 image manifest/config digests. It validates every uncompressed image
+layer against the pinned config, sets `imagePullPolicy: Never`, and emits
+`bundle.json` with runtime integrity hashes. The versioned tags are preserved
+in Docker archives for kind's offline image import; a mutable registry tag is
+never used to fetch an image. Skopeo exists only in the build stage.
+
+For disconnected builds, supply these additional inputs in `tool-archives/`:
+
+```text
+metallb-native-v0.16.1.yaml
+metallb-controller-v0.16.1-linux-amd64.tar
+metallb-speaker-v0.16.1-linux-amd64.tar
+```
+
+The image archives must each contain the corresponding single versioned image
+tag. The same config/layer verification applies to supplied archives. Alpine
+base images and packages must also be cached or available from an approved
+internal mirror. Connected builds download only during image construction.
+
+To build just this bundle for validation acceptance testing:
+
+```bash
+docker build --target validation-loadbalancer -t cats-validation-lb-bundle cats-scanner
+```
+
+The [official MetalLB installation](https://metallb.io/installation/) publishes
+the pinned native manifest. This design uses in-cluster components so their
+lifetime is the disposable cluster's lifetime. The alternative
+[Cloud Provider KIND](https://github.com/kubernetes-sigs/cloud-provider-kind)
+runs outside the cluster with Docker access and, by default, monitors all KIND
+clusters. That requires additional host-helper ownership and discovery controls
+for concurrent isolated runs. MetalLB provides generic IP allocation and L2
+advertisement, not AWS/Azure/GCP-specific annotations, public routing, or a
+guarantee that a workstation can reach the allocated IP. Reachability is only
+reported when independently probed.
 
 ## Offline Trivy behavior
 

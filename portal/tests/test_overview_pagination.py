@@ -6,7 +6,7 @@ def _files():
     return next(root.glob("app/**/_overview_panels.html")), next(root.glob("app/**/overview-pagination.js"))
 
 
-def test_top_overview_panels_have_independent_client_pagination():
+def test_overview_panels_have_synchronized_top_and_bottom_client_pagination():
     template, script = _files()
     html = template.read_text(encoding="utf-8")
     js = script.read_text(encoding="utf-8")
@@ -16,6 +16,7 @@ def test_top_overview_panels_have_independent_client_pagination():
     assert html.count("data-overview-pagination") == 3
     assert "let page = 1" in js
     assert "rows.forEach" in js
+    assert "const mounts = [top, footer]" in js
+    assert "mounts.forEach" in js
     assert "fetch(" not in js
     assert "XMLHttpRequest" not in js
-

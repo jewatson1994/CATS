@@ -101,7 +101,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 
 $dotenv = Read-DotEnv $envPath
 $pipelineToken = if ($env:PIPELINE_API_TOKEN) { $env:PIPELINE_API_TOKEN } else { $dotenv["PIPELINE_API_TOKEN"] }
-$catsImage = if ($env:CATS_IMAGE) { $env:CATS_IMAGE } elseif ($dotenv["CATS_IMAGE"]) { $dotenv["CATS_IMAGE"] } else { "cats:1.2.1" }
+$catsImage = if ($env:CATS_IMAGE) { $env:CATS_IMAGE } elseif ($dotenv["CATS_IMAGE"]) { $dotenv["CATS_IMAGE"] } else { "cats:1.3" }
 if (-not $pipelineToken) { throw "PIPELINE_API_TOKEN is missing from $envPath" }
 
 $runningServices = @(Invoke-Docker -Capture -Arguments @(

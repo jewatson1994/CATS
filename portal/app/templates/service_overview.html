@@ -20,6 +20,36 @@
 </nav>
 
 {% include "_overview_panels.html" %}
+{% set av = architecture_verification or {'state':'N/A','label':'N/A','expected':0,'observed':0,'missing':0} %}
+<article class="overview-dashboard-card overview-full-width architecture-summary-card" data-architecture-summary data-evidence-url="/api/v1/services/{{ view.service.service_key }}/architecture-evidence">
+  <div class="deployment-validation-card-head"><div><h3>Architecture</h3><p>Declared and persisted runtime evidence remain independent from static findings.</p></div><span class="status validation-status-{{ av.state|lower|replace('_','-') }}" data-architecture-summary-badge>{{ av.label }}</span></div>
+  <div class="validation-metrics">
+    <span><small>Declared resources</small><strong data-architecture-declared>{{ architecture_graph.summary.declared or 0 }}</strong></span>
+    <span><small>Runtime verified</small><strong data-architecture-observed>{{ av.observed or 0 }}</strong></span>
+    <span><small>Unverified / differences</small><strong data-architecture-differences>{{ av.missing or architecture_graph.summary.differences or 0 }}</strong></span>
+    <span><small>Relationships</small><strong>{{ architecture_graph.summary.relationships or 0 }}</strong></span>
+    <span><small>Unresolved relationships</small><strong>{{ architecture_graph.summary.unresolved or 0 }}</strong></span>
+  </div>
+  <div class="validation-actions"><a class="secondary-button" href="/services/{{ view.service.service_key }}?architecture=true">View Architecture</a>{% if av.state == 'PARTIALLY_VERIFIED' %}<a class="secondary-button" href="/services/{{ view.service.service_key }}?architecture=true#differences">Review Differences</a>{% endif %}</div>
+</article>
+{% set deployment_validation = deployment_validation or {'status':'NOT_ATTEMPTED','reason':'Validation has not been requested for a Helm artifact.','resource_summary':{},'helm_result':{},'conditions':{},'static_scan_complete':(latest_execution.complete if latest_execution else none),'artifact_reference':none} %}
+{% set validation_status = (deployment_validation.status or 'NOT_ATTEMPTED')|upper %}
+{% set validation_display_status = validation_status if validation_status in ['VERIFIED','PARTIALLY_VERIFIED','COULD_NOT_VALIDATE','NOT_ATTEMPTED'] else 'IN_PROGRESS' %}
+{% set validation_resources = deployment_validation.resource_summary or {} %}
+<article class="overview-dashboard-card overview-full-width deployment-validation-card">
+  <div class="deployment-validation-card-head"><div><h3>Deployment Validation</h3><p>Static Scan: <strong>{{ 'Complete' if deployment_validation.static_scan_complete else ('Incomplete' if deployment_validation.static_scan_complete is sameas false else 'Not linked') }}</strong> · Validation engine: <strong>kind</strong>{% if deployment_validation.artifact_reference %} · Helm evidence: <code>{{ deployment_validation.artifact_reference }}</code>{% endif %}</p></div><span class="status validation-status-{{ validation_display_status|lower|replace('_', '-') }}">{{ validation_display_status|replace('_', ' ')|title }}</span></div>
+  <p class="deployment-validation-explanation">{{ deployment_validation.reason or 'Validation is queued or currently running. Static scan results remain available.' }}</p>
+  <div class="validation-metrics">
+    <span><small>Pods</small><strong>{{ (validation_resources.pods or {}).ready or 0 }} / {{ (validation_resources.pods or {}).expected or 0 }}</strong></span>
+    <span><small>Deployments</small><strong>{{ (validation_resources.deployments or {}).ready or 0 }} / {{ (validation_resources.deployments or {}).expected or 0 }}</strong></span>
+    <span><small>StatefulSets</small><strong>{{ (validation_resources.statefulsets or {}).ready or 0 }} / {{ (validation_resources.statefulsets or {}).expected or 0 }}</strong></span>
+    <span><small>Helm Install</small><strong>{{ (deployment_validation.helm_result or {}).install or 'NOT ATTEMPTED' }}</strong></span>
+    <span><small>CrashLoopBackOff</small><strong>{{ (deployment_validation.conditions or {}).crashloopbackoff or 0 }}</strong></span>
+    <span><small>ImagePullBackOff</small><strong>{{ (deployment_validation.conditions or {}).imagepullbackoff or 0 }}</strong></span>
+    <span><small>Validation Time</small><strong>{{ deployment_validation.duration_seconds ~ 's' if deployment_validation.duration_seconds is number else '—' }}</strong></span>
+  </div>
+  <div class="validation-actions"><a class="secondary-button" href="/services/{{ view.service.service_key }}?validation=true">View Validation</a>{% if deployment_validation.observed_topology and deployment_validation.observed_topology.nodes %}<a class="secondary-button" href="/services/{{ view.service.service_key }}?validation=true#observed-topology">View Observed Topology</a>{% endif %}</div>
+</article>
 {% set chart_graph = (latest_execution.raw_payload.service_overview.helm_chart_graph if latest_execution and latest_execution.raw_payload and latest_execution.raw_payload.service_overview else {}) %}
 {% if chart_graph and (chart_graph.charts or chart_graph.unresolved) %}
 <details class="panel helm-chart-discovery"><summary><strong>Helm charts discovered: {{ chart_graph.charts|length }}</strong>{% if chart_graph.unresolved %} · {{ chart_graph.unresolved|length }} unresolved references{% endif %}</summary>
@@ -29,4 +59,5 @@
   {% if chart_graph.unresolved %}<h3>Unresolved chart references</h3><ul>{% for item in chart_graph.unresolved %}<li><strong>{{ item.item }}</strong> — {{ item.reason }}{% if item.source_file %} <code>{{ item.source_file }}{% if item.yaml_path %}#{{ item.yaml_path }}{% endif %}</code>{% endif %}</li>{% endfor %}</ul>{% endif %}
 </details>
 {% endif %}
+<script src="/static/architecture-evidence-live.js" defer></script>
 {% endblock %}

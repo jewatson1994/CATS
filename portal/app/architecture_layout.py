@@ -88,8 +88,19 @@ def _aggregate_flow(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def project_graph(graph: dict[str, Any], view: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     all_nodes = sorted(graph.get("nodes", []), key=_stable_node)
+    if view == "declared":
+        nodes = [node for node in all_nodes if node.get("provenance", "DECLARED") in {"DECLARED", "DECLARED_AND_OBSERVED", "INFERRED"}]
+    elif view == "runtime":
+        nodes = [node for node in all_nodes if node.get("provenance") in {"OBSERVED", "DECLARED_AND_OBSERVED"}]
+    elif view == "differences":
+        nodes = [node for node in all_nodes if node.get("provenance") == "OBSERVED" or (
+            node.get("provenance") == "DECLARED" and node.get("kind") not in {"ContainerImage", "ExternalEndpoint"}
+        )]
+    else:
+        nodes = None
     kinds = VIEW_KINDS.get(view)
-    nodes = all_nodes if view == "all" else [node for node in all_nodes if node.get("kind", node.get("type")) in (kinds or set())]
+    if nodes is None:
+        nodes = all_nodes if view == "all" else [node for node in all_nodes if node.get("kind", node.get("type")) in (kinds or set())]
     visible = {node["id"] for node in nodes}
     edges = [dict(edge) for edge in graph.get("relationships", []) if edge.get("source") in visible and edge.get("target") in visible]
     if view == "network":
@@ -492,4 +503,4 @@ def build_layout(graph: dict[str, Any], view: str, viewport_width: float = 1200)
 
 
 def build_layouts(graph: dict[str, Any], viewport_width: float = 1200) -> dict[str, dict[str, Any]]:
-    return {view: build_layout(graph, view, viewport_width) for view in ("flow", "all", "network", "containers", "configuration", "storage")}
+    return {view: build_layout(graph, view, viewport_width) for view in ("flow", "all", "declared", "runtime", "differences", "network", "containers", "configuration", "storage")}

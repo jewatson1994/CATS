@@ -16,6 +16,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+from cryptography import x509
+
 
 _PEM_CERTIFICATE_RE = re.compile(
     rb"-----BEGIN CERTIFICATE-----\s+.*?\s+-----END CERTIFICATE-----",
@@ -145,7 +147,15 @@ def certificate_bundle_metadata(payload: bytes | str) -> list[dict]:
     for match in matches:
         # Validate every block before the caller persists any of them. A single
         # malformed block therefore rejects the entire upload atomically.
-        metadata.append(certificate_metadata(match.group(0)))
+        item = certificate_metadata(match.group(0))
+        try:
+            certificate = x509.load_pem_x509_certificate(match.group(0))
+            constraints = certificate.extensions.get_extension_for_class(x509.BasicConstraints).value
+        except (ValueError, x509.ExtensionNotFound) as exc:
+            raise ValueError("Trusted certificates must be X.509 CA certificates") from exc
+        if not constraints.ca:
+            raise ValueError("Trusted certificates must have CA basic constraints")
+        metadata.append(item)
     return metadata
 
 
@@ -207,7 +217,12 @@ def resolve_policy(os_id: str, policies: dict) -> dict:
 def test_repository(url: str, ca_bundle: str | None = None, timeout: int = 10) -> tuple[bool, str]:
     if not url:
         return False, "No repository URL configured"
-    context = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else ssl.create_default_context()
+    context = ssl.create_default_context()
+    if ca_bundle:
+        if "BEGIN CERTIFICATE" in ca_bundle:
+            context.load_verify_locations(cadata=ca_bundle)
+        else:
+            context.load_verify_locations(cafile=ca_bundle)
     try:
         request = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "CATS repository validator"})
         with urllib.request.urlopen(request, timeout=timeout, context=context) as response:

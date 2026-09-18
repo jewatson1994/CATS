@@ -240,7 +240,7 @@ PERMISSIONS = {
 SYSTEM_ROLES = {
     "Administrator": [permission for permission in PERMISSIONS if permission != "scan.ingest"],
     "Assessor": ["service.view", "service.export", "audit.view"],
-    "Service Manager": ["service.view", "service.export", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
+    "Service Manager": ["service.view", "service.export", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
     "Cybersecurity": [
         "artifact.sign",
         "service.view", "service.export", "service.edit", "exception.request",

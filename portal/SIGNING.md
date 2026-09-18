@@ -5,12 +5,12 @@ After rebuilding the portal and patch-worker images, open **Configuration → Im
 From the repository root, build and start the local Compose services:
 
 ```sh
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local --build-arg CATS_VERSION=1.2.1 -f cats-image/Dockerfile.all-in-one -t cats:1.2.1 .
+docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local --build-arg CATS_VERSION=1.3 -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
 docker compose up -d --wait
 docker compose logs -f portal patch-worker
 ```
 
-The application service is named `portal`. The canonical root `compose.yaml` runs the prebuilt image and defaults to `cats:1.2.1`; if `CATS_IMAGE` is set, it must match the tag you built. Keep the database volume unless intentionally resetting all historical data.
+The application service is named `portal`. The canonical root `compose.yaml` runs the prebuilt image and defaults to `cats:1.3`; if `CATS_IMAGE` is set, it must match the tag you built. Keep the database volume unless intentionally resetting all historical data.
 
 The private key and password use the existing `CATS_CONFIG_ENCRYPTION_KEY` encryption mechanism. Preserve this server key across redeployments and database restores. Public-key downloads contain no private material. Blank upload fields preserve the configured pair; upload the private key again to replace its password or public key. Removing keys disables future signing. Already queued jobs retain their original key selection.
 

@@ -7,12 +7,13 @@
   <link rel="icon" type="image/png" href="/static/cats-icon.png">
   <link rel="apple-touch-icon" href="/static/cats-icon.png">
   <link rel="stylesheet" href="/static/app.css?v=20260913-sbom-workspace">
+  <script src="/static/elapsed-time.js?v=20260915-job-timers"></script>
   <script src="/static/overview-pagination.js" defer></script>
   <script src="/static/navigation.js?v=20260825-nav-landing" defer></script>
 </head>
 <body data-theme="{{ (current_user.theme or 'cats') if current_user else 'cats' }}">
   <header>
-    <a class="brand" href="{{ '/' if current_user else '/home' }}"><img class="brand-icon" src="{% if current_user and current_user.theme in ['blue','red','gray','light'] %}/static/cats-icon-{{ current_user.theme }}.png{% else %}/static/cats-icon.png{% endif %}" alt="">CATS <span>Continuous Assessment &amp; Tracking System</span></a>
+    <a class="brand" href="{{ '/' if current_user else '/home' }}"><img class="brand-icon" src="{% if current_user and current_user.theme in ['blue','red','gray','light'] %}/static/cats-icon-{{ current_user.theme }}.png{% else %}/static/cats-icon.png{% endif %}" alt="">CATS{% if cats_deployed_version %} <small class="cats-version">{{ cats_deployed_version }}</small>{% endif %} <span>Continuous Assessment &amp; Tracking System</span></a>
     {% if current_user %}
     <nav class="account-nav" aria-label="Primary navigation">
       <a href="/">Services</a>
@@ -28,6 +29,11 @@
     <nav class="public-nav"><a href="/home">Overview</a><a href="/scan">Scan</a><a href="/sbom">SBOM</a><a href="/patch">Patch</a><a href="/login">Login</a></nav>
     {% endif %}
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  <main>
+    {% if request.url.path.startswith('/services/') and request.query_params.get('saved') == '1' %}
+    <div class="save-confirmation" role="status">Service information saved successfully.</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
 </body>
 </html>

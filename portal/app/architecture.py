@@ -148,7 +148,7 @@ def _network_label(mappings: list[dict[str, Any]], suffix: str = "") -> str:
     return f"{label}{suffix}" if label else suffix.strip()
 
 
-def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: float = 1200) -> dict[str, Any]:
+def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: float = 1200, runtime_evidence: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload if isinstance(payload, dict) else {}
     overview_raw = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
     overview = normalize_overview(
@@ -159,6 +159,7 @@ def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: flo
     )
     resources = _resource_list(payload)
     nodes: list[dict[str, Any]] = []
+    node_by_id: dict[str, dict[str, Any]] = {}
     by_key: dict[tuple[str, str, str], str] = {}
     resource_by_id: dict[str, dict[str, Any]] = {}
     for resource in resources:
@@ -174,11 +175,25 @@ def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: flo
                               "name": _text(port.get("name"), "—"), "source": _source(resource)})
         mappings = resource.get("_cats_source_mappings") if isinstance(resource.get("_cats_source_mappings"), list) else []
         chart_provenance = resource.get("_cats_chart_provenance") if isinstance(resource.get("_cats_chart_provenance"), dict) else {}
-        nodes.append({"id": node_id, "kind": kind, "name": name, "namespace": namespace,
-                      "label": f"{kind} · {name}", "source": _source(resource), "source_mappings": mappings,
-                      "chart_provenance": chart_provenance,
-                      "generic": kind not in SUPPORTED_KINDS, "api_version": _text(resource.get("apiVersion")),
-                      "evidence": [_evidence(resource)], "ports": ports})
+        if node_id in node_by_id:
+            existing_node = node_by_id[node_id]
+            evidence = _evidence(resource)
+            if evidence not in existing_node["evidence"]:
+                existing_node["evidence"].append(evidence)
+            for mapping in mappings:
+                if mapping not in existing_node["source_mappings"]:
+                    existing_node["source_mappings"].append(mapping)
+            for port in ports:
+                if port not in existing_node["ports"]:
+                    existing_node["ports"].append(port)
+            continue
+        node = {"id": node_id, "kind": kind, "name": name, "namespace": namespace,
+                "label": f"{kind} · {name}", "source": _source(resource), "source_mappings": mappings,
+                "chart_provenance": chart_provenance,
+                "generic": kind not in SUPPORTED_KINDS, "api_version": _text(resource.get("apiVersion")),
+                "evidence": [_evidence(resource)], "ports": ports, "provenance": "DECLARED"}
+        nodes.append(node)
+        node_by_id[node_id] = node
 
     def find(kind: str, name: str, namespace: str) -> str | None:
         return by_key.get((kind, namespace, name))
@@ -399,9 +414,83 @@ def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: flo
         if not any(node["id"] == external_id for node in nodes):
             nodes.append({"id": external_id, "kind": "ExternalEndpoint", "name": "External Traffic", "namespace": "outside",
                           "label": "External · Traffic", "source": _source(ingress),
-                          "evidence": [_evidence(ingress, f"entry point for {_name(ingress)}")], "external": True})
+                          "evidence": [_evidence(ingress, f"entry point for {_name(ingress)}")], "external": True, "provenance": "INFERRED"})
         edge(external_id, ingress_id, "DERIVED", _network_label((ingress_edges[0].get("network") or {}).get("ports", [])),
              [_evidence(ingress, "Ingress entry point")], network={"ports": (ingress_edges[0].get("network") or {}).get("ports", []), "evidence_type": "Ingress entry point"})
+
+    runtime = runtime_evidence if isinstance(runtime_evidence, dict) else {}
+    comparison = runtime.get("comparison") if isinstance(runtime.get("comparison"), dict) else {}
+    expected_rows = comparison.get("expected_evidence") if isinstance(comparison.get("expected_evidence"), list) else []
+    expected_by_name = {(str(item.get("kind") or ""), str(item.get("name") or "")): item for item in expected_rows if isinstance(item, dict)}
+    reconciliation = (runtime.get("diagnostics") or {}).get("reconciliation", {}) if isinstance(runtime.get("diagnostics"), dict) else {}
+    validation_releases = [str(value) for value in reconciliation.get("template_release_names", []) if value]
+
+    def logical_runtime_name(item: dict[str, Any]) -> str:
+        name = str(item.get("name") or "")
+        for release in sorted(validation_releases, key=len, reverse=True):
+            if name == release:
+                return ""
+            if name.startswith(release + "-"):
+                return name[len(release) + 1:]
+        return name
+
+    def release_agnostic_candidate(node: dict[str, Any]) -> dict[str, Any] | None:
+        matches = []
+        node_name = str(node.get("name") or "")
+        for item in expected_rows:
+            if not isinstance(item, dict) or str(item.get("kind") or "") != str(node.get("kind") or ""):
+                continue
+            logical = logical_runtime_name(item)
+            if logical and (node_name == logical or node_name.endswith("-" + logical)):
+                matches.append(item)
+        return matches[0] if len(matches) == 1 else None
+    expected_by_source: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for item in expected_rows:
+        if isinstance(item, dict) and item.get("source_file"):
+            expected_by_source.setdefault((str(item.get("kind") or ""), str(item.get("source_file") or "")), []).append(item)
+    observed_node_ids: set[str] = set()
+    for node in nodes:
+        node.setdefault("provenance", "DECLARED")
+        if node.get("provenance") == "INFERRED" or node.get("kind") in {"ContainerImage", "ExternalEndpoint"}:
+            continue
+        candidate = expected_by_name.get((str(node.get("kind") or ""), str(node.get("name") or "")))
+        if candidate is None:
+            candidate = release_agnostic_candidate(node)
+        if candidate is None:
+            node_source = str(node.get("source") or "").replace("\\", "/").lstrip("/")
+            source_candidates = [item for (kind, source), items in expected_by_source.items()
+                                 if kind == str(node.get("kind") or "") and (source == node_source or source.endswith("/" + node_source) or node_source.endswith("/" + source))
+                                 for item in items]
+            candidate = source_candidates[0] if len(source_candidates) == 1 else None
+        if candidate and candidate.get("matched"):
+            node["provenance"] = "DECLARED_AND_OBSERVED"
+            node["runtime_evidence"] = candidate
+            observed_node_ids.add(node["id"])
+        elif candidate:
+            node["runtime_evidence"] = candidate
+    noisy_runtime_kinds = {"Pod", "ReplicaSet", "EndpointSlice", "Endpoints", "ControllerRevision", "Event"}
+    existing = {(str(node.get("kind")), str(node.get("namespace")), str(node.get("name"))) for node in nodes}
+    for identity in [*(comparison.get("defaulted") or []), *(comparison.get("observed_only") or [])]:
+        parts = str(identity).split("/", 2)
+        if len(parts) != 3 or parts[0] in noisy_runtime_kinds or tuple(parts) in existing:
+            continue
+        kind, namespace, name = parts
+        nodes.append({"id": _node_id(kind, namespace, name), "kind": kind, "name": name, "namespace": namespace,
+                      "label": f"{kind} · {name}", "source": "Kubernetes runtime evidence", "evidence": [],
+                      "ports": [], "provenance": "OBSERVED", "runtime_only": True})
+    capabilities = runtime.get("capability_preflight") if isinstance(runtime.get("capability_preflight"), list) else []
+    for capability in capabilities:
+        if not isinstance(capability, dict) or str(capability.get("status") or "").upper() not in {"VERIFIED", "AVAILABLE", "BOUND"}:
+            continue
+        kind, _, name = str(capability.get("source_resource") or "").partition("/")
+        for node in nodes:
+            if node.get("kind") == kind and node.get("name") == name:
+                node.setdefault("capability_evidence", []).append({"capability": capability.get("capability"), "status": capability.get("status"), "explanation": capability.get("explanation")})
+    for relationship in relationships:
+        relationship["provenance"] = "INFERRED" if relationship.get("classification") == "INFERRED" else "DECLARED"
+        if relationship["provenance"] != "INFERRED" and relationship.get("source") in observed_node_ids and relationship.get("target") in observed_node_ids:
+            relationship["provenance"] = "DECLARED_AND_OBSERVED"
+            relationship.setdefault("evidence", []).append({"source": "Deployment Validation", "detail": "Both endpoint resources were observed for this artifact revision"})
 
     # Compatibility metadata uses the same topology ranking as presentation.
     from .architecture_layout import _ranks
@@ -416,10 +505,15 @@ def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: flo
     warnings = list(overview.get("missing_evidence", [])) + list(overview.get("warnings", []))
     if not resources:
         warnings.append({"type": "Rendered resources", "item": "Kubernetes resources", "reason": "No rendered Kubernetes resources were supplied", "source_file": "—"})
-    graph = {"schema_version": "1.0", "incomplete": bool(warnings or not resources), "source": overview.get("source", "Rendered Helm/Kubernetes evidence"),
+    graph = {"schema_version": "1.1", "incomplete": bool(warnings or not resources), "source": overview.get("source", "Rendered Helm/Kubernetes evidence"),
             "nodes": nodes, "relationships": relationships, "unresolved": unresolved, "warnings": warnings,
             "summary": {"nodes": len(nodes), "relationships": len(relationships), "unresolved": len(unresolved), "warnings": len(warnings),
-                        "ports": len(overview.get("ports", []))}, "ports": overview.get("ports", [])}
+                        "ports": len(overview.get("ports", [])),
+                        "declared": sum(node.get("provenance") in {"DECLARED", "DECLARED_AND_OBSERVED"} for node in nodes),
+                        "runtime_verified": sum(node.get("provenance") == "DECLARED_AND_OBSERVED" for node in nodes),
+                        "differences": sum(node.get("provenance") == "OBSERVED" or (
+                            node.get("provenance") == "DECLARED" and node.get("kind") not in {"ContainerImage", "ExternalEndpoint"}
+                        ) for node in nodes)}, "ports": overview.get("ports", [])}
     from .architecture_layout import build_layouts
     graph["layouts"] = build_layouts(graph, viewport_width)
     logger.info("Architecture normalization complete: resources=%d nodes=%d relationships=%d unresolved=%d warnings=%d ports=%d",

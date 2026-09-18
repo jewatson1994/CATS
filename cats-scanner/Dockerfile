@@ -1,5 +1,20 @@
 ARG BASE_IMAGE=alpine:3.22
+FROM ${BASE_IMAGE} AS validation-loadbalancer
+# Build-time only dependencies; neither skopeo nor downloads are needed at run time.
+RUN apk add --no-cache ca-certificates python3 py3-yaml skopeo
+COPY certs /usr/local/share/ca-certificates
+RUN update-ca-certificates
+COPY tool-archives /opt/catscan/tool-archives
+COPY build-loadbalancer-bundle.py /usr/local/bin/build-loadbalancer-bundle.py
+COPY build-ingress-bundle.py /usr/local/bin/build-ingress-bundle.py
+RUN python3 /usr/local/bin/build-loadbalancer-bundle.py \
+      /opt/catscan/tool-archives /opt/cats/validation/loadbalancer \
+    && python3 /usr/local/bin/build-ingress-bundle.py \
+      /opt/catscan/tool-archives /opt/cats/validation/ingress
+
 FROM ${BASE_IMAGE}
+COPY --from=validation-loadbalancer /opt/cats/validation/loadbalancer /opt/cats/validation/loadbalancer
+COPY --from=validation-loadbalancer /opt/cats/validation/ingress /opt/cats/validation/ingress
 
 ARG CATS_SCANNER_VERSION=0.1.0
 ARG GRYPE_VERSION=packaged
@@ -10,6 +25,10 @@ ARG DOCKLE_VERSION=0.4.15
 ARG DOCKLE_SHA256=8bfc9183d1d3d67800edb45bea4bb63ddf1d28bec5f89944075a07007d79caad
 ARG HELM_VERSION=4.2.3
 ARG HELM_SHA256=e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c
+ARG KIND_VERSION=0.33.0
+ARG KIND_SHA256=aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+ARG KUBECTL_VERSION=1.37.0
+ARG KUBECTL_SHA256=6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
 ARG COPA_VERSION=0.14.1
 ARG COPA_SHA256=a780f62c054f60cd1aecbbf4a4b2665a816aa852534e6b0b9592cf96a327fdc9
 ARG GRYPE_DB_UPDATE_URL=https://grype.anchore.io/databases/v6/latest.json
@@ -24,6 +43,8 @@ LABEL org.opencontainers.image.title="CatScan" \
       cats.trivy.version="${TRIVY_VERSION}" \
       cats.dockle.version="${DOCKLE_VERSION}" \
       cats.helm.version="${HELM_VERSION}" \
+      cats.kind.version="${KIND_VERSION}" \
+      cats.kubectl.version="${KUBECTL_VERSION}" \
       cats.copa.version="${COPA_VERSION}"
 
 RUN apk add --no-cache \
@@ -104,6 +125,26 @@ RUN set -eux; \
     echo "${HELM_SHA256}  /tmp/${helm_archive}" | sha256sum -c -; \
     tar -xzf "/tmp/${helm_archive}" -C /tmp; \
     install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm; \
+    kind_binary="kind-v${KIND_VERSION}-linux-amd64"; \
+    if [ -f "/opt/catscan/tool-archives/${kind_binary}" ]; then \
+      cp "/opt/catscan/tool-archives/${kind_binary}" "/tmp/${kind_binary}"; \
+    else \
+      curl --fail --location --silent --show-error \
+        "https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64" \
+        --output "/tmp/${kind_binary}"; \
+    fi; \
+    echo "${KIND_SHA256}  /tmp/${kind_binary}" | sha256sum -c -; \
+    install -m 0755 "/tmp/${kind_binary}" /usr/local/bin/kind; \
+    kubectl_binary="kubectl-v${KUBECTL_VERSION}-linux-amd64"; \
+    if [ -f "/opt/catscan/tool-archives/${kubectl_binary}" ]; then \
+      cp "/opt/catscan/tool-archives/${kubectl_binary}" "/tmp/${kubectl_binary}"; \
+    else \
+      curl --fail --location --silent --show-error \
+        "https://dl.k8s.io/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+        --output "/tmp/${kubectl_binary}"; \
+    fi; \
+    echo "${KUBECTL_SHA256}  /tmp/${kubectl_binary}" | sha256sum -c -; \
+    install -m 0755 "/tmp/${kubectl_binary}" /usr/local/bin/kubectl; \
     copa_archive="copa_${COPA_VERSION}_linux_amd64.tar.gz"; \
     if [ -f "/opt/catscan/tool-archives/${copa_archive}" ]; then \
       cp "/opt/catscan/tool-archives/${copa_archive}" "/tmp/${copa_archive}"; \
@@ -115,10 +156,12 @@ RUN set -eux; \
     echo "${COPA_SHA256}  /tmp/${copa_archive}" | sha256sum -c -; \
     tar -xzf "/tmp/${copa_archive}" -C /tmp copa; \
     install -m 0755 /tmp/copa /usr/local/bin/copa; \
-    rm -rf /tmp/trivy /tmp/dockle /tmp/copa "/tmp/${trivy_archive}" "/tmp/${dockle_archive}" /tmp/linux-amd64 "/tmp/${helm_archive}" "/tmp/${copa_archive}"; \
+    rm -rf /tmp/trivy /tmp/dockle /tmp/copa "/tmp/${trivy_archive}" "/tmp/${dockle_archive}" /tmp/linux-amd64 "/tmp/${helm_archive}" "/tmp/${kind_binary}" "/tmp/${kubectl_binary}" "/tmp/${copa_archive}"; \
     trivy --version; \
     dockle --version; \
     helm version --short; \
+    kind version; \
+    kubectl version --client=true; \
     copa --version
 
 COPY catscan-version /usr/local/bin/catscan-version

@@ -15,7 +15,24 @@ else
 fi
 
 echo "Offline release validation:"
-for tool in helm syft grype copa; do
+python3 - <<'PY'
+import hashlib, json
+from pathlib import Path
+for directory, provider, version in (
+    ('loadbalancer', 'metallb', '0.16.1'),
+    ('ingress', 'ingress-nginx', '1.15.1'),
+):
+    root = Path('/opt/cats/validation') / directory
+    bundle = json.loads((root / 'bundle.json').read_text())
+    assert bundle['provider'] == provider and bundle['version'] == version
+    for entry in [bundle['manifest'], *bundle['images']]:
+        path = root / entry.get('path', entry.get('archive', ''))
+        assert path.resolve().parent == root.resolve()
+        with path.open('rb') as stream:
+            assert hashlib.file_digest(stream, 'sha256').hexdigest() == entry['sha256'], path.name
+    print(f'Offline {provider} bundle: PASS ({version}, manifest and image archive hashes verified)')
+PY
+for tool in helm kubectl kind syft grype copa; do
   if command -v "$tool" >/dev/null 2>&1; then
     version="$($tool version 2>/dev/null | head -n 1 || true)"
     echo "$tool binary: PASS${version:+ ($version)}"

@@ -2,7 +2,7 @@
   const root = document.querySelector("[data-architecture]");
   if (!root) return;
 
-  const graph = JSON.parse(root.dataset.graph);
+  let graph = JSON.parse(root.dataset.graph);
   const svg = root.querySelector("svg");
   const scene = root.querySelector("[data-architecture-scene]");
   const panel = root.querySelector(".architecture-details");
@@ -13,7 +13,7 @@
   const close = root.querySelector("[data-architecture-close]");
   const level = root.querySelector("[data-zoom-level]");
   const viewport = root.querySelector(".architecture-canvas");
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  let nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
   let renderedEdges = [];
   let selected = null;
   let scale = 1;
@@ -62,6 +62,7 @@
       + `<dt>Source</dt><dd>${escapeHtml(source?.label || item.source || "—")}</dd>`
       + `<dt>Destination</dt><dd>${escapeHtml(target?.label || item.target || "—")}</dd>`
       + `<dt>Classification</dt><dd>${escapeHtml(classifications.join(" + ") || item.kind || "—")}</dd>`
+      + `<dt>Evidence provenance</dt><dd>${escapeHtml(titleCase(item.provenance || "DECLARED"))}</dd>`
       + mappings
       + chartDetails
       + `<dt>Evidence</dt><dd>${evidence}</dd>`
@@ -113,7 +114,7 @@
       const dim = selected && !related.has(edge.id);
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", pathData(edge.points));
-      path.setAttribute("class", `architecture-edge ${String(edge.classification || "derived").toLowerCase()}${dim ? " is-dim" : ""}`);
+      path.setAttribute("class", `architecture-edge ${String(edge.classification || "derived").toLowerCase()} provenance-${String(edge.provenance || "declared").toLowerCase().replaceAll("_", "-")}${dim ? " is-dim" : ""}`);
       path.dataset.id = edge.id;
       path.addEventListener("click", () => show(edge));
       scene.appendChild(path);
@@ -140,7 +141,7 @@
       const point = layout.positions[node.id];
       const dim = selected && !related.has(node.id);
       const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
-      group.setAttribute("class", `architecture-node${dim ? " is-dim" : ""}`);
+      group.setAttribute("class", `architecture-node provenance-${String(node.provenance || "declared").toLowerCase().replaceAll("_", "-")}${dim ? " is-dim" : ""}`);
       group.dataset.id = node.id;
       group.innerHTML = `<rect x="${point.x - 92}" y="${point.y - 28}" width="184" height="56" rx="8"></rect>`
         + `<text x="${point.x}" y="${point.y - 3}" text-anchor="middle">${escapeHtml(node.kind || node.type)}</text>`
@@ -253,6 +254,56 @@
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(reflow, 180);
   }).observe(svg);
+  function titleCase(value) { return String(value || "").toLowerCase().replace(/(^|[_ -])([a-z])/g, (_, p, c) => p + c.toUpperCase()).replaceAll("_", " "); }
+  function updateGraph(nextGraph) {
+    const selectedView = layer.value;
+    graph = nextGraph;
+    nodeById = new Map((graph.nodes || []).map((node) => [node.id, node]));
+    if (!graph.layouts[selectedView]) layer.value = "all";
+    if (selected && !nodeById.has(selected) && !(graph.relationships || []).some(edge => edge.id === selected)) selected = null;
+    draw();
+    fit();
+  }
+  const verification = document.querySelector("[data-architecture-verification]");
+  if (verification?.dataset.evidenceUrl) {
+    let evidenceTimer;
+    let graphKey = JSON.stringify(graph);
+    const refreshEvidence = async () => {
+      if (document.hidden) { evidenceTimer = setTimeout(refreshEvidence, 5000); return; }
+      try {
+        const response = await fetch(verification.dataset.evidenceUrl, {credentials: "same-origin", headers: {Accept: "application/json"}, cache: "no-store"});
+        if (response.ok) {
+          const state = await response.json();
+          const badge = verification.querySelector("[data-architecture-badge]");
+          if (badge && state.architecture) {
+            badge.textContent = `${state.architecture.state === "VERIFIED" ? "✓ " : ""}${state.architecture.label}`;
+            badge.className = `status validation-status-${state.architecture.state.toLowerCase().replaceAll("_", "-")}`;
+          }
+          const evidence = state.architecture || {};
+          const popover = verification.querySelector("[data-architecture-popover]");
+          if (popover) {
+            const verified = ["VERIFIED", "PARTIALLY_VERIFIED"].includes(evidence.state);
+            const metrics = verified
+              ? `<p><strong>${escapeHtml(evidence.observed ?? 0)} / ${escapeHtml(evidence.expected ?? 0)}</strong> declared resources observed<br>${escapeHtml(evidence.missing ?? 0)} expected resources missing<br>${escapeHtml(evidence.failed ?? 0)} failed</p>`
+                + `<p>Validation completed: ${escapeHtml(evidence.completed_at ? new Date(evidence.completed_at).toLocaleString() : "—")}</p><p>Engine: <strong>${escapeHtml(evidence.engine || "kind")}</strong></p>`
+              : `<p>${escapeHtml(evidence.reason || "No persisted runtime verification applies to this artifact revision.")}</p>`;
+            const action = evidence.run_key
+              ? `<a href="${escapeHtml(window.location.pathname)}?validation=true&amp;validation_run=${encodeURIComponent(evidence.run_key)}">View Deployment Validation →</a>`
+              : evidence.state === "DECLARED" ? `<a href="${escapeHtml(window.location.pathname)}?validation=true">Run Deployment Validation →</a>` : "";
+            popover.innerHTML = `<h3>${escapeHtml(evidence.label || "N/A")} Architecture</h3>${metrics}${action}`;
+          }
+          const nextGraphKey = state.graph ? JSON.stringify(state.graph) : graphKey;
+          if (state.graph && nextGraphKey !== graphKey) {
+            graphKey = nextGraphKey;
+            updateGraph(state.graph);
+          }
+        }
+      } catch (_) { /* Persisted evidence remains visible while polling recovers. */ }
+      evidenceTimer = setTimeout(refreshEvidence, 5000);
+    };
+    evidenceTimer = setTimeout(refreshEvidence, 5000);
+    window.addEventListener("pagehide", () => clearTimeout(evidenceTimer), {once: true});
+  }
   draw();
   reflow();
 })();

@@ -1,0 +1,2202 @@
+{
+  "source": "persisted-deployment-validation-run",
+  "run_id": 16,
+  "run_key": "DV-3C9DE7F1AD9C483293F7",
+  "execution_id": 16,
+  "status": "PARTIALLY_VERIFIED",
+  "reason_category": "UNSUPPORTED_INGRESS",
+  "reason": "Helm installed successfully and Kubernetes workload evidence was collected, but a compatible Ingress controller was unavailable, so external routing behavior could not be fully validated.",
+  "helm_result": {
+    "template": "PASS",
+    "install": "PASS",
+    "release_status": "DEPLOYED",
+    "rendered_resource_count": 16,
+    "template_started_at": "2026-09-16T06:23:41.064857+00:00",
+    "template_completed_at": "2026-09-16T06:23:41.145180+00:00",
+    "template_duration_ms": 80,
+    "install_started_at": "2026-09-16T06:25:00.026958+00:00",
+    "install_completed_at": "2026-09-16T06:25:01.009590+00:00",
+    "install_duration_ms": 983,
+    "helm_total_duration_ms": 1063,
+    "releases": [
+      {
+        "name": "cats-validation-1",
+        "status": "DEPLOYED"
+      }
+    ]
+  },
+  "resource_summary": {
+    "deployments": {
+      "ready": 6,
+      "expected": 6
+    },
+    "statefulsets": {
+      "ready": 1,
+      "expected": 1
+    },
+    "daemonsets": {
+      "ready": 1,
+      "expected": 1
+    },
+    "pods": {
+      "ready": 9,
+      "expected": 9
+    },
+    "jobs": {
+      "ready": 1,
+      "expected": 1
+    },
+    "pvcs": {
+      "bound": 1,
+      "expected": 1
+    },
+    "services": 4,
+    "ingresses": 1,
+    "cronjobs": 1,
+    "configmaps": 3,
+    "secrets": 2
+  },
+  "conditions": {
+    "crashloopbackoff": 0,
+    "imagepullbackoff": 0,
+    "oomkilled": 0,
+    "pending_pods": 0,
+    "unschedulable": 0,
+    "insufficient_cpu": 0,
+    "insufficient_memory": 0,
+    "failed_jobs": 0,
+    "probe_failures": 0,
+    "unsupported_load_balancer": 0,
+    "unsupported_ingress": 1
+  },
+  "capability_preflight": [
+    {
+      "capability": "Kubernetes",
+      "required": true,
+      "source": "validation-engine",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "kind",
+      "status": "AVAILABLE",
+      "explanation": "The validation engine provisions an isolated kind cluster.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "LoadBalancer",
+      "required": true,
+      "source": "manifest",
+      "source_resource": "Service/cats-validation-1-frontend",
+      "source_namespace": "",
+      "source_field": "spec.type",
+      "provider_strategy": "built-in MetalLB",
+      "status": "VERIFIED",
+      "explanation": "CATS observed this Service receive a LoadBalancer address with a healthy provider and ready backends where applicable. Network reachability was not tested.",
+      "provisioned_by_cats": true,
+      "provider_specific": false,
+      "evidence": {
+        "requested_class": "",
+        "annotation_keys": [],
+        "provider": {
+          "provider": "metallb",
+          "version": "0.16.1",
+          "status": "AVAILABLE",
+          "controller_ready": true,
+          "warnings": [],
+          "duration": 32.138,
+          "duration_ms": 32138,
+          "resources": [
+            {
+              "kind": "Namespace",
+              "name": "metallb-system",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "bfdprofiles.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "bgpadvertisements.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "bgppeers.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "communities.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "configurationstates.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "ipaddresspools.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "l2advertisements.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "servicebgpstatuses.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "CustomResourceDefinition",
+              "name": "servicel2statuses.metallb.io",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ServiceAccount",
+              "name": "controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ServiceAccount",
+              "name": "speaker",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "Role",
+              "name": "controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "Role",
+              "name": "pod-lister",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ClusterRole",
+              "name": "metallb-system:controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ClusterRole",
+              "name": "metallb-system:speaker",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "RoleBinding",
+              "name": "controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "RoleBinding",
+              "name": "pod-lister",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ClusterRoleBinding",
+              "name": "metallb-system:controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ClusterRoleBinding",
+              "name": "metallb-system:speaker",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ConfigMap",
+              "name": "metallb-excludel2",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "Secret",
+              "name": "metallb-webhook-cert",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "Service",
+              "name": "metallb-webhook-service",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "Deployment",
+              "name": "controller",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "DaemonSet",
+              "name": "speaker",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "ValidatingWebhookConfiguration",
+              "name": "metallb-webhook-configuration",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "IPAddressPool",
+              "name": "cats-validation-pool",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            },
+            {
+              "kind": "L2Advertisement",
+              "name": "cats-validation-l2",
+              "namespace": "metallb-system",
+              "label": "cats.clanhq.io/validation-infrastructure=true"
+            }
+          ],
+          "stages": [
+            {
+              "name": "verify_bundle",
+              "status": "PASS",
+              "duration_ms": 294
+            },
+            {
+              "name": "inspect_network",
+              "status": "PASS",
+              "duration_ms": 16
+            },
+            {
+              "name": "load_controller",
+              "status": "PASS",
+              "duration_ms": 7077
+            },
+            {
+              "name": "load_speaker",
+              "status": "PASS",
+              "duration_ms": 11791
+            },
+            {
+              "name": "apply_controller",
+              "status": "PASS",
+              "duration_ms": 565
+            },
+            {
+              "name": "wait_crds",
+              "status": "PASS",
+              "duration_ms": 265
+            },
+            {
+              "name": "wait_deployment_controller",
+              "status": "PASS",
+              "duration_ms": 10839
+            },
+            {
+              "name": "wait_daemonset_speaker",
+              "status": "PASS",
+              "duration_ms": 966
+            },
+            {
+              "name": "apply_pool",
+              "status": "PASS",
+              "duration_ms": 215
+            },
+            {
+              "name": "enable_node_advertisement",
+              "status": "PASS",
+              "duration_ms": 64
+            }
+          ],
+          "bundle": {
+            "provider": "metallb",
+            "version": "0.16.1",
+            "manifest_path": "/opt/cats/validation/loadbalancer/metallb-native.yaml",
+            "manifest_sha256": "e09dfe83a1feb0ebf5d26f8c4e9d1c7add22e7e08155cbe9c9f58efcce22047f"
+          },
+          "images": [
+            {
+              "name": "quay.io/metallb/controller:v0.16.1",
+              "digest": "sha256:5a3e101335f5ea2cfb0ddf51acdfa9538251e0623ffcd6cbfc1b274b7898790c",
+              "archive": "controller.tar",
+              "archive_sha256": "c4c5180b42dd2f4591de524701f45c77bd2fe005ebdf15b720969a626d4ff5fa"
+            },
+            {
+              "name": "quay.io/metallb/speaker:v0.16.1",
+              "digest": "sha256:37a98a9d1cd970051c5dededb6f922c1e6c3b90fdd0fc1350d1686e67675af0e",
+              "archive": "speaker.tar",
+              "archive_sha256": "f19b7ceb122849e1774e47ed5908ca8a820340e07b29302b6f30d3538d20c46d"
+            }
+          ],
+          "address_pool": {
+            "addresses": [
+              "172.19.255.239",
+              "172.19.255.240",
+              "172.19.255.241",
+              "172.19.255.242",
+              "172.19.255.243",
+              "172.19.255.244",
+              "172.19.255.245",
+              "172.19.255.246",
+              "172.19.255.247",
+              "172.19.255.248",
+              "172.19.255.249",
+              "172.19.255.250",
+              "172.19.255.251",
+              "172.19.255.252",
+              "172.19.255.253",
+              "172.19.255.254"
+            ],
+            "range": "172.19.255.239-172.19.255.254",
+            "subnet": "172.19.0.0/16",
+            "reserved": [
+              "172.19.0.1",
+              "172.19.0.2"
+            ]
+          },
+          "namespace": "metallb-system",
+          "attempted": true,
+          "runtime_health": {
+            "status": "AVAILABLE",
+            "controller_ready": true,
+            "pool_addresses": [
+              "172.19.255.239/32",
+              "172.19.255.240/32",
+              "172.19.255.241/32",
+              "172.19.255.242/32",
+              "172.19.255.243/32",
+              "172.19.255.244/32",
+              "172.19.255.245/32",
+              "172.19.255.246/32",
+              "172.19.255.247/32",
+              "172.19.255.248/32",
+              "172.19.255.249/32",
+              "172.19.255.250/32",
+              "172.19.255.251/32",
+              "172.19.255.252/32",
+              "172.19.255.253/32",
+              "172.19.255.254/32"
+            ],
+            "items": [
+              {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                  "annotations": {
+                    "deployment.kubernetes.io/revision": "1"
+                  },
+                  "creationTimestamp": "2026-09-16T06:24:47Z",
+                  "generation": 1,
+                  "labels": {
+                    "app": "metallb",
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                    "component": "controller"
+                  },
+                  "name": "controller",
+                  "namespace": "metallb-system",
+                  "resourceVersion": "698",
+                  "uid": "fabf461f-2a27-4a1c-a2cf-77f41a7eea10"
+                },
+                "spec": {
+                  "progressDeadlineSeconds": 600,
+                  "replicas": 1,
+                  "revisionHistoryLimit": 3,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "metallb",
+                      "component": "controller"
+                    }
+                  },
+                  "strategy": {
+                    "rollingUpdate": {
+                      "maxSurge": "25%",
+                      "maxUnavailable": "25%"
+                    },
+                    "type": "RollingUpdate"
+                  },
+                  "template": {
+                    "metadata": {
+                      "annotations": {
+                        "prometheus.io/port": "9120",
+                        "prometheus.io/scrape": "true"
+                      },
+                      "labels": {
+                        "app": "metallb",
+                        "cats.clanhq.io/validation-infrastructure": "true",
+                        "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                        "component": "controller"
+                      }
+                    },
+                    "spec": {
+                      "containers": [
+                        {
+                          "args": [
+                            "--port=9120",
+                            "--log-level=info"
+                          ],
+                          "env": [
+                            {
+                              "name": "METALLB_POD_NAME",
+                              "valueFrom": {
+                                "fieldRef": {
+                                  "apiVersion": "v1",
+                                  "fieldPath": "metadata.name"
+                                }
+                              }
+                            },
+                            {
+                              "name": "METALLB_ML_SECRET_NAME",
+                              "value": "memberlist"
+                            },
+                            {
+                              "name": "METALLB_DEPLOYMENT",
+                              "value": "controller"
+                            }
+                          ],
+                          "image": "quay.io/metallb/controller:v0.16.1",
+                          "imagePullPolicy": "Never",
+                          "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                              "path": "/healthz",
+                              "port": 17472,
+                              "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                          },
+                          "name": "controller",
+                          "ports": [
+                            {
+                              "containerPort": 9120,
+                              "name": "metricshttps",
+                              "protocol": "TCP"
+                            },
+                            {
+                              "containerPort": 9443,
+                              "name": "webhook-server",
+                              "protocol": "TCP"
+                            }
+                          ],
+                          "readinessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                              "path": "/readyz",
+                              "port": 17472,
+                              "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                          },
+                          "resources": {},
+                          "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                              "drop": [
+                                "all"
+                              ]
+                            },
+                            "readOnlyRootFilesystem": true
+                          },
+                          "terminationMessagePath": "/dev/termination-log",
+                          "terminationMessagePolicy": "File",
+                          "volumeMounts": [
+                            {
+                              "mountPath": "/tmp/k8s-webhook-server/serving-certs",
+                              "name": "cert",
+                              "readOnly": true
+                            }
+                          ]
+                        }
+                      ],
+                      "dnsPolicy": "ClusterFirst",
+                      "nodeSelector": {
+                        "kubernetes.io/os": "linux"
+                      },
+                      "restartPolicy": "Always",
+                      "schedulerName": "default-scheduler",
+                      "securityContext": {
+                        "fsGroup": 65534,
+                        "runAsNonRoot": true,
+                        "runAsUser": 65534
+                      },
+                      "serviceAccount": "controller",
+                      "serviceAccountName": "controller",
+                      "terminationGracePeriodSeconds": 0,
+                      "volumes": [
+                        {
+                          "name": "cert",
+                          "secret": {
+                            "defaultMode": 420,
+                            "secretName": "metallb-webhook-cert"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "status": {
+                  "availableReplicas": 1,
+                  "conditions": [
+                    {
+                      "lastTransitionTime": "2026-09-16T06:24:58Z",
+                      "lastUpdateTime": "2026-09-16T06:24:58Z",
+                      "message": "Deployment has minimum availability.",
+                      "reason": "MinimumReplicasAvailable",
+                      "status": "True",
+                      "type": "Available"
+                    },
+                    {
+                      "lastTransitionTime": "2026-09-16T06:24:47Z",
+                      "lastUpdateTime": "2026-09-16T06:24:58Z",
+                      "message": "ReplicaSet \"controller-7cf65467d4\" has successfully progressed.",
+                      "reason": "NewReplicaSetAvailable",
+                      "status": "True",
+                      "type": "Progressing"
+                    }
+                  ],
+                  "observedGeneration": 1,
+                  "readyReplicas": 1,
+                  "replicas": 1,
+                  "terminatingReplicas": 0,
+                  "updatedReplicas": 1
+                }
+              },
+              {
+                "apiVersion": "apps/v1",
+                "kind": "DaemonSet",
+                "metadata": {
+                  "annotations": {
+                    "deprecated.daemonset.template.generation": "1"
+                  },
+                  "creationTimestamp": "2026-09-16T06:24:47Z",
+                  "generation": 1,
+                  "labels": {
+                    "app": "metallb",
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                    "component": "speaker"
+                  },
+                  "name": "speaker",
+                  "namespace": "metallb-system",
+                  "resourceVersion": "702",
+                  "uid": "02870a41-93c0-4fe6-8122-e098ab139d93"
+                },
+                "spec": {
+                  "revisionHistoryLimit": 10,
+                  "selector": {
+                    "matchLabels": {
+                      "app": "metallb",
+                      "component": "speaker"
+                    }
+                  },
+                  "template": {
+                    "metadata": {
+                      "annotations": {
+                        "prometheus.io/port": "9120",
+                        "prometheus.io/scrape": "true"
+                      },
+                      "labels": {
+                        "app": "metallb",
+                        "cats.clanhq.io/validation-infrastructure": "true",
+                        "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                        "component": "speaker"
+                      }
+                    },
+                    "spec": {
+                      "containers": [
+                        {
+                          "args": [
+                            "--port=9120",
+                            "--log-level=info"
+                          ],
+                          "env": [
+                            {
+                              "name": "METALLB_NODE_NAME",
+                              "valueFrom": {
+                                "fieldRef": {
+                                  "apiVersion": "v1",
+                                  "fieldPath": "spec.nodeName"
+                                }
+                              }
+                            },
+                            {
+                              "name": "METALLB_POD_NAME",
+                              "valueFrom": {
+                                "fieldRef": {
+                                  "apiVersion": "v1",
+                                  "fieldPath": "metadata.name"
+                                }
+                              }
+                            },
+                            {
+                              "name": "METALLB_HOST",
+                              "valueFrom": {
+                                "fieldRef": {
+                                  "apiVersion": "v1",
+                                  "fieldPath": "status.hostIP"
+                                }
+                              }
+                            },
+                            {
+                              "name": "METALLB_ML_BIND_ADDR",
+                              "valueFrom": {
+                                "fieldRef": {
+                                  "apiVersion": "v1",
+                                  "fieldPath": "status.podIP"
+                                }
+                              }
+                            },
+                            {
+                              "name": "METALLB_ML_LABELS",
+                              "value": "app=metallb,component=speaker"
+                            },
+                            {
+                              "name": "METALLB_ML_SECRET_KEY_PATH",
+                              "value": "/etc/ml_secret_key"
+                            }
+                          ],
+                          "image": "quay.io/metallb/speaker:v0.16.1",
+                          "imagePullPolicy": "Never",
+                          "livenessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                              "host": "127.0.0.1",
+                              "path": "/healthz",
+                              "port": 17472,
+                              "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                          },
+                          "name": "speaker",
+                          "ports": [
+                            {
+                              "containerPort": 9120,
+                              "name": "metricshttps",
+                              "protocol": "TCP"
+                            },
+                            {
+                              "containerPort": 7946,
+                              "name": "memberlist-tcp",
+                              "protocol": "TCP"
+                            },
+                            {
+                              "containerPort": 7946,
+                              "name": "memberlist-udp",
+                              "protocol": "UDP"
+                            }
+                          ],
+                          "readinessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                              "host": "127.0.0.1",
+                              "path": "/readyz",
+                              "port": 17472,
+                              "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                          },
+                          "resources": {},
+                          "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                              "add": [
+                                "NET_RAW"
+                              ],
+                              "drop": [
+                                "ALL"
+                              ]
+                            },
+                            "readOnlyRootFilesystem": true
+                          },
+                          "terminationMessagePath": "/dev/termination-log",
+                          "terminationMessagePolicy": "File",
+                          "volumeMounts": [
+                            {
+                              "mountPath": "/etc/ml_secret_key",
+                              "name": "memberlist",
+                              "readOnly": true
+                            },
+                            {
+                              "mountPath": "/etc/metallb",
+                              "name": "metallb-excludel2",
+                              "readOnly": true
+                            },
+                            {
+                              "mountPath": "/etc/metallb/memberlist",
+                              "name": "memberlist-config",
+                              "readOnly": true
+                            }
+                          ]
+                        }
+                      ],
+                      "dnsPolicy": "ClusterFirst",
+                      "hostNetwork": true,
+                      "nodeSelector": {
+                        "kubernetes.io/os": "linux"
+                      },
+                      "restartPolicy": "Always",
+                      "schedulerName": "default-scheduler",
+                      "securityContext": {},
+                      "serviceAccount": "speaker",
+                      "serviceAccountName": "speaker",
+                      "terminationGracePeriodSeconds": 2,
+                      "tolerations": [
+                        {
+                          "effect": "NoSchedule",
+                          "key": "node-role.kubernetes.io/master",
+                          "operator": "Exists"
+                        },
+                        {
+                          "effect": "NoSchedule",
+                          "key": "node-role.kubernetes.io/control-plane",
+                          "operator": "Exists"
+                        }
+                      ],
+                      "volumes": [
+                        {
+                          "name": "memberlist",
+                          "secret": {
+                            "defaultMode": 420,
+                            "secretName": "memberlist"
+                          }
+                        },
+                        {
+                          "configMap": {
+                            "defaultMode": 256,
+                            "name": "metallb-excludel2"
+                          },
+                          "name": "metallb-excludel2"
+                        },
+                        {
+                          "configMap": {
+                            "defaultMode": 420,
+                            "name": "metallb-memberlist-config",
+                            "optional": true
+                          },
+                          "name": "memberlist-config"
+                        }
+                      ]
+                    }
+                  },
+                  "updateStrategy": {
+                    "rollingUpdate": {
+                      "maxSurge": 0,
+                      "maxUnavailable": 1
+                    },
+                    "type": "RollingUpdate"
+                  }
+                },
+                "status": {
+                  "currentNumberScheduled": 1,
+                  "desiredNumberScheduled": 1,
+                  "numberAvailable": 1,
+                  "numberMisscheduled": 0,
+                  "numberReady": 1,
+                  "observedGeneration": 1,
+                  "updatedNumberScheduled": 1
+                }
+              },
+              {
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "IPAddressPool",
+                "metadata": {
+                  "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"metallb.io/v1beta1\",\"kind\":\"IPAddressPool\",\"metadata\":{\"annotations\":{},\"labels\":{\"cats.clanhq.io/validation-infrastructure\":\"true\",\"cats.clanhq.io/validation-run\":\"cats-validation-dv-3c9de7f1ad9c483293f7\"},\"name\":\"cats-validation-pool\",\"namespace\":\"metallb-system\"},\"spec\":{\"addresses\":[\"172.19.255.239/32\",\"172.19.255.240/32\",\"172.19.255.241/32\",\"172.19.255.242/32\",\"172.19.255.243/32\",\"172.19.255.244/32\",\"172.19.255.245/32\",\"172.19.255.246/32\",\"172.19.255.247/32\",\"172.19.255.248/32\",\"172.19.255.249/32\",\"172.19.255.250/32\",\"172.19.255.251/32\",\"172.19.255.252/32\",\"172.19.255.253/32\",\"172.19.255.254/32\"]}}\n"
+                  },
+                  "creationTimestamp": "2026-09-16T06:24:59Z",
+                  "generation": 1,
+                  "labels": {
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7"
+                  },
+                  "name": "cats-validation-pool",
+                  "namespace": "metallb-system",
+                  "resourceVersion": "737",
+                  "uid": "b045fdf2-2aab-4a7d-b58e-d11985c5833c"
+                },
+                "spec": {
+                  "addresses": [
+                    "172.19.255.239/32",
+                    "172.19.255.240/32",
+                    "172.19.255.241/32",
+                    "172.19.255.242/32",
+                    "172.19.255.243/32",
+                    "172.19.255.244/32",
+                    "172.19.255.245/32",
+                    "172.19.255.246/32",
+                    "172.19.255.247/32",
+                    "172.19.255.248/32",
+                    "172.19.255.249/32",
+                    "172.19.255.250/32",
+                    "172.19.255.251/32",
+                    "172.19.255.252/32",
+                    "172.19.255.253/32",
+                    "172.19.255.254/32"
+                  ],
+                  "autoAssign": true,
+                  "avoidBuggyIPs": false
+                },
+                "status": {
+                  "assignedIPv4": 1,
+                  "assignedIPv6": 0,
+                  "availableIPv4": 15,
+                  "availableIPv6": 0
+                }
+              },
+              {
+                "apiVersion": "metallb.io/v1beta1",
+                "kind": "L2Advertisement",
+                "metadata": {
+                  "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"metallb.io/v1beta1\",\"kind\":\"L2Advertisement\",\"metadata\":{\"annotations\":{},\"labels\":{\"cats.clanhq.io/validation-infrastructure\":\"true\",\"cats.clanhq.io/validation-run\":\"cats-validation-dv-3c9de7f1ad9c483293f7\"},\"name\":\"cats-validation-l2\",\"namespace\":\"metallb-system\"},\"spec\":{\"ipAddressPools\":[\"cats-validation-pool\"]}}\n"
+                  },
+                  "creationTimestamp": "2026-09-16T06:24:59Z",
+                  "generation": 1,
+                  "labels": {
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7"
+                  },
+                  "name": "cats-validation-l2",
+                  "namespace": "metallb-system",
+                  "resourceVersion": "707",
+                  "uid": "25a1c048-4548-4a94-977e-7b10c060ba1c"
+                },
+                "spec": {
+                  "ipAddressPools": [
+                    "cats-validation-pool"
+                  ]
+                }
+              }
+            ],
+            "duration_ms": 64,
+            "error": null
+          }
+        },
+        "service": {
+          "name": "cats-validation-1-frontend",
+          "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7",
+          "observed": true,
+          "uid": "601b3930-8288-4105-aaa3-d6cf837af852",
+          "type": "LoadBalancer",
+          "cluster_ip": "10.96.65.226",
+          "load_balancer_ingress": [
+            {
+              "ip": "172.19.255.239",
+              "ipMode": "VIP"
+            }
+          ],
+          "conditions": []
+        },
+        "endpoint_slices": [
+          {
+            "addressType": "IPv4",
+            "apiVersion": "discovery.k8s.io/v1",
+            "endpoints": [
+              {
+                "addresses": [
+                  "10.244.0.8"
+                ],
+                "conditions": {
+                  "ready": true,
+                  "serving": true,
+                  "terminating": false
+                },
+                "nodeName": "cats-validation-dv-3c9de7f1ad9c483293f7-control-plane",
+                "targetRef": {
+                  "kind": "Pod",
+                  "name": "cats-validation-1-frontend-c84b4759c-2zg5k",
+                  "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                  "uid": "fe08b5c3-a7b1-4749-9c80-0036ded2829a"
+                }
+              },
+              {
+                "addresses": [
+                  "10.244.0.11"
+                ],
+                "conditions": {
+                  "ready": true,
+                  "serving": true,
+                  "terminating": false
+                },
+                "nodeName": "cats-validation-dv-3c9de7f1ad9c483293f7-control-plane",
+                "targetRef": {
+                  "kind": "Pod",
+                  "name": "cats-validation-1-frontend-c84b4759c-k42pp",
+                  "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                  "uid": "11191b1a-7c27-4f18-9c98-cf4b32a99d39"
+                }
+              }
+            ],
+            "kind": "EndpointSlice",
+            "metadata": {
+              "annotations": {
+                "endpoints.kubernetes.io/last-change-trigger-time": "2026-09-16T06:25:10Z"
+              },
+              "creationTimestamp": "2026-09-16T06:25:00Z",
+              "generateName": "cats-validation-1-frontend-",
+              "generation": 5,
+              "labels": {
+                "app.kubernetes.io/managed-by": "Helm",
+                "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+                "kubernetes.io/service-name": "cats-validation-1-frontend"
+              },
+              "name": "cats-validation-1-frontend-rjggs",
+              "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7",
+              "ownerReferences": [
+                {
+                  "apiVersion": "v1",
+                  "blockOwnerDeletion": true,
+                  "controller": true,
+                  "kind": "Service",
+                  "name": "cats-validation-1-frontend",
+                  "uid": "601b3930-8288-4105-aaa3-d6cf837af852"
+                }
+              ],
+              "resourceVersion": "979",
+              "uid": "d0b840c7-2b0b-4544-87dc-ef1a94503266"
+            },
+            "ports": [
+              {
+                "name": "http",
+                "port": 8080,
+                "protocol": "TCP"
+              }
+            ]
+          }
+        ],
+        "ready_backend_endpoints": 2,
+        "backend_required": true,
+        "reconciliation": "SUCCESSFUL",
+        "connectivity": {
+          "attempted": false,
+          "reason": "Control-plane reconciliation only; network reachability was not probed."
+        },
+        "events": [
+          {
+            "type": "Normal",
+            "reason": "IPAllocated",
+            "message": "Technical event message withheld",
+            "condition": "",
+            "count": 1,
+            "firstTimestamp": "2026-09-16T06:25:00Z",
+            "lastTimestamp": "2026-09-16T06:25:00Z",
+            "involvedObject": {
+              "kind": "Service",
+              "name": "cats-validation-1-frontend",
+              "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7"
+            }
+          },
+          {
+            "type": "Normal",
+            "reason": "nodeAssigned",
+            "message": "Technical event message withheld",
+            "condition": "",
+            "count": 2,
+            "firstTimestamp": "2026-09-16T06:25:10Z",
+            "lastTimestamp": "2026-09-16T06:25:10Z",
+            "involvedObject": {
+              "kind": "Service",
+              "name": "cats-validation-1-frontend",
+              "namespace": "cats-validation-dv-3c9de7f1ad9c483293f7"
+            }
+          }
+        ],
+        "event_collection": "COMPLETE"
+      },
+      "generic_exercise": true
+    },
+    {
+      "capability": "Ingress",
+      "required": true,
+      "source": "manifest",
+      "source_resource": "Ingress/cats-validation-1-frontend",
+      "source_namespace": "",
+      "source_field": "spec.ingressClassName",
+      "provider_strategy": "configured generic controller",
+      "status": "UNAVAILABLE",
+      "explanation": "No offline Ingress provider/controller manifest is configured; validation continued without claiming the capability.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {
+        "observed_resource": "Ingress/cats-validation-1-frontend",
+        "observed": "No usable loadBalancer.ingress status"
+      }
+    },
+    {
+      "capability": "Storage",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No PersistentVolumeClaim was rendered.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "GPU / extended resources",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No GPU or extended device resource was requested.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    },
+    {
+      "capability": "Cloud/provider-specific capabilities",
+      "required": false,
+      "source": "manifest",
+      "source_resource": "",
+      "source_namespace": "",
+      "source_field": "",
+      "provider_strategy": "not required",
+      "status": "NOT_REQUIRED",
+      "explanation": "No obvious cloud-provider API group was rendered.",
+      "provisioned_by_cats": false,
+      "provider_specific": false,
+      "evidence": {}
+    }
+  ],
+  "capability_bootstrap": {
+    "provisioned": [
+      {
+        "capability": "LoadBalancer",
+        "provider": "metallb",
+        "version": "0.16.1",
+        "status": "AVAILABLE",
+        "controller_ready": true,
+        "warnings": [],
+        "duration": 32.138,
+        "duration_ms": 32138,
+        "resources": [
+          {
+            "kind": "Namespace",
+            "name": "metallb-system",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "bfdprofiles.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "bgpadvertisements.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "bgppeers.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "communities.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "configurationstates.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "ipaddresspools.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "l2advertisements.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "servicebgpstatuses.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "CustomResourceDefinition",
+            "name": "servicel2statuses.metallb.io",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ServiceAccount",
+            "name": "controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ServiceAccount",
+            "name": "speaker",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "Role",
+            "name": "controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "Role",
+            "name": "pod-lister",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ClusterRole",
+            "name": "metallb-system:controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ClusterRole",
+            "name": "metallb-system:speaker",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "RoleBinding",
+            "name": "controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "RoleBinding",
+            "name": "pod-lister",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ClusterRoleBinding",
+            "name": "metallb-system:controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ClusterRoleBinding",
+            "name": "metallb-system:speaker",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ConfigMap",
+            "name": "metallb-excludel2",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "Secret",
+            "name": "metallb-webhook-cert",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "Service",
+            "name": "metallb-webhook-service",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "Deployment",
+            "name": "controller",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "DaemonSet",
+            "name": "speaker",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "ValidatingWebhookConfiguration",
+            "name": "metallb-webhook-configuration",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "IPAddressPool",
+            "name": "cats-validation-pool",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          },
+          {
+            "kind": "L2Advertisement",
+            "name": "cats-validation-l2",
+            "namespace": "metallb-system",
+            "label": "cats.clanhq.io/validation-infrastructure=true"
+          }
+        ],
+        "stages": [
+          {
+            "name": "verify_bundle",
+            "status": "PASS",
+            "duration_ms": 294
+          },
+          {
+            "name": "inspect_network",
+            "status": "PASS",
+            "duration_ms": 16
+          },
+          {
+            "name": "load_controller",
+            "status": "PASS",
+            "duration_ms": 7077
+          },
+          {
+            "name": "load_speaker",
+            "status": "PASS",
+            "duration_ms": 11791
+          },
+          {
+            "name": "apply_controller",
+            "status": "PASS",
+            "duration_ms": 565
+          },
+          {
+            "name": "wait_crds",
+            "status": "PASS",
+            "duration_ms": 265
+          },
+          {
+            "name": "wait_deployment_controller",
+            "status": "PASS",
+            "duration_ms": 10839
+          },
+          {
+            "name": "wait_daemonset_speaker",
+            "status": "PASS",
+            "duration_ms": 966
+          },
+          {
+            "name": "apply_pool",
+            "status": "PASS",
+            "duration_ms": 215
+          },
+          {
+            "name": "enable_node_advertisement",
+            "status": "PASS",
+            "duration_ms": 64
+          }
+        ],
+        "bundle": {
+          "provider": "metallb",
+          "version": "0.16.1",
+          "manifest_path": "/opt/cats/validation/loadbalancer/metallb-native.yaml",
+          "manifest_sha256": "e09dfe83a1feb0ebf5d26f8c4e9d1c7add22e7e08155cbe9c9f58efcce22047f"
+        },
+        "images": [
+          {
+            "name": "quay.io/metallb/controller:v0.16.1",
+            "digest": "sha256:5a3e101335f5ea2cfb0ddf51acdfa9538251e0623ffcd6cbfc1b274b7898790c",
+            "archive": "controller.tar",
+            "archive_sha256": "c4c5180b42dd2f4591de524701f45c77bd2fe005ebdf15b720969a626d4ff5fa"
+          },
+          {
+            "name": "quay.io/metallb/speaker:v0.16.1",
+            "digest": "sha256:37a98a9d1cd970051c5dededb6f922c1e6c3b90fdd0fc1350d1686e67675af0e",
+            "archive": "speaker.tar",
+            "archive_sha256": "f19b7ceb122849e1774e47ed5908ca8a820340e07b29302b6f30d3538d20c46d"
+          }
+        ],
+        "address_pool": {
+          "addresses": [
+            "172.19.255.239",
+            "172.19.255.240",
+            "172.19.255.241",
+            "172.19.255.242",
+            "172.19.255.243",
+            "172.19.255.244",
+            "172.19.255.245",
+            "172.19.255.246",
+            "172.19.255.247",
+            "172.19.255.248",
+            "172.19.255.249",
+            "172.19.255.250",
+            "172.19.255.251",
+            "172.19.255.252",
+            "172.19.255.253",
+            "172.19.255.254"
+          ],
+          "range": "172.19.255.239-172.19.255.254",
+          "subnet": "172.19.0.0/16",
+          "reserved": [
+            "172.19.0.1",
+            "172.19.0.2"
+          ]
+        },
+        "namespace": "metallb-system",
+        "attempted": true
+      }
+    ],
+    "warnings": [
+      "Ingress infrastructure was not configured for this offline validation run."
+    ],
+    "load_balancer": {
+      "provider": "metallb",
+      "version": "0.16.1",
+      "status": "AVAILABLE",
+      "controller_ready": true,
+      "warnings": [],
+      "duration": 32.138,
+      "duration_ms": 32138,
+      "resources": [
+        {
+          "kind": "Namespace",
+          "name": "metallb-system",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "bfdprofiles.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "bgpadvertisements.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "bgppeers.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "communities.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "configurationstates.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "ipaddresspools.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "l2advertisements.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "servicebgpstatuses.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "CustomResourceDefinition",
+          "name": "servicel2statuses.metallb.io",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ServiceAccount",
+          "name": "controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ServiceAccount",
+          "name": "speaker",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "Role",
+          "name": "controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "Role",
+          "name": "pod-lister",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "metallb-system:controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "metallb-system:speaker",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "RoleBinding",
+          "name": "controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "RoleBinding",
+          "name": "pod-lister",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "metallb-system:controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "metallb-system:speaker",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ConfigMap",
+          "name": "metallb-excludel2",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "Secret",
+          "name": "metallb-webhook-cert",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "Service",
+          "name": "metallb-webhook-service",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "Deployment",
+          "name": "controller",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "DaemonSet",
+          "name": "speaker",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "ValidatingWebhookConfiguration",
+          "name": "metallb-webhook-configuration",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "IPAddressPool",
+          "name": "cats-validation-pool",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        },
+        {
+          "kind": "L2Advertisement",
+          "name": "cats-validation-l2",
+          "namespace": "metallb-system",
+          "label": "cats.clanhq.io/validation-infrastructure=true"
+        }
+      ],
+      "stages": [
+        {
+          "name": "verify_bundle",
+          "status": "PASS",
+          "duration_ms": 294
+        },
+        {
+          "name": "inspect_network",
+          "status": "PASS",
+          "duration_ms": 16
+        },
+        {
+          "name": "load_controller",
+          "status": "PASS",
+          "duration_ms": 7077
+        },
+        {
+          "name": "load_speaker",
+          "status": "PASS",
+          "duration_ms": 11791
+        },
+        {
+          "name": "apply_controller",
+          "status": "PASS",
+          "duration_ms": 565
+        },
+        {
+          "name": "wait_crds",
+          "status": "PASS",
+          "duration_ms": 265
+        },
+        {
+          "name": "wait_deployment_controller",
+          "status": "PASS",
+          "duration_ms": 10839
+        },
+        {
+          "name": "wait_daemonset_speaker",
+          "status": "PASS",
+          "duration_ms": 966
+        },
+        {
+          "name": "apply_pool",
+          "status": "PASS",
+          "duration_ms": 215
+        },
+        {
+          "name": "enable_node_advertisement",
+          "status": "PASS",
+          "duration_ms": 64
+        }
+      ],
+      "bundle": {
+        "provider": "metallb",
+        "version": "0.16.1",
+        "manifest_path": "/opt/cats/validation/loadbalancer/metallb-native.yaml",
+        "manifest_sha256": "e09dfe83a1feb0ebf5d26f8c4e9d1c7add22e7e08155cbe9c9f58efcce22047f"
+      },
+      "images": [
+        {
+          "name": "quay.io/metallb/controller:v0.16.1",
+          "digest": "sha256:5a3e101335f5ea2cfb0ddf51acdfa9538251e0623ffcd6cbfc1b274b7898790c",
+          "archive": "controller.tar",
+          "archive_sha256": "c4c5180b42dd2f4591de524701f45c77bd2fe005ebdf15b720969a626d4ff5fa"
+        },
+        {
+          "name": "quay.io/metallb/speaker:v0.16.1",
+          "digest": "sha256:37a98a9d1cd970051c5dededb6f922c1e6c3b90fdd0fc1350d1686e67675af0e",
+          "archive": "speaker.tar",
+          "archive_sha256": "f19b7ceb122849e1774e47ed5908ca8a820340e07b29302b6f30d3538d20c46d"
+        }
+      ],
+      "address_pool": {
+        "addresses": [
+          "172.19.255.239",
+          "172.19.255.240",
+          "172.19.255.241",
+          "172.19.255.242",
+          "172.19.255.243",
+          "172.19.255.244",
+          "172.19.255.245",
+          "172.19.255.246",
+          "172.19.255.247",
+          "172.19.255.248",
+          "172.19.255.249",
+          "172.19.255.250",
+          "172.19.255.251",
+          "172.19.255.252",
+          "172.19.255.253",
+          "172.19.255.254"
+        ],
+        "range": "172.19.255.239-172.19.255.254",
+        "subnet": "172.19.0.0/16",
+        "reserved": [
+          "172.19.0.1",
+          "172.19.0.2"
+        ]
+      },
+      "namespace": "metallb-system",
+      "attempted": true,
+      "runtime_health": {
+        "status": "AVAILABLE",
+        "controller_ready": true,
+        "pool_addresses": [
+          "172.19.255.239/32",
+          "172.19.255.240/32",
+          "172.19.255.241/32",
+          "172.19.255.242/32",
+          "172.19.255.243/32",
+          "172.19.255.244/32",
+          "172.19.255.245/32",
+          "172.19.255.246/32",
+          "172.19.255.247/32",
+          "172.19.255.248/32",
+          "172.19.255.249/32",
+          "172.19.255.250/32",
+          "172.19.255.251/32",
+          "172.19.255.252/32",
+          "172.19.255.253/32",
+          "172.19.255.254/32"
+        ],
+        "items": [
+          {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+              "annotations": {
+                "deployment.kubernetes.io/revision": "1"
+              },
+              "creationTimestamp": "2026-09-16T06:24:47Z",
+              "generation": 1,
+              "labels": {
+                "app": "metallb",
+                "cats.clanhq.io/validation-infrastructure": "true",
+                "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                "component": "controller"
+              },
+              "name": "controller",
+              "namespace": "metallb-system",
+              "resourceVersion": "698",
+              "uid": "fabf461f-2a27-4a1c-a2cf-77f41a7eea10"
+            },
+            "spec": {
+              "progressDeadlineSeconds": 600,
+              "replicas": 1,
+              "revisionHistoryLimit": 3,
+              "selector": {
+                "matchLabels": {
+                  "app": "metallb",
+                  "component": "controller"
+                }
+              },
+              "strategy": {
+                "rollingUpdate": {
+                  "maxSurge": "25%",
+                  "maxUnavailable": "25%"
+                },
+                "type": "RollingUpdate"
+              },
+              "template": {
+                "metadata": {
+                  "annotations": {
+                    "prometheus.io/port": "9120",
+                    "prometheus.io/scrape": "true"
+                  },
+                  "labels": {
+                    "app": "metallb",
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                    "component": "controller"
+                  }
+                },
+                "spec": {
+                  "containers": [
+                    {
+                      "args": [
+                        "--port=9120",
+                        "--log-level=info"
+                      ],
+                      "env": [
+                        {
+                          "name": "METALLB_POD_NAME",
+                          "valueFrom": {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "metadata.name"
+                            }
+                          }
+                        },
+                        {
+                          "name": "METALLB_ML_SECRET_NAME",
+                          "value": "memberlist"
+                        },
+                        {
+                          "name": "METALLB_DEPLOYMENT",
+                          "value": "controller"
+                        }
+                      ],
+                      "image": "quay.io/metallb/controller:v0.16.1",
+                      "imagePullPolicy": "Never",
+                      "livenessProbe": {
+                        "failureThreshold": 3,
+                        "httpGet": {
+                          "path": "/healthz",
+                          "port": 17472,
+                          "scheme": "HTTP"
+                        },
+                        "initialDelaySeconds": 10,
+                        "periodSeconds": 10,
+                        "successThreshold": 1,
+                        "timeoutSeconds": 1
+                      },
+                      "name": "controller",
+                      "ports": [
+                        {
+                          "containerPort": 9120,
+                          "name": "metricshttps",
+                          "protocol": "TCP"
+                        },
+                        {
+                          "containerPort": 9443,
+                          "name": "webhook-server",
+                          "protocol": "TCP"
+                        }
+                      ],
+                      "readinessProbe": {
+                        "failureThreshold": 3,
+                        "httpGet": {
+                          "path": "/readyz",
+                          "port": 17472,
+                          "scheme": "HTTP"
+                        },
+                        "initialDelaySeconds": 10,
+                        "periodSeconds": 10,
+                        "successThreshold": 1,
+                        "timeoutSeconds": 1
+                      },
+                      "resources": {},
+                      "securityContext": {
+                        "allowPrivilegeEscalation": false,
+                        "capabilities": {
+                          "drop": [
+                            "all"
+                          ]
+                        },
+                        "readOnlyRootFilesystem": true
+                      },
+                      "terminationMessagePath": "/dev/termination-log",
+                      "terminationMessagePolicy": "File",
+                      "volumeMounts": [
+                        {
+                          "mountPath": "/tmp/k8s-webhook-server/serving-certs",
+                          "name": "cert",
+                          "readOnly": true
+                        }
+                      ]
+                    }
+                  ],
+                  "dnsPolicy": "ClusterFirst",
+                  "nodeSelector": {
+                    "kubernetes.io/os": "linux"
+                  },
+                  "restartPolicy": "Always",
+                  "schedulerName": "default-scheduler",
+                  "securityContext": {
+                    "fsGroup": 65534,
+                    "runAsNonRoot": true,
+                    "runAsUser": 65534
+                  },
+                  "serviceAccount": "controller",
+                  "serviceAccountName": "controller",
+                  "terminationGracePeriodSeconds": 0,
+                  "volumes": [
+                    {
+                      "name": "cert",
+                      "secret": {
+                        "defaultMode": 420,
+                        "secretName": "metallb-webhook-cert"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "status": {
+              "availableReplicas": 1,
+              "conditions": [
+                {
+                  "lastTransitionTime": "2026-09-16T06:24:58Z",
+                  "lastUpdateTime": "2026-09-16T06:24:58Z",
+                  "message": "Deployment has minimum availability.",
+                  "reason": "MinimumReplicasAvailable",
+                  "status": "True",
+                  "type": "Available"
+                },
+                {
+                  "lastTransitionTime": "2026-09-16T06:24:47Z",
+                  "lastUpdateTime": "2026-09-16T06:24:58Z",
+                  "message": "ReplicaSet \"controller-7cf65467d4\" has successfully progressed.",
+                  "reason": "NewReplicaSetAvailable",
+                  "status": "True",
+                  "type": "Progressing"
+                }
+              ],
+              "observedGeneration": 1,
+              "readyReplicas": 1,
+              "replicas": 1,
+              "terminatingReplicas": 0,
+              "updatedReplicas": 1
+            }
+          },
+          {
+            "apiVersion": "apps/v1",
+            "kind": "DaemonSet",
+            "metadata": {
+              "annotations": {
+                "deprecated.daemonset.template.generation": "1"
+              },
+              "creationTimestamp": "2026-09-16T06:24:47Z",
+              "generation": 1,
+              "labels": {
+                "app": "metallb",
+                "cats.clanhq.io/validation-infrastructure": "true",
+                "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                "component": "speaker"
+              },
+              "name": "speaker",
+              "namespace": "metallb-system",
+              "resourceVersion": "702",
+              "uid": "02870a41-93c0-4fe6-8122-e098ab139d93"
+            },
+            "spec": {
+              "revisionHistoryLimit": 10,
+              "selector": {
+                "matchLabels": {
+                  "app": "metallb",
+                  "component": "speaker"
+                }
+              },
+              "template": {
+                "metadata": {
+                  "annotations": {
+                    "prometheus.io/port": "9120",
+                    "prometheus.io/scrape": "true"
+                  },
+                  "labels": {
+                    "app": "metallb",
+                    "cats.clanhq.io/validation-infrastructure": "true",
+                    "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7",
+                    "component": "speaker"
+                  }
+                },
+                "spec": {
+                  "containers": [
+                    {
+                      "args": [
+                        "--port=9120",
+                        "--log-level=info"
+                      ],
+                      "env": [
+                        {
+                          "name": "METALLB_NODE_NAME",
+                          "valueFrom": {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "spec.nodeName"
+                            }
+                          }
+                        },
+                        {
+                          "name": "METALLB_POD_NAME",
+                          "valueFrom": {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "metadata.name"
+                            }
+                          }
+                        },
+                        {
+                          "name": "METALLB_HOST",
+                          "valueFrom": {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "status.hostIP"
+                            }
+                          }
+                        },
+                        {
+                          "name": "METALLB_ML_BIND_ADDR",
+                          "valueFrom": {
+                            "fieldRef": {
+                              "apiVersion": "v1",
+                              "fieldPath": "status.podIP"
+                            }
+                          }
+                        },
+                        {
+                          "name": "METALLB_ML_LABELS",
+                          "value": "app=metallb,component=speaker"
+                        },
+                        {
+                          "name": "METALLB_ML_SECRET_KEY_PATH",
+                          "value": "/etc/ml_secret_key"
+                        }
+                      ],
+                      "image": "quay.io/metallb/speaker:v0.16.1",
+                      "imagePullPolicy": "Never",
+                      "livenessProbe": {
+                        "failureThreshold": 3,
+                        "httpGet": {
+                          "host": "127.0.0.1",
+                          "path": "/healthz",
+                          "port": 17472,
+                          "scheme": "HTTP"
+                        },
+                        "initialDelaySeconds": 10,
+                        "periodSeconds": 10,
+                        "successThreshold": 1,
+                        "timeoutSeconds": 1
+                      },
+                      "name": "speaker",
+                      "ports": [
+                        {
+                          "containerPort": 9120,
+                          "name": "metricshttps",
+                          "protocol": "TCP"
+                        },
+                        {
+                          "containerPort": 7946,
+                          "name": "memberlist-tcp",
+                          "protocol": "TCP"
+                        },
+                        {
+                          "containerPort": 7946,
+                          "name": "memberlist-udp",
+                          "protocol": "UDP"
+                        }
+                      ],
+                      "readinessProbe": {
+                        "failureThreshold": 3,
+                        "httpGet": {
+                          "host": "127.0.0.1",
+                          "path": "/readyz",
+                          "port": 17472,
+                          "scheme": "HTTP"
+                        },
+                        "initialDelaySeconds": 10,
+                        "periodSeconds": 10,
+                        "successThreshold": 1,
+                        "timeoutSeconds": 1
+                      },
+                      "resources": {},
+                      "securityContext": {
+                        "allowPrivilegeEscalation": false,
+                        "capabilities": {
+                          "add": [
+                            "NET_RAW"
+                          ],
+                          "drop": [
+                            "ALL"
+                          ]
+                        },
+                        "readOnlyRootFilesystem": true
+                      },
+                      "terminationMessagePath": "/dev/termination-log",
+                      "terminationMessagePolicy": "File",
+                      "volumeMounts": [
+                        {
+                          "mountPath": "/etc/ml_secret_key",
+                          "name": "memberlist",
+                          "readOnly": true
+                        },
+                        {
+                          "mountPath": "/etc/metallb",
+                          "name": "metallb-excludel2",
+                          "readOnly": true
+                        },
+                        {
+                          "mountPath": "/etc/metallb/memberlist",
+                          "name": "memberlist-config",
+                          "readOnly": true
+                        }
+                      ]
+                    }
+                  ],
+                  "dnsPolicy": "ClusterFirst",
+                  "hostNetwork": true,
+                  "nodeSelector": {
+                    "kubernetes.io/os": "linux"
+                  },
+                  "restartPolicy": "Always",
+                  "schedulerName": "default-scheduler",
+                  "securityContext": {},
+                  "serviceAccount": "speaker",
+                  "serviceAccountName": "speaker",
+                  "terminationGracePeriodSeconds": 2,
+                  "tolerations": [
+                    {
+                      "effect": "NoSchedule",
+                      "key": "node-role.kubernetes.io/master",
+                      "operator": "Exists"
+                    },
+                    {
+                      "effect": "NoSchedule",
+                      "key": "node-role.kubernetes.io/control-plane",
+                      "operator": "Exists"
+                    }
+                  ],
+                  "volumes": [
+                    {
+                      "name": "memberlist",
+                      "secret": {
+                        "defaultMode": 420,
+                        "secretName": "memberlist"
+                      }
+                    },
+                    {
+                      "configMap": {
+                        "defaultMode": 256,
+                        "name": "metallb-excludel2"
+                      },
+                      "name": "metallb-excludel2"
+                    },
+                    {
+                      "configMap": {
+                        "defaultMode": 420,
+                        "name": "metallb-memberlist-config",
+                        "optional": true
+                      },
+                      "name": "memberlist-config"
+                    }
+                  ]
+                }
+              },
+              "updateStrategy": {
+                "rollingUpdate": {
+                  "maxSurge": 0,
+                  "maxUnavailable": 1
+                },
+                "type": "RollingUpdate"
+              }
+            },
+            "status": {
+              "currentNumberScheduled": 1,
+              "desiredNumberScheduled": 1,
+              "numberAvailable": 1,
+              "numberMisscheduled": 0,
+              "numberReady": 1,
+              "observedGeneration": 1,
+              "updatedNumberScheduled": 1
+            }
+          },
+          {
+            "apiVersion": "metallb.io/v1beta1",
+            "kind": "IPAddressPool",
+            "metadata": {
+              "annotations": {
+                "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"metallb.io/v1beta1\",\"kind\":\"IPAddressPool\",\"metadata\":{\"annotations\":{},\"labels\":{\"cats.clanhq.io/validation-infrastructure\":\"true\",\"cats.clanhq.io/validation-run\":\"cats-validation-dv-3c9de7f1ad9c483293f7\"},\"name\":\"cats-validation-pool\",\"namespace\":\"metallb-system\"},\"spec\":{\"addresses\":[\"172.19.255.239/32\",\"172.19.255.240/32\",\"172.19.255.241/32\",\"172.19.255.242/32\",\"172.19.255.243/32\",\"172.19.255.244/32\",\"172.19.255.245/32\",\"172.19.255.246/32\",\"172.19.255.247/32\",\"172.19.255.248/32\",\"172.19.255.249/32\",\"172.19.255.250/32\",\"172.19.255.251/32\",\"172.19.255.252/32\",\"172.19.255.253/32\",\"172.19.255.254/32\"]}}\n"
+              },
+              "creationTimestamp": "2026-09-16T06:24:59Z",
+              "generation": 1,
+              "labels": {
+                "cats.clanhq.io/validation-infrastructure": "true",
+                "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7"
+              },
+              "name": "cats-validation-pool",
+              "namespace": "metallb-system",
+              "resourceVersion": "737",
+              "uid": "b045fdf2-2aab-4a7d-b58e-d11985c5833c"
+            },
+            "spec": {
+              "addresses": [
+                "172.19.255.239/32",
+                "172.19.255.240/32",
+                "172.19.255.241/32",
+                "172.19.255.242/32",
+                "172.19.255.243/32",
+                "172.19.255.244/32",
+                "172.19.255.245/32",
+                "172.19.255.246/32",
+                "172.19.255.247/32",
+                "172.19.255.248/32",
+                "172.19.255.249/32",
+                "172.19.255.250/32",
+                "172.19.255.251/32",
+                "172.19.255.252/32",
+                "172.19.255.253/32",
+                "172.19.255.254/32"
+              ],
+              "autoAssign": true,
+              "avoidBuggyIPs": false
+            },
+            "status": {
+              "assignedIPv4": 1,
+              "assignedIPv6": 0,
+              "availableIPv4": 15,
+              "availableIPv6": 0
+            }
+          },
+          {
+            "apiVersion": "metallb.io/v1beta1",
+            "kind": "L2Advertisement",
+            "metadata": {
+              "annotations": {
+                "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"metallb.io/v1beta1\",\"kind\":\"L2Advertisement\",\"metadata\":{\"annotations\":{},\"labels\":{\"cats.clanhq.io/validation-infrastructure\":\"true\",\"cats.clanhq.io/validation-run\":\"cats-validation-dv-3c9de7f1ad9c483293f7\"},\"name\":\"cats-validation-l2\",\"namespace\":\"metallb-system\"},\"spec\":{\"ipAddressPools\":[\"cats-validation-pool\"]}}\n"
+              },
+              "creationTimestamp": "2026-09-16T06:24:59Z",
+              "generation": 1,
+              "labels": {
+                "cats.clanhq.io/validation-infrastructure": "true",
+                "cats.clanhq.io/validation-run": "cats-validation-dv-3c9de7f1ad9c483293f7"
+              },
+              "name": "cats-validation-l2",
+              "namespace": "metallb-system",
+              "resourceVersion": "707",
+              "uid": "25a1c048-4548-4a94-977e-7b10c060ba1c"
+            },
+            "spec": {
+              "ipAddressPools": [
+                "cats-validation-pool"
+              ]
+            }
+          }
+        ],
+        "duration_ms": 64,
+        "error": null
+      },
+      "cleanup_status": "COMPLETE"
+    },
+    "status": "ATTEMPTED",
+    "duration_ms": 32139,
+    "cleanup_status": "COMPLETE"
+  },
+  "cleanup_status": "COMPLETE",
+  "duration_seconds": 105,
+  "created_at": "2026-09-16 06:23:41.017311+00:00",
+  "completed_at": "2026-09-16 06:25:26.353596+00:00"
+}
