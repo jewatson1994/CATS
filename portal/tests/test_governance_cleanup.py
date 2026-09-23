@@ -60,5 +60,5 @@ def test_archival_is_a_service_header_action_not_raw_findings_panel():
 
 def test_assessment_rollup_does_not_invent_image_details():
     source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
-    assert '"evidence_image": ""' in source
-    assert "specific_missing_evidence" in source
+    assert 'row["item"] != "Assessment" else ""' in source
+    assert 'for row in missing_evidence' in source

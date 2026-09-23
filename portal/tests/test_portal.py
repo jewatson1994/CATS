@@ -798,7 +798,7 @@ def test_incomplete_execution_without_skipped_images_is_noncompliant():
     ingest(client, complete=False, skipped_images=[])
     page = client.get("/services/payments-service?finding_state=noncompliant")
     assert page.status_code == 200
-    assert "Latest assessment reported incomplete evidence" in page.text
+    assert "Latest assessment did not provide complete evidence" in page.text
     assert "No image details reported" not in page.text
     assert "<th>Details</th>" in page.text
     overview = client.get("/services/payments-service?overview=true")
@@ -1870,6 +1870,65 @@ def test_missing_evidence_source_file_is_preserved_in_service_overview():
     page = client.get("/services/provenance-service?overview=true")
     assert page.status_code == 200
     assert "charts/app/values.yaml" in page.text
+
+
+def test_all_sixty_missing_evidence_entries_reach_noncompliance():
+    client = new_client()
+    body = payload("sixty-evidence", datetime.now(timezone.utc), [], complete=False,
+                   skipped_images=[f"registry.example/missing:{i}" for i in range(9)])
+    body["service_overview"] = {
+        "missing_evidence": [{"type": "Chart", "item": f"missing-chart-{i}",
+                              "reason": "Remote chart unavailable", "source_file": f"charts/{i}/values.yaml"}
+                             for i in range(50)],
+        "dependencies": [{"name": "unresolved-dependency", "resolved": False}],
+    }
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    overview = client.get("/services/payments-service?overview=true")
+    assert "Active Non-Compliance</span><strong>60</strong>" in overview.text
+    page = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&page_size=100")
+    assert page.status_code == 200
+    assert "missing-chart-49" in page.text and "unresolved-dependency" in page.text
+    assert "charts/49/values.yaml" in page.text
+    assert "of 60" in page.text
+    filtered = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&q=missing-chart-49")
+    assert "of 1" in filtered.text and "charts/49/values.yaml" in filtered.text
+    second_page = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&page_size=50&page=2")
+    assert "51&ndash;60 of 60" in second_page.text
+
+
+def test_raw_findings_do_not_hide_non_risk_eligible_cves():
+    client = new_client()
+    assert ingest(client, cves=["CVE-2099-11111"]).status_code == 201
+    with SessionLocal() as db:
+        db.add(PortalSetting(key="compliance_mode", value="risk_based"))
+        db.commit()
+    assert "CVE-2099-11111" not in client.get("/services/payments-service?findings_view=simplified").text
+    page = client.get("/services/payments-service?findings_view=raw")
+    assert "CVE-2099-11111" in page.text
+
+
+def test_public_ingest_preserves_scan_companion_overview(monkeypatch, tmp_path):
+    from app import main as portal_main
+    client = new_client(); ingest(client)
+    monkeypatch.setattr(AuthContext, "accessible_service_ids", lambda self, permission: {1})
+    monkeypatch.setattr(AuthContext, "has", lambda self, permission, service_id=None: True)
+    job_id = "companion-evidence"
+    output = tmp_path / job_id / "output"
+    output.mkdir(parents=True)
+    body = payload("companion", datetime.now(timezone.utc), ["CVE-2099-12345"] * 3, complete=False)
+    body["service_overview"] = {"rendered_resources": [{"kind": "Service", "metadata": {"name": "kept"}}]}
+    (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
+    (output / "service-overview.json").write_text(json.dumps({"missing_evidence": [
+        {"type": "Chart", "item": "companion-chart", "reason": "Unavailable"}]}), encoding="utf-8")
+    monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete"})
+    assert client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service").status_code == 200
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}"))
+        assert len(execution.raw_payload["findings"]) == 3
+        assert execution.raw_payload["service_overview"]["rendered_resources"][0]["metadata"]["name"] == "kept"
+        assert execution.raw_payload["service_overview"]["missing_evidence"][0]["item"] == "companion-chart"
+    assert "companion-chart" in client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant").text
 
 
 def test_helm_ingest_queues_deployment_validation_without_changing_static_result(monkeypatch):

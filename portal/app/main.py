@@ -1288,7 +1288,14 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     ]
     policy_resolved = [finding for finding in service.policy_findings if not finding.active]
     poam_active = [entry for entry in service.poam_entries if entry.status == "active"]
-    incomplete = bool(latest_execution and (not latest_execution.complete or skipped_images or skipped_charts))
+    latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
+    missing_evidence = normalize_overview(
+        latest_payload.get("service_overview") or {},
+        skipped_images=skipped_images or [], skipped_charts=skipped_charts or [],
+        incomplete=bool(latest_execution and not latest_execution.complete),
+        digest_resolver=None,
+    )["missing_evidence"]
+    incomplete = bool(latest_execution and (not latest_execution.complete or missing_evidence))
     try:
         epss_rules = json.loads(configuration.get("epss_rules", "[]"))
     except (TypeError, ValueError):
@@ -1358,7 +1365,7 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     ]
     evidence_state = "No evidence"
     if latest_execution:
-        evidence_state = "Complete" if latest_execution.complete else "Incomplete"
+        evidence_state = "Incomplete" if incomplete else "Complete"
     if skipped_images and evidence_state == "Incomplete":
         evidence_state = f"Incomplete · {len(skipped_images)} skipped"
     if skipped_charts and evidence_state == "Incomplete":
@@ -1390,52 +1397,15 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         "due": policy_due_dates[finding.id],
         "status": "Non-Compliant",
     } for finding in policy_noncompliant)
-    # Keep the actionable evidence observations as the source of truth.  A
-    # generic assessment roll-up is useful only when the incomplete assessment
-    # has no concrete skipped/missing item to explain it.
-    latest_overview = (latest_execution.raw_payload.get("service_overview", {})
-                       if latest_execution and isinstance(latest_execution.raw_payload, dict)
-                       else {})
-    specific_missing_evidence = bool(
-        isinstance(latest_overview, dict)
-        and (latest_overview.get("missing_evidence") or latest_overview.get("evidence"))
-    )
+    # Use the same canonical observations as Overview, including explicit
+    # missing evidence and unresolved dependencies, with identical deduplication.
     if evidence_noncompliant:
-        if skipped_images:
-            noncompliance_items.extend(
-                {
-                    "type": "Evidence",
-                    "item": "Image",
-                    "evidence_image": image,
-                    "reason": "Unavailable for assessment",
-                    "due": None,
-                    "status": "Non-Compliant",
-                }
-                for image in skipped_images
-            )
-        elif not skipped_charts and not specific_missing_evidence:
-            noncompliance_items.append(
-                {
-                    "type": "Evidence",
-                    "item": "Assessment",
-                    "evidence_image": "",
-                    "reason": "Latest assessment reported incomplete evidence",
-                    "due": None,
-                    "status": "Non-Compliant",
-                }
-            )
-        if skipped_charts:
-            noncompliance_items.extend(
-                {
-                    "type": "Evidence",
-                    "item": "Chart",
-                    "evidence_image": chart,
-                    "reason": "Unavailable for assessment",
-                    "due": None,
-                    "status": "Non-Compliant",
-                }
-                for chart in skipped_charts
-            )
+        noncompliance_items.extend({
+            "type": "Evidence", "item": row["type"] if row["item"] != "Assessment" else "Assessment",
+            "evidence_image": row["item"] if row["item"] != "Assessment" else "",
+            "source_file": row.get("source_file", ""),
+            "reason": row["reason"], "due": None, "status": "Non-Compliant",
+        } for row in missing_evidence)
     noncompliance_items.sort(key=lambda item: (str(item.get("item", "")).casefold(), str(item.get("type", "")).casefold()))
     return {
         "service": service, "compliant": not risk_findings and not policy_noncompliant and not (incomplete and configuration.get("incomplete_noncompliant") == "true"), "overdue": overdue,
@@ -1689,8 +1659,10 @@ def service_overview_rows_detailed(
         raw_payload = latest.raw_payload if latest and isinstance(latest.raw_payload, dict) else {}
         skipped_images = raw_payload.get("skipped_images", []) or []
         skipped_charts = raw_payload.get("skipped_charts", []) or []
-        incomplete = bool(latest and (not latest.complete or skipped_images or skipped_charts))
-        evidence_state = "No evidence" if not latest else ("Complete" if latest.complete else "Incomplete")
+        missing = normalize_overview(raw_payload.get("service_overview") or {}, skipped_images=skipped_images,
+                                     skipped_charts=skipped_charts, incomplete=bool(latest and not latest.complete))["missing_evidence"]
+        incomplete = bool(latest and (not latest.complete or missing))
+        evidence_state = "No evidence" if not latest else ("Incomplete" if incomplete else "Complete")
         if skipped_images and evidence_state == "Incomplete":
             evidence_state = f"Incomplete · {len(skipped_images)} skipped"
         if skipped_charts and evidence_state == "Incomplete":
@@ -1983,8 +1955,10 @@ def service_overview_rows_aggregated(
         raw_payload = latest.raw_payload if latest and isinstance(latest.raw_payload, dict) else {}
         skipped_images = raw_payload.get("skipped_images", []) or []
         skipped_charts = raw_payload.get("skipped_charts", []) or []
-        incomplete = bool(latest and (not latest.complete or skipped_images or skipped_charts))
-        evidence_state = "No evidence" if not latest else ("Complete" if latest.complete else "Incomplete")
+        missing = normalize_overview(raw_payload.get("service_overview") or {}, skipped_images=skipped_images,
+                                     skipped_charts=skipped_charts, incomplete=bool(latest and not latest.complete))["missing_evidence"]
+        incomplete = bool(latest and (not latest.complete or missing))
+        evidence_state = "No evidence" if not latest else ("Incomplete" if incomplete else "Complete")
         if skipped_images and evidence_state == "Incomplete":
             evidence_state = f"Incomplete · {len(skipped_images)} skipped"
         if skipped_charts and evidence_state == "Incomplete":
@@ -3375,15 +3349,15 @@ def public_scan_job_results_view(request: Request, job_id: str):
     if not isinstance(payload, dict):
         payload = {}
     service = payload.get("service") if isinstance(payload.get("service"), dict) else {}
-    overview_data = {}
+    overview_data = dict(payload.get("service_overview") or {})
     overview_path = output_dir / "service-overview.json"
     if overview_path.exists():
         try:
             candidate = json.loads(overview_path.read_text(encoding="utf-8"))
             if isinstance(candidate, dict):
-                overview_data = candidate
+                overview_data.update(candidate)
         except (OSError, ValueError):
-            overview_data = {}
+            pass
     vulnerabilities = [item for item in (payload.get("findings") or []) if isinstance(item, dict)]
     configurations = [item for item in (payload.get("policy_findings") or []) if isinstance(item, dict)]
     skipped_images = payload.get("skipped_images") or []
@@ -3683,6 +3657,13 @@ def ingest_public_scan(
     ingest_logger = logging.getLogger("cats.public_ingest")
     try:
         data = json.loads(result_path.read_text(encoding="utf-8"))
+        # Use the same overview source as the Scan results page. Keep all
+        # embedded sections when the companion file only supplies some fields.
+        overview_path = result_path.parent / "service-overview.json"
+        if overview_path.exists():
+            overview = json.loads(overview_path.read_text(encoding="utf-8"))
+            if isinstance(overview, dict):
+                data["service_overview"] = {**(data.get("service_overview") or {}), **overview}
         stage_timings[ingest_stage] = round((time.perf_counter() - stage_started) * 1000, 2)
         ingest_stage = "normalize_result"; stage_started = time.perf_counter()
         # Public scans may include raw (non-fixable) vulnerabilities for
@@ -5280,13 +5261,17 @@ def service_detail(
         "resolved": view["resolved"],
         "warnings": view["warning_items"],
     }
+    # Raw findings must not silently inherit the risk-policy visibility filter.
+    # Lifecycle and exceptions are still explicit, independent service states.
+    if findings_view == "raw":
+        finding_groups["active"] = [f for f in service.findings if f.active and not active_exception(f, now)]
     severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
     all_policy_items = [*view["policy_findings"], *view["policy_excepted"], *view["policy_resolved"]]
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
     severity_options = sorted({str(item.severity) for item in [*finding_groups["active"], *finding_groups["exceptions"], *finding_groups["resolved"], *all_policy_items] if isinstance(item, (Finding, PolicyFinding)) and item.severity}, key=lambda value: (severity_order.get(value.casefold(), 4), value.casefold()))
     finding_groups = _filter_service_finding_groups(finding_groups, query=q, severities=severity, resource=resource)
     policy_groups = _filter_service_finding_groups({
-        "active": view["policy_findings"], "exceptions": view["policy_excepted"], "resolved": view["policy_resolved"],
+        "active": [*view["policy_findings"], *view["policy_noncompliant"]] if findings_view == "raw" else view["policy_findings"], "exceptions": view["policy_excepted"], "resolved": view["policy_resolved"],
     }, query=q, severities=severity, resource=resource)
     selected_findings_view = "simplified" if simplified else "raw"
     canonical_findings = bool(findings or findings_view)
@@ -5338,6 +5323,7 @@ def service_detail(
         total_items = len(active_entries)
     else:
         all_items = view["noncompliance_items"] if finding_state in {"noncompliant", "overdue"} else all_findings
+        all_items = _filter_service_finding_groups({"items": all_items}, query=q, severities=severity, resource=resource)["items"]
         if finding_type != "all":
             item_type = {"evidence": "Evidence", "configuration": "Configuration", "vulnerability": "CVE"}[finding_type]
             all_items = [item for item in all_items if (item.get("type") if isinstance(item, dict) else "CVE") == item_type]

@@ -66,6 +66,7 @@
 {% endif %}
 {% set active_service_tab = 'findings' %}{% include "_service_tabs.html" %}
 {% include "_finding_view_selector.html" %}
+{% if selected_findings_view == 'raw' %}<p class="muted">All retained fixable findings are shown without risk-policy filtering. Vulnerabilities are grouped by CVE across images and packages; Scan counts individual observations and may also include vulnerabilities without fixes. Exceptions and resolved findings have separate views.</p>{% endif %}
 {% if view.skipped_images %}
 <span class="sr-only">Skipped images ({{ view.skipped_images|length }}): {{ view.skipped_images|join(', ') }}</span>
 {% endif %}
@@ -75,6 +76,7 @@
 
 <section class="panel service-findings">
   <form class="finding-filters" method="get" action="/services/{{ view.service.service_key }}">
+    <input type="hidden" name="findings_view" value="{{ selected_findings_view }}">
     <input type="hidden" name="overview" value="false"><input type="hidden" name="finding_state" value="{{ finding_state }}"><input type="hidden" name="finding_type" value="{{ finding_type }}"><input type="hidden" name="page_size" value="{{ page_size }}"><input type="hidden" name="page" value="1">
     <label class="finding-filter-field">Search findings<input name="q" value="{{ query or '' }}" placeholder="CVE, package, image, resource…" aria-label="Search findings"></label>
     <div class="finding-filter-field"><span>Severity</span><details class="multi-select-filter"><summary>{% if severity %}{{ severity|length }} selected{% else %}All severities{% endif %}</summary><div class="multi-select-options">{% for option in severity_options %}<label><input type="checkbox" name="severity" value="{{ option }}" {% if option in severity %}checked{% endif %}>{{ option }}</label>{% endfor %}</div></details></div>
@@ -124,7 +126,7 @@
             {% endif %}
           </strong></td>
           <td>{% for image in item.images %}<code class="image-ref" title="{{ image }}">{{ image }}</code>{% else %}&mdash;{% endfor %}</td>
-          <td>{{ item.reason }}</td>
+          <td>{{ item.reason }}{% if item.source_file %}<small class="muted"><br>Source: <code>{{ item.source_file }}</code></small>{% endif %}</td>
           <td>{% if item.due %}{{ cats_date(item.due) }}{% else %}&mdash;{% endif %}</td>
           <td class="finding-actions">
             {% if item.type == 'CVE' %}
