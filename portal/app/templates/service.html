@@ -241,7 +241,7 @@
             {% elif item.active %}
               {% set remediation = remediation_classes.get(item.id, {}) %}
               <span class="status" title="{{ remediation.get('reason', '') }}">{{ remediation.get('classification', 'NOT REMEDIABLE') }}</span>
-              {% if can('remediation.execute', view.service.id) and remediation.get('classification') != 'NOT REMEDIABLE' %}
+              {% if remediation_enabled and can('remediation.execute', view.service.id) and remediation.get('classification') != 'NOT REMEDIABLE' %}
               <form method="post" action="/services/{{ view.service.service_key }}/policy-findings/{{ item.id }}/remediate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Remediate</button></form>
               {% endif %}
               {% if can('exception.request', view.service.id) %}

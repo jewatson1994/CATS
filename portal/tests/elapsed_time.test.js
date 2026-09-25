@@ -65,7 +65,9 @@ const drift = runningTimer();
 drift.setClock(605000);
 assert.match(drift.element.textContent, /00:10:05$/);
 
-for (const status of ['complete', 'incomplete', 'error', 'failed', 'cancelled']) {
+for (const status of ['complete', 'incomplete', 'error', 'failed', 'cancelled',
+  'bundle_ready', 'bundle_partial', 'publication_partial', 'evidence_partial',
+  'validation_failed', 'validation_unavailable']) {
   const terminal = runningTimer();
   terminal.setClock(10000);
   terminal.controller.update({

@@ -446,6 +446,7 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     from app import main as portal_main
 
     client = new_client()
+    assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False).status_code == 303
     data = payload("remediation-source", datetime.now(timezone.utc), [])
     data["policy_findings"] = [{
         "finding": "KSV-allowPrivilegeEscalation", "severity": "High", "target": "Deployment/payments",
@@ -470,6 +471,160 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     report = client.get(location)
     assert report.status_code == 200
     assert "Before / After" in report.text and "Deployment validation" in report.text and "Review Required" in report.text
+    retry = client.post(location + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert retry.status_code == 303
+    with SessionLocal() as db:
+        newer = db.scalar(select(RemediationExecution).where(RemediationExecution.retry_of_id == job.id))
+        assert newer and newer.job_key != job.job_key and newer.output_mode == job.output_mode
+
+
+def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_history():
+    client = new_client()
+    with SessionLocal() as db:
+        db.add(Service(service_key="payments-service", name="Payments Service"))
+        db.commit()
+    assert "Enable Remediation" in client.get("/admin/configuration").text
+    page = client.get("/services/payments-service?remediations=true&tab=pipeline")
+    assert page.status_code == 200 and "Remediate Service" not in page.text
+    denied = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)})
+    assert denied.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(RemediationExecution)) is None
+    enabled = client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False)
+    assert enabled.status_code == 303
+    assert "Remediate Service" in client.get("/services/payments-service?remediations=true&tab=pipeline").text
+    add_user("remediation-viewer", "Assessor")
+    viewer = new_client("remediation-viewer")
+    assert viewer.post("/services/payments-service/remediate", data={"csrf_token": csrf(viewer)}).status_code == 403
+    with SessionLocal() as db:
+        other = Service(service_key="other-service", name="Other Service")
+        db.add(other); db.commit(); other_id = other.id
+    add_user("other-manager", "Service Manager", service_id=other_id)
+    manager = new_client("other-manager")
+    assert manager.post("/services/payments-service/remediate", data={"csrf_token": csrf(manager)}).status_code == 403
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        db.add(RemediationExecution(job_key="R-CONCURRENT", service_id=service.id, requested_by_id=admin.id,
+                                    output_mode="publish", status="running", phase="patch_images"))
+        db.commit()
+    assert client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}).status_code == 409
+    assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client)}, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        assert db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == "R-CONCURRENT")).status == "running"
+    assert "R-CONCURRENT" in client.get("/services/payments-service?remediations=true&tab=pipeline").text
+    assert client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}).status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "remediation.feature_toggled"))
+
+
+def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypatch):
+    from app import main as portal_main
+    from app.models import PortalSetting
+    from app import validator_client
+
+    client = new_client()
+    client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
+    data = payload("remediation-remote", datetime.now(timezone.utc), [])
+    data["helm_source_files"] = {
+        "Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
+        "values.yaml": "image: registry.internal/payments:1\n",
+        "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: {{ .Values.image }}\n",
+    }
+    data["service_overview"] = {"rendered_resources": [{
+        "apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "payments"},
+        "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
+                                  "values_file": "values.yaml", "values_key": ".Values.image", "ambiguous": False}],
+        "spec": {"template": {"spec": {"containers": [{"name": "payments", "image": "registry.internal/payments:1"}]}}},
+    }]}
+    assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        db.add(PortalSetting(key="validator_configuration", value='{"endpoint":"https://validator.internal"}'))
+        db.commit()
+
+    candidate = "registry.internal/remediated/payments@sha256:" + "a" * 64
+    def fake_patch(_db, _record, _service, plan):
+        for image in plan["images"]:
+            image.update(candidate=candidate, patch_status="PATCHED", classification="AUTO-REMEDIABLE",
+                         remediation_evidence={"sbom": "complete", "trivy": "complete", "dockle": "complete"})
+    def fake_static(candidate_dir, _payload, _plan, validation):
+        (candidate_dir / ".cats-rendered.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: " + candidate + "\n", encoding="utf-8")
+        validation["status"] = "PASS"
+        validation["checks"]["trivy_config_rescan"] = {"status": "PASS"}
+        validation["checks"]["vulnerability_rescan"] = {"status": "PASS"}
+        return validation
+    submitted = []
+    def fake_validate(_config, package):
+        submitted.append(package)
+        return {"status": "VERIFIED", "cleanup_status": "COMPLETE"}
+    monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
+    monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
+    monkeypatch.setattr(validator_client, "validate", fake_validate)
+    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert response.status_code == 303
+    assert submitted[0]["manifest"]["referenced_images"] == [candidate]
+    assert candidate in submitted[0]["artifact"]["source_files"]["values.yaml"]
+    assert "1.0.0-cats." in submitted[0]["artifact"]["source_files"]["Chart.yaml"]
+    monkeypatch.setattr(validator_client, "validate", lambda _config, _package: {"status": "FAILED", "cleanup_status": "COMPLETE"})
+    retry = client.post(response.headers["location"] + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert retry.status_code == 303
+    with SessionLocal() as db:
+        rerun = db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == retry.headers["location"].split("/")[-1]))
+        assert rerun.validation_results["deployment"]["status"] == "FAILED"
+        assert Path(rerun.artifact_path).is_file()
+
+
+def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(monkeypatch):
+    from app import main as portal_main
+    client = new_client()
+    client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
+    data = payload("remediation-bundle", datetime.now(timezone.utc), [])
+    data["helm_source_files"] = {"Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
+                                 "values.yaml": "image: registry.internal/payments:1\n"}
+    data["service_overview"] = {"rendered_resources": [{"apiVersion": "apps/v1", "kind": "Deployment",
+        "metadata": {"name": "payments"},
+        "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
+                                  "values_file": "values.yaml", "values_key": ".Values.image", "ambiguous": False}],
+        "spec": {"template": {"spec": {"containers": [{"name": "payments", "image": "registry.internal/payments:1"}]}}}}]}
+    assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
+    patch_key = "a" * 32
+    candidate = "registry.internal/remediated/payments:1"
+    output = portal_main.PATCH_JOB_ROOT / patch_key / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "patched-image.tar").write_bytes(b"archive")
+    (output / "grype-after.json").write_text('{"matches":[]}', encoding="utf-8")
+    (output / "remediated-sbom.json").write_text('{"artifacts":[]}', encoding="utf-8")
+    def fake_patch(_db, _record, _service, plan):
+        for image in plan["images"]:
+            image.update(candidate=candidate, digest="b" * 64, patch_job_id=patch_key,
+                         patch_status="PATCHED", classification="AUTO-REMEDIABLE",
+                         remediation_evidence={"sbom": "complete", "trivy": "complete", "dockle": "complete"})
+    def fake_static(candidate_dir, _payload, _plan, validation):
+        (candidate_dir / ".cats-rendered.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: " + candidate + "\n", encoding="utf-8")
+        validation["status"] = "PASS"
+        validation["checks"]["trivy_config_rescan"] = {"status": "PASS"}
+        validation["checks"]["vulnerability_rescan"] = {"status": "PASS"}
+        return validation
+    monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
+    monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
+    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client),
+        "output_mode": "bundle"}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        job = db.scalar(select(RemediationExecution))
+        assert job.output_mode == "bundle"
+        assert job.status in {"bundle_ready", "bundle_partial"}
+        with ZipFile(job.artifact_path) as bundle:
+            names = set(bundle.namelist())
+            assert {"manifest.json", f"images/{patch_key}.tar", f"scans/{patch_key}-grype-after.json",
+                    f"sbom/{patch_key}.json"} <= names
+            manifest = json.loads(bundle.read("manifest.json"))
+            assert manifest["images"][0]["remediated"] == candidate
+            assert "remediation-plan.yaml" not in names
 
 
 def test_administrator_can_save_oci_registry():

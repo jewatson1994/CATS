@@ -8,7 +8,7 @@
     <h1>{{ finding.cve }}</h1>
     <p>{{ service.name }} · {{ evidence.get("namespace") or "Unknown namespace" }}</p>
   </div>
-  <div><span class="status large {{ 'bad' if finding.active else 'ok' }}">{{ "Active" if finding.active else "Resolved" }}</span>{% if finding.active and can('remediation.execute', service.id) %}<form method="post" action="/services/{{ service.service_key }}/findings/{{ finding.id }}/remediate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Remediate</button></form>{% endif %}</div>
+  <div><span class="status large {{ 'bad' if finding.active else 'ok' }}">{{ "Active" if finding.active else "Resolved" }}</span>{% if remediation_enabled and finding.active and can('remediation.execute', service.id) %}<form method="post" action="/services/{{ service.service_key }}/findings/{{ finding.id }}/remediate"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Remediate</button></form>{% endif %}</div>
 </section>
 <section class="panel"><div class="panel-head"><div><h2>Remediation classification</h2><p>{{ remediation_classification.reason }}</p></div><span class="status">{{ remediation_classification.classification }}</span></div></section>
 <section class="metrics">

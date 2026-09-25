@@ -37,6 +37,8 @@ The current local release tag is **`cats:1.3`**.
 The [cybersecurity and validation guide](docs/cybersecurity-and-validation.md)
 describes watchlist formats, dashboard status, OIDC claim mapping, the separate
 CATSchrödinger validator, and connected or disconnected security data updates.
+The [service remediation guide](docs/remediation.md) covers the default-off
+feature flag, OCI and bundle outputs, provenance, and validation states.
 
 ## Main workflows
 

@@ -83,7 +83,7 @@ from . import signing
 from .admin_config import OS_DEFINITIONS, PACKAGE_MANAGERS, certificate_bundle_metadata, merge_certificate_metadata, normalize_policy, parse_json, policy_bool, test_repository, validate_os_definition, validate_policy
 from .trusted_ca import ephemeral_trust, write_additive_bundle
 from .runtime_version import deployed_version
-from .remediation import associate_patch_results, build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation
+from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports
 from .deployment_validation import (
     KindDeploymentValidator, ValidationArtifact, ValidationConfig,
     ValidationStatus, capability_assessment_groups, cleanup_stale_clusters, validation_names,
@@ -184,6 +184,13 @@ with engine.begin() as connection:
     revision_columns = {column["name"] for column in inspect(connection).get_columns("service_artifact_revisions")}
     if "source_metadata" not in revision_columns:
         connection.execute(text("ALTER TABLE service_artifact_revisions ADD COLUMN source_metadata JSON"))
+    remediation_columns = {column["name"] for column in inspect(connection).get_columns("remediation_executions")}
+    if "output_mode" not in remediation_columns:
+        connection.execute(text("ALTER TABLE remediation_executions ADD COLUMN output_mode VARCHAR(20) DEFAULT 'publish'"))
+    if "stages" not in remediation_columns:
+        connection.execute(text("ALTER TABLE remediation_executions ADD COLUMN stages JSON"))
+    if "retry_of_id" not in remediation_columns:
+        connection.execute(text("ALTER TABLE remediation_executions ADD COLUMN retry_of_id INTEGER"))
     # Conservatively link legacy WORKING rows only when their strict historical
     # reference resolves to one exact revision owned by the same service.
     legacy_working = connection.execute(text(
@@ -956,6 +963,7 @@ CONFIG_DEFAULTS = {
     "image_signing": "{}",
     "validator_configuration": "{}",
     "cyber_warning_policy": '{"critical_high":true,"kev":true,"watchlist":true,"poam":true,"kind":true,"missing_evidence":true}',
+    "remediation_enabled": "false",
 }
 
 # These settings describe the CATS runtime itself.  They are intentionally
@@ -967,6 +975,7 @@ GLOBAL_CONFIGURATION_KEYS = {
     "oidc_configuration", "oci_registries", "image_signing",
     "validator_configuration",
     "cyber_warning_policy",
+    "remediation_enabled",
 }
 
 DISPLAY_TIMEZONE_FALLBACKS = (
@@ -1024,6 +1033,10 @@ def get_global_configuration(db: Session) -> dict[str, str]:
     if migrated:
         db.commit()
     return configuration
+
+
+def remediation_enabled(db: Session) -> bool:
+    return get_global_configuration(db).get("remediation_enabled") == "true"
 
 
 def configuration_for_service(db: Session, service: Service) -> dict[str, str]:
@@ -4484,54 +4497,34 @@ def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: d
              for item in plan.get("images", [])):
         checks["vulnerability_rescan"] = {"status": "PASS", "detail": "Every staged image completed the existing patch worker's before/after vulnerability scan."}
     validation["status"] = "PASS" if all(checks[name]["status"] == "PASS" for name in validation["required_checks"]) else "FAIL"
-    kubeconfig = os.getenv("CATS_REMEDIATION_KUBECONFIG", "").strip()
-    kubectl = shutil.which("kubectl")
-    if validation["status"] == "PASS" and chart_roots and kubeconfig and helm and kubectl:
-        namespace = "cats-remediation-" + re.sub(r"[^a-z0-9]", "", str(plan.get("job_id", "")).lower())[-20:]
-        env = {**os.environ, "KUBECONFIG": kubeconfig}
-        deployment = {"status": "FAIL", "namespace": namespace, "detail": "Deployment validation did not complete."}
-        try:
-            created = subprocess.run([kubectl, "create", "namespace", namespace], env=env, capture_output=True, text=True, timeout=60, check=False)
-            if created.returncode != 0:
-                raise RuntimeError((created.stderr or created.stdout)[-1000:])
-            for index, chart_root in enumerate(chart_roots, start=1):
-                installed = subprocess.run([helm, "upgrade", "--install", f"candidate-{index}", str(chart_root), "--namespace", namespace,
-                                            "--wait", "--timeout", os.getenv("CATS_REMEDIATION_DEPLOY_TIMEOUT", "5m")],
-                                           env=env, capture_output=True, text=True, timeout=600, check=False)
-                if installed.returncode != 0:
-                    raise RuntimeError((installed.stderr or installed.stdout)[-1000:])
-            ready = subprocess.run([kubectl, "wait", "--for=condition=Ready", "pods", "--all", "--namespace", namespace,
-                                    "--timeout", os.getenv("CATS_REMEDIATION_DEPLOY_TIMEOUT", "5m")],
-                                   env=env, capture_output=True, text=True, timeout=600, check=False)
-            if ready.returncode != 0:
-                raise RuntimeError((ready.stderr or ready.stdout)[-1000:])
-            deployment = {"status": "PASS", "namespace": namespace, "detail": "Charts installed and all created pods reached Ready."}
-        except Exception as exc:
-            deployment["detail"] = redact(exc)
-        finally:
-            subprocess.run([kubectl, "delete", "namespace", namespace, "--wait=false"], env=env,
-                           capture_output=True, text=True, timeout=60, check=False)
-        validation["deployment"] = deployment
     return validation
 
 
 def _run_remediation_image_patches(db: Session, record: RemediationExecution, service: Service, plan: dict) -> None:
-    """Run the existing patch worker for images when one staging registry is configured."""
+    """Run the existing patch worker for each distinct service image."""
     configuration = get_global_configuration(db)
     registries = [item for item in parse_json(configuration.get("oci_registries"), []) if isinstance(item, dict)]
     staging = [item for item in registries if item.get("use_for_remediation") is True]
     if len(staging) != 1:
-        reason = "Configure exactly one OCI registry for remediation staging before image publication."
+        reason = "Configure exactly one OCI registry as the remediation target or staging registry."
         for image in plan.get("images", []):
             if not image.get("candidate"):
                 image["reason"] = reason
         return
     requester = db.get(User, record.requested_by_id) if record.requested_by_id else None
-    signing_config, signing_credentials = _portal_signing_material(db, AuthContext(requester, None) if requester else None, "push", service)
+    patch_mode = "push" if record.output_mode == "publish" else "download"
+    signing_config, signing_credentials = _portal_signing_material(db, AuthContext(requester, None) if requester else None, patch_mode, service)
     destination_registry = staging[0]
     endpoint = str(destination_registry.get("endpoint") or "").strip().rstrip("/")
     destination_host = urllib.parse.urlparse(endpoint if "://" in endpoint else f"https://{endpoint}").netloc
     destination_prefix = str(destination_registry.get("namespace") or "").strip("/")
+    policy = configuration_for_service(db, service)
+    repository_policies = parse_json(policy.get("repository_policies"), {})
+    if plan.get("images") and not repository_policies:
+        for image in plan["images"]:
+            image.update(classification="REVIEW REQUIRED",
+                         reason="No explicit package repository mirror policy is configured for remediation")
+        return
 
     def credentials(registry: dict | None) -> tuple[str, str]:
         if not registry:
@@ -4540,11 +4533,26 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
         password = decrypt_secret(str(registry.get("password"))) if registry.get("password") else ""
         return username, password
 
+    patched_by_source: dict[str, dict] = {}
     for image in plan.get("images", []):
         if image.get("candidate"):
             continue
         source = str(image.get("original") or "")
+        if source in patched_by_source:
+            image.update(patched_by_source[source])
+            continue
+        try:
+            _validate_image_reference(source)
+        except HTTPException:
+            image.update(classification="NOT REMEDIABLE", reason="Discovered image reference is not a safe OCI reference")
+            patched_by_source[source] = {"classification": image["classification"], "reason": image["reason"]}
+            continue
         source_registry = _configured_registry_for_image(source, registries)
+        if source_registry is None:
+            image.update(classification="REVIEW REQUIRED",
+                         reason="Source image registry is not explicitly configured; no public registry fallback is allowed")
+            patched_by_source[source] = {"classification": image["classification"], "reason": image["reason"]}
+            continue
         source_path = source.rsplit("@", 1)[0]
         last_slash, last_colon = source_path.rfind("/"), source_path.rfind(":")
         tag = source_path[last_colon + 1:] if last_colon > last_slash else "latest"
@@ -4552,35 +4560,46 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
         first, separator, remainder = repository.partition("/")
         if separator and ("." in first or ":" in first or first == "localhost"):
             repository = remainder
-        destination = "/".join(part for part in (destination_host, destination_prefix, repository) if part) + f":{tag}-cats-r1"
+        destination = "/".join(part for part in (destination_host, destination_prefix, repository) if part) + f":{tag}-cats-{record.job_key.lower()}"
         patch_key = uuid.uuid4().hex
         patch_root = PATCH_JOB_ROOT / patch_key
         (patch_root / "input").mkdir(parents=True, exist_ok=False)
-        policy = configuration_for_service(db, service)
-        config = {"job_id": patch_key, "source_mode": "oci", "source_image": source, "output_mode": "push",
+        config = {"job_id": patch_key, "source_mode": "oci", "source_image": source, "output_mode": patch_mode,
                   **signing_config,
+                  "remediation_evidence": True,
+                  "require_repository_policy": True,
                   "destination_image": destination, "reuse_source_credentials": False,
                   "trusted_ca_certificates": parse_json(policy.get("trusted_ca_certificates"), []),
-                  "repository_policies": parse_json(policy.get("repository_policies"), {}),
+                  "repository_policies": repository_policies,
                   "os_definitions": parse_json(policy.get("os_definitions"), {})}
         (patch_root / "job-config.json").write_text(json.dumps(safe_job_config(config), indent=2), encoding="utf-8")
         patch_record = PatchExecution(job_key=patch_key, service_id=service.id, requested_by_id=record.requested_by_id,
-                                      source_mode="oci", source_image=source, output_mode="push",
+                                      source_mode="oci", source_image=source, output_mode=patch_mode,
                                       destination_image=destination, status="queued", phase="queued", summary={})
         db.add(patch_record); db.flush()
         public = {"job_id": patch_key, "patch_execution_id": patch_record.id, "status": "queued", "phase": "queued",
                   "signing_enabled": bool(signing_config), "signing_fingerprint": signing_config.get("signing_fingerprint"),
-                  "stages": initial_patch_stages("push"), "source_mode": "oci", "source_image": source,
-                  "output_mode": "push", "destination_image": destination, "created_at": utcnow().isoformat()}
+                  "stages": initial_patch_stages(patch_mode), "source_mode": "oci", "source_image": source,
+                  "output_mode": patch_mode, "destination_image": destination, "created_at": utcnow().isoformat()}
         with PATCH_JOB_LOCK:
             PATCH_JOBS[patch_key] = public
         db.commit()
         source_user, source_password = credentials(source_registry)
-        destination_user, destination_password = credentials(destination_registry)
+        destination_user, destination_password = credentials(destination_registry) if patch_mode == "push" else ("", "")
         _audit_signing_request(db, patch_key, record.requested_by_id, config)
-        _run_patch_job(patch_key, {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
-                                   "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password})
+        try:
+            _run_patch_job(patch_key, {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
+                                       "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password})
+        except Exception as exc:
+            image.update(classification="REVIEW REQUIRED", patch_job_id=patch_key,
+                         reason=f"Image patch worker failed: {type(exc).__name__}")
+            patched_by_source[source] = {"classification": image["classification"], "reason": image["reason"],
+                                         "patch_job_id": patch_key}
+            continue
         result = (_load_patch_job(patch_key).get("result") or {})
+        image["remediation_evidence"] = result.get("remediation_evidence") or {}
+        image["vulnerabilities_before"] = result.get("vulnerabilities_before")
+        image["vulnerabilities_after"] = result.get("vulnerabilities_after")
         immutable = result.get("immutable_destination")
         if result.get("delivery_status") == "delivered" and immutable:
             image.update(candidate=immutable, digest=str(immutable).split("@", 1)[-1], patch_status=result.get("patch_status"),
@@ -4590,9 +4609,139 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
             editable = not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in source_files
             image["classification"] = "AUTO-REMEDIABLE" if editable else "REVIEW REQUIRED"
             image["reason"] = "Published and digest-qualified; source mapping is exact." if editable else "Published and digest-qualified, but the Helm source mapping needs review."
+        elif patch_mode == "download" and result.get("delivery_status") == "download" and result.get("artifact_available"):
+            image.update(candidate=destination, digest=result.get("artifact_sha256"), patch_status=result.get("patch_status"),
+                         signature_status="not_applicable", patch_job_id=patch_key, delivery_status="bundled")
+            mapping = image.get("source_mapping") or {}
+            editable = not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in (plan.get("_source_files") or {})
+            image["classification"] = "AUTO-REMEDIABLE" if editable else "REVIEW REQUIRED"
+            image["reason"] = "Archive prepared for the configured target registry; import is required before deployment." if editable else "Archive prepared, but Helm source mapping needs review."
         else:
             image.update(classification="REVIEW REQUIRED", patch_job_id=patch_key,
                          reason=result.get("delivery_error") or result.get("reason") or "Image patch/publication did not produce an immutable staged reference.")
+        patched_by_source[source] = {key: image[key] for key in (
+            "candidate", "digest", "patch_status", "signature_status", "patch_job_id", "delivery_status", "remediation_evidence",
+            "vulnerabilities_before", "vulnerabilities_after", "classification", "reason") if key in image}
+
+
+REMEDIATION_STAGES = ("snapshot", "patch_images", "rewrite_artifacts", "static_validation", "output", "deployment_validation")
+
+
+def _remediation_audit(db: Session, record: RemediationExecution, action: str, **details) -> None:
+    db.add(AuditEvent(actor_user_id=record.requested_by_id, action=action,
+        target_type="remediation_execution", target_id=str(record.id),
+        detail={"service_id": record.service_id, "job_key": record.job_key, **details}))
+
+
+def _remediation_stage(record: RemediationExecution, name: str, status: str, detail: str = "") -> None:
+    stages = dict(record.stages or {})
+    previous = stages.get(name) or {}
+    current = utcnow()
+    started = current.isoformat() if status == "running" else previous.get("started_at")
+    duration = None
+    if status != "running" and started:
+        try:
+            duration = max(0, round((current - datetime.fromisoformat(started)).total_seconds(), 1))
+        except ValueError:
+            pass
+    stages[name] = {"status": status, "started_at": started,
+                    "completed_at": None if status == "running" else current.isoformat(),
+                    "duration_seconds": duration, "detail": detail[:500]}
+    record.stages = stages
+    record.phase = name
+
+
+def _candidate_workload_images(resources: list[dict]) -> set[str]:
+    images: set[str] = set()
+    for resource in resources:
+        if resource.get("kind") not in WORKLOAD_KINDS:
+            continue
+        spec = pod_spec(resource)
+        if not isinstance(spec, dict):
+            continue
+        for field in ("containers", "initContainers", "ephemeralContainers"):
+            for container in spec.get(field) or []:
+                if isinstance(container, dict) and isinstance(container.get("image"), str):
+                    images.add(container["image"])
+    return images
+
+
+def _assert_bundle_sources_safe(files: dict[str, str]) -> None:
+    """Refuse a transferable bundle when retained source may contain secrets."""
+    sensitive_keys = {"password", "token", "clientsecret", "apikey", "privatekey", "credential", "secretkey", "secretaccesskey"}
+    for path, content in files.items():
+        normalized_path = path.replace("\\", "/").lower()
+        if any(part == ".env" or "secret" in part or "credential" in part for part in normalized_path.split("/")):
+            raise ValueError("Bundle source contains a secret-bearing file")
+        if re.search(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", content) or re.search(r"(?im)^\s*kind:\s*Secret\s*$", content):
+            raise ValueError("Bundle source contains a Kubernetes Secret or private key")
+        for line in content.splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip().lower().replace("_", "") in sensitive_keys:
+                actual = value.strip().strip("\"'")
+                if actual and actual.lower() not in {"null", "none"} and not actual.startswith("{{"):
+                    raise ValueError("Bundle source contains a secret-like value")
+
+
+def _publish_remediation_charts(db: Session, packaged_charts: list[tuple[Path, dict]]) -> None:
+    """Publish packaged charts with Helm OCI using isolated credentials and trust."""
+    if not packaged_charts:
+        return
+    configuration = get_global_configuration(db)
+    registries = [row for row in parse_json(configuration.get("oci_registries"), [])
+                  if isinstance(row, dict) and row.get("use_for_remediation") is True]
+    if len(registries) != 1:
+        for _, chart in packaged_charts:
+            chart.update(publish_status="FAILED", reason="One remediation OCI registry must be configured")
+        return
+    registry = registries[0]
+    endpoint = str(registry.get("endpoint") or "").strip()
+    parsed = urllib.parse.urlparse(endpoint if "://" in endpoint else f"https://{endpoint}")
+    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+        for _, chart in packaged_charts:
+            chart.update(publish_status="FAILED", reason="Remediation registry must be a credential-free HTTPS endpoint")
+        return
+    helm_binary = shutil.which("helm")
+    if not helm_binary:
+        return
+    prefix = str(registry.get("namespace") or "").strip("/")
+    target = "oci://" + "/".join(part for part in (parsed.netloc, prefix) if part)
+    username = str(registry.get("username") or "")
+    password = decrypt_secret(str(registry.get("password"))) if registry.get("password") else ""
+    trusted = parse_json(configuration.get("trusted_ca_certificates"), [])
+    with tempfile.TemporaryDirectory(prefix="cats-remediation-helm-") as temporary:
+        private = Path(temporary)
+        private.chmod(0o700)
+        registry_config = private / "registry.json"
+        with ephemeral_trust(trusted if isinstance(trusted, list) else []) as (ca_path, trust_env):
+            environment = {**os.environ, **trust_env, "HELM_REGISTRY_CONFIG": str(registry_config)}
+            if username or password:
+                if not username or not password:
+                    for _, chart in packaged_charts:
+                        chart.update(publish_status="FAILED", reason="Registry credentials are incomplete")
+                    return
+                command = [helm_binary, "registry", "login", parsed.netloc, "--username", username, "--password-stdin"]
+                if ca_path:
+                    command.extend(["--ca-file", str(ca_path)])
+                login = subprocess.run(command, input=password + "\n", env=environment,
+                    capture_output=True, text=True, timeout=60, check=False)
+                if login.returncode:
+                    for _, chart in packaged_charts:
+                        chart.update(publish_status="FAILED", reason="Helm registry authentication failed")
+                    return
+            for archive, chart in packaged_charts:
+                try:
+                    push = subprocess.run([helm_binary, "push", str(archive), target], env=environment,
+                        capture_output=True, text=True, timeout=300, check=False)
+                    if push.returncode:
+                        raise ValueError("Helm OCI push failed")
+                    digest = re.search(r"(?im)^Digest:\s*(sha256:[0-9a-f]{64})\s*$", push.stdout)
+                    if not digest:
+                        raise ValueError("Helm did not report an immutable digest")
+                    chart.update(publish_status="PUBLISHED", digest=digest.group(1),
+                        published_reference=f"{target}/{chart['name']}:{chart['remediated_version']}")
+                except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                    chart.update(publish_status="FAILED", reason=type(exc).__name__)
 
 
 def _run_remediation_job(record_id: int) -> None:
@@ -4601,7 +4750,8 @@ def _run_remediation_job(record_id: int) -> None:
         record = db.get(RemediationExecution, record_id)
         if not record:
             return
-        record.status, record.phase, record.started_at, record.updated_at = "running", "snapshot", utcnow(), utcnow()
+        record.status, record.started_at, record.updated_at = "running", utcnow(), utcnow()
+        _remediation_stage(record, "snapshot", "running")
         record.logs = ["Captured immutable references to the original execution and service revision."]
         db.commit()
         try:
@@ -4619,10 +4769,52 @@ def _run_remediation_job(record_id: int) -> None:
             else:
                 findings = [item for item in service.policy_findings if item.active]
             plan = build_plan(payload, findings, record.job_key)
+            for change in plan.get("configuration_changes", []):
+                change.pop("original_value", None)
+                if isinstance(change.get("source_mapping"), dict):
+                    change["source_mapping"].pop("original_value", None)
+            plan["before"]["epss_max"] = max((score for finding in service.findings
+                for _, score in [risk_metadata(finding.cve)] if finding.active and score is not None), default=None)
+            _remediation_stage(record, "snapshot", "success")
+            planned_references = {str(item.get("original")) for item in plan.get("images", [])}
+            for service_image in service.images:
+                if service_image.lifecycle_status != "active" or service_image.image_reference in planned_references:
+                    continue
+                plan["images"].append({"original": service_image.image_reference,
+                    "original_digest": service_image.image_digest,
+                    "classification": "REVIEW REQUIRED", "candidate": None,
+                    "source_mapping": {"ambiguous": True},
+                    "reason": "Canonical service image has no exact Helm source mapping; patching can proceed, chart rewriting needs review."})
+                planned_references.add(service_image.image_reference)
             plan["_source_files"] = payload.get("helm_source_files") or payload.get("source_files") or {}
-            patch_records = list(db.scalars(select(PatchExecution).where(PatchExecution.service_id == service.id)))
-            associate_patch_results(payload, plan, patch_records)
+            _assert_bundle_sources_safe(plan["_source_files"])
+            _remediation_stage(record, "patch_images", "running")
+            db.commit()
             _run_remediation_image_patches(db, record, service, plan)
+            _remediation_stage(record, "patch_images", "success" if all(image.get("candidate") for image in plan["images"]) else "partial")
+            for image in plan["images"]:
+                _remediation_audit(db, record, "remediation.image_result", original=image.get("original"),
+                    remediated=image.get("candidate"), patch_status=image.get("patch_status"),
+                    signature_status=image.get("signature_status"))
+            distinct_patches = {image.get("patch_job_id"): image for image in plan["images"] if image.get("patch_job_id")}
+            plan["before"]["patchable_vulnerabilities"] = sum(int(image.get("vulnerabilities_before") or 0) for image in distinct_patches.values())
+            plan["after"]["patchable_vulnerabilities"] = sum(int(image.get("vulnerabilities_after") or 0) for image in distinct_patches.values())
+            if distinct_patches:
+                full_reports = []
+                for patch_key in distinct_patches:
+                    if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key):
+                        continue
+                    path = PATCH_JOB_ROOT / patch_key / "output" / "grype-full-after.json"
+                    if path.is_file():
+                        try:
+                            full_reports.append(json.loads(path.read_text(encoding="utf-8")))
+                        except (OSError, ValueError):
+                            pass
+                if len(full_reports) == len(distinct_patches):
+                    plan["after"].update(summarize_grype_reports(full_reports, risk_metadata))
+                else:
+                    plan["after"]["vulnerabilities"] = None
+                    plan["after"]["kev"] = None
             plan.pop("_source_files", None)
             for image in plan["images"]:
                 if image.get("classification") == "AUTO-REMEDIABLE":
@@ -4631,7 +4823,7 @@ def _run_remediation_job(record_id: int) -> None:
                     if not artifact:
                         artifact = {"path": source, "changes": []}; plan["changed_artifacts"].append(artifact)
                     artifact["changes"].append(f"Image {image['original']} → {image['candidate']}")
-            record.phase = "candidate"
+            _remediation_stage(record, "rewrite_artifacts", "running")
             record.before_snapshot = plan["before"]
             record.configuration_changes = plan["configuration_changes"]
             record.changed_artifacts = plan["changed_artifacts"]
@@ -4640,7 +4832,10 @@ def _run_remediation_job(record_id: int) -> None:
             record.logs = [*record.logs, "Classified findings and images without changing the original artifacts."]
             db.commit()
 
-            files = candidate_files(payload, plan)
+            files, chart_mappings = versioned_charts(candidate_files(payload, plan), record.job_key)
+            plan["charts"] = chart_mappings
+            _assert_bundle_sources_safe(files)
+            _remediation_stage(record, "rewrite_artifacts", "success" if files else "skipped")
             job_root = REMEDIATION_JOB_ROOT / record.job_key
             job_root.mkdir(parents=True, exist_ok=True)
             artifact = job_root / "remediation-candidate.zip"
@@ -4653,36 +4848,187 @@ def _run_remediation_job(record_id: int) -> None:
                 target = candidate_dir / safe
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
+            _remediation_stage(record, "static_validation", "running")
             validation = _validate_materialized_candidate(candidate_dir, payload, plan, static_validation(payload, plan))
+            if plan["images"]:
+                plan["after"]["policy_validation"] = "NOT EVALUATED"
+            rendered_path = candidate_dir / ".cats-rendered.yaml"
+            rendered = []
+            if rendered_path.is_file() and plan["images"]:
+                rendered = [item for item in yaml.safe_load_all(rendered_path.read_text(encoding="utf-8")) if isinstance(item, dict)]
+                actual_images = _candidate_workload_images(rendered)
+                expected_images = {str(image["candidate"]) for image in plan["images"] if image.get("candidate")}
+                original_images = {str(image["original"]) for image in plan["images"]}
+                image_references_valid = bool(expected_images) and expected_images <= actual_images and not original_images & actual_images
+                validation["checks"]["image_references"] = {"status": "PASS" if image_references_valid else "FAIL",
+                    "detail": "Candidate render uses the remediated image mappings." if image_references_valid else "Original or missing remediated image references remain in the candidate render."}
+                if not image_references_valid:
+                    validation["status"] = "FAIL"
+            rendered_path.unlink(missing_ok=True)
+            _remediation_stage(record, "static_validation", "success" if validation["status"] == "PASS" else "failed")
+            packaged_charts: list[tuple[Path, dict]] = []
+            helm_binary = shutil.which("helm")
+            chart_output = job_root / "helm"
+            chart_output.mkdir(exist_ok=True)
+            for chart in chart_mappings:
+                if chart.get("package_status") == "FAILED":
+                    continue
+                if not helm_binary:
+                    chart["package_status"] = "UNAVAILABLE"
+                    continue
+                chart_root = candidate_dir / Path(chart["path"]).parent
+                try:
+                    packaged = subprocess.run([helm_binary, "package", str(chart_root), "--destination", str(chart_output)],
+                        capture_output=True, text=True, timeout=180, check=False)
+                    if packaged.returncode:
+                        raise ValueError("Helm rejected candidate chart")
+                    archive = chart_output / f"{chart['name']}-{chart['remediated_version']}.tgz"
+                    if not archive.is_file():
+                        raise ValueError("Helm did not create a chart package")
+                    chart["sha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+                    chart["package_status"] = "PACKAGED"
+                    packaged_charts.append((archive, chart))
+                except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+                    chart["package_status"] = "FAILED"
+                    chart["reason"] = type(exc).__name__
+            if record.output_mode == "publish" and validation["status"] == "PASS":
+                _publish_remediation_charts(db, packaged_charts)
+                for chart in chart_mappings:
+                    _remediation_audit(db, record, "remediation.chart_publication", name=chart.get("name"),
+                        version=chart.get("remediated_version"), status=chart.get("publish_status"), digest=chart.get("digest"))
+            record.changed_artifacts = [*(record.changed_artifacts or []), *({"path": chart["path"],
+                "changes": [f"Chart {chart['original_version']} → {chart['remediated_version']}",
+                            f"Package: {chart.get('package_status', 'NOT RUN')}",
+                            f"OCI: {chart.get('publish_status', 'NOT REQUESTED')}"]} for chart in chart_mappings)]
+            validator_config = parse_json(get_global_configuration(db).get("validator_configuration"), {})
+            if validator_config.get("endpoint") and record.output_mode == "publish":
+                candidate_images = {str(image.get("candidate")) for image in plan["images"] if image.get("candidate")}
+                all_images_mapped = all(image.get("candidate") and image.get("classification") == "AUTO-REMEDIABLE"
+                                        for image in plan["images"])
+                chart_sources_valid = all(chart.get("package_status") != "FAILED" for chart in chart_mappings)
+                if validation["status"] != "PASS" or not all_images_mapped or not chart_sources_valid or not rendered:
+                    validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": "Exact remediated chart and image references are unavailable."}
+                else:
+                    rendered_images = _candidate_workload_images(rendered)
+                    original_images = {str(image.get("original")) for image in plan["images"]}
+                    if not candidate_images <= rendered_images or original_images & rendered_images:
+                        validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": "The candidate render does not exclusively use the remediated image mappings."}
+                    else:
+                        from .validator_client import validate as validate_remote_artifact
+                        from .validator_protocol import SCHEMA_VERSION as validation_schema_version
+                        package = {"schema_version": validation_schema_version,
+                            "manifest": {"service_key": service.service_key, "timeout_seconds": 600,
+                                         "referenced_images": sorted(rendered_images),
+                                         "required_capabilities": ["kind", "helm", "kubectl", "docker"]},
+                            "artifact": {"source_files": files, "values_files": [], "declared_resources": rendered,
+                                         "artifact_type": "REMEDIATED", "reference": record.job_key}}
+                        _remediation_stage(record, "deployment_validation", "running")
+                        db.commit()
+                        try:
+                            remote_result = validate_remote_artifact(validator_config, package)
+                            validation["deployment"] = {"status": remote_result.get("status"), "result": remote_result}
+                            _remediation_stage(record, "deployment_validation", "success" if remote_result.get("status") == "VERIFIED" else "failed")
+                            _remediation_audit(db, record, "remediation.deployment_validation", status=remote_result.get("status"))
+                        except Exception as exc:
+                            validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": type(exc).__name__}
+                            _remediation_stage(record, "deployment_validation", "failed", type(exc).__name__)
+            elif record.output_mode == "bundle":
+                validation["deployment"] = {"status": "NOT RUN", "detail": "Import bundled images into the configured target registry before deployment validation."}
+            record.validation_results = validation
+            record.after_snapshot = plan["after"]
+            _remediation_stage(record, "output", "running")
+            db.commit()
+            if record.output_mode == "bundle":
+                bundle_sources = [archive for archive, _ in packaged_charts]
+                bundle_sources.extend(PATCH_JOB_ROOT / image["patch_job_id"] / "output" / "patched-image.tar"
+                    for image in plan["images"] if image.get("patch_job_id"))
+                if sum(path.stat().st_size for path in bundle_sources if path.is_file()) > 8 * 1024 ** 3:
+                    raise ValueError("Remediation bundle exceeds the transfer size limit")
             with ZipFile(artifact, "w", ZIP_DEFLATED) as bundle:
-                bundle.writestr("remediation-plan.yaml", plan_yaml(plan))
+                bundle.writestr("manifest.json", json.dumps({
+                    "schema_version": "cats.remediation/v1", "job_key": record.job_key,
+                    "service_key": service.service_key, "output_mode": record.output_mode,
+                    "created_at": record.created_at.isoformat() if record.created_at else None,
+                    "original_revision": record.original_revision,
+                    "images": [{"original": item.get("original"), "original_digest": item.get("original_digest"),
+                                "remediated": item.get("candidate"),
+                                "artifact_sha256": item.get("digest") if record.output_mode == "bundle" else None,
+                                "remediated_digest": item.get("digest") if record.output_mode == "publish" else None,
+                                "patch_status": item.get("patch_status"), "signature_status": item.get("signature_status"),
+                                "evidence": item.get("remediation_evidence"),
+                                "archive_path": f"images/{item['patch_job_id']}.tar" if record.output_mode == "bundle" and item.get("patch_job_id") else None,
+                                "loaded_tag": f"cats-canonical-{item['patch_job_id']}:validated" if record.output_mode == "bundle" and item.get("patch_job_id") else None}
+                               for item in plan["images"]],
+                    "charts": chart_mappings,
+                    "validation": validation.get("deployment"),
+                }, indent=2))
+                if record.output_mode != "bundle":
+                    bundle.writestr("remediation-plan.yaml", plan_yaml(plan))
                 bundle.writestr("before-after.json", json.dumps({"before": plan["before"], "after": plan["after"]}, indent=2))
                 for relative, content in sorted(files.items()):
                     safe = Path(relative.replace("\\", "/"))
                     if safe.is_absolute() or ".." in safe.parts:
                         raise ValueError(f"Unsafe source path in uploaded artifact: {relative}")
                     bundle.writestr(f"candidate/{safe.as_posix()}", content)
-            record.phase = "validation"
+                for archive, chart in packaged_charts:
+                    bundle.write(archive, f"helm/{archive.name}")
+                if record.output_mode == "bundle":
+                    for image in plan["images"]:
+                        patch_key = image.get("patch_job_id")
+                        if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key):
+                            continue
+                        output = PATCH_JOB_ROOT / patch_key / "output"
+                        for name, archive_name in (("patched-image.tar", f"images/{patch_key}.tar"),
+                                                   ("grype-before.json", f"scans/{patch_key}-grype-before.json"),
+                                                   ("grype-after.json", f"scans/{patch_key}-grype-after.json"),
+                                                   ("grype-full-after.json", f"scans/{patch_key}-grype-full-after.json"),
+                                                   ("remediated-sbom.json", f"sbom/{patch_key}.json")):
+                            path = output / name
+                            if path.is_file():
+                                bundle.write(path, archive_name)
+            _remediation_stage(record, "output", "success" if artifact.is_file() else "failed")
+            _remediation_audit(db, record, "remediation.bundle_created" if record.output_mode == "bundle" else "remediation.candidate_created",
+                output_mode=record.output_mode)
             record.validation_results = validation
             record.after_snapshot = plan["after"]
             record.scan_results = {
                 "configuration": validation["checks"]["trivy_config_rescan"],
                 "vulnerabilities": validation["checks"]["vulnerability_rescan"],
+                "images": {image.get("patch_job_id"): image.get("remediation_evidence")
+                           for image in plan["images"] if image.get("patch_job_id")},
             }
             record.artifact_path = str(artifact)
             automatic = [item for item in plan["configuration_changes"] if item["classification"] == "AUTO-REMEDIABLE"]
             automatic.extend(item for item in plan["images"] if item["classification"] == "AUTO-REMEDIABLE")
             review = [item for item in plan["configuration_changes"] if item["classification"] == "REVIEW REQUIRED"]
             review.extend(item for item in plan["images"] if item["classification"] == "REVIEW REQUIRED")
+            unresolved_images = [item for item in plan["images"] if not item.get("candidate")]
+            evidence_complete = all(all(value == "complete" for value in (image.get("remediation_evidence") or {}).values())
+                                    and bool(image.get("remediation_evidence"))
+                                    for image in plan["images"] if image.get("candidate"))
             if automatic and not files:
                 raise ValueError("An automatic change had no editable source artifact")
-            if review:
+            if review or unresolved_images:
                 record.status = "review_required"
                 record.logs = [*record.logs, "Candidate created; ambiguous source or image changes require review before validation and promotion."]
             elif automatic and validation["status"] == "PASS":
-                record.status = "validated"
-                record.resulting_revision = f"{record.original_revision or service.manual_version or execution.execution_key}-cats-r1"
-                record.logs = [*record.logs, "Static validation passed for the isolated candidate."]
+                deployment_status = (validation.get("deployment") or {}).get("status")
+                charts_complete = all(chart.get("package_status") == "PACKAGED" for chart in chart_mappings)
+                chart_publication_ok = all(chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings)
+                if record.output_mode == "bundle":
+                    record.status = "bundle_ready" if evidence_complete and charts_complete else "bundle_partial"
+                elif not chart_publication_ok:
+                    record.status = "publication_partial"
+                elif not evidence_complete:
+                    record.status = "evidence_partial"
+                elif deployment_status == "VERIFIED":
+                    record.status = "validated"
+                elif deployment_status in {"FAILED", "PARTIALLY_VERIFIED"}:
+                    record.status = "validation_failed"
+                else:
+                    record.status = "validation_unavailable"
+                record.resulting_revision = f"{record.original_revision or service.manual_version or execution.execution_key}-cats-{record.job_key.lower()}"
+                record.logs = [*record.logs, "Static validation passed; publication and deployment validation are reported separately."]
             elif not automatic:
                 record.status = "not_remediable"
                 record.logs = [*record.logs, "No registered deterministic remediation could be applied."]
@@ -4697,41 +5043,60 @@ def _run_remediation_job(record_id: int) -> None:
             db.commit()
         except Exception as exc:
             db.rollback()
+            (REMEDIATION_JOB_ROOT / record.job_key / "remediation-candidate.zip").unlink(missing_ok=True)
             record = db.get(RemediationExecution, record_id)
             if record:
+                failed_phase = record.phase
+                if failed_phase in REMEDIATION_STAGES:
+                    _remediation_stage(record, failed_phase, "failed", type(exc).__name__)
                 record.status, record.phase = "failed", "failed"
-                record.failure_reason = str(exc)[:4000]
-                record.logs = [*(record.logs or []), f"Failed safely: {str(exc)[:1000]}"]
+                record.failure_reason = f"Remediation failed during {failed_phase}: {type(exc).__name__}"
+                record.logs = [*(record.logs or []), record.failure_reason]
                 record.completed_at = record.updated_at = utcnow()
+                _remediation_audit(db, record, "remediation.failed", reason=type(exc).__name__)
                 db.commit()
 
 
 def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding_type: str | None = None,
-                       finding_id: int | None = None) -> RemediationExecution:
+                       finding_id: int | None = None, output_mode: str = "publish",
+                       retry_of_id: int | None = None) -> RemediationExecution:
+    if not remediation_enabled(db):
+        raise HTTPException(403, detail="Remediation is disabled by the administrator")
+    if output_mode not in {"publish", "bundle"}:
+        raise HTTPException(422, detail="Choose OCI publish or downloadable bundle")
+    db.execute(select(Service.id).where(Service.id == service.id).with_for_update()).scalar_one()
+    existing = db.scalar(select(RemediationExecution).where(
+        RemediationExecution.service_id == service.id,
+        RemediationExecution.status.in_(["queued", "running"])))
+    if existing:
+        raise HTTPException(409, detail="A remediation is already running for this service")
     latest = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
     if not latest:
         raise HTTPException(422, detail="The service has no assessment execution to remediate")
     job_key = f"R-{uuid.uuid4().hex[:12].upper()}"
     record = RemediationExecution(job_key=job_key, service_id=service.id, requested_by_id=auth.user.id,
                                   finding_type=finding_type, finding_id=finding_id, status="queued", phase="queued",
+                                  output_mode=output_mode, stages={},
+                                  retry_of_id=retry_of_id,
                                   original_revision=service.manual_version or latest.commit_sha or latest.execution_key,
                                   rollback_reference=latest.execution_key, logs=["Remediation request queued."])
     db.add(record); db.flush()
     record_audit(db, auth, "remediation.queued", "remediation_execution", record.id,
-                 service_id=service.id, job_key=job_key, finding_type=finding_type, finding_id=finding_id)
+                 service_id=service.id, job_key=job_key, finding_type=finding_type, finding_id=finding_id,
+                 output_mode=output_mode, retry_of_id=retry_of_id)
     db.commit()
     REMEDIATION_WORKERS.submit(_run_remediation_job, record.id)
     return record
 
 
 @app.post("/services/{service_key}/remediate")
-def remediate_service(service_key: str, csrf_token: str = Form(), db: Session = Depends(get_db),
+def remediate_service(service_key: str, csrf_token: str = Form(), output_mode: str = Form("publish"), db: Session = Depends(get_db),
                       auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
     check_csrf(auth, csrf_token)
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    record = _queue_remediation(db, auth, service)
+    record = _queue_remediation(db, auth, service, output_mode=output_mode)
     return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
 
 
@@ -4763,7 +5128,23 @@ def remediation_report(service_key: str, job_key: str, request: Request, db: Ses
     record = db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == job_key).options(selectinload(RemediationExecution.service)))
     if not record or record.service.service_key != service_key:
         raise HTTPException(404)
-    return templates.TemplateResponse(request, "remediation_report.html", page_context(auth, job=record, service=record.service))
+    return templates.TemplateResponse(request, "remediation_report.html", page_context(auth, job=record, service=record.service,
+        remediation_enabled=remediation_enabled(db)))
+
+
+@app.post("/services/{service_key}/remediations/{job_key}/retry")
+def retry_remediation(service_key: str, job_key: str, csrf_token: str = Form(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    check_csrf(auth, csrf_token)
+    prior = db.scalar(select(RemediationExecution).join(Service).where(
+        RemediationExecution.job_key == job_key, Service.service_key == service_key).options(selectinload(RemediationExecution.service)))
+    if not prior:
+        raise HTTPException(404)
+    if prior.status in {"queued", "running"}:
+        raise HTTPException(409, detail="The remediation job is still active")
+    record = _queue_remediation(db, auth, prior.service, prior.finding_type, prior.finding_id,
+                                prior.output_mode, retry_of_id=prior.id)
+    return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
 
 
 @app.get("/services/{service_key}/remediations/{job_key}/candidate.zip")
@@ -4775,6 +5156,23 @@ def remediation_candidate(service_key: str, job_key: str, db: Session = Depends(
     if not path or not path.is_file() or path.parent != REMEDIATION_JOB_ROOT / job_key:
         raise HTTPException(404, detail="Remediation candidate is not available")
     return FileResponse(path, media_type="application/zip", filename=f"cats-{service_key}-{job_key}.zip")
+
+
+@app.get("/api/v1/services/{service_key}/remediations/{job_key}")
+def remediation_job_status(service_key: str, job_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    record = db.scalar(select(RemediationExecution).join(Service).where(
+        RemediationExecution.job_key == job_key, Service.service_key == service_key))
+    if not record:
+        raise HTTPException(404)
+    return {"job_key": record.job_key, "status": record.status, "phase": record.phase,
+            "output_mode": record.output_mode, "retry_of_id": record.retry_of_id, "stages": record.stages or {},
+            "started_at": record.started_at, "completed_at": record.completed_at,
+            "images": [{"original": row.get("original"), "remediated": row.get("candidate"),
+                        "patch_status": row.get("patch_status"), "signature_status": row.get("signature_status")}
+                       for row in record.patched_images or []],
+            "validation": record.validation_results or {},
+            "download_url": f"/services/{service_key}/remediations/{job_key}/candidate.zip" if record.artifact_path else None}
 
 
 @app.post("/services/{service_key}/deployment-validations")
@@ -5377,9 +5775,21 @@ def service_detail(
                                "href": f"/services/{service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{service.service_key}?finding_state=exceptions&finding_type=configuration"})
         remediation_jobs = db.scalars(select(RemediationExecution).where(
             RemediationExecution.service_id == service.id).order_by(RemediationExecution.created_at.desc()).limit(100)).all()
+        preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+        preview_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
+        preview_plan = build_plan(preview_payload, [item for item in service.policy_findings if item.active], "PREVIEW")
+        preview_images = {str(item.get("original")) for item in preview_plan.get("images", [])}
+        preview_images.update(image.image_reference for image in service.images if image.lifecycle_status == "active")
+        preview_files = preview_payload.get("helm_source_files") or preview_payload.get("source_files") or {}
+        remediation_preview = {"images": len(preview_images),
+            "charts": sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in preview_files) if isinstance(preview_files, dict) else 0,
+            "configuration_changes": sum(item.get("classification") == "AUTO-REMEDIABLE" for item in preview_plan.get("configuration_changes", [])),
+            "manual_review": sum(item.get("classification") == "REVIEW REQUIRED" for item in preview_plan.get("configuration_changes", []))}
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
-            remediation_jobs=remediation_jobs, can_remediate=auth.has("remediation.execute", service.id),
+            remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
+            remediation_enabled=remediation_enabled(db),
+            remediation_preview=remediation_preview,
             can_create_poam=auth.has("poam.request", service.id), now=now,
         ))
     if poam:
@@ -5459,6 +5869,7 @@ def service_detail(
         page_start = (page - 1) * page_size
         displayed_warning_items = all_items[page_start:page_start + page_size]
         return templates.TemplateResponse(request, "service.html", page_context(auth,
+            remediation_enabled=remediation_enabled(db),
             view=view, findings=[], affected_images={}, policy_findings=[], noncompliance_items=[],
             warning_items=displayed_warning_items, now=now, active_exception=active_exception,
             finding_state=finding_state, groups=db.scalars(select(Group).order_by(Group.name)).all(),
@@ -5606,6 +6017,7 @@ def service_detail(
     latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
     remediation_classes = {item.id: classify_policy_finding(item, latest_payload) for item in displayed_policy_findings}
     return templates.TemplateResponse(request, "service.html", page_context(auth,
+        remediation_enabled=remediation_enabled(db),
         view=view, findings=findings, affected_images=affected_images,
         policy_findings=displayed_policy_findings,
         noncompliance_items=displayed_items if finding_state in {"noncompliant", "overdue"} else [],
@@ -6174,6 +6586,7 @@ def finding_detail(
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
     return templates.TemplateResponse(request, "finding.html", page_context(auth,
+        remediation_enabled=remediation_enabled(db),
         finding=finding, service=finding.service, now=now,
         age=(now - aware(finding.episode_started)).days if finding.active else None,
         exception=active_exception(finding, now), evidence=evidence,
@@ -7777,6 +8190,22 @@ def save_configuration(
         setting.updated_by_id = auth.user.id
         setting.updated_at = utcnow()
     record_audit(db, auth, "configuration.updated", "portal", "global", changed=list(values))
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/remediation")
+def save_remediation_configuration(csrf_token: str = Form(), enabled: bool = Form(False),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    setting = db.scalar(select(PortalSetting).where(PortalSetting.key == "remediation_enabled"))
+    if setting is None:
+        setting = PortalSetting(key="remediation_enabled", group_id=None)
+        db.add(setting)
+    setting.value = "true" if enabled else "false"
+    setting.updated_by_id = auth.user.id
+    setting.updated_at = utcnow()
+    record_audit(db, auth, "remediation.feature_toggled", "portal", "global", enabled=enabled)
     db.commit()
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
 
