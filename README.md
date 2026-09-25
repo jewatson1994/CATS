@@ -31,6 +31,12 @@ The current local release tag is **`cats:1.3`**.
 | Deployment Validation | Independently deploys retained Helm artifacts to disposable kind clusters, captures runtime health/events/topology, and preserves every validation attempt without changing static scan state |
 | Remediation | Runs portal-initiated image patching with Copa, rescans the result, publishes an immutable digest, and optionally signs and verifies it with Cosign |
 | Access and audit | Supports local accounts or OIDC, scoped role-based access control, audit history, trusted CAs, registry configuration, and repository policies |
+| Cybersecurity review | Aggregates service posture, watchlist matches, missing evidence, findings, and deployment validation with links to underlying evidence |
+| Runtime security data | Refreshes configured KEV, EPSS, Grype, and Trivy sources without rebuilding the portal image |
+
+The [cybersecurity and validation guide](docs/cybersecurity-and-validation.md)
+describes watchlist formats, dashboard status, OIDC claim mapping, the separate
+CATSchrödinger validator, and connected or disconnected security data updates.
 
 ## Main workflows
 

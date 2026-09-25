@@ -63,6 +63,8 @@ class ExecutionPayload(BaseModel):
     service: ServicePayload
     findings: list[FindingPayload] = Field(default_factory=list)
     policy_findings: list[PolicyFindingPayload] = Field(default_factory=list)
+    sbom_components: list[dict[str, str]] = Field(default_factory=list, max_length=50000)
+    sbom_images: list[str] = Field(default_factory=list, max_length=5000)
     # Optional normalized architecture metadata produced by Helm/configuration scans.
     service_overview: dict = Field(default_factory=dict)
     # Source files are optional because CI/API producers may submit evidence
@@ -74,6 +76,22 @@ class ExecutionPayload(BaseModel):
     # using non-default values must declare them so runtime validation deploys
     # the exact configuration that static analysis rendered.
     helm_values_files: list[str] = Field(default_factory=list)
+
+    @field_validator("sbom_components")
+    @classmethod
+    def validate_sbom_components(cls, components: list[dict[str, str]]) -> list[dict[str, str]]:
+        allowed = {"name": 300, "version": 200, "ecosystem": 80, "purl": 700, "image": 1000}
+        for component in components:
+            if any(key not in allowed or len(value) > allowed[key] for key, value in component.items()):
+                raise ValueError("SBOM component field is invalid or too long")
+        return components
+
+    @field_validator("sbom_images")
+    @classmethod
+    def validate_sbom_images(cls, images: list[str]) -> list[str]:
+        if any(len(image) > 1000 for image in images):
+            raise ValueError("SBOM image reference is too long")
+        return images
 
     @field_validator("helm_source_files")
     @classmethod

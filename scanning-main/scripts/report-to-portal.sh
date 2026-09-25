@@ -198,6 +198,8 @@ SERVICE_OVERVIEW=$(jq --slurpfile helm_warnings_input "$HELM_RENDER_WARNINGS_FIL
 # Architecture evidence can make this payload exceed the OS argument limit.
 SERVICE_OVERVIEW_FILE="$REPORT_TMP_DIR/service-overview.json"
 printf '%s\n' "$SERVICE_OVERVIEW" > "$SERVICE_OVERVIEW_FILE"
+SBOM_COMPONENTS_FILE="$REPORT_TMP_DIR/sbom-components.json"
+python3 "$(dirname "$0")/extract-sbom-components.py" sboms "$SBOM_COMPONENTS_FILE"
 
 jq -n \
   --arg execution_id "gitlab:${CI_PROJECT_ID}:pipeline:${CI_PIPELINE_ID}" \
@@ -213,6 +215,7 @@ jq -n \
   --arg service_poc "$SERVICE_POC" \
   --argjson service_groups "$SERVICE_GROUPS" \
   --slurpfile service_overview "$SERVICE_OVERVIEW_FILE" \
+  --slurpfile sbom_components "$SBOM_COMPONENTS_FILE" \
   --arg raw_findings "$REPORT_RAW_FINDINGS" \
   --argjson skipped_images "$SKIPPED_IMAGES" \
   --argjson skipped_charts "$SKIPPED_CHARTS" \
@@ -239,6 +242,8 @@ jq -n \
     },
     findings: $findings[0],
     policy_findings: $policy_findings[0],
+    sbom_components: ($sbom_components[0].components // []),
+    sbom_images: ($sbom_components[0].images // []),
      service_overview: $service_overview[0]
   }' > portal-result.json
 

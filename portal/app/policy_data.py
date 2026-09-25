@@ -13,9 +13,14 @@ from pathlib import Path
 DATA_DIR = Path(os.getenv("CATS_POLICY_DATA_DIR", "/app/policy"))
 
 
+def _data_file(name: str) -> Path:
+    configured = DATA_DIR / name
+    return configured if configured.exists() else Path("/app/policy") / name
+
+
 @lru_cache(maxsize=1)
 def kev_cves() -> set[str]:
-    path = DATA_DIR / "kev.json"
+    path = _data_file("kev.json")
     if not path.exists():
         return set()
     try:
@@ -27,7 +32,7 @@ def kev_cves() -> set[str]:
 
 @lru_cache(maxsize=1)
 def epss_scores() -> dict[str, float]:
-    path = DATA_DIR / "epss.csv"
+    path = _data_file("epss.csv")
     if not path.exists():
         return {}
     try:

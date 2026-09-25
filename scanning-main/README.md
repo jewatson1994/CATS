@@ -193,3 +193,13 @@ python -m pytest scanning-main/tests
 Shell fixtures under `tests/` exercise Helm rendering, image evidence,
 configuration normalization, and offline scanner behavior when their required
 tools are installed.
+
+## Artifact classification
+
+Prepare recursively inspects submitted YAML for local Helm charts and chart
+references. A local path is promoted only when it resolves to a directory
+containing `Chart.yaml` or a valid chart package. Remote chart references need
+an explicit chart field or a chart plus repository declaration; unrelated URLs
+remain ordinary YAML data. Unresolved declared charts remain missing evidence.
+Prepare does not require remote chart verification, so disconnected submissions
+can still be classified and scanned where local artifacts are available.

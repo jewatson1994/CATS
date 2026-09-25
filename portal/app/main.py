@@ -59,7 +59,14 @@ from .models import (
     PatchExecution,
     RemediationExecution,
     DeploymentValidationRun, ServiceArtifact, ServiceArtifactRevision,
+    DependencyWatchlistEntry, DependencyWatchlistMatch,
+    OidcClaimMapping,
+    SecurityDataSource,
 )
+from .security_data import SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD
+from .validator_client import validate as validate_remote_artifact, health as validator_health
+from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
+from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
 from .policy_data import epss_scores, kev_cves, risk_metadata
 from .overview import normalize_overview
@@ -67,6 +74,7 @@ from .service_export import build_service_workbook, service_export_filename
 from .helm_diagram import build_helm_diagram
 from .architecture import build_architecture_graph
 from .architecture_evidence import architecture_summary_json, architecture_verification
+from .capability_evidence import WORKLOAD_KINDS, pod_spec
 from .architecture_export import build_architecture_svg
 from .report_html import build_public_scan_report
 from .patching import PATCH_PHASES, advance_patch_stages, initial_patch_stages, redact, registry_host, safe_job_config
@@ -122,6 +130,8 @@ with engine.begin() as connection:
         connection.execute(text("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP"))
     if "group_id" not in {column["name"] for column in inspect(connection).get_columns("user_role_assignments") }:
         connection.execute(text("ALTER TABLE user_role_assignments ADD COLUMN group_id INTEGER"))
+    if "source" not in {column["name"] for column in inspect(connection).get_columns("user_role_assignments") }:
+        connection.execute(text("ALTER TABLE user_role_assignments ADD COLUMN source VARCHAR(20) DEFAULT 'local'"))
     if "group_id" not in {column["name"] for column in inspect(connection).get_columns("portal_settings") }:
         connection.execute(text("ALTER TABLE portal_settings ADD COLUMN group_id INTEGER"))
     if "poam_id" not in {column["name"] for column in inspect(connection).get_columns("workflow_requests") }:
@@ -319,10 +329,13 @@ def deployment_validation_enabled() -> bool:
     return os.getenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
+VALIDATION_TERMINAL_STATUSES = {item.value for item in ValidationStatus} | {"FAILED", "ERROR", "CANCELLED", "TIMED_OUT"}
+
+
 def deployment_validation_view(run: DeploymentValidationRun | None) -> dict | None:
     if not run:
         return None
-    terminal_statuses = {item.value for item in ValidationStatus}
+    terminal_statuses = VALIDATION_TERMINAL_STATUSES
     cleanup_terminal = str(run.cleanup_status or "").upper() in {"COMPLETE", "FAILED", "NOT_REQUIRED", "NOT_ATTEMPTED", "UNKNOWN"}
     terminal = str(run.status or "").upper() in terminal_statuses and str(run.phase or "").upper() == "COMPLETE" and cleanup_terminal
     return {
@@ -378,8 +391,10 @@ def artifact_validation_summary(run: DeploymentValidationRun | None) -> dict:
         key, label, symbol = "partially-validated", "Partially Validated", "\u25d0"
     elif blocked:
         key, label, symbol = "blocked", "Blocked", "!"
-    elif status == ValidationStatus.COULD_NOT_VALIDATE.value:
+    elif status in {ValidationStatus.COULD_NOT_VALIDATE.value, "FAILED"}:
         key, label, symbol = "failed", "Validation Failed", "\u00d7"
+    elif status in {"ERROR", "TIMED_OUT", "CANCELLED"}:
+        key, label, symbol = "unable", "Unable to Validate", "!"
     elif status == ValidationStatus.NOT_ATTEMPTED.value:
         key, label, symbol = "not-validated", "Not Validated", "\u2014"
     else:
@@ -534,6 +549,8 @@ def _run_deployment_validation(run_id: int) -> None:
         overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
         declared = overview.get("rendered_resources") or payload.get("rendered_resources") or []
         configuration = get_global_configuration(db)
+        remote_validator = parse_json(configuration.get("validator_configuration"), {})
+        service_key_for_validation = db.get(Service, run.service_id).service_key
         trusted_cas = parse_json(configuration.get("trusted_ca_certificates"), [])
         artifact = ValidationArtifact(
             source_files=source_files, artifact_type=run.artifact_type,
@@ -546,7 +563,34 @@ def _run_deployment_validation(run_id: int) -> None:
         run.cluster_name = cluster_name; run.namespace = namespace; run.started_at = utcnow(); run.updated_at = utcnow()
         db.commit()
     try:
-        result = KindDeploymentValidator(config).validate_artifact(artifact, progress_callback=lambda value: _validation_progress(run_id, value))
+        if remote_validator.get("endpoint"):
+            referenced_image_set = set()
+            for resource in artifact.declared_resources:
+                if not isinstance(resource, dict) or resource.get("kind") not in WORKLOAD_KINDS:
+                    continue
+                try:
+                    pod = pod_spec(resource)
+                except (AttributeError, TypeError):
+                    continue
+                if not isinstance(pod, dict):
+                    continue
+                for field in ("containers", "initContainers", "ephemeralContainers"):
+                    for container in pod.get(field) or []:
+                        if isinstance(container, dict) and isinstance(container.get("image"), str) and container["image"].strip():
+                            referenced_image_set.add(container["image"].strip())
+            referenced_images = sorted(referenced_image_set)
+            package = {"schema_version": VALIDATION_PACKAGE_VERSION,
+                "manifest": {"service_key": service_key_for_validation,
+                             "timeout_seconds": max(30, min(3600, int(config.total_timeout_seconds))),
+                             "referenced_images": referenced_images,
+                             "required_capabilities": ["kind", "helm", "kubectl", "docker"]},
+                "artifact": {"source_files": source_files, "values_files": list(artifact.values_files),
+                             "declared_resources": list(artifact.declared_resources),
+                             "artifact_type": artifact.artifact_type, "reference": artifact.reference}}
+            result = validate_remote_artifact(remote_validator, package,
+                progress_callback=lambda value: _validation_progress(run_id, value))
+        else:
+            result = KindDeploymentValidator(config).validate_artifact(artifact, progress_callback=lambda value: _validation_progress(run_id, value))
     except Exception as exc:  # The optional pass must never escape into scan state.
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation worker failed", extra={"run_id": run_id})
         error_reason = f"Deployment Validation encountered an internal error: {type(exc).__name__}"
@@ -623,7 +667,7 @@ def _submit_validation_run(run_id: int) -> None:
 def recover_stale_validation_runs() -> None:
     """Reconcile expired attempts and retry exact-name failed cleanup."""
     config = ValidationConfig.from_env(); cutoff = utcnow() - timedelta(seconds=config.total_timeout_seconds * 2)
-    terminal_statuses = tuple(item.value for item in ValidationStatus)
+    terminal_statuses = tuple(VALIDATION_TERMINAL_STATUSES)
     with SessionLocal() as db:
         runs = db.scalars(select(DeploymentValidationRun).where(
             DeploymentValidationRun.created_at < cutoff,
@@ -910,6 +954,8 @@ CONFIG_DEFAULTS = {
     "oidc_configuration": "{}",
     "oci_registries": "[]",
     "image_signing": "{}",
+    "validator_configuration": "{}",
+    "cyber_warning_policy": '{"critical_high":true,"kev":true,"watchlist":true,"poam":true,"kind":true,"missing_evidence":true}',
 }
 
 # These settings describe the CATS runtime itself.  They are intentionally
@@ -919,6 +965,8 @@ GLOBAL_CONFIGURATION_KEYS = {
     "display_timezone", "date_format", "time_format", "identity_mode",
     "trusted_ca_certificates", "repository_policies", "os_definitions", "log_level",
     "oidc_configuration", "oci_registries", "image_signing",
+    "validator_configuration",
+    "cyber_warning_policy",
 }
 
 DISPLAY_TIMEZONE_FALLBACKS = (
@@ -1260,9 +1308,11 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         exception = active_exception(finding, now)
         due_date = due_dates[finding.id]
         if not exception and now < due_date <= warning_cutoff:
-            warning_items.append({"type": "CVE", "item": finding.cve, "reason": "Due date approaching", "due": due_date})
+            warning_items.append({"type": "CVE", "item": finding.cve, "reason": "Due date approaching", "due": due_date,
+                                  "href": f"/services/{service.service_key}/findings/{finding.id}"})
         elif exception and now < aware(exception.expires_at) <= warning_cutoff:
-            warning_items.append({"type": "Exception", "item": finding.cve, "reason": "Exception expires soon", "due": aware(exception.expires_at)})
+            warning_items.append({"type": "Exception", "item": finding.cve, "reason": "Exception expires soon", "due": aware(exception.expires_at),
+                                  "href": f"/services/{service.service_key}/findings/{finding.id}"})
     last_execution = max((aware(e.scanned_at) for e in service.executions), default=None)
     latest_execution = max(service.executions, key=lambda e: aware(e.scanned_at), default=None)
     version = service.manual_version or (latest_execution.raw_payload.get("service", {}).get("version") if latest_execution else None)
@@ -1374,7 +1424,8 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         else:
             evidence_state = f"Incomplete · {len(skipped_charts)} skipped charts"
     if incomplete and configuration.get("incomplete_noncompliant") != "true":
-        warning_items.append({"type": "Evidence", "item": "Incomplete evidence", "reason": "Latest assessment is incomplete", "due": None})
+        warning_items.append({"type": "Evidence", "item": "Incomplete evidence", "reason": "Latest assessment is incomplete", "due": None,
+                              "href": f"/services/{service.service_key}?overview=true"})
     evidence_noncompliant = bool(incomplete and configuration.get("incomplete_noncompliant") == "true")
     noncompliant = [finding for finding in active_all if finding.id in risk_findings and not active_exception(finding, now)]
     noncompliance_items = [
@@ -2047,7 +2098,7 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
         configuration = get_global_configuration(db)
         ca_bundle = configured_ca_bundle(configuration)
         tokens, discovery = oidc_exchange_code(code, oidc_config, ca_bundle)
-        id_claims = verify_oidc_id_token(tokens, discovery, request.cookies.get("cats_oidc_nonce"), oidc_config)
+        id_claims = verify_oidc_id_token(tokens, discovery, request.cookies.get("cats_oidc_nonce"), oidc_config, ca_bundle)
         access_token = tokens.get("access_token")
         if not access_token:
             raise ValueError("OIDC token response did not include an access token")
@@ -2056,12 +2107,22 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
             if ca_bundle:
                 import ssl
                 context = ssl.create_default_context()
-                context.load_verify_locations(cadata=ca_bundle)
+                if "BEGIN CERTIFICATE" in ca_bundle:
+                    context.load_verify_locations(cadata=ca_bundle)
+                else:
+                    context.load_verify_locations(cafile=ca_bundle)
                 with urllib.request.urlopen(userinfo_request, timeout=15, context=context) as response:
-                    claims = {**id_claims, **json.load(response)}
+                    userinfo = json.load(response)
             else:
                 with urllib.request.urlopen(userinfo_request, timeout=15) as response:
-                    claims = {**id_claims, **json.load(response)}
+                    userinfo = json.load(response)
+            if not isinstance(userinfo, dict) or userinfo.get("sub") != id_claims.get("sub"):
+                raise ValueError("OIDC UserInfo subject does not match the validated ID token")
+            # Authorization claims must come from the validated ID token.
+            claims = dict(id_claims)
+            for display_claim in ("name", "email", "preferred_username"):
+                if display_claim not in claims and isinstance(userinfo.get(display_claim), str):
+                    claims[display_claim] = userinfo[display_claim]
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 # UserInfo is supplementary. The ID token has already been
@@ -2373,6 +2434,7 @@ def ingest(payload: ExecutionPayload, db: Session = Depends(get_db)):
     )
     db.add(execution)
     db.flush()
+    reconcile_watchlist_matches(db, execution)
     observed = set()
     finding_by_cve: dict[str, Finding] = {}
     requested_cves = sorted({item.cve for item in payload.findings})
@@ -4817,6 +4879,88 @@ def architecture_evidence_result(
     })
 
 
+@app.get("/cybersecurity", response_class=HTMLResponse)
+def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
+    severity: str = "all", component: str = "", since: str = "",
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    allowed = auth.accessible_service_ids("service.view")
+    if allowed == set():
+        raise HTTPException(403, detail="Permission denied")
+    query = select(Service).where(Service.lifecycle_status == "active").options(
+        selectinload(Service.findings).selectinload(Finding.exceptions),
+        selectinload(Service.findings).selectinload(Finding.observations),
+        selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
+        selectinload(Service.executions), selectinload(Service.groups),
+        selectinload(Service.poam_entries), selectinload(Service.deployment_validation_runs),
+        selectinload(Service.images))
+    if allowed is not None:
+        query = query.where(Service.id.in_(allowed))
+    services = db.scalars(query.order_by(Service.name)).all()
+    rows = []
+    now = utcnow()
+    warning_policy = parse_json(get_global_configuration(db).get("cyber_warning_policy"), {})
+    for service in services:
+        view = service_view(service, now, configuration_for_service(db, service))
+        latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+        watchlist = db.scalars(select(DependencyWatchlistMatch).where(
+            DependencyWatchlistMatch.execution_id == latest.id)).all() if latest else []
+        validation = max(service.deployment_validation_runs, key=lambda item: aware(item.created_at), default=None)
+        active_poam = [item for item in service.poam_entries if item.status == "active"]
+        overdue_poam = [item for item in active_poam if item.due_date and aware(item.due_date) < now]
+        active_findings = [item for item in service.findings if item.active]
+        search_components = {match.component_name.casefold() for match in watchlist}
+        search_components.update(str(observation.package or "").casefold()
+            for finding in active_findings for observation in finding.observations)
+        search_images = {str(image.image_reference or "").casefold() for image in service.images}
+        search_images.update(match.image.casefold() for match in watchlist)
+        critical = sum(item.severity.lower() == "critical" for item in active_findings)
+        high = sum(item.severity.lower() == "high" for item in active_findings)
+        kev = sum(bool(view["risk_metadata"].get(item.id, {}).get("kev")) for item in active_findings)
+        patchable = sum(bool(next((obs.fixed_version for obs in sorted(item.observations, key=lambda row: row.id, reverse=True)), "")) for item in active_findings)
+        missing = bool(view["incomplete"])
+        kind_failed = bool(validation and validation.status in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"})
+        warning = bool(
+            (warning_policy.get("critical_high", True) and (critical or high)) or
+            (warning_policy.get("kev", True) and kev) or
+            (warning_policy.get("watchlist", True) and watchlist) or
+            (warning_policy.get("poam", True) and active_poam) or
+            (warning_policy.get("kind", True) and kind_failed) or
+            (warning_policy.get("missing_evidence", True) and missing) or
+            view["warning_items"])
+        posture = "RED" if not view["compliant"] else "YELLOW" if warning else "GREEN"
+        rows.append({"service": service, "status": posture, "critical": critical, "high": high,
+            "vulnerabilities": len(active_findings), "kev": kev, "watchlist": len(watchlist),
+            "patchable": patchable, "poam": len(active_poam), "poam_overdue": len(overdue_poam),
+            "missing": missing, "sbom": bool(latest and (latest.raw_payload or {}).get("sbom_images")),
+            "kind": validation.status if validation else "NOT_ATTEMPTED",
+            "severity_set": {item.severity.casefold() for item in active_findings},
+            "components": search_components, "images": search_images,
+            "last_scan": latest.scanned_at if latest else None,
+            "attention": critical + high + kev + len(watchlist) + len(active_poam) + int(missing) + int(kind_failed)})
+    metrics = {"services": len(rows), "scanned": sum(row["last_scan"] is not None for row in rows),
+        "attention": sum(row["attention"] for row in rows), "vulnerabilities": sum(row["vulnerabilities"] for row in rows),
+        "critical_high": sum(row["critical"] + row["high"] for row in rows), "kev": sum(row["kev"] for row in rows),
+        "watchlist": sum(row["watchlist"] for row in rows), "patchable": sum(row["patchable"] for row in rows),
+        "poam": sum(row["poam"] for row in rows), "poam_overdue": sum(row["poam_overdue"] for row in rows),
+        "sbom_coverage": sum(row["sbom"] for row in rows), "missing": sum(row["missing"] for row in rows),
+        "kind_failed": sum(row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"} for row in rows)}
+    try:
+        since_date = datetime.fromisoformat(since).date() if since else None
+    except ValueError as exc:
+        raise HTTPException(422, detail="Invalid since date") from exc
+    filtered = [row for row in rows if (not q or q.casefold() in row["service"].name.casefold() or q.casefold() in row["service"].service_key.casefold())
+                and (status == "all" or row["status"] == status)
+                and (severity == "all" or severity.casefold() in row["severity_set"])
+                and (not component or any(component.casefold() in value for value in row["components"] | row["images"]))
+                and (not since_date or row["last_scan"] and aware(row["last_scan"]).date() >= since_date)
+                and (attention == "all" or (attention == "kev" and row["kev"]) or (attention == "watchlist" and row["watchlist"])
+                     or (attention == "poam" and row["poam"]) or (attention == "missing" and row["missing"])
+                     or (attention == "kind" and row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}))]
+    return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth,
+        rows=filtered, metrics=metrics, q=q, status=status, attention=attention,
+        severity=severity, component=component, since=since))
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
               page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
@@ -5054,6 +5198,15 @@ def service_detail(
         overview = False
     configuration = configuration_for_service(db, service)
     view = service_view(service, now, configuration)
+    latest_scan = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+    if latest_scan:
+        matches = db.scalars(select(DependencyWatchlistMatch).where(
+            DependencyWatchlistMatch.execution_id == latest_scan.id).order_by(DependencyWatchlistMatch.id)).all()
+        view["warning_items"].extend({
+            "type": "Dependency Watchlist", "item": match.component_name,
+            "reason": f"Watched component {match.component_name} {match.component_version} in {match.image}",
+            "due": None, "href": f"/services/{service.service_key}/watchlist/{match.id}",
+        } for match in matches)
     archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
         WorkflowRequest.request_type == "archive",
         WorkflowRequest.service_id == service.id,
@@ -5063,6 +5216,11 @@ def service_detail(
         DeploymentValidationRun.service_id == service.id,
     ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
     latest_validation = deployment_validation_view(validation_records[0]) if validation_records else None
+    if validation_records and validation_records[0].status in {"FAILED", "ERROR", "COULD_NOT_VALIDATE", "PARTIALLY_VERIFIED"}:
+        failed_run = validation_records[0]
+        view["warning_items"].append({"type": "Kind Validation", "item": failed_run.status,
+            "reason": failed_run.reason or failed_run.reason_category or "Deployment validation needs review",
+            "due": None, "href": f"/services/{service.service_key}?validation=true&validation_run={failed_run.run_key}"})
     if validation:
         selected_record = next((item for item in validation_records if item.run_key == validation_run), None) if validation_run else (validation_records[0] if validation_records else None)
         if validation_run and not selected_record:
@@ -5286,14 +5444,14 @@ def service_detail(
     clear_filters_url = f"/services/{urllib.parse.quote(service_key, safe='')}?overview=false&{'findings_view=' + selected_findings_view + '&' if canonical_findings else ''}finding_state={urllib.parse.quote(finding_state)}&finding_type={urllib.parse.quote(finding_type)}&page_size={page_size}"
     if finding_state not in finding_groups:
         raise HTTPException(400, detail="Unknown finding state")
-    if finding_type not in {"all", "vulnerability", "configuration", "evidence"}:
-        raise HTTPException(422, detail="Finding type must be all, vulnerability, configuration, or evidence")
+    if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
+        raise HTTPException(422, detail="Unknown finding type")
     if page_size not in {50, 100, 250}:
         raise HTTPException(422, detail="Page size must be 50, 100, or 250")
     if finding_state == "warnings":
         all_items = list(finding_groups["warnings"])
         if finding_type != "all":
-            warning_types = {"vulnerability": "CVE", "configuration": "Configuration", "evidence": "Evidence"}
+            warning_types = {"vulnerability": "CVE", "configuration": "Configuration", "evidence": "Evidence", "watchlist": "Dependency Watchlist"}
             all_items = [item for item in all_items if item.get("type") == warning_types[finding_type]]
         total_items = len(all_items)
         total_pages = max(1, (total_items + page_size - 1) // page_size)
@@ -5962,6 +6120,20 @@ def export_service_helm_diagram(service_key: str, db: Session = Depends(get_db),
         raise HTTPException(404)
     latest_execution = max(service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
     return Response(build_helm_diagram(service, latest_execution), media_type="image/svg+xml")
+
+
+@app.get("/services/{service_key}/watchlist/{match_id}", response_class=HTMLResponse)
+def watchlist_match_detail(service_key: str, match_id: int, request: Request,
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if not service:
+        raise HTTPException(404)
+    match = db.scalar(select(DependencyWatchlistMatch).where(
+        DependencyWatchlistMatch.id == match_id, DependencyWatchlistMatch.service_id == service.id))
+    if not match:
+        raise HTTPException(404)
+    return templates.TemplateResponse(request, "watchlist_match.html", page_context(
+        auth, service=service, match=match))
 
 
 @app.get("/services/{service_key}/findings/{finding_id}", response_class=HTMLResponse)
@@ -7415,6 +7587,11 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
     public_url = os.getenv("CATS_PUBLIC_URL", str(request.base_url).rstrip("/"))
     oidc["redirect_uri"] = oidc.get("redirect_uri") or f"{public_url}/auth/oidc/callback"
     oidc["post_logout_redirect_uri"] = oidc.get("post_logout_redirect_uri") or f"{public_url}/login"
+    validator_raw = parse_json(configuration.get("validator_configuration"), {})
+    validator_display = {"endpoint": validator_raw.get("endpoint") or "",
+        "client_certificate_configured": bool(validator_raw.get("client_certificate")),
+        "client_key_configured": secret_configured(validator_raw.get("client_key") or ""),
+        "ca_configured": bool(validator_raw.get("ca_certificate"))}
     return templates.TemplateResponse(request, "configuration.html", page_context(
         auth,
         configuration=configuration,
@@ -7425,6 +7602,13 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
         certificates=certificates, repository_policies=repository_policies,
         custom_os=custom_os,
         oidc=oidc, public_url=public_url, registries=configured_registries(configuration),
+        oidc_mappings=db.scalars(select(OidcClaimMapping).order_by(OidcClaimMapping.id)).all(),
+        oidc_roles=db.scalars(select(Role).order_by(Role.name)).all(),
+        oidc_groups=db.scalars(select(Group).order_by(Group.name)).all(),
+        oidc_services=db.scalars(select(Service).order_by(Service.name)).all(),
+        security_data_sources={row.key: row for row in db.scalars(select(SecurityDataSource))},
+        validator=validator_display, validator_result=request.query_params.get("validator_result", ""),
+        cyber_warning_policy=parse_json(configuration.get("cyber_warning_policy"), {}),
         signing=signing.public_metadata(configuration),
         os_definitions={**OS_DEFINITIONS, **custom_os}, package_managers=sorted(PACKAGE_MANAGERS),
         edit_os_id=edit_os_id.strip().lower(),
@@ -7485,6 +7669,82 @@ def workflow_policy_page(request: Request, group_id: str = "", db: Session = Dep
         saved=request.query_params.get("saved") == "1", groups=groups,
         selected_group_id=selected_group_id,
     ))
+
+
+@app.get("/admin/dependency-watchlist", response_class=HTMLResponse)
+def dependency_watchlist_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    entries = db.scalars(select(DependencyWatchlistEntry).order_by(DependencyWatchlistEntry.id)).all()
+    return templates.TemplateResponse(request, "dependency_watchlist.html", page_context(
+        auth, entries=entries, saved=request.query_params.get("saved") == "1"))
+
+
+def _refresh_watchlist_matches(db: Session) -> None:
+    # Re-evaluate persisted SBOM evidence when configuration changes. Old scan
+    # payloads without a component inventory simply produce no matches.
+    for execution in db.scalars(select(Execution).where(Execution.raw_payload.is_not(None))).all():
+        reconcile_watchlist_matches(db, execution)
+
+
+@app.post("/admin/dependency-watchlist")
+def save_dependency_watchlist(
+    csrf_token: str = Form(), entry_id: int = Form(default=0), action: str = Form(default="save"),
+    purl: str = Form(default=""), ecosystem: str = Form(default=""), name: str = Form(default=""),
+    version_constraint: str = Form(default=""), enabled: bool = Form(default=False),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    entry = db.get(DependencyWatchlistEntry, entry_id) if entry_id else None
+    if entry_id and not entry:
+        raise HTTPException(404, detail="Watchlist entry not found")
+    if action == "delete":
+        if not entry:
+            raise HTTPException(404, detail="Watchlist entry not found")
+        db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.entry_id == entry.id))
+        db.delete(entry)
+        record_audit(db, auth, "watchlist.deleted", "watchlist_entry", entry_id)
+    elif action == "save":
+        try:
+            parsed = parse_watchlist_entries(yaml.safe_dump([{"purl": purl, "ecosystem": ecosystem,
+                "name": name, "version_constraint": version_constraint}]), "yaml")[0]
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        if not entry:
+            entry = DependencyWatchlistEntry()
+            db.add(entry)
+        for key, value in parsed.items():
+            setattr(entry, key, value)
+        entry.enabled = enabled
+        db.flush()
+        record_audit(db, auth, "watchlist.saved", "watchlist_entry", entry.id,
+                     purl=entry.purl, ecosystem=entry.ecosystem, name=entry.name,
+                     version_constraint=entry.version_constraint, enabled=enabled)
+    else:
+        raise HTTPException(422, detail="Unknown watchlist action")
+    db.flush()
+    _refresh_watchlist_matches(db)
+    db.commit()
+    return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)
+
+
+@app.post("/admin/dependency-watchlist/import")
+async def import_dependency_watchlist(
+    csrf_token: str = Form(), file: UploadFile = File(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_global_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    suffix = Path(file.filename or "").suffix.lower().lstrip(".")
+    content = await file.read(1024 * 1024 + 1)
+    try:
+        entries = parse_watchlist_entries(content.decode("utf-8-sig"), suffix)
+    except (ValueError, UnicodeError, yaml.YAMLError) as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    for item in entries:
+        db.add(DependencyWatchlistEntry(**item, enabled=True))
+    db.flush()
+    _refresh_watchlist_matches(db)
+    record_audit(db, auth, "watchlist.imported", "watchlist", "global", count=len(entries), format=suffix)
+    db.commit()
+    return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)
 
 
 @app.post("/admin/configuration")
@@ -7579,6 +7839,173 @@ def save_oidc_configuration(
         except Exception as exc:
             result = f"OIDC discovery failed: {redact(exc)}"
         return RedirectResponse(f"/admin/configuration?saved=1&oidc_result={urllib.parse.quote(result)}", status_code=303)
+    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/oidc-mappings")
+def save_oidc_claim_mapping(
+    csrf_token: str = Form(), mapping_id: int = Form(default=0), action: str = Form(default="save"),
+    claim_path: str = Form(default=""), expected_value: str = Form(default=""),
+    role_id: int = Form(default=0), scope: str = Form(default=""), scope_id: int = Form(default=0),
+    enabled: bool = Form(default=False), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_global_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    mapping = db.get(OidcClaimMapping, mapping_id) if mapping_id else None
+    if mapping_id and mapping is None:
+        raise HTTPException(404, detail="OIDC mapping not found")
+    if action == "delete":
+        if mapping is None:
+            raise HTTPException(404, detail="OIDC mapping not found")
+        db.delete(mapping)
+        record_audit(db, auth, "oidc.mapping_deleted", "oidc_mapping", mapping_id)
+    elif action == "save":
+        claim_path = claim_path.strip()
+        expected_value = expected_value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", claim_path) or len(claim_path) > 240:
+            raise HTTPException(422, detail="Invalid claim path")
+        if not expected_value or len(expected_value) > 300:
+            raise HTTPException(422, detail="Expected claim value is required")
+        if not db.get(Role, role_id):
+            raise HTTPException(422, detail="Mapped CATS role does not exist")
+        if scope == "global":
+            service_id = group_id = None
+        elif scope == "service" and db.get(Service, scope_id):
+            service_id, group_id = scope_id, None
+        elif scope == "group" and db.get(Group, scope_id):
+            service_id, group_id = None, scope_id
+        else:
+            raise HTTPException(422, detail="A valid global, service, or group scope is required")
+        if mapping is None:
+            mapping = OidcClaimMapping()
+            db.add(mapping)
+        mapping.claim_path, mapping.expected_value, mapping.role_id = claim_path, expected_value, role_id
+        mapping.global_scope, mapping.service_id, mapping.group_id = scope == "global", service_id, group_id
+        mapping.enabled = enabled
+        db.flush()
+        record_audit(db, auth, "oidc.mapping_saved", "oidc_mapping", mapping.id,
+            claim_path=claim_path, expected_value=expected_value, role_id=role_id,
+            scope=scope, scope_id=scope_id if scope != "global" else None, enabled=enabled)
+    else:
+        raise HTTPException(422, detail="Unknown mapping action")
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/cyber-warning-policy")
+def save_cyber_warning_policy(csrf_token: str = Form(), conditions: list[str] = Form(default=[]),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    known = {"critical_high", "kev", "watchlist", "poam", "kind", "missing_evidence"}
+    if set(conditions) - known:
+        raise HTTPException(422, detail="Unknown warning condition")
+    policy = {key: key in conditions for key in sorted(known)}
+    _set_config_value(db, auth, "cyber_warning_policy", json.dumps(policy), None)
+    record_audit(db, auth, "cyber_warning_policy.updated", "portal", "global", conditions=policy)
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/validator")
+def save_validator_configuration(
+    csrf_token: str = Form(), endpoint: str = Form(default=""), client_certificate: str = Form(default=""),
+    client_key: str = Form(default=""), ca_certificate: str = Form(default=""), action: str = Form(default="save"),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    current = parse_json(get_global_configuration(db).get("validator_configuration"), {})
+    if action == "save":
+        endpoint = endpoint.strip().rstrip("/")
+        parsed = urllib.parse.urlparse(endpoint)
+        if endpoint and (parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password):
+            raise HTTPException(422, detail="Validator endpoint must be credential-free HTTPS")
+        current["endpoint"] = endpoint
+        if client_certificate.strip():
+            if len(client_certificate) > 65536 or "BEGIN CERTIFICATE" not in client_certificate:
+                raise HTTPException(422, detail="Client certificate must be PEM")
+            current["client_certificate"] = client_certificate.strip()
+        if ca_certificate.strip():
+            if len(ca_certificate) > 65536 or "BEGIN CERTIFICATE" not in ca_certificate:
+                raise HTTPException(422, detail="Validator CA must be PEM")
+            current["ca_certificate"] = ca_certificate.strip()
+        if client_key.strip():
+            if len(client_key) > 65536 or "PRIVATE KEY" not in client_key:
+                raise HTTPException(422, detail="Client key must be PEM")
+            current["client_key"] = encrypt_secret(client_key.strip())
+        _set_config_value(db, auth, "validator_configuration", json.dumps(current), None)
+        record_audit(db, auth, "validator.configuration_updated", "portal", "global",
+                     endpoint=endpoint, client_certificate_changed=bool(client_certificate),
+                     client_key_changed=bool(client_key), ca_changed=bool(ca_certificate))
+        db.commit()
+        return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+    if action != "test":
+        raise HTTPException(422, detail="Unknown validator action")
+    try:
+        result = validator_health(current)
+        if result.get("schema_version") != VALIDATION_PACKAGE_VERSION:
+            raise ValueError("Validator schema version is incompatible")
+        message = f"Connected; mTLS verified; ready={bool(result.get('ready'))}; active={result.get('active_jobs')}/{result.get('max_jobs')}; schema={result.get('schema_version')}"
+    except Exception as exc:
+        message = f"Connection failed: {type(exc).__name__}"
+    record_audit(db, auth, "validator.connection_tested", "portal", "global", success=message.startswith("Connected"))
+    db.commit()
+    return RedirectResponse("/admin/configuration?validator_result=" + urllib.parse.quote(message), status_code=303)
+
+
+@app.post("/admin/configuration/security-data/{source_key}")
+async def manage_security_data_source(source_key: str, csrf_token: str = Form(), action: str = Form(),
+    source: str = Form(default=""), file: UploadFile | None = File(default=None),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    if source_key not in SECURITY_DATA_KEYS or action not in {"save", "refresh", "upload"}:
+        raise HTTPException(422, detail="Unknown security data action")
+    record = db.get(SecurityDataSource, source_key)
+    if record is None:
+        record = SecurityDataSource(key=source_key)
+        db.add(record)
+    if action == "save":
+        value = source.strip()
+        if len(value) > 2000:
+            raise HTTPException(422, detail="Source reference is too long")
+        parsed = urllib.parse.urlparse(value)
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise HTTPException(422, detail="Source references cannot contain credentials, query strings, or fragments")
+        if source_key != "trivy" and value:
+            if parsed.scheme not in {"https", "http"} or not parsed.netloc:
+                raise HTTPException(422, detail="Source must be an HTTP(S) URL")
+        if source_key == "trivy" and value and (value.startswith("-") or any(character.isspace() for character in value)):
+            raise HTTPException(422, detail="Trivy source must be one OCI repository reference")
+        record.source = value
+        record.status = "CONFIGURED" if value else "UNCONFIGURED"
+        record.failure_reason = None
+        record_audit(db, auth, "security_data.source_changed", "security_data_source", source_key,
+                     source=value)
+    else:
+        if action == "refresh" and not record.source:
+            raise HTTPException(422, detail="Configure a source before refreshing")
+        if action == "upload" and source_key == "trivy":
+            raise HTTPException(422, detail="Trivy uses its configured OCI DB repository")
+        if action == "upload" and file is None:
+            raise HTTPException(422, detail="Upload a database or feed file")
+        data = await file.read(MAX_SECURITY_DATA_UPLOAD + 1) if file else None
+        record.last_attempt_at = utcnow()
+        record_audit(db, auth, f"security_data.{action}_requested", "security_data_source", source_key)
+        try:
+            version = refresh_security_data(source_key, record.source or "", data,
+                configured_ca_bundle(get_global_configuration(db)))
+        except Exception as exc:
+            record.status = "FAILED"
+            record.failure_reason = f"{type(exc).__name__}: {redact(exc)}"[:1000]
+            record_audit(db, auth, "security_data.update_failed", "security_data_source", source_key,
+                         reason=record.failure_reason)
+        else:
+            record.installed_version = version
+            record.installed_at = record.last_success_at = utcnow()
+            record.status = "READY"
+            record.failure_reason = None
+            record_audit(db, auth, "security_data.updated", "security_data_source", source_key,
+                         version=version)
+    db.commit()
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
 
 

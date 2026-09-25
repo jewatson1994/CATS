@@ -368,6 +368,9 @@ services:
       - patch_jobs:/tmp/cats-patch-jobs
 
       - public_jobs:/tmp/cats-public-jobs
+      - security_policy_data:/app/policy
+      - security_grype_db:/opt/catscan/grype-db
+      - security_trivy_db:/opt/catscan/trivy-cache
 
 
     # ---------------------------------------------------------
@@ -430,3 +433,9 @@ volumes:
   patch_jobs:
 
   public_jobs:
+
+  security_policy_data:
+
+  security_grype_db:
+
+  security_trivy_db:

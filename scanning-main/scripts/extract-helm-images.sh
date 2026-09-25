@@ -224,12 +224,9 @@ render_chart() {
     return
   fi
   printf '%s\n' "$entry_json" > "${rendered%.yaml}.chart.json"
-  # Restrict extraction to Kubernetes workload pod specs. The fallback map
-  # query also handles init/ephemeral containers and keeps this compatible
-  # with yq versions that do not support a recursive path expression.
-  yq -r '
-    .. | select(tag == "!!map" and has("image") and (.image | tag) == "!!str") | .image
-  ' "$rendered" 2>/dev/null | sed '/^null$/d;/^[[:space:]]*$/d' >> "$IMAGE_FILE" || {
+  # A rendered ConfigMap or custom resource may also have an `image` field.
+  # Only pod container locations provide affirmative image evidence.
+  python3 "${SCRIPT_DIRECTORY}/extract-workload-images.py" "$rendered" >> "$IMAGE_FILE" || {
     record_skip "$chart_name" "Unable to extract image references from rendered manifests"
   }
 }

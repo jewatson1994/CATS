@@ -5,7 +5,7 @@
 })(typeof window !== 'undefined' ? window : undefined, function (window) {
   'use strict';
 
-  const TERMINAL = new Set(['VERIFIED', 'PARTIALLY_VERIFIED', 'COULD_NOT_VALIDATE', 'NOT_ATTEMPTED']);
+  const TERMINAL = new Set(['VERIFIED', 'PARTIALLY_VERIFIED', 'COULD_NOT_VALIDATE', 'NOT_ATTEMPTED', 'FAILED', 'ERROR', 'CANCELLED', 'TIMED_OUT']);
   const CLEANUP_TERMINAL = new Set(['COMPLETE', 'FAILED', 'NOT_REQUIRED', 'NOT_ATTEMPTED', 'UNKNOWN']);
   const PHASE_LABELS = { QUEUED: 'Queued', PREFLIGHT: 'Preparing Validation', RENDERING: 'Rendering Helm', CREATING_CLUSTER: 'Creating Cluster', INSTALLING: 'Installing Helm', WAITING_FOR_READY: 'Observing Runtime', COLLECTING: 'Collecting Evidence', COMPARING: 'Reconciling Evidence', CLEANING_UP: 'Cleaning Up', COMPLETE: '' };
 

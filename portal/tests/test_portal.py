@@ -79,6 +79,76 @@ def add_user(username, role_name, service_id=None):
         db.add(UserRoleAssignment(user_id=user.id, role_id=role.id, service_id=service_id)); db.commit()
 
 
+def test_watchlist_warning_dashboard_and_authorization():
+    client = new_client()
+    saved = client.post("/admin/dependency-watchlist", data={"csrf_token": csrf(client), "action": "save",
+        "name": "requests", "ecosystem": "python", "version_constraint": ">=2.30", "enabled": "true"}, follow_redirects=False)
+    assert saved.status_code == 303
+    body = payload("watchlist-run", datetime.now(timezone.utc), [])
+    body["sbom_components"] = [{"name": "requests", "version": "2.31.0", "ecosystem": "python",
+        "purl": "pkg:pypi/requests@2.31.0", "image": "registry.internal/app:1"},
+        {"name": "request-helper", "version": "2.31.0", "ecosystem": "python", "image": "registry.internal/app:1"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    warnings = client.get("/services/payments-service?finding_state=warnings")
+    assert warnings.status_code == 200 and "Dependency Watchlist" in warnings.text
+    dashboard = client.get("/cybersecurity")
+    assert dashboard.status_code == 200 and "Service Security Matrix" in dashboard.text
+    assert "Payments Service" in client.get("/cybersecurity?attention=watchlist&component=requests").text
+    assert "No services match" in client.get("/cybersecurity?component=not-present").text
+    with SessionLocal() as db:
+        from app.models import DependencyWatchlistMatch
+        matches = db.scalars(select(DependencyWatchlistMatch)).all()
+        assert len(matches) == 1 and matches[0].component_name == "requests"
+        assert not db.scalars(select(Finding)).all()
+        detail_url = f"/services/payments-service/watchlist/{matches[0].id}"
+    assert "pkg:pypi/requests@2.31.0" in client.get(detail_url).text
+    add_user("assessor", "Assessor")
+    viewer = new_client("assessor")
+    assert viewer.post("/admin/dependency-watchlist", data={"csrf_token": csrf(viewer), "name": "secret"}).status_code == 403
+
+
+def test_oidc_claim_mapping_preserves_scope_and_local_roles():
+    from app.auth import provision_oidc_user
+    from app.models import OidcClaimMapping
+    with SessionLocal() as db:
+        service = Service(service_key="claim-service", name="Claim Service")
+        other = Service(service_key="other-service", name="Other Service")
+        db.add_all([service, other]); db.flush()
+        role = db.scalar(select(Role).where(Role.name == "Service Manager"))
+        db.add(OidcClaimMapping(claim_path="custom.nested.roles", expected_value="owners",
+            role_id=role.id, service_id=service.id, enabled=True))
+        db.flush()
+        user = provision_oidc_user(db, {"sub": "subject-1", "preferred_username": "claim-user",
+            "custom": {"nested": {"roles": ["owners", "other"]}}})
+        db.commit()
+        db.refresh(user)
+        auth = AuthContext(user, UserSession(token_hash="dummy", csrf_token="dummy", user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+        assert auth.has("service.edit", service.id)
+        assert not auth.has("service.edit", other.id)
+        assert not auth.has("config.manage")
+        import pytest
+        with pytest.raises(ValueError):
+            provision_oidc_user(db, {"sub": "subject-2", "preferred_username": "unmapped-user",
+                "custom": {"nested": {"roles": "none"}}})
+
+
+def test_security_data_upload_is_authorized_and_audited(tmp_path, monkeypatch):
+    monkeypatch.setenv("CATS_POLICY_DATA_DIR", str(tmp_path))
+    client = new_client()
+    response = client.post("/admin/configuration/security-data/kev", data={"csrf_token": csrf(client), "action": "upload"},
+        files={"file": ("kev.json", b'{"vulnerabilities":[{"cveID":"CVE-2026-0001"}]}', "application/json")},
+        follow_redirects=False)
+    assert response.status_code == 303
+    assert "CVE-2026-0001" in (tmp_path / "kev.json").read_text()
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "security_data.updated"))
+    add_user("security-viewer", "Assessor")
+    viewer = new_client("security-viewer")
+    denied = viewer.post("/admin/configuration/security-data/kev", data={"csrf_token": csrf(viewer), "action": "refresh"})
+    assert denied.status_code == 403
+
+
 def test_login_and_http_cookie_mode():
     client = new_client()
     assert client.get("/").status_code == 200

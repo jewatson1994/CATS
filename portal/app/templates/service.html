@@ -97,6 +97,7 @@
           <option value="vulnerability" {% if finding_type == 'vulnerability' %}selected{% endif %}>Vulnerabilities</option>
           <option value="configuration" {% if finding_type == 'configuration' %}selected{% endif %}>Configuration</option>
           <option value="evidence" {% if finding_type == 'evidence' %}selected{% endif %}>Evidence</option>
+          {% if finding_state == 'warnings' %}<option value="watchlist" {% if finding_type == 'watchlist' %}selected{% endif %}>Dependency Watchlist</option>{% endif %}
         </select>
       </label>
       <label class="page-size-control">Rows
@@ -170,7 +171,7 @@
       <thead><tr><th>Type</th><th>Item</th><th>Reason</th><th>Due date</th></tr></thead>
       <tbody>
         {% for item in warning_items %}
-        <tr><td>{{ 'Vulnerability' if item.type == 'CVE' else item.type }}</td><td><strong>{{ item.item }}</strong></td><td>{{ item.reason }}</td><td>{{ cats_date(item.due) if item.due else '—' }}</td></tr>
+        <tr><td>{{ 'Vulnerability' if item.type == 'CVE' else item.type }}</td><td>{% if item.href %}<a class="finding-link" href="{{ item.href }}">{{ item.item }}</a>{% else %}<strong>{{ item.item }}</strong>{% endif %}</td><td>{{ item.reason }}</td><td>{{ cats_date(item.due) if item.due else '—' }}</td></tr>
         {% else %}<tr><td class="empty" colspan="4">No warnings for this service.</td></tr>{% endfor %}
       </tbody>
     </table>

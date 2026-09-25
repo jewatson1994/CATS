@@ -157,17 +157,24 @@ def mapping_values(node: object, path: str = "") -> tuple[object | None, str | N
     """Return the first useful chart reference and its render context."""
     if not isinstance(node, dict):
         return None, None, {}
-    lower = {norm_key(key): (key, value) for key, value in node.items()}
+    lower = {norm_key(key): value for key, value in node.items()}
     reference = None
     for key, value in node.items():
         key_norm = norm_key(key)
         if key_norm in PATH_KEYS | CHART_KEYS and isinstance(value, str):
-            if value.startswith(("oci://", "http://", "https://", "./", "../", "/")) or "/" in value or value.endswith((".tgz", ".tar.gz", ".zip")):
+            # Generic ``source``, ``reference`` and ``url`` fields are common
+            # outside Helm. Remote values need an explicit chart field or a
+            # chart/repository pair before they become chart evidence.
+            remote = value.startswith(("oci://", "http://", "https://"))
+            explicit_chart = key_norm in {"chart", "helmchart", "chartref", "chartname", "chartpath"}
+            if (remote and explicit_chart) or (not remote and (value.startswith(("./", "../", "/")) or "/" in value or value.endswith((".tgz", ".tar.gz", ".zip")))):
                 reference = value
                 break
-    chartish = bool(set(lower) & (CHART_KEYS | REPOSITORY_KEYS | VERSION_KEYS))
-    repo = next((value for key, value in lower.items() if key in REPOSITORY_KEYS and isinstance(value, str)), None)
-    if reference is None and chartish and repo:
+    # A generic ``name`` plus ``url`` is common for non-Helm resources.
+    # Treat only an explicitly named repository field as chart context.
+    explicit_repo_keys = {"repository", "repo", "repourl", "helmrepo"}
+    repo = next((value for key, value in lower.items() if key in explicit_repo_keys and isinstance(value, str)), None)
+    if reference is None and repo:
         reference = next((value for key, value in lower.items() if key in CHART_KEYS and isinstance(value, str)), None)
     if reference is None:
         return None, None, {}
@@ -217,7 +224,7 @@ def walk_references(node: object, source: Path, root: Path, roots: list[Path], e
         # when its YAML key is arbitrary.  Keep scalar references source-level
         # occurrences (no logical instance) so data paths do not create
         # synthetic chart instances during cycle traversal.
-        if resolved or raw.startswith(("oci://", "http://", "https://")):
+        if resolved:
             yield {"reference": raw, "resolved": resolved, "context": {}, "yaml_path": yaml_path, "instance": ""}
 
 

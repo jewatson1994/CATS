@@ -62,6 +62,35 @@ def test_arbitrary_yaml_key_resolving_to_chart_is_high_confidence(tmp_path):
     assert any(item.get("reference") == "./components/backend/chart" and item.get("confidence") == "HIGH" for item in graph["references"])
 
 
+def test_unrelated_urls_do_not_become_helm_artifacts(tmp_path):
+    chart(tmp_path, "app", "app")
+    (tmp_path / "config.yml").write_text(
+        "identity:\n  claim: http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname\n"
+        "links:\n  - https://example.invalid/documentation\n"
+        "nested:\n  source: https://example.invalid/schema\n",
+        encoding="utf-8",
+    )
+    graph, entries = discover(tmp_path)
+    assert not any("schemas.xmlsoap.org" in str(item) or "example.invalid" in str(item)
+                   for item in graph["references"] + graph["unresolved"] + entries)
+
+
+def test_remote_chart_requires_explicit_helm_structure(tmp_path):
+    chart(tmp_path, "app", "app")
+    (tmp_path / "config.yml").write_text(
+        "applications:\n"
+        "  remote:\n    chart: worker\n    repository: https://charts.example.invalid/internal\n"
+        "  oci:\n    chart: oci://registry.example.invalid/charts/worker\n"
+        "  missing:\n    chart: oci://registry.example.invalid/charts/missing\n",
+        encoding="utf-8",
+    )
+    graph, entries = discover(tmp_path)
+    assert any(item.get("reference") == "worker" and item.get("repository") == "https://charts.example.invalid/internal" for item in graph["references"])
+    assert any(item.get("reference") == "oci://registry.example.invalid/charts/worker" for item in graph["references"])
+    assert any(item.get("item") == "oci://registry.example.invalid/charts/missing" for item in graph["unresolved"])
+    assert any(item.get("reference") == "worker" for item in entries)
+
+
 def test_cycles_are_bounded_and_plain_paths_are_not_charts(tmp_path):
     chart(tmp_path, "a", "a")
     chart(tmp_path, "b", "b")
