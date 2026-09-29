@@ -17,7 +17,7 @@ import threading
 import time
 import tarfile
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, ExitStack
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -43,6 +43,9 @@ from openpyxl.utils import get_column_letter
 import yaml
 
 from .database import Base, engine, get_db, SessionLocal
+from .helm_sources import normalize_chart_reference, oci_pull_arguments
+from .helm_archives import extract_chart, compressed_limit
+from .helm_downloads import DownloadedChart, copy_bounded, close_downloads, check_space
 from .auth import (
     PERMISSIONS, SESSION_COOKIE, AuthContext, hash_password, record_audit,
     require_permission, require_user, optional_user, seed_auth, token_hash, utcnow as auth_utcnow,
@@ -90,11 +93,14 @@ from .deployment_validation import (
 )
 
 
-Base.metadata.create_all(bind=engine)
+from .exchange_migrations import migration_transaction, upgrade_connection
+from .preview_cleanup import preview_cleanup_lifespan
 # Lightweight additive upgrade for deployments created before service POC
 # metadata existed. This keeps the existing create_all-based deployment model
 # upgrade-safe without touching or deleting evidence.
-with engine.begin() as connection:
+with migration_transaction(engine) as connection:
+    Base.metadata.create_all(bind=connection)
+    upgrade_connection(connection)
     if "poc" not in {column["name"] for column in inspect(connection).get_columns("services") }:
         connection.execute(text("ALTER TABLE services ADD COLUMN poc VARCHAR(240)"))
     if "manual_version" not in {column["name"] for column in inspect(connection).get_columns("services") }:
@@ -228,10 +234,17 @@ seed_auth()
 async def app_lifespan(_app: FastAPI):
     # Recovery is a safety obligation even when administrators disable new runs.
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
-    yield
+    async with preview_cleanup_lifespan(SessionLocal):
+        yield
 
 
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
+from .exchange_routes import router as exchange_router
+app.include_router(exchange_router)
+from .definition_routes import router as definition_router
+app.include_router(definition_router)
+from .upload_limits import UploadLimitMiddleware
+app.add_middleware(UploadLimitMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 snapshot_logger = logging.getLogger("cats.snapshot")
 PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))))
@@ -2377,6 +2390,10 @@ def _reconcile_image_scope(db: Session, service: Service, target_image: str, obs
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
 def ingest(payload: ExecutionPayload, db: Session = Depends(get_db)):
+    return ingest_payload(payload, db)
+
+
+def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True):
     if not payload.fixable_only:
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
@@ -2436,6 +2453,8 @@ def ingest(payload: ExecutionPayload, db: Session = Depends(get_db)):
          and configuration.get("skipped_images_incomplete", "true") == "true")
         or bool(payload.skipped_charts)
     )
+    if effective_complete and scan_scope == "service":
+        service.assessment_status = "assessed"
     if payload.helm_source_files and isinstance(payload.service_overview, dict):
         _enrich_values_source_mappings({"service_overview": payload.service_overview}, payload.helm_source_files)
     execution = Execution(
@@ -2539,6 +2558,9 @@ def ingest(payload: ExecutionPayload, db: Session = Depends(get_db)):
         ))
     should_record_validation = payload.artifact_type == "helm" and scan_scope == "service"
     service_id, execution_id = service.id, execution.id
+    if not commit:
+        db.flush()
+        return {"accepted": True, "duplicate": False, "execution_id": execution_id}
     db.commit()
     validation_run_id = None
     schedule_validation = False
@@ -2633,48 +2655,21 @@ def _safe_chart_member(name: str) -> bool:
 
 def _stage_public_chart(input_dir: Path, archive: bytes, filename: str) -> None:
     """Extract one uploaded Helm archive into the ephemeral charts directory."""
-    max_bytes = int(os.getenv("CATS_PUBLIC_MAX_CHART_BYTES", str(50 * 1024 * 1024)))
-    if len(archive) > max_bytes:
-        raise HTTPException(status_code=413, detail="Helm chart archive is too large")
-    charts_dir = input_dir / "charts"
-    charts_dir.mkdir(parents=True, exist_ok=True)
-    max_expanded_bytes = int(os.getenv("CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES", str(250 * 1024 * 1024)))
-    name = (filename or "chart.tgz").lower()
     try:
-        if name.endswith(".zip"):
-            with ZipFile(BytesIO(archive)) as bundle:
-                members = bundle.infolist()
-                if any(not _safe_chart_member(member.filename) for member in members):
-                    raise HTTPException(status_code=400, detail="Helm archive contains an unsafe path")
-                if any((member.external_attr >> 16) & 0o170000 == 0o120000 for member in members):
-                    raise HTTPException(status_code=400, detail="Helm archive contains an unsafe symbolic link")
-                if sum(member.file_size for member in members) > max_expanded_bytes:
-                    raise HTTPException(status_code=413, detail="Helm archive expands beyond the configured safety limit")
-                bundle.extractall(charts_dir)
-        elif name.endswith((".tgz", ".tar.gz", ".tar")):
-            with tarfile.open(fileobj=BytesIO(archive), mode="r:*") as bundle:
-                members = bundle.getmembers()
-                if any(not _safe_chart_member(member.name) for member in members):
-                    raise HTTPException(status_code=400, detail="Helm archive contains an unsafe path")
-                if any(member.issym() or member.islnk() or member.isdev() for member in members):
-                    raise HTTPException(status_code=400, detail="Helm archive contains an unsafe link or device entry")
-                if sum(member.size for member in members) > max_expanded_bytes:
-                    raise HTTPException(status_code=413, detail="Helm archive expands beyond the configured safety limit")
-                bundle.extractall(charts_dir, filter="data")
-        else:
-            raise HTTPException(status_code=400, detail="Helm chart must be a .tgz, .tar.gz, .tar, or .zip archive")
-    except (tarfile.TarError, OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Helm chart archive could not be read") from exc
-    if not any(charts_dir.rglob("Chart.yaml")):
-        raise HTTPException(status_code=400, detail="Helm archive does not contain a Chart.yaml")
+        extract_chart(archive, filename or "chart.tgz", input_dir / "charts")
+    except ValueError as exc:
+        raise HTTPException(status_code=413 if "exceeds configured" in str(exc) else 400, detail=str(exc)) from exc
+    finally:
+        if isinstance(archive, DownloadedChart):
+            archive.close()
 
 
-def _fetch_public_url(url: str, certificates: list[dict] | None = None) -> tuple[bytes, str]:
-    """Fetch a public URL and return its bytes plus the final URL."""
+def _fetch_public_stream(url: str, certificates: list[dict] | None = None):
+    """Fetch into a bounded temporary file, preserving urllib TLS and redirects."""
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Chart URL must use http or https")
-    max_bytes = int(os.getenv("CATS_PUBLIC_MAX_CHART_BYTES", str(50 * 1024 * 1024)))
+    max_bytes = compressed_limit()
     try:
         request = urllib.request.Request(url.strip(), headers={"User-Agent": "CATS/standalone-scanner"})
         context = ssl.create_default_context()
@@ -2686,12 +2681,12 @@ def _fetch_public_url(url: str, certificates: list[dict] | None = None) -> tuple
             content_length = int(response.headers.get("Content-Length") or 0)
             if content_length > max_bytes:
                 raise HTTPException(status_code=413, detail="Helm chart archive is too large")
-            data = response.read(max_bytes + 1)
             final_url = response.geturl()
-        if len(data) > max_bytes:
-            raise HTTPException(status_code=413, detail="Helm chart archive is too large")
+            data = copy_bounded(response, max_bytes)
     except HTTPException:
         raise
+    except TimeoutError as exc:
+        raise HTTPException(status_code=408, detail="Helm source acquisition timed out") from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
         if isinstance(reason, (ssl.SSLError, ssl.SSLCertVerificationError)):
@@ -2707,16 +2702,27 @@ def _fetch_public_url(url: str, certificates: list[dict] | None = None) -> tuple
     return data, final_url
 
 
-def _download_oci_chart(reference: str, certificates: list[dict] | None = None) -> list[tuple[bytes, str]]:
+def _fetch_public_url(url: str, certificates: list[dict] | None = None) -> tuple[bytes, str]:
+    """Compatibility metadata reader; archive transfers use the disk-backed path."""
+    stream, final_url = _fetch_public_stream(url, certificates)
+    try:
+        return stream.read(), final_url
+    finally:
+        stream.close()
+
+
+def _download_oci_chart(reference: str, certificates: list[dict] | None = None) -> list[tuple[DownloadedChart, str]]:
     """Pull one public OCI Helm chart using the bundled Helm executable."""
     helm = shutil.which("helm") or "/usr/local/bin/helm"
     if not Path(helm).exists() and shutil.which(helm) is None:
         raise HTTPException(status_code=400, detail="OCI Helm charts require Helm in the scanner image")
-    max_bytes = int(os.getenv("CATS_PUBLIC_MAX_CHART_BYTES", str(50 * 1024 * 1024)))
+    max_bytes = compressed_limit()
+    output = []
     try:
         with tempfile.TemporaryDirectory(prefix="cats-oci-chart-") as destination:
+            check_space(destination, max_bytes)
             with ephemeral_trust(certificates) as (ca_file, trust_env):
-                command = [helm, "pull", reference, "--destination", destination]
+                command = [helm, "pull", *oci_pull_arguments(reference), "--destination", destination]
                 if ca_file:
                     command.extend(["--ca-file", str(ca_file)])
                 result = subprocess.run(
@@ -2724,6 +2730,7 @@ def _download_oci_chart(reference: str, certificates: list[dict] | None = None) 
                     timeout=int(os.getenv("CATS_PUBLIC_HELM_PULL_TIMEOUT", "180")),
                     check=False, env={**os.environ, **trust_env},
                 )
+            check_space(destination)
             if result.returncode != 0:
                 detail = (result.stderr or result.stdout or "").casefold()
                 if any(term in detail for term in ("unauthorized", "authentication required", "denied")):
@@ -2738,33 +2745,47 @@ def _download_oci_chart(reference: str, certificates: list[dict] | None = None) 
             archives = sorted(Path(destination).glob("*.tgz")) + sorted(Path(destination).glob("*.tar.gz"))
             if not archives:
                 raise HTTPException(status_code=400, detail="Helm did not produce an OCI chart archive")
-            output: list[tuple[bytes, str]] = []
             for archive_path in archives:
-                data = archive_path.read_bytes()
-                if len(data) > max_bytes:
+                if archive_path.stat().st_size > max_bytes:
                     raise HTTPException(status_code=413, detail="Helm chart archive is too large")
+                with archive_path.open("rb") as source:
+                    data = copy_bounded(source, max_bytes)
                 output.append((data, archive_path.name))
             return output
     except HTTPException:
+        close_downloads(output)
         raise
+    except subprocess.TimeoutExpired as exc:
+        close_downloads(output)
+        raise HTTPException(status_code=408, detail="OCI Helm acquisition timed out") from exc
     except (OSError, subprocess.SubprocessError) as exc:
+        close_downloads(output)
         raise HTTPException(status_code=400, detail="OCI Helm chart could not be pulled") from exc
+    except BaseException:
+        close_downloads(output)
+        raise
 
 
-def _download_public_chart(url: str, certificates: list[dict] | None = None) -> list[tuple[bytes, str]]:
+def _download_public_chart(url: str, certificates: list[dict] | None = None) -> list[tuple[DownloadedChart, str]]:
     """Download a chart archive or expand a Helm repository/index URL."""
-    raw_url = url.strip()
+    try:
+        raw_url = normalize_chart_reference(url)
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
     if raw_url.lower().startswith("oci://"):
         return _download_oci_chart(raw_url, certificates)
     parsed = urllib.parse.urlparse(raw_url)
     selector = parsed.fragment.strip()
     fetch_url = urllib.parse.urlunparse(parsed._replace(fragment=""))
-    data, final_url = _fetch_public_url(fetch_url, certificates)
+    data, final_url = _fetch_public_stream(fetch_url, certificates)
     final_path = urllib.parse.urlparse(final_url).path.lower()
     if final_path.endswith((".tgz", ".tar.gz", ".tar", ".zip")):
         return [(data, Path(final_path).name or "chart.tgz")]
 
-    index_data, index_url = data, final_url
+    try:
+        index_data, index_url = data.read(), final_url
+    finally:
+        data.close()
     try:
         index = yaml.safe_load(index_data.decode("utf-8-sig"))
     except (UnicodeDecodeError, yaml.YAMLError):
@@ -2784,21 +2805,24 @@ def _download_public_chart(url: str, certificates: list[dict] | None = None) -> 
     names = [selector] if selector else list(entries)
     if selector and selector not in entries:
         raise HTTPException(status_code=400, detail=f"Helm repository does not contain chart: {selector}")
-    archives: list[tuple[bytes, str]] = []
-    for chart_name in names:
-        versions = entries.get(chart_name)
-        if not isinstance(versions, list) or not versions:
-            continue
-        version = next((item for item in versions if isinstance(item, dict) and item.get("urls")), None)
-        if not version:
-            continue
-        base_url = index_url if index_url.endswith("/") else index_url.rsplit("/", 1)[0] + "/"
-        archive_url = urllib.parse.urljoin(base_url, str((version.get("urls") or [])[0]))
-        archive_data, archive_final_url = _fetch_public_url(archive_url, certificates)
-        archive_name = Path(urllib.parse.urlparse(archive_final_url).path).name
-        if not archive_name.lower().endswith((".tgz", ".tar.gz", ".tar", ".zip")):
-            archive_name = f"{chart_name}-{version.get('version', 'latest')}.tgz"
-        archives.append((archive_data, archive_name))
+    archives: list[tuple[DownloadedChart, str]] = []
+    with ExitStack() as cleanup:
+        for chart_name in names:
+            versions = entries.get(chart_name)
+            if not isinstance(versions, list) or not versions:
+                continue
+            version = next((item for item in versions if isinstance(item, dict) and item.get("urls")), None)
+            if not version:
+                continue
+            base_url = index_url if index_url.endswith("/") else index_url.rsplit("/", 1)[0] + "/"
+            archive_url = urllib.parse.urljoin(base_url, str((version.get("urls") or [])[0]))
+            archive_data, archive_final_url = _fetch_public_stream(archive_url, certificates)
+            cleanup.callback(archive_data.close)
+            archive_name = Path(urllib.parse.urlparse(archive_final_url).path).name
+            if not archive_name.lower().endswith((".tgz", ".tar.gz", ".tar", ".zip")):
+                archive_name = f"{chart_name}-{version.get('version', 'latest')}.tgz"
+            archives.append((archive_data, archive_name))
+        cleanup.pop_all()
     if not archives:
         raise HTTPException(status_code=400, detail="Helm repository index contains no downloadable chart archives")
     return archives
@@ -2851,8 +2875,16 @@ def _discover_helm_repository(url: str, certificates: list[dict] | None = None) 
     }
 
 
+def _primary_chart_markers(source: dict[str, str]) -> list[str]:
+    """Exclude chart dependencies nested below another chart root."""
+    markers = {PurePosixPath(name) for name in source if PurePosixPath(name).name == "Chart.yaml"}
+    return sorted(str(marker) for marker in markers if not any(
+        parent / "Chart.yaml" in markers for parent in marker.parent.parents
+    ))
+
+
 def _chart_identity(source: dict[str, str]) -> tuple[str, str]:
-    markers = sorted(name for name in source if name.endswith("Chart.yaml"))
+    markers = _primary_chart_markers(source)
     if len(markers) != 1:
         raise HTTPException(422, detail="A Helm Chart artifact must contain exactly one chart root")
     try:
@@ -2968,6 +3000,11 @@ def _run_public_scan(job_id: str, image_list: str):
         _public_job_update(job_id, status="error", phase="worker", error=str(exc))
     finally:
         shutil.rmtree(input_dir / ".cats-trust", ignore_errors=True)
+        with PUBLIC_JOB_LOCK:
+            final_job = dict(PUBLIC_JOBS.get(job_id, {}))
+        if final_job.get("definition_context"):
+            from .definition_routes import complete_scan
+            complete_scan(job_id, final_job)
 
 
 def _public_chart_skip_entry(source: str, error: object) -> str:
@@ -2994,10 +3031,10 @@ def _collect_helm_source_files(charts_dir: Path) -> dict[str, str]:
     for path in sorted(charts_dir.rglob("*")):
         if not path.is_file() or (path.name not in allowed_names and path.suffix.lower() not in allowed_suffixes):
             continue
+        if path.stat().st_size + total > limit:
+            raise HTTPException(413, detail="Retained Helm text sources exceed CATS_ARTIFACT_SOURCE_MAX_BYTES; scan archive size and retained-source size are separate limits")
         raw = path.read_bytes()
         total += len(raw)
-        if total > limit:
-            return {}
         try:
             files[path.relative_to(charts_dir).as_posix()] = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
@@ -3009,15 +3046,16 @@ def _retained_helm_sources(archives: list[tuple[bytes, str]]) -> tuple[dict[str,
     """Use the scanner's guarded archive staging to produce one retained snapshot."""
     if not archives:
         raise HTTPException(status_code=422, detail="No Helm chart archives were supplied")
-    with tempfile.TemporaryDirectory(prefix="cats-artifact-helm-") as temporary:
+    with ExitStack() as cleanup, tempfile.TemporaryDirectory(prefix="cats-artifact-helm-") as temporary:
+        cleanup.callback(close_downloads, archives)
         root = Path(temporary)
         for archive, filename in archives:
             _stage_public_chart(root, archive, filename)
         charts_dir = root / "charts"
-        chart_count = sum(1 for _path in charts_dir.rglob("Chart.yaml"))
         source = _collect_helm_source_files(charts_dir)
         if not source:
             raise HTTPException(status_code=422, detail="Helm source could not be retained within the configured source-size policy")
+        chart_count = len(_primary_chart_markers(source))
         return source, chart_count
 
 
@@ -3179,10 +3217,11 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
         resource["_cats_source_mappings"] = mappings
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     chart_urls = [url.strip() for url in (chart_urls or []) if url.strip()]
+    definition_sources = [url.strip() for url in (definition_sources or []) if url.strip()]
     if job_kind not in {"scan", "sbom"}:
         raise HTTPException(status_code=400, detail="Unsupported analysis job type")
     format_values = sbom_formats if sbom_formats is not None else (["cyclonedx-json"] if job_kind == "sbom" else ["syft-json"])
@@ -3195,7 +3234,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         raise HTTPException(status_code=400, detail="Unsupported CycloneDX specification version")
     if job_kind == "sbom" and (chart_archives or chart_urls):
         raise HTTPException(status_code=400, detail="SBOM generation accepts container images or image archives")
-    if not lines and not chart_archives and not chart_urls and not image_archive:
+    if not lines and not chart_archives and not chart_urls and not image_archive and not definition_sources:
         detail = "Provide an image reference or image archive" if job_kind == "sbom" else "Provide an image reference, image archive, or Helm chart"
         raise HTTPException(status_code=400, detail=detail)
     if len(lines) > int(os.getenv("CATS_PUBLIC_MAX_IMAGES", "50")):
@@ -3204,8 +3243,8 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     job_input = PUBLIC_JOB_ROOT / job_id / "input"
     job_input.mkdir(parents=True, exist_ok=True)
     write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
-    skipped_charts: list[str] = []
-    for chart_url in chart_urls:
+    skipped_charts: list[str] = list(definition_skipped or [])
+    for chart_url in list(dict.fromkeys(chart_urls + definition_sources)):
         # A repository or OCI endpoint is external evidence.  Its failure
         # must not discard otherwise usable images/charts from this scan.
         # Preserve the failed source for report-to-portal, which turns it
@@ -3233,7 +3272,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
             raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
         (image_dir / safe_name).write_bytes(image_bytes)
     with PUBLIC_JOB_LOCK:
-        PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": job_kind, "status": "queued", "phase": "queued", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "created_at": utcnow().isoformat()}
+        PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": job_kind, "status": "queued", "phase": "queued", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat()}
     PUBLIC_WORKERS.submit(_run_public_scan, job_id, "\n".join(lines) + "\n")
     return job_id
 
@@ -3276,11 +3315,37 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
         # with clients that submit multiple parts.
         form = await request.form()
         chart_uploads = [value for value in form.getlist("chart_archives") if hasattr(value, "read") and getattr(value, "filename", None)] or chart_uploads
-        chart_archives = [(await upload.read(), upload.filename or "chart.tgz") for upload in chart_uploads]
+        # Starlette already spools multipart files to disk. Keep that seekable
+        # stream through synchronous staging instead of allocating another copy.
+        chart_archives = [(upload.file, upload.filename or "chart.tgz") for upload in chart_uploads]
         image_upload = form.get("image_archive")
         image_archive = None
         if hasattr(image_upload, "read") and getattr(image_upload, "filename", None):
             image_archive = (await image_upload.read(), image_upload.filename)
+        definition_sources: list[str] = []
+        definition_skipped: list[str] = []
+        definition_summary: dict = {}
+        definition_upload = form.get("service_definition")
+        if hasattr(definition_upload, "read") and getattr(definition_upload, "filename", None):
+            from .service_definitions import DefinitionError, _limit, parse_definition
+            from .definition_routes import acquire_component
+            filename = (definition_upload.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+            if not filename.lower().endswith((".yaml", ".yml")) or len(filename) > 240:
+                raise HTTPException(status_code=422, detail="Upload a YAML or YML service definition")
+            try:
+                limit = _limit("BYTES", 10 * 1024 * 1024)
+            except DefinitionError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            raw = await definition_upload.read(limit + 1)
+            if len(raw) > limit:
+                raise HTTPException(status_code=413, detail="Service definition exceeds byte limit")
+            try:
+                parsed = parse_definition(raw.decode("utf-8-sig"), "auto")
+            except UnicodeDecodeError:
+                raise HTTPException(status_code=422, detail="Service definition must be UTF-8") from None
+            except DefinitionError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
+            definition_summary = {"filename": filename, "adapter": parsed["adapter"], "counts": parsed["counts"]}
         if ingest_service_id:
             if not auth or auth.accessible_service_ids("scan.ingest") == set():
                 raise HTTPException(status_code=403, detail="Sign in with scan-ingest permission to select a service")
@@ -3290,8 +3355,25 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
             if not auth.has("scan.ingest", service.id):
                 raise HTTPException(status_code=403, detail="Selected service is outside your scope")
         trusted_cas = parse_json(get_global_configuration(db).get("trusted_ca_certificates"), [])
+        trusted_cas = trusted_cas if isinstance(trusted_cas, list) else []
+        if definition_summary:
+            for component in parsed["components"]:
+                if component["status"] != "normalized":
+                    definition_skipped.append(_public_chart_skip_entry(component["logical_name"], component["reason"]))
+                    continue
+                try:
+                    source_url, _, _, _ = acquire_component(component, trusted_cas)
+                    definition_sources.append(source_url)
+                except Exception as exc:
+                    definition_skipped.append(_public_chart_skip_entry(component["logical_name"], exc))
+            if not definition_sources and not image_list.strip() and not image_archive and not chart_archives and not chart_url.strip():
+                failures = "; ".join(definition_skipped[:3])
+                if len(definition_skipped) > 3:
+                    failures += f"; and {len(definition_skipped) - 3} more"
+                raise HTTPException(status_code=422, detail=f"No service-definition components could be acquired. {failures}")
         job_id = _start_public_scan(image_list, chart_archives, chart_url.splitlines(), image_archive, ingest_service_id or None,
-                                    trusted_ca_certificates=trusted_cas if isinstance(trusted_cas, list) else [])
+                                    trusted_ca_certificates=trusted_cas, definition_sources=definition_sources,
+                                    definition_skipped=definition_skipped, definition_summary=definition_summary)
     except HTTPException as exc:
         return self_service_context(request, "scan", image_list, chart_url, str(exc.detail), auth=auth)
     # Redirect after a successful submission so refreshing the browser only
@@ -3753,6 +3835,14 @@ def ingest_public_scan(
         ]
         data["fixable_only"] = True
         data["execution_id"] = f"public:{job_id}"
+        with PUBLIC_JOB_LOCK:
+            definition_context = dict(PUBLIC_JOBS.get(job_id, {}).get("definition_context") or {})
+        if definition_context:
+            data["scan_scope"] = "evidence"
+            data["complete"] = False
+            overview = data.get("service_overview") if isinstance(data.get("service_overview"), dict) else {}
+            overview["definition_provenance"] = definition_context
+            data["service_overview"] = overview
         stage_timings[ingest_stage] = round((time.perf_counter() - stage_started) * 1000, 2)
         ingest_stage = "collect_helm_sources"; stage_started = time.perf_counter()
         source_files = _collect_helm_source_files(PUBLIC_JOB_ROOT / job_id / "input" / "charts")
@@ -5547,6 +5637,7 @@ def _artifact_revision(files: dict[str, str], *, artifact_id: int, number: int, 
 def service_detail(
     service_key: str,
     request: Request,
+    version: str = "",
     finding_state: str = "active",
     finding_type: str = "all",
     q: str = "",
@@ -5584,6 +5675,8 @@ def service_detail(
     if not service:
         raise HTTPException(404)
     now = utcnow()
+    if version:
+        return RedirectResponse(f"/services/{service_key}/history?version={urllib.parse.quote(version, safe='')}", status_code=303)
     # Canonical Findings selector; legacy ``overview=false`` and
     # ``simplified=true`` links remain valid for bookmarks and deep links.
     if findings and not findings_view:
@@ -6155,14 +6248,17 @@ def acquire_artifact_workspace(
         return RedirectResponse(f"/services/{service_key}?artifacts=true&artifact_added=repository", status_code=303)
 
     if source_method == "oci":
-        reference = source_reference.strip()
-        if not reference.lower().startswith("oci://"):
-            raise HTTPException(422, detail="OCI Helm references must begin with oci://")
+        try:
+            reference = normalize_chart_reference(source_reference)
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        if not reference.startswith("oci://"):
+            raise HTTPException(422, detail="Choose an OCI registry chart reference")
         archives = _download_public_chart(reference, certificates)
     else:
         if not files:
             raise HTTPException(422, detail="Choose a packaged Helm chart archive")
-        archives = [(uploaded.file.read(), uploaded.filename or "chart.tgz") for uploaded in files]
+        archives = [(uploaded.file, uploaded.filename or "chart.tgz") for uploaded in files]
     source, chart_count = _retained_helm_sources(archives)
     chart_name, chart_version = _chart_identity(source)
     safe_reference = ((files[0].filename or "chart.tgz")[:240] if source_method == "upload"
@@ -6473,7 +6569,9 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
 
 
 @app.get("/services/{service_key}/export.xlsx")
-def export_service(service_key: str, include_diagrams: bool = False, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+def export_service(service_key: str, include_diagrams: bool = False, version: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    if version:
+        raise HTTPException(422, detail="This workbook is current-state only. Use the version-selected spreadsheet exchange for historical exports")
     now = utcnow()
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(
         selectinload(Service.findings).selectinload(Finding.exceptions),

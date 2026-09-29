@@ -21,6 +21,7 @@ class Service(Base):
     owner: Mapped[str | None] = mapped_column(String(240))
     poc: Mapped[str | None] = mapped_column(String(240))
     manual_version: Mapped[str | None] = mapped_column(String(120))
+    assessment_status: Mapped[str] = mapped_column(String(32), default="assessment_pending")
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     staging_original_name: Mapped[str | None] = mapped_column(String(240))
     staging_name_generated: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -518,6 +519,9 @@ class PoamEntry(Base):
     __tablename__ = "poam_entries"
     id: Mapped[int] = mapped_column(primary_key=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    service_version: Mapped[str | None] = mapped_column(String(120))
+    exchange_key: Mapped[str | None] = mapped_column(String(64))
+    supplemental_fields: Mapped[dict | None] = mapped_column(JSON)
     finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), index=True)
     policy_finding_id: Mapped[int | None] = mapped_column(ForeignKey("policy_findings.id"), index=True)
     item_type: Mapped[str] = mapped_column(String(40), index=True)
@@ -585,3 +589,64 @@ class PortalSetting(Base):
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_by: Mapped[User | None] = relationship()
+
+
+class ExportTemplate(Base):
+    __tablename__ = "export_templates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    definition: Mapped[dict] = mapped_column(JSON)
+
+
+class ServiceMetadata(Base):
+    __tablename__ = "service_metadata"
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), primary_key=True)
+    values: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class InventoryRecord(Base):
+    """Version-specific, manually maintained network/asset inventory.
+
+    Discovered inventory stays in immutable Execution evidence. This table only
+    owns imported/manual information, with explicit identity and provenance.
+    """
+    __tablename__ = "inventory_records"
+    __table_args__ = (UniqueConstraint("service_id", "version", "dataset", "record_key", name="uq_inventory_record"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    version: Mapped[str] = mapped_column(String(120))
+    dataset: Mapped[str] = mapped_column(String(20))
+    record_key: Mapped[str] = mapped_column(String(64))
+    values: Mapped[dict] = mapped_column(JSON)
+    updated_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExchangePreview(Base):
+    __tablename__ = "exchange_previews"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[str] = mapped_column(String(120))
+    dataset: Mapped[str] = mapped_column(String(20))
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BundlePreview(Base):
+    __tablename__ = "bundle_previews"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    target_key: Mapped[str] = mapped_column(String(120))
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ServiceTransferProvenance(Base):
+    __tablename__ = "service_transfer_provenance"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    detail: Mapped[dict] = mapped_column(JSON)

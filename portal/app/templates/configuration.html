@@ -1,18 +1,22 @@
 {% extends "base.html" %}
 {% block title %}Configuration · CATS{% endblock %}
 {% block content %}
-<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Configuration</h1><p>Global runtime preferences for this CATS portal.</p></div></section>
+<section class="heading"><div><p class="eyebrow">ADMINISTRATION</p><h1>Settings</h1><p>Global runtime preferences for this CATS portal.</p></div></section>
 {% set admin_section = 'configuration' %}
 {% include "_admin_tabs.html" %}
 <section class="panel padded configuration-panel">
   {% if saved %}<div class="save-confirmation" role="status">Configuration saved successfully.</div>{% endif %}
   <p class="muted">These settings apply to the portal instance. Group and service governance remains managed in the policy tabs.</p>
-  <form method="post" action="/admin/configuration"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="config-grid">
+  <nav class="settings-nav" aria-label="Settings categories"><a href="#general" data-settings-tab="general">General</a><a href="#identity-access" data-settings-tab="identity-access">Identity &amp; Access</a><a href="#security" data-settings-tab="security">Security</a><a href="#integrations" data-settings-tab="integrations">Integrations</a><a href="#data" data-settings-tab="data">Data</a></nav>
+  <label class="settings-search-label" for="settings-search">Search settings</label><input id="settings-search" type="search" placeholder="Search settings..." aria-describedby="settings-search-help"><small id="settings-search-help" class="muted">Search section names and fields across all categories.</small><p id="settings-search-empty" class="muted" role="status" hidden>No matching settings found.</p>
+  <section class="settings-category-block" data-settings-category="general"><h2>Portal Preferences</h2>
+  <form id="portal-preferences" method="post" action="/admin/configuration"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="config-grid">
 <label>Display timezone<select name="display_timezone" required>{% for zone in timezones %}<option value="{{ zone }}" {% if configuration.display_timezone == zone %}selected{% endif %}>{{ zone }}</option>{% endfor %}</select></label>
     <label>Date format<select name="date_format">{% for value, label in date_formats %}<option value="{{ value }}" {% if configuration.date_format == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label>Time format<select name="time_format">{% for value, label in time_formats %}<option value="{{ value }}" {% if configuration.time_format == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
     <label>Identity mode<select name="identity_mode"><option value="local" {% if configuration.identity_mode == 'local' %}selected{% endif %}>Local accounts</option><option value="oidc" {% if configuration.identity_mode == 'oidc' %}selected{% endif %}>OIDC</option><option value="both" {% if configuration.identity_mode == 'both' %}selected{% endif %}>Both local and OIDC</option></select><small>Choose local accounts, organizational OIDC, or both for recovery access.</small></label>
-  </div><div class="config-actions"><button>Save configuration</button><span>Changes are recorded in the audit history.</span></div></form>
+  </div><div class="config-actions"><button>Save configuration</button><span>Changes are recorded in the audit history.</span></div></form></section>
+  <section class="panel padded config-subpanel" data-settings-category="identity-access"><h2>Authentication</h2><p>Choose local accounts, organizational OIDC, or both for recovery access.</p><div id="identity-mode-slot" class="config-grid"></div><div class="config-actions"><button type="submit" form="portal-preferences">Save authentication mode</button></div></section>
   <section class="panel padded config-subpanel"><h2>Remediation</h2><p>Enable service remediation only after the patch worker, registry, trust, and validation infrastructure have been reviewed. This controls new jobs; existing jobs continue to a safe terminal state and history remains available.</p><form method="post" action="/admin/configuration/remediation"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label><input type="checkbox" name="enabled" value="true" {% if configuration.remediation_enabled == 'true' %}checked{% endif %}> Enable Remediation</label><div class="config-actions"><button>Save Remediation setting</button></div></form></section>
   <section class="panel padded config-subpanel"><h2>Image signing</h2>
     {% if signing.error %}<p role="alert">{{ signing.error }}</p>{% endif %}
@@ -56,7 +60,7 @@
   <section class="panel padded config-subpanel"><h2>Security Data Sources</h2><p>Configure each source explicitly. Updates are validated in staging; a failed candidate leaves installed data in place.</p>
     {% for key, label in [('kev','CISA KEV'),('epss','EPSS'),('grype','Grype DB'),('trivy','Trivy DB')] %}{% set row = security_data_sources.get(key) %}<div class="config-edit-card"><h3>{{ label }}</h3><p>Status: {{ row.status if row else 'NEVER_UPDATED' }} · Installed: {{ row.installed_version if row and row.installed_version else 'Unknown' }} · Last attempt: {{ cats_date(row.last_attempt_at) if row and row.last_attempt_at else '—' }} · Last success: {{ cats_date(row.last_success_at) if row and row.last_success_at else '—' }}{% if row and row.failure_reason %}<br>Failure: {{ row.failure_reason }}{% endif %}</p><form method="post" action="/admin/configuration/security-data/{{ key }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Configured source<input name="source" value="{{ row.source if row else '' }}" placeholder="{{ 'OCI database repository' if key == 'trivy' else 'https://internal.example/data' }}"></label><button name="action" value="save">Save source</button><button name="action" value="refresh">Refresh</button></form>{% if key != 'trivy' %}<form method="post" action="/admin/configuration/security-data/{{ key }}" enctype="multipart/form-data"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="file" name="file" required><button name="action" value="upload">Upload offline data</button></form>{% endif %}</div>{% endfor %}
   </section>
-  <section class="panel padded config-subpanel"><h2>OCI registries</h2><p>Reusable registry endpoints for scan and patch jobs. Passwords/tokens are encrypted and only decrypted for the individual operation.</p>
+  <section class="panel padded config-subpanel"><h2>OCI registries</h2><p>Reusable registry endpoints for scan and patch jobs. Passwords/tokens are encrypted and only decrypted for the individual operation.</p><button type="button" id="add-registry" class="button-secondary">Add registry</button>
     <div class="table-wrap"><table><thead><tr><th>Registry Name</th><th>Endpoint</th><th>Repository / Project Prefix</th><th>Purpose</th><th>Resolved Registry Path</th><th>Authentication</th><th>Status</th><th>Actions</th></tr></thead><tbody>{% for registry in registries %}<tr><td>{{ registry.display_name }}</td><td class="breakable"><code>{{ registry.endpoint }}</code></td><td>{{ registry.namespace or '—' }}</td><td>{{ 'Remediation staging' if registry.use_for_remediation else 'General' }}</td><td><code>{{ registry.resolved_path }}</code></td><td>{{ 'Credentials' if registry.auth_mode == 'credentials' else 'Anonymous' }}{% if registry.secret_configured %}<small> (secret configured)</small>{% endif %}</td><td>{{ registry.status }}{% if registry.status_detail %}<small>{{ registry.status_detail }}</small>{% endif %}</td><td class="button-row"><form method="post" action="/admin/configuration/registry-test"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="registry_id" value="{{ registry.id }}"><button class="button-secondary">Test</button></form><form method="post" action="/admin/configuration/registries"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="registry_id" value="{{ registry.id }}"><input type="hidden" name="action" value="delete"><button class="button-secondary">Delete</button></form></td></tr>{% endfor %}</tbody></table></div>
     <details class="config-edit-card" open><summary>Add or update registry</summary><form method="post" action="/admin/configuration/registries"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div class="config-grid"><label>Registry Name<input name="display_name" required placeholder="Production registry"></label><label>Endpoint<input name="endpoint" type="text" required placeholder="https://registry.example.invalid/"></label><label>Repository / Project Prefix<input name="namespace" placeholder="/approved/"></label><label>Authentication<select name="auth_mode"><option value="none">Anonymous</option><option value="credentials">Username and password/token</option></select></label><label>Username<input name="username" autocomplete="off"></label><label>Password / token<input name="password" type="password" autocomplete="new-password" placeholder="Never shown after save"></label><label>Registry ID <small>Optional; use an existing ID to update.</small><input name="registry_id" placeholder="registry-prod"></label><label><input type="checkbox" name="use_for_remediation" value="true"> Use as remediation staging registry</label></div><button>Save registry</button></form></details>
   </section>
@@ -72,6 +76,127 @@
   </section>
 </section>
 <script>
+(() => {
+  const panel = document.querySelector('.configuration-panel');
+  const sections = [...panel.querySelectorAll('.config-subpanel')];
+  const mappingScopes = { {% for mapping in oidc_mappings %}{{ mapping.id }}: {scope: {{ ('global' if mapping.global_scope else 'service' if mapping.service_id else 'group')|tojson }}, id: {{ mapping.service_id or mapping.group_id or 0 }}},{% endfor %} };
+  const registryUsernames = { {% for registry in registries %}{{ registry.id|tojson }}: {{ registry.username|tojson }},{% endfor %} };
+  const claimSection = sections.find(section => section.querySelector('h2')?.textContent.trim() === 'OIDC Claim Mapping');
+  if (claimSection) {
+    const editor = [...claimSection.querySelectorAll('form[action="/admin/configuration/oidc-mappings"]')].find(form => form.querySelector('[name="claim_path"]'));
+    if (editor && editor.querySelector('[name="claim_path"]')) {
+      const details = document.createElement('details');
+      details.className = 'config-edit-card';
+      details.innerHTML = '<summary>Add or edit mapping</summary>';
+      editor.replaceWith(details);
+      details.append(editor);
+      const add = document.createElement('button'); add.type = 'button'; add.className = 'button-secondary'; add.textContent = 'Add mapping';
+      add.addEventListener('click', () => { editor.reset(); editor.elements.mapping_id.value = '0'; details.open = true; editor.elements.claim_path.focus(); });
+      details.before(add);
+      claimSection.querySelectorAll('table tbody tr').forEach(row => {
+        const id = row.cells[0]?.textContent.trim();
+        if (!/^\d+$/.test(id)) return;
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'button-secondary'; button.textContent = 'Edit';
+        button.addEventListener('click', () => {
+          editor.elements.mapping_id.value = id;
+          editor.elements.claim_path.value = row.cells[1].textContent.trim();
+          editor.elements.expected_value.value = row.cells[2].textContent.trim();
+          [...editor.elements.role_id.options].forEach(option => { if (option.textContent.trim() === row.cells[3].textContent.trim()) editor.elements.role_id.value = option.value; });
+          editor.elements.scope.value = mappingScopes[id]?.scope || 'global';
+          editor.elements.scope_id.value = mappingScopes[id]?.id || '0';
+          editor.elements.enabled.checked = row.cells[5].textContent.trim() === 'Enabled';
+          details.open = true; editor.elements.claim_path.focus();
+        });
+        row.cells[6].prepend(button);
+      });
+    }
+  }
+  const registrySection = sections.find(section => section.querySelector('h2')?.textContent.trim() === 'OCI registries');
+  if (registrySection) {
+    const details = registrySection.querySelector('details.config-edit-card');
+    if (details) details.open = false;
+    const editor = details?.querySelector('form');
+    registrySection.querySelector('#add-registry')?.addEventListener('click', () => {
+      editor.reset(); editor.elements.registry_id.value = ''; details.open = true; editor.elements.display_name.focus();
+    });
+    registrySection.querySelectorAll('table tbody tr').forEach(row => {
+      const id = row.querySelector('input[name="registry_id"]')?.value;
+      if (!id || !editor) return;
+      const button = document.createElement('button');
+      button.type = 'button'; button.className = 'button-secondary'; button.textContent = 'Edit';
+      button.addEventListener('click', () => {
+        editor.elements.registry_id.value = id;
+        editor.elements.display_name.value = row.cells[0].textContent.trim();
+        editor.elements.endpoint.value = row.cells[1].textContent.trim();
+        editor.elements.namespace.value = row.cells[2].textContent.trim() === '—' ? '' : row.cells[2].textContent.trim();
+        editor.elements.use_for_remediation.checked = row.cells[3].textContent.includes('Remediation staging');
+        editor.elements.auth_mode.value = row.cells[5].textContent.includes('Credentials') ? 'credentials' : 'none';
+        editor.elements.username.value = registryUsernames[id] || '';
+        editor.elements.password.value = '';
+        details.open = true; editor.elements.display_name.focus();
+      });
+      row.cells[7].prepend(button);
+    });
+  }
+  const dataSection = sections.find(section => section.querySelector('h2')?.textContent.trim() === 'Security Data Sources');
+  if (dataSection) {
+    const cards = [...dataSection.querySelectorAll('.config-edit-card')];
+    const grid = document.createElement('div'); grid.className = 'settings-data-grid';
+    cards[0]?.before(grid);
+    cards.forEach((card, index) => {
+      const form = card.querySelector('form');
+      const refresh = form?.querySelector('button[value="refresh"]');
+      const configure = document.createElement('details');
+      configure.innerHTML = '<summary>Configure and upload offline data</summary>';
+      const action = document.createElement('div'); action.className = 'settings-card-actions';
+      if (refresh) { refresh.setAttribute('form', 'settings-data-' + index); form.id = 'settings-data-' + index; action.append(refresh); }
+      card.querySelectorAll('form').forEach(item => configure.append(item));
+      card.append(action, configure); grid.append(card);
+    });
+  }
+  const categories = {
+    'Remediation': 'security', 'Image signing': 'security',
+    'Authentication': 'identity-access', 'OIDC identity provider': 'identity-access', 'OIDC Claim Mapping': 'identity-access',
+    'Cybersecurity warning policy': 'security',
+    'Deployment Validation Sandbox': 'integrations', 'OCI registries': 'integrations',
+    'Trusted CA certificates': 'integrations', 'Operating-system repositories': 'integrations',
+    'Security Data Sources': 'data'
+  };
+  sections.forEach(section => { section.dataset.settingsCategory = categories[section.querySelector('h2')?.textContent.trim()] || 'general'; });
+  const identity = panel.querySelector('select[name="identity_mode"]');
+  if (identity) {
+    identity.setAttribute('form', 'portal-preferences');
+    document.getElementById('identity-mode-slot').append(identity.closest('label'));
+  }
+  const blocks = [...panel.querySelectorAll('[data-settings-category]')];
+  const tabs = [...panel.querySelectorAll('[data-settings-tab]')];
+  const search = document.getElementById('settings-search');
+  const empty = document.getElementById('settings-search-empty');
+  function show() {
+    const query = search.value.trim().toLocaleLowerCase();
+    const requested = location.hash.slice(1);
+    const saved = sessionStorage.getItem('cats-settings-category');
+    const selected = tabs.some(tab => tab.dataset.settingsTab === requested) ? requested :
+      new URLSearchParams(location.search).has('edit_os_id') ? 'integrations' :
+      tabs.some(tab => tab.dataset.settingsTab === saved) ? saved : 'general';
+    let matches = 0;
+    blocks.forEach(block => {
+      const visible = query ? block.textContent.toLocaleLowerCase().includes(query) : block.dataset.settingsCategory === selected;
+      block.hidden = !visible;
+      if (visible) matches++;
+    });
+    empty.hidden = !query || matches > 0;
+    tabs.forEach(tab => {
+      if (!query && tab.dataset.settingsTab === selected) tab.setAttribute('aria-current', 'page');
+      else tab.removeAttribute('aria-current');
+    });
+    if (!query) sessionStorage.setItem('cats-settings-category', selected);
+  }
+  search.addEventListener('input', show);
+  window.addEventListener('hashchange', () => { search.value = ''; show(); });
+  show();
+})();
 document.querySelectorAll('.repository-policy-form').forEach(function(form) {
   const warning = form.querySelector('[data-policy-warning]');
   const tls = form.querySelector('input[name="verify_tls"][type="checkbox"]');

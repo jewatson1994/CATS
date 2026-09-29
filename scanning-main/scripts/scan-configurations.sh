@@ -50,6 +50,7 @@ SOURCE_SUCCEEDED=0
 DOCKLE_REQUESTED=0
 DOCKLE_SUCCEEDED=0
 HELM_REQUESTED=0
+HELM_MATERIALIZATION_SEQUENCE=0
 HELM_SUCCEEDED=0
 HELM_SKIPPED=0
 FAILURES=0
@@ -68,7 +69,7 @@ values_files() {
     printf '%s\n' "$HELM_VALUES_FILES" | tr ':' '\n'
   fi
   if [ -f charts.yml ] && command -v yq >/dev/null 2>&1; then
-    yq -r '.values_files[]? // .valuesFiles[]? // empty' charts.yml 2>/dev/null || true
+    yq -r '(.values_files[]?, .valuesFiles[]?) | select(. != null and . != "")' charts.yml 2>/dev/null || true
   fi
 }
 
@@ -100,6 +101,14 @@ update_chart_graph_status() {
   local next_file="${GRAPH_OUTPUT}.next"
   jq --arg id "$chart_id" --arg path "$chart_path" --arg status "$status" --arg stage "$stage" --arg reason "$reason" --arg rendered "$rendered" \
     '(.charts // []) |= map(if (($id != "" and .chart_id == $id) or ($id == "" and .path == $path)) then .status=$status | .render_stage=$stage | (if $reason != "" then .render_error=$reason else . end) | (if $rendered != "" then .rendered_manifest=$rendered else . end) else . end)' \
+    "$GRAPH_OUTPUT" > "$next_file" 2>/dev/null && mv "$next_file" "$GRAPH_OUTPUT"
+}
+
+update_chart_graph_dependencies() {
+  local chart_id="$1" status="$2" next_file="${GRAPH_OUTPUT}.next"
+  [ -n "$chart_id" ] && [ -s "$GRAPH_OUTPUT" ] || return 0
+  jq --arg id "$chart_id" --arg status "$status" \
+    '(.references // []) |= map(if .parent_chart == $id and .discovery_method == "Chart.yaml dependency" and .resolution_status == "DECLARED_DEPENDENCY" then .resolution_status=$status else . end)' \
     "$GRAPH_OUTPUT" > "$next_file" 2>/dev/null && mv "$next_file" "$GRAPH_OUTPUT"
 }
 
@@ -383,6 +392,11 @@ materialize_remote_chart() {
   repository="$(jq -r '.repository // empty' <<< "$entry_json")"
   version="$(jq -r '.version // empty' <<< "$entry_json")"
   chart_name="$(jq -r '.name // empty' <<< "$entry_json")"
+  if [[ "$repository" == oci://* ]]; then
+    [[ "$reference" == oci://* ]] || reference="${repository%/}/${reference:-$chart_name}"
+    repository=""
+  fi
+  [[ "$reference" == oci://* ]] && repository=""
 
   if ! is_true "$HELM_ALLOW_NETWORK"; then
     echo "Remote chart ${reference:-$chart_name} requires HELM_ALLOW_NETWORK=true" >&2
@@ -517,7 +531,8 @@ process_chart_entry() {
   chart_source_identity="${path:-${reference:-$name}}"
 
   HELM_REQUESTED=$((HELM_REQUESTED + 1))
-  chart_workspace="${RESULT_ROOT}/charts/${HELM_REQUESTED}"
+  HELM_MATERIALIZATION_SEQUENCE=$((HELM_MATERIALIZATION_SEQUENCE + 1))
+  chart_workspace="${RESULT_ROOT}/charts/${HELM_MATERIALIZATION_SEQUENCE}"
   if [ -z "$path" ]; then
     if [ -z "$reference" ] && [ -z "$name" ]; then
       record_chart_failure "entry-${HELM_REQUESTED}" "Chart entry has neither path nor reference"
@@ -534,6 +549,12 @@ process_chart_entry() {
     return
   fi
 
+  # A library chart supplies templates to a parent; it is not a workload.
+  if [ "$(yq -r '.type // "application"' "${path}/Chart.yaml")" = "library" ]; then
+    HELM_REQUESTED=$((HELM_REQUESTED - 1))
+    return
+  fi
+
   normalized_identity="$(chart_identity "$path")"
   chart_instance_id="$(jq -r '.chart_id // empty' <<< "$entry_json" 2>/dev/null || true)"
   [ -n "$chart_instance_id" ] && normalized_identity="${normalized_identity}|${chart_instance_id}"
@@ -543,7 +564,7 @@ process_chart_entry() {
   HELM_PROCESSED_CHARTS["$normalized_identity"]=1
   [ -n "$declared_by" ] && record_chart_discovery "${name:-$(basename "$path")}" "$normalized_identity" "$declared_by" "${declared_enabled:-unknown}" "processing"
 
-  chart_name="$(yq -r '.name // empty' "${path}/Chart.yaml")"
+  chart_name="$(yq -r '.name // ""' "${path}/Chart.yaml")"
   chart_name="${chart_name:-$(basename "$path")}"
   name="${name:-$chart_name}"
   release="${release:-$name}"
@@ -555,10 +576,12 @@ process_chart_entry() {
     discover_local_components "$path" "${normalized_identity}/values.yaml"
   fi
   if ! prepare_chart_dependencies "$path" "$dependency_mode"; then
+    update_chart_graph_dependencies "$chart_instance_id" "UNAVAILABLE"
     update_chart_graph_status "$chart_instance_id" "$path" "Render Failed" "dependencies" "Helm dependencies are unavailable for mode ${dependency_mode}"
     record_chart_failure "$name" "Helm dependencies are unavailable for mode ${dependency_mode}"
     return
   fi
+  update_chart_graph_dependencies "$chart_instance_id" "RESOLVED_WITH_PARENT"
 
   chart_identity_digest="$(
     printf '%s' "${chart_source_identity}|${release}|${namespace}|${chart_instance_id}" \
@@ -736,7 +759,7 @@ if is_true "$HELM_SCAN_ENABLED"; then
     if [ -s "$GRAPH_ENTRIES" ]; then
       while IFS= read -r graph_entry; do
         [ -n "$graph_entry" ] || continue
-        if jq -e '.embedded_dependency == true' <<< "$graph_entry" >/dev/null 2>&1; then
+        if jq -e '.embedded_dependency == true or .chart_type == "library"' <<< "$graph_entry" >/dev/null 2>&1; then
           continue
         fi
         process_chart_entry "$(jq -c '. + {graph_discovery:true}' <<< "$graph_entry")"

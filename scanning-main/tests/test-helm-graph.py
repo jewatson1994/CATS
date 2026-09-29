@@ -1,7 +1,10 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import tarfile
+
+import pytest
 
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "discover-helm-graph.py"
@@ -141,6 +144,24 @@ def test_packaged_chart_is_discovered_and_unsafe_archive_is_ignored(tmp_path):
     assert not any(item.get("name") == "outside" for item in entries)
 
 
+def test_oversized_archive_is_isolated_from_healthy_sibling(tmp_path, monkeypatch):
+    chart(tmp_path, "healthy", "healthy")
+    package_root = tmp_path / "package" / "oversized"
+    package_root.mkdir(parents=True)
+    (package_root / "Chart.yaml").write_text("name: oversized\nversion: 1.0.0\n", encoding="utf-8")
+    (package_root / "payload").write_bytes(b"x" * 256)
+    archive = tmp_path / "oversized.tgz"
+    with tarfile.open(archive, "w:gz") as handle:
+        handle.add(package_root, arcname="oversized")
+    shutil.rmtree(tmp_path / "package")
+    monkeypatch.setattr(MODULE, "MAX_ARCHIVE_EXPANDED_BYTES", 64)
+
+    graph, entries = discover(tmp_path)
+
+    assert any(item["chart"] == "healthy" for item in graph["charts"])
+    assert not any(item.get("name") == "oversized" for item in entries)
+
+
 def test_cats_helm_torture_graph_preserves_instances_and_independent_charts(tmp_path):
     generic = chart(tmp_path, "charts/generic-api", "generic-api")
     chart(tmp_path, "charts/good", "good")
@@ -175,3 +196,128 @@ def test_cats_helm_torture_graph_preserves_instances_and_independent_charts(tmp_
     assert any(item.get("item") == "oci://registry.invalid/missing" for item in graph["unresolved"])
     assert not any(item.get("name") == "fake-chart" for item in entries)
     assert {item.get("name") for item in entries} >= {"good", "render-failed"}
+
+
+def dependency(parent: Path, name: str, repository: str, version: str = "2.41.0"):
+    (parent / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: parent\nversion: 1.0.0\n"
+        f"dependencies:\n  - name: {name}\n    version: {version}\n    repository: {repository}\n",
+        encoding="utf-8",
+    )
+
+
+def test_vendored_library_and_application_are_edges_not_render_targets(tmp_path):
+    parent = chart(tmp_path, "parent", "parent")
+    library = chart(tmp_path, "parent/charts/helpers", "helpers", "2.0.0")
+    (library / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: helpers\nversion: 2.0.0\ntype: library\n", encoding="utf-8"
+    )
+    chart(tmp_path, "parent/charts/worker", "worker", "3.0.0")
+    (parent / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: parent\nversion: 1.0.0\n"
+        "dependencies:\n  - name: helpers\n    version: 2.0.0\n"
+        "  - name: worker\n    version: 3.0.0\n", encoding="utf-8"
+    )
+    graph, entries = discover(tmp_path)
+    assert [item["name"] for item in entries] == ["parent"]
+    children = {item["chart"]: item for item in graph["charts"] if item["chart"] != "parent"}
+    assert children["helpers"]["chart_type"] == "library"
+    assert children["worker"]["chart_type"] == "application"
+    assert all(item["embedded_dependency"] for item in children.values())
+    refs = [item for item in graph["references"] if item["discovery_method"] == "Chart.yaml dependency"]
+    assert {item["reference"] for item in refs} == {"helpers", "worker"}
+    assert all(item["resolution_status"] == "LOCAL_CHART" for item in refs)
+    assert not graph["unresolved"]
+
+
+@pytest.mark.parametrize("allow_network", ["false", "true"])
+def test_missing_oci_dependency_is_parent_edge_never_standalone(tmp_path, monkeypatch, allow_network):
+    monkeypatch.setenv("HELM_ALLOW_NETWORK", allow_network)
+    parent = chart(tmp_path, "parent", "parent")
+    dependency(parent, "helpers", "oci://registry.example.invalid/team")
+    (parent / "Chart.lock").write_text(
+        "dependencies:\n  - name: helpers\n    repository: oci://registry.example.invalid/team\n",
+        encoding="utf-8",
+    )
+    graph, entries = discover(tmp_path)
+    assert [item["name"] for item in entries] == ["parent"]
+    refs = [item for item in graph["references"] if item["discovery_method"] == "Chart.yaml dependency"]
+    assert len(refs) == 1
+    assert refs[0]["reference"] == "helpers"
+    assert refs[0]["chart_reference"] == "oci://registry.example.invalid/team/helpers"
+    assert refs[0]["version"] == "2.41.0"
+    assert not graph["unresolved"]
+    assert not any(item.get("reference") == "oci://registry.example.invalid/team" for item in entries)
+
+
+def test_vendored_package_is_dependency_not_independent_chart(tmp_path):
+    parent = chart(tmp_path, "parent", "parent")
+    dependency(parent, "helpers", "oci://registry.example.invalid/team")
+    package_root = tmp_path / "staging" / "helpers"
+    package_root.mkdir(parents=True)
+    (package_root / "Chart.yaml").write_text(
+        "apiVersion: v2\nname: helpers\nversion: 2.41.0\ntype: library\n", encoding="utf-8"
+    )
+    archive = parent / "charts" / "helpers-2.41.0.tgz"
+    archive.parent.mkdir()
+    with tarfile.open(archive, "w:gz") as handle:
+        handle.add(package_root, arcname="helpers")
+    shutil.rmtree(tmp_path / "staging")
+    graph, entries = discover(tmp_path)
+    assert [item["name"] for item in entries] == ["parent"]
+    child = next(item for item in graph["charts"] if item["chart"] == "helpers")
+    assert child["embedded_dependency"] and child["chart_type"] == "library"
+    assert any(item.get("resolution_status") == "LOCAL_CHART" and item.get("chart_type") == "library"
+               for item in graph["references"])
+
+
+def test_independently_supplied_chart_stays_independent_despite_dependency_name(tmp_path):
+    parent = chart(tmp_path, "parent", "parent")
+    dependency(parent, "worker", "oci://registry.example.invalid/team")
+    chart(tmp_path, "independent/worker", "worker", "2.41.0")
+    graph, entries = discover(tmp_path)
+    assert {item["name"] for item in entries} == {"parent", "worker"}
+    assert any(item["reference"] == "worker" and item["resolution_status"] == "DECLARED_DEPENDENCY"
+               for item in graph["references"])
+    assert not any(item["chart"] == "worker" and item["embedded_dependency"] for item in graph["charts"])
+
+
+def test_independent_oci_reference_is_complete_and_sibling_is_retained(tmp_path):
+    parent = chart(tmp_path, "parent", "parent")
+    dependency(parent, "helpers", "oci://registry.example.invalid/team")
+    chart(tmp_path, "healthy", "healthy")
+    (tmp_path / "catalog.yml").write_text(
+        "charts:\n  dashboard:\n    chart: dashboard\n"
+        "    repository: oci://registry.example.invalid/team\n    version: 5.0.0\n",
+        encoding="utf-8",
+    )
+    graph, entries = discover(tmp_path)
+    assert {"parent", "healthy", "dashboard"} <= {item["name"] for item in entries}
+    dashboard = next(item for item in entries if item["name"] == "dashboard")
+    assert dashboard["reference"] == "oci://registry.example.invalid/team/dashboard"
+    assert dashboard["repository"] is None
+    assert not any(item["name"] == "helpers" for item in entries)
+
+
+def test_dependency_edge_does_not_duplicate_parent_render_or_missing_evidence(tmp_path):
+    parent = chart(tmp_path, "parent", "parent")
+    dependency(parent, "helpers", "oci://registry.example.invalid/team")
+    chart(tmp_path, "healthy", "healthy")
+
+    graph, entries = discover(tmp_path)
+
+    assert [item["name"] for item in entries].count("parent") == 1
+    assert [item["name"] for item in entries].count("healthy") == 1
+    assert not any(item["name"] == "helpers" for item in entries)
+    assert not any(item.get("item") in {"helpers", "oci://registry.example.invalid/team"}
+                   for item in graph["unresolved"])
+
+
+def test_chart_processing_yq_queries_do_not_use_jq_only_empty():
+    scripts = SCRIPT.parent
+    for name in ("scan-configurations.sh", "extract-helm-images.sh"):
+        source = (scripts / name).read_text(encoding="utf-8")
+        yq_lines = [line for line in source.splitlines() if "yq " in line and not line.lstrip().startswith("#")]
+        assert yq_lines
+        assert all("// empty" not in line for line in yq_lines)
+    assert "yq -r '.name // \"\"'" in (scripts / "scan-configurations.sh").read_text(encoding="utf-8")

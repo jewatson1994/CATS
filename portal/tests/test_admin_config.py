@@ -69,6 +69,27 @@ def test_admin_template_exposes_independent_verification_controls_and_warnings()
     assert "package signature verification is disabled" in text
 
 
+def test_settings_console_preserves_sections_actions_and_search():
+    template = Path(__file__).parents[1] / "app" / "templates" / "configuration.html"
+    text = template.read_text(encoding="utf-8")
+    for category in ("general", "identity-access", "security", "integrations", "data"):
+        assert f'data-settings-tab="{category}"' in text
+    for section in ("Portal Preferences", "Authentication", "OIDC identity provider", "OIDC Claim Mapping",
+                    "Remediation", "Image signing", "Cybersecurity warning policy", "Deployment Validation Sandbox",
+                    "OCI registries", "Trusted CA certificates", "Operating-system repositories", "Security Data Sources"):
+        assert section in text
+    for source in ("CISA KEV", "EPSS", "Grype DB", "Trivy DB"):
+        assert source in text
+    for action in ("/admin/configuration/oidc", "/admin/configuration/oidc-mappings",
+                   "/admin/configuration/registries", "/admin/configuration/registry-test",
+                   "/admin/configuration/validator", "/admin/configuration/security-data/{{ key }}"):
+        assert action in text
+    assert 'id="settings-search"' in text
+    assert "addEventListener('input', show)" in text
+    assert "editor.elements.password.value = ''" in text
+    assert "Configure and upload offline data" in text
+
+
 @pytest.mark.parametrize(("manager", "filename", "needle"), [("apt", "cats.list", "deb https://mirror.example.invalid stable main"), ("dnf", "cats.repo", "baseurl=https://mirror.example.invalid"), ("apk", "repositories", "https://mirror.example.invalid")])
 def test_repository_override_is_ephemeral_and_manager_specific(tmp_path: Path, manager: str, filename: str, needle: str):
     path = write_repository_config({"mode": "custom", "url": "https://mirror.example.invalid/"}, tmp_path, "ubuntu", manager)

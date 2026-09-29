@@ -60,7 +60,10 @@ def test_oci_helm_pull_receives_additive_ca_file_and_environment(monkeypatch):
     archives = main._download_oci_chart("oci://registry.example/team/chart", [{
         "fingerprint": "x", "pem": "-----BEGIN CERTIFICATE-----\nCUSTOM\n-----END CERTIFICATE-----",
     }])
-    assert archives == [(b"archive", "chart.tgz")]
+    try:
+        assert [(stream.read(), name) for stream, name in archives] == [(b"archive", "chart.tgz")]
+    finally:
+        main.close_downloads(archives)
     ca_path = observed["command"][observed["command"].index("--ca-file") + 1]
     assert observed["env"]["SSL_CERT_FILE"] == ca_path
     assert not Path(ca_path).exists()

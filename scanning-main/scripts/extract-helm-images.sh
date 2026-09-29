@@ -20,7 +20,7 @@ values_files() {
     printf '%s\n' "$HELM_VALUES_FILES" | tr ':' '\n'
   fi
   if [ -f charts.yml ] && command -v yq >/dev/null 2>&1; then
-    yq -r '.values_files[]? // .valuesFiles[]? // empty' charts.yml 2>/dev/null || true
+    yq -r '(.values_files[]?, .valuesFiles[]?) | select(. != null and . != "")' charts.yml 2>/dev/null || true
   fi
 }
 
@@ -88,7 +88,8 @@ resolve_declared_chart() {
 }
 
 discover_components() {
-  local parent="$1" declared_by="$2" values_file="$1/values.yaml" encoded entry name enabled explicit resolved reason repo_url chart_ref version download_dir
+  local parent="$1" declared_by="$2" values_file="$1/values.yaml" encoded entry name enabled explicit resolved reason repo_url chart_ref version download_dir pull_reference
+  local -a pull_command
   declared_by="$(source_path_for "$declared_by")"
   [ -f "$values_file" ] || return 0
   while IFS= read -r encoded; do
@@ -112,7 +113,16 @@ discover_components() {
       if is_true "${HELM_ALLOW_NETWORK:-false}"; then
         download_dir="${RENDER_ROOT}/component-$(printf '%s' "$name" | tr -cs 'A-Za-z0-9._-' '-')"
         mkdir -p "$download_dir"
-        if helm pull "${chart_ref:-$name}" --repo "$repo_url" ${version:+--version "$version"} --untar --untardir "$download_dir" >/dev/null 2>&1; then
+        pull_reference="${chart_ref:-$name}"
+        pull_command=(helm pull "$pull_reference")
+        if [[ "$repo_url" == oci://* ]]; then
+          [[ "$pull_reference" == oci://* ]] || pull_command=(helm pull "${repo_url%/}/${pull_reference}")
+        elif [[ "$pull_reference" != oci://* ]]; then
+          pull_command+=(--repo "$repo_url")
+        fi
+        [ -n "$version" ] && pull_command+=(--version "$version")
+        pull_command+=(--untar --untardir "$download_dir")
+        if "${pull_command[@]}" >/dev/null 2>&1; then
           resolved="$(find "$download_dir" -mindepth 1 -maxdepth 2 -type f -name Chart.yaml -print -quit | xargs -r dirname)"
           [ -n "$resolved" ] && render_chart "$resolved" "$name" "$RENDER_ROOT/component-$(printf '%s' "$name" | tr -cs 'A-Za-z0-9._-' '-').yaml" "$entry" || record_skip "$name" "Downloaded child chart did not contain Chart.yaml"
         else
@@ -185,6 +195,7 @@ render_chart() {
     record_skip "$chart_name" "Chart.yaml not found at ${chart_path}"
     return
   }
+  [ "$(yq -r '.type // "application"' "${chart_path}/Chart.yaml")" = "library" ] && return
   local identity chart_instance_id declared_by declared_enabled
   identity="$(chart_identity "$chart_path")"
   chart_instance_id="$(jq -r '.chart_id // empty' <<< "$entry_json" 2>/dev/null || true)"
@@ -261,7 +272,12 @@ render_values_file_apps() {
       record_skip "$app_name" "Values-file Helm references require HELM_ALLOW_NETWORK=true"
       continue
     fi
-    pull_command=(helm pull "$chart_ref" --repo "$repo_url")
+    pull_command=(helm pull "$chart_ref")
+    if [[ "$repo_url" == oci://* ]]; then
+      [[ "$chart_ref" == oci://* ]] || pull_command=(helm pull "${repo_url%/}/${chart_ref}")
+    elif [[ "$chart_ref" != oci://* ]]; then
+      pull_command+=(--repo "$repo_url")
+    fi
     [ -n "$version" ] && pull_command+=(--version "$version")
     pull_command+=(--untar --untardir "$download_dir")
     if ! "${pull_command[@]}" >/dev/null 2>&1; then
@@ -278,7 +294,7 @@ if [ -s "$GRAPH_ENTRIES" ]; then
   graph_index=0
   while IFS= read -r graph_entry; do
     [ -n "$graph_entry" ] || continue
-    if jq -e '.embedded_dependency == true' <<< "$graph_entry" >/dev/null 2>&1; then
+    if jq -e '.embedded_dependency == true or .chart_type == "library"' <<< "$graph_entry" >/dev/null 2>&1; then
       continue
     fi
     graph_index=$((graph_index + 1))
@@ -288,6 +304,11 @@ if [ -s "$GRAPH_ENTRIES" ]; then
       reference="$(jq -r '.reference // empty' <<< "$graph_entry")"
       repository="$(jq -r '.repository // empty' <<< "$graph_entry")"
       version="$(jq -r '.version // empty' <<< "$graph_entry")"
+      if [[ "$repository" == oci://* ]]; then
+        [[ "$reference" == oci://* ]] || reference="${repository%/}/${reference}"
+        repository=""
+      fi
+      [[ "$reference" == oci://* ]] && repository=""
       if [ -z "$reference" ] || ! is_true "${HELM_ALLOW_NETWORK:-false}"; then
         record_skip "$chart_name" "External chart reference requires HELM_ALLOW_NETWORK=true"
         continue
@@ -313,6 +334,8 @@ elif [ -f charts.yml ]; then
     entry="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
     path="$(jq -r '.path // empty' <<< "$entry" 2>/dev/null || true)"
     reference="$(jq -r '.reference // .chart // empty' <<< "$entry" 2>/dev/null || true)"
+    repository="$(jq -r '.repository // .repo // empty' <<< "$entry" 2>/dev/null || true)"
+    version="$(jq -r '.version // empty' <<< "$entry" 2>/dev/null || true)"
     name="$(jq -r '.name // .chart // .path // "chart"' <<< "$entry" 2>/dev/null || true)"
     if [ -z "$path" ]; then
       if [ -z "$reference" ] || ! is_true "${HELM_ALLOW_NETWORK:-false}"; then
@@ -321,7 +344,15 @@ elif [ -f charts.yml ]; then
       fi
       download_dir="${RENDER_ROOT}/download-$(printf '%s' "$name" | tr -cs 'A-Za-z0-9._-' '-')"
       mkdir -p "$download_dir"
-      if ! helm pull "$reference" --untar --untardir "$download_dir" >/dev/null 2>&1; then
+      if [[ "$repository" == oci://* ]]; then
+        [[ "$reference" == oci://* ]] || reference="${repository%/}/${reference}"
+        repository=""
+      fi
+      [[ "$reference" == oci://* ]] && repository=""
+      pull_command=(helm pull "$reference" --untar --untardir "$download_dir")
+      [ -n "$repository" ] && pull_command+=(--repo "$repository")
+      [ -n "$version" ] && pull_command+=(--version "$version")
+      if ! "${pull_command[@]}" >/dev/null 2>&1; then
         record_skip "$name" "Unable to download remote chart for image extraction"
         continue
       fi

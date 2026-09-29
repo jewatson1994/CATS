@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Data exchange · CATS{% endblock %}
+{% block content %}
+{% if bundle_mode is defined %}
+<h1>Import service state</h1>
+<p>Transfers authoritative service inputs: identity, retained charts and definitions, image references, manual inventory, metadata and human-maintained POA&amp;M. Imported services enter Assessment Pending and need a fresh local scan. Generated findings, reports and remediation downloads are excluded. Credentials and local trust settings must be configured at the destination.</p>
+{% if bundle_manifest is defined %}
+<h2>Target: {{ target_key }}</h2><pre>{{ bundle_manifest|tojson(indent=2) }}</pre>
+<p>Selected operation: {{ import_mode }}. No other categories of an existing service will change.</p>
+{% if history_counts %}<p>{{ history_counts.new }} missing historical executions; {{ history_counts.duplicates }} duplicates skipped. Current state will not be recalculated.</p>{% endif %}
+<form method="post" action="/exchange/bundles/confirm/{{ token }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label><input type="checkbox" name="confirm" value="true" required> I understand the exclusions and confirm the selected operation</label><button>Confirm import</button></form><a href="/exchange/bundles">Cancel</a>
+{% else %}
+<form method="post" enctype="multipart/form-data" action="/exchange/bundles/preview"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Target service key<input name="target_key" required></label><label>Operation<select name="mode"><option value="create">Create new service (fail if key exists)</option><option value="add_history">Existing service: retain older assessment as read-only provenance</option><option value="replace_metadata">Existing service: replace manual metadata only</option></select></label><p>History is informational and never becomes current findings. Metadata replacement requires metadata-edit permission; all current manual metadata will be replaced, including removal of fields absent from the bundle.</p><input type="file" name="upload" accept=".zip" required><button>Validate and preview</button></form>
+{% endif %}
+{% elif template_catalog is defined %}
+<h1>Spreadsheet templates</h1>
+<p>Choose a template to inspect its fields. Duplicate a built-in to customize it; custom templates can be edited directly.</p>
+<label>Template<select id="designer-source">{% for key, item in template_catalog.items() %}<option value="{{ key }}">{{ item.name }} — {{ 'built-in' if key in ['ppsm','poam','assets'] else 'custom' }} · {{ 'enabled' if item.enabled else 'disabled' }}</option>{% endfor %}</select></label>
+<script type="application/json" id="template-catalog">{{ template_catalog|tojson }}</script>
+<script type="application/json" id="field-catalog">{{ field_catalog|tojson }}</script>
+{% if can('template.manage') %}
+<button type="button" id="designer-duplicate">Duplicate selected template</button>
+{% endif %}
+<form method="post" id="template-designer" data-editable="{{ 'true' if can('template.manage') else 'false' }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="template_id"><input type="hidden" name="definition">
+<p id="designer-status" role="status"></p><fieldset id="designer-fields">
+<label>Name<input id="designer-name" maxlength="120" required></label>
+<label>Description<textarea id="designer-description" maxlength="2000" rows="3"></textarea></label>
+<label>Dataset<select id="designer-dataset"><option value="ppsm">PPSM</option><option value="poam">POA&amp;M</option><option value="assets">Asset List</option></select></label>
+<label>Worksheet name<input id="designer-sheet" maxlength="31"></label>
+<label>Classification banner<input id="designer-banner" maxlength="200"></label>
+<label>Missing required fields<select id="designer-policy"><option value="acknowledge">Require acknowledgement before export</option><option value="block">Block export</option></select></label>
+<label>Header color<input type="color" id="designer-color"></label><label>Row height<input type="number" id="designer-height" min="15" max="120"></label>
+<label><input type="checkbox" name="enabled" value="true"> Enabled for selection</label>
+<h2>Workbook metadata</h2><p>Move fields up or down to set their order. Defaults fill gaps only.</p><div id="designer-metadata"></div><button type="button" data-add="metadata">Add metadata field</button>
+<h2>Table columns</h2><div id="designer-columns"></div><button type="button" data-add="columns">Add column</button>
+{% if can('template.manage') %}<p><button type="submit">Save template</button> <button type="button" id="designer-reset">Reset changes</button></p>{% endif %}
+</fieldset></form><noscript>This designer requires JavaScript to load and save template fields.</noscript>
+<script src="/static/exchange-designer.js" defer></script>
+{% else %}
+<a href="/services/{{ service.service_key }}">Current service workspace</a>
+<h1>{{ service.name }} — data exchange</h1>
+{% if can('bundle.export', service.id) %}<p><a href="/services/{{ service.service_key }}/bundle.zip">Download portable service bundle</a> — authoritative inputs for a fresh assessment.</p>{% endif %}
+{% if can('bundle.import', service.id) %}<p><a href="/exchange/bundles">Import portable service bundle</a></p>{% endif %}
+<p>Selected version: {{ version }}. Historical scan evidence is isolated by version; reusable service metadata is current.</p>
+{% if preview is defined %}
+<h2>Import preview</h2><p>{{ preview.recognized }} recognized rows; {{ preview.new }} new; {{ preview.conflicts|length }} conflicts.</p>
+<p>Mapped: {{ preview.mapped|join(', ') }}. Ignored columns: {{ preview.ignored|join(', ') or 'None' }}.</p>
+{% for error in preview.errors %}<p role="alert">{{ error }}</p>{% endfor %}
+<details><summary>Preview rows</summary><pre>{{ preview.rows|tojson(indent=2) }}</pre></details>
+{% if not preview.errors %}<form method="post" action="/services/{{ service.service_key }}/exchange/confirm/{{ token }}">
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<label>Conflicts<select name="conflict_action" required><option value="">Choose explicitly</option value="skip">Skip existing records</option><option value="update">Update manual fields (scan evidence stays authoritative)</option></select></label>
+<p>POA&amp;M imports create pending-approval entries; imported status cannot grant approval.</p><button>Confirm import</button></form>{% endif %}
+<a href="/services/{{ service.service_key }}/exchange?version={{ version|urlencode }}">Cancel / return</a>
+{% else %}
+<form method="get"><label>Version<select name="version">{% for v in versions %}<option {% if v == version %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></label>
+<label>Template<select name="template">{% for key, item in catalog.items() %}{% if item.enabled %}<option value="{{ key }}" {% if key == selected_template %}selected{% endif %}>{{ item.name }}</option>{% endif %}{% endfor %}</select></label><button>Preview selection</button></form>
+<p>{{ row_count }} rows available.</p>
+{% if definition.description %}<p>{{ definition.description }}</p>{% endif %}
+<details open><summary>Export field preview</summary><p>Automatic values come from scan evidence or service identity. Configured values come from reusable metadata. Defaults fill remaining gaps.</p>
+<table><thead><tr><th>Field</th><th>Placement</th><th>Population</th></tr></thead><tbody>{% for item in export_preview %}<tr><td>{{ item.label }}<br><small>{{ item.field }}</small></td><td>{{ item.section }}</td><td>{% for label, count in item.counts.items() %}{{ label }}: {{ count }}{% if not loop.last %}; {% endif %}{% else %}No data rows{% endfor %}</td></tr>{% endfor %}</tbody></table></details>
+{% if missing %}<h2>Missing required fields</h2><ul>{% for field in missing %}<li>{{ field }}</li>{% endfor %}</ul>{% else %}<p>All configured required fields are populated.</p>{% endif %}
+{% if can(definition.dataset ~ '.export', service.id) %}<form method="get" action="/services/{{ service.service_key }}/exchange/{{ selected_template }}/export.xlsx"><input type="hidden" name="version" value="{{ version }}">
+{% if missing %}<label><input type="checkbox" name="acknowledge_missing" value="true" required> I reviewed the missing fields</label>{% endif %}
+<button {% if missing and definition.block_missing %}disabled{% endif %}>Download {{ definition.name }}</button></form>{% endif %}
+{% if can(definition.dataset ~ '.import', service.id) %}<h2>Import workbook</h2><form method="post" enctype="multipart/form-data" action="/services/{{ service.service_key }}/exchange/{{ selected_template }}/preview">
+<input type="hidden" name="version" value="{{ version }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="file" name="upload" accept=".xlsx" required><p>Maximum 20 MiB; preview and confirmation required.</p><button>Validate and preview</button></form>{% endif %}
+{% if metadata is not none %}<h2>Reusable service metadata</h2><p>Current service-level values fill missing evidence; they do not rewrite scan history.</p>
+<p>System name, service version, export date and exporter are filled automatically and cannot be overridden here.</p>
+<form method="post" id="metadata-editor" action="/services/{{ service.service_key }}/exchange/metadata"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="values">
+<fieldset {% if not can('metadata.edit', service.id) %}disabled{% endif %}>{% for group, fields in metadata_groups.items() %}<h3>{{ group }}</h3>{% for field in fields %}<label>{{ field.label }}<input data-metadata-key="{{ field.key }}" value="{{ metadata.get(field.key, '') }}" maxlength="2000"></label>{% endfor %}{% endfor %}
+{% if can('metadata.edit', service.id) %}<button>Save metadata</button>{% endif %}</fieldset></form><script src="/static/exchange-designer.js" defer></script>{% endif %}
+{% if can('template.view') %}<p><a href="/exchange/templates">Template management and field catalog</a></p>{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
