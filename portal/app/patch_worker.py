@@ -264,6 +264,8 @@ def main() -> int:
                 source_for_patch = policy_image_ref
         elif os_id and not manager:
             log(f"Skipping repository policy: {capability_reason}")
+        if config.get("require_repository_policy") is True and manager and not policy_image_ref:
+            unsupported_reason = "No matching explicit package repository mirror is configured for the detected operating system"
 
         patched_ref, patched_tag = patched_reference(source_ref)
         state("running", "scanning_source", source_image=source_ref)
@@ -274,7 +276,7 @@ def main() -> int:
         native_path = workspace / "copa-report.json"
         native = copa_native_report(before, (inspect.stdout or "amd64").strip(), package_ecosystem_name)
         native_path.write_text(json.dumps(native, indent=2), encoding="utf-8")
-        if unsupported_reason and not manager:
+        if unsupported_reason and (not manager or config.get("require_repository_policy") is True):
             unsupported = {
                 "status": "unsupported", "patch_status": "UNSUPPORTED", "source_image": source_ref,
                 "patched_image": None, "output_mode": config.get("output_mode", "download"),
@@ -351,7 +353,42 @@ def main() -> int:
         after_path = output / "grype-after.json"
         run(["grype", f"dir:{verification_root}", "--only-fixed", "--output", "json"], stdout_path=after_path)
         after = json.loads(after_path.read_text(encoding="utf-8"))
+        full_after_path = output / "grype-full-after.json"
+        remediation_full_scan = "not_requested"
+        if config.get("remediation_evidence") is True:
+            try:
+                run(["grype", f"dir:{verification_root}", "--output", "json"], stdout_path=full_after_path)
+                json.loads(full_after_path.read_text(encoding="utf-8"))
+                remediation_full_scan = "complete"
+            except Exception:
+                remediation_full_scan = "failed"
+                full_after_path.unlink(missing_ok=True)
         comparison = compare_reports(before, after)
+        remediation_evidence = {}
+        if config.get("remediation_evidence") is True:
+            remediation_evidence["grype_full"] = remediation_full_scan
+            checks = (
+                ("sbom", "syft", ["syft", f"dir:{verification_root}", "-o", "syft-json"], output / "remediated-sbom.json"),
+                ("trivy", "trivy", ["trivy", "image", "--skip-db-update", "--skip-check-update", "--format", "json",
+                                      "--output", str(output / "trivy-after.json"), canonical_ref], output / "trivy-after.json"),
+                ("dockle", "dockle", ["dockle", "--format", "json", "--output", str(output / "dockle-after.json"),
+                                        "--exit-code", "0", canonical_ref], output / "dockle-after.json"),
+            )
+            for name, binary, command, evidence_path in checks:
+                if not shutil.which(binary):
+                    remediation_evidence[name] = "unavailable"
+                    continue
+                try:
+                    if name == "sbom":
+                        run(command, stdout_path=evidence_path)
+                    else:
+                        run(command)
+                    if not evidence_path.is_file() or not evidence_path.stat().st_size:
+                        raise RuntimeError("Scanner produced no evidence")
+                    remediation_evidence[name] = "complete"
+                except Exception:
+                    remediation_evidence[name] = "failed"
+                    evidence_path.unlink(missing_ok=True)
         source_id = run(["docker", "image", "inspect", source_ref, "--format", "{{.Id}}"]).stdout.strip()
         patched_id = run(["docker", "image", "inspect", canonical_ref, "--format", "{{.Id}}"]).stdout.strip()
         image_changed = None if not (source_id.startswith("sha256:") and patched_id.startswith("sha256:")) else source_id != patched_id
@@ -442,6 +479,7 @@ def main() -> int:
             "delivery_error": delivery_error,
             "immutable_destination": immutable_destination, "signature_status": signature_status,
             "signature": signature_metadata,
+            "remediation_evidence": remediation_evidence,
         }
         (output / "patch-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         state("complete", "completed", summary={k: v for k, v in comparison.items() if not isinstance(v, list)}, patched_image=patched_ref, destination_image=result["destination_image"])

@@ -17,6 +17,9 @@
     <label for="chart-archive">Helm chart archives <span class="muted">(select one or more .tgz, .tar.gz, .tar, or .zip files)</span></label>
     <input id="chart-archive" name="chart_archives" type="file" accept=".tgz,.tar.gz,.tar,.zip" multiple>
     {% if archive_names %}<p class="muted upload-summary">Submitted archives: {{ archive_names|join(', ') }}. Select files again only if starting a new scan.</p>{% endif %}
+    <label for="service-definition">Service definition <span class="muted">(optional)</span></label>
+    <input id="service-definition" name="service_definition" type="file" accept=".yaml,.yml" aria-describedby="service-definition-help">
+    <small id="service-definition-help" class="muted">Upload a service-definition YAML/YML file. CATS will discover and assess every declared component.</small>
     {% if authenticated_ingest %}
     <label for="ingest-service">Ingest completed scan into <span class="muted">(only services within your role, group, and service scope)</span></label>
     <select id="ingest-service" name="ingest_service_id"><option value="">Do not ingest (temporary results only)</option>{% for service in authenticated_services %}<option value="{{ service.service_key }}"{% if service.service_key == ingest_service_id %} selected{% endif %}>{{ service.name }} ({{ service.service_key }})</option>{% endfor %}</select>

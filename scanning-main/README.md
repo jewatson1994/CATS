@@ -149,6 +149,13 @@ Helm network access is disabled by default. Set `HELM_ALLOW_NETWORK=true` only
 when repository or OCI retrieval is explicitly permitted. Vendored and
 uploaded charts work without network access.
 
+Packaged-chart discovery is bounded before extraction. Administrators may
+lower the defaults with `HELM_DISCOVERY_MAX_ARCHIVE_BYTES` (512 MiB),
+`HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS` (10,000), and
+`HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES` (1 GiB). Archives that exceed a
+limit, contain links, or contain traversal paths are skipped while discovery
+continues for independent charts.
+
 Policy datasets are maintained once under `cats-image/policy/` and copied into
 the unified image. Portal settings determine compliance; the scanner preserves
 complete raw evidence rather than applying a second local policy gate.
@@ -193,3 +200,13 @@ python -m pytest scanning-main/tests
 Shell fixtures under `tests/` exercise Helm rendering, image evidence,
 configuration normalization, and offline scanner behavior when their required
 tools are installed.
+
+## Artifact classification
+
+Prepare recursively inspects submitted YAML for local Helm charts and chart
+references. A local path is promoted only when it resolves to a directory
+containing `Chart.yaml` or a valid chart package. Remote chart references need
+an explicit chart field or a chart plus repository declaration; unrelated URLs
+remain ordinary YAML data. Unresolved declared charts remain missing evidence.
+Prepare does not require remote chart verification, so disconnected submissions
+can still be classified and scanned where local artifacts are available.

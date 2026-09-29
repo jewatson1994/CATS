@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Service definitions · {{ service.name }} · CATS{% endblock %}
+{% block content %}
+<a class="back" href="/services/{{ service.service_key }}">&larr; {{ service.name }}</a>
+<section class="heading"><div><p class="eyebrow">{{ service.service_key }}</p><h1>Service definitions / chart catalogs</h1>
+<p>Upload a definition to preview every declared component. CATS retains the original, acquires exact chart versions, and scans each available chart. Singularity enabled values never change scan scope.</p></div></section>
+{% if can('service.edit', service.id) %}
+<form method="post" enctype="multipart/form-data" action="/services/{{ service.service_key }}/definitions/preview">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <label>Adapter <select name="adapter"><option value="auto">Auto detect</option><option value="singularity">Singularity</option></select></label>
+  <label>YAML definition <input type="file" name="upload" accept=".yaml,.yml" required></label>
+  <button type="submit">Preview definition</button>
+</form>
+{% endif %}
+{% if preview is defined %}
+<section><h2>Preview: {{ preview_filename }}</h2>
+  <p>Adapter: {{ preview.adapter_label }} · Declared: {{ preview.counts.declared }} · Chart sources: {{ preview.counts.normalized }} · Unsupported: {{ preview.counts.unsupported }} · Unresolved: {{ preview.counts.unresolved }}</p>
+  <form method="post" action="/services/{{ service.service_key }}/definitions/confirm/{{ preview_token }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Retain and process all components</button></form>
+  <table><thead><tr><th>Component</th><th>Source</th><th>Chart</th><th>Version</th><th>Status</th></tr></thead><tbody>
+  {% for component in preview.components %}<tr><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}</td><td>{{ component.version or '—' }}</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endif %}
+<section><h2>Retained definitions</h2>
+{% for definition in definitions %}
+<article><h3>{{ definition.source_reference }}</h3>
+  <p>Adapter: {{ definition.source_metadata.adapter }} · Declared: {{ definition.source_metadata.counts.declared }} · Revision: {{ definition.revisions|length }}</p>
+  {% if can('service.edit', service.id) %}<form method="post" action="/services/{{ service.service_key }}/definitions/{{ definition.id }}/reprocess"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Reprocess retained original</button></form>{% endif %}
+  <label>Search components <input type="search" class="definition-search" placeholder="Name, chart or source"></label>
+  <label>Filter <select class="definition-filter"><option value="all">All</option><option value="helm">Helm</option><option value="oci">OCI</option><option value="unsupported">Unsupported</option><option value="failed">Failed</option><option value="complete">Complete</option></select></label>
+  <table class="definition-components"><thead><tr><th>Component</th><th>Source</th><th>Chart / version</th><th>Status</th></tr></thead><tbody>
+  {% for component in definition.source_metadata.components %}
+  <tr data-type="{{ component.source_type }}" data-status="{{ component.status }}"><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}{% if component.version %} / {{ component.version }}{% endif %}</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}{% if component.scan_job_id %}<br><a href="/scan?job_id={{ component.scan_job_id }}">Scan {{ component.scan_job_id[:8] }}</a>{% endif %}</td></tr>
+  {% endfor %}
+  </tbody></table>
+</article>
+{% else %}<p>No retained definitions yet.</p>{% endfor %}
+</section>
+<script>
+document.querySelectorAll('article:has(.definition-components)').forEach(card => {
+  const query = card.querySelector('.definition-search');
+  const filter = card.querySelector('.definition-filter');
+  const refresh = () => card.querySelectorAll('.definition-components tbody tr').forEach(row => {
+    const choice = filter.value;
+    const status = row.dataset.status;
+    const matches = choice === 'all' || choice === row.dataset.type ||
+      (choice === 'failed' && status.endsWith('_failed')) ||
+      (choice === 'unsupported' && ['unsupported', 'unresolved'].includes(status)) ||
+      (choice === 'complete' && status === 'complete');
+    row.hidden = !matches || !row.textContent.toLowerCase().includes(query.value.toLowerCase());
+  });
+  query.addEventListener('input', refresh); filter.addEventListener('change', refresh);
+});
+</script>
+{% endblock %}

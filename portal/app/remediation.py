@@ -277,5 +277,63 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
     return {"remediated-manifests.yaml": "---\n" + "\n---\n".join(yaml.safe_dump(item, sort_keys=False).strip() for item in resources) + "\n"}
 
 
+def versioned_charts(files: dict[str, str], job_key: str) -> tuple[dict[str, str], list[dict[str, str]]]:
+    """Give retained Helm charts a unique SemVer candidate version."""
+    updated = dict(files)
+    charts = []
+    job_suffix = re.sub(r"[^a-z0-9]", "", job_key.lower())[-12:]
+    for path, content in files.items():
+        if path.replace("\\", "/").split("/")[-1] != "Chart.yaml":
+            continue
+        try:
+            chart = yaml.safe_load(content)
+            if not isinstance(chart, dict):
+                raise ValueError("Chart.yaml must contain chart metadata")
+            name = str(chart.get("name") or "")
+            if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", name):
+                raise ValueError("Chart name is not a safe Helm package name")
+            original = str(chart.get("version") or "")
+            if not re.fullmatch(
+                r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", original):
+                raise ValueError("Chart version must be SemVer before remediation")
+            base = original.split("+", 1)[0]
+            suffix = job_suffix + "." + sha256(path.encode("utf-8")).hexdigest()[:6]
+            remediated = base + ("." if "-" in base else "-") + "cats." + suffix
+            chart["version"] = remediated
+            updated[path] = yaml.safe_dump(chart, sort_keys=False, allow_unicode=True)
+            charts.append({"path": path, "name": name,
+                           "original_version": original, "remediated_version": remediated})
+        except (ValueError, yaml.YAMLError) as exc:
+            charts.append({"path": path, "name": "", "original_version": "", "remediated_version": "",
+                           "package_status": "FAILED", "reason": type(exc).__name__})
+    return updated, charts
+
+
+def summarize_grype_reports(reports: list[dict], risk_lookup) -> dict:
+    """Summarize fresh full Grype reports without mutating service findings."""
+    severity_order = {"Unknown": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    by_cve: dict[str, str] = {}
+    for report in reports:
+        for match in report.get("matches") or []:
+            if not isinstance(match, dict):
+                continue
+            vulnerability = match.get("vulnerability") or {}
+            cve = str(vulnerability.get("id") or "").upper()
+            if not cve:
+                continue
+            severity = str(vulnerability.get("severity") or "Unknown").title()
+            if severity not in severity_order:
+                severity = "Unknown"
+            if severity_order[severity] > severity_order.get(by_cve.get(cve, "Unknown"), 0):
+                by_cve[cve] = severity
+            else:
+                by_cve.setdefault(cve, severity)
+    counts = {name: sum(value == name for value in by_cve.values()) for name in severity_order}
+    risks = {cve: risk_lookup(cve) for cve in by_cve}
+    return {"vulnerabilities": counts, "kev": sum(bool(kev) for kev, _ in risks.values()),
+            "epss_max": max((score for _, score in risks.values() if score is not None), default=None),
+            "cve_count": len(by_cve)}
+
+
 def plan_yaml(plan: dict[str, Any]) -> str:
     return yaml.safe_dump(plan, sort_keys=False, allow_unicode=True)

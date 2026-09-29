@@ -36,6 +36,9 @@ MAX_REFS = int(os.getenv("HELM_DISCOVERY_MAX_REFERENCES", "2000"))
 # platform's practical path limit.  The exact limit differs by OS/filesystem;
 # this conservative bound keeps malformed recursive references harmless.
 MAX_PATH_CHARS = int(os.getenv("HELM_DISCOVERY_MAX_PATH_CHARS", "240"))
+MAX_ARCHIVE_BYTES = int(os.getenv("HELM_DISCOVERY_MAX_ARCHIVE_BYTES", str(512 * 1024 * 1024)))
+MAX_ARCHIVE_MEMBERS = int(os.getenv("HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS", "10000"))
+MAX_ARCHIVE_EXPANDED_BYTES = int(os.getenv("HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES", str(1024 * 1024 * 1024)))
 
 
 def norm_key(value: object) -> str:
@@ -69,12 +72,20 @@ def read_yaml_files(root: Path):
                 yield path, document_index, document
 
 
-def chart_meta(chart_path: Path) -> tuple[str, str]:
+def chart_meta(chart_path: Path) -> tuple[str, str, str]:
     try:
         data = yaml.safe_load((chart_path / "Chart.yaml").read_text(encoding="utf-8-sig")) or {}
     except (OSError, UnicodeDecodeError, yaml.YAMLError):
         data = {}
-    return str(data.get("name") or chart_path.name), str(data.get("version") or "")
+    return (str(data.get("name") or chart_path.name), str(data.get("version") or ""),
+            str(data.get("type") or "application"))
+
+
+def helm_reference(name: str, repository: str | None) -> str:
+    """OCI repository is a namespace; Helm pulls the named chart within it."""
+    if repository and repository.startswith("oci://") and not name.startswith("oci://"):
+        return repository.rstrip("/") + "/" + name.lstrip("/")
+    return name
 
 
 def chart_identity(path: Path, name: str, version: str, context: dict) -> str:
@@ -122,7 +133,16 @@ def path_value(value: str, source: Path, roots: list[Path], extraction_root: Pat
 
 
 def extract_package(package: Path, extraction_root: Path, roots: list[Path]) -> Path | None:
-    digest = hashlib.sha256(package.read_bytes()).hexdigest()[:24]
+    try:
+        if not package.is_file() or package.stat().st_size > MAX_ARCHIVE_BYTES:
+            return None
+        digest_hash = hashlib.sha256()
+        with package.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest_hash.update(chunk)
+        digest = digest_hash.hexdigest()[:24]
+    except OSError:
+        return None
     destination = extraction_root / digest
     if not destination.exists():
         destination.mkdir(parents=True, exist_ok=True)
@@ -130,14 +150,18 @@ def extract_package(package: Path, extraction_root: Path, roots: list[Path]) -> 
             if package.suffix.lower() == ".zip":
                 with zipfile.ZipFile(package) as archive:
                     members = archive.infolist()
-                    if any(not safe_member(item.filename) or stat.S_ISLNK((item.external_attr >> 16) & 0o170000)
-                           for item in members):
+                    if (len(members) > MAX_ARCHIVE_MEMBERS or
+                            sum(item.file_size for item in members) > MAX_ARCHIVE_EXPANDED_BYTES or
+                            any(not safe_member(item.filename) or stat.S_ISLNK((item.external_attr >> 16) & 0o170000)
+                                for item in members)):
                         raise ValueError("unsafe chart archive path")
                     archive.extractall(destination)
             else:
                 with tarfile.open(package, mode="r:*") as archive:
                     members = archive.getmembers()
-                    if any(not safe_member(item.name) or item.issym() or item.islnk() for item in members):
+                    if (len(members) > MAX_ARCHIVE_MEMBERS or
+                            sum(item.size for item in members) > MAX_ARCHIVE_EXPANDED_BYTES or
+                            any(not safe_member(item.name) or item.issym() or item.islnk() for item in members)):
                         raise ValueError("unsafe chart archive path")
                     # Members have already passed traversal and link checks.
                     # Use the safer extraction filter where available while
@@ -157,17 +181,24 @@ def mapping_values(node: object, path: str = "") -> tuple[object | None, str | N
     """Return the first useful chart reference and its render context."""
     if not isinstance(node, dict):
         return None, None, {}
-    lower = {norm_key(key): (key, value) for key, value in node.items()}
+    lower = {norm_key(key): value for key, value in node.items()}
     reference = None
     for key, value in node.items():
         key_norm = norm_key(key)
         if key_norm in PATH_KEYS | CHART_KEYS and isinstance(value, str):
-            if value.startswith(("oci://", "http://", "https://", "./", "../", "/")) or "/" in value or value.endswith((".tgz", ".tar.gz", ".zip")):
+            # Generic ``source``, ``reference`` and ``url`` fields are common
+            # outside Helm. Remote values need an explicit chart field or a
+            # chart/repository pair before they become chart evidence.
+            remote = value.startswith(("oci://", "http://", "https://"))
+            explicit_chart = key_norm in {"chart", "helmchart", "chartref", "chartname", "chartpath"}
+            if (remote and explicit_chart) or (not remote and (value.startswith(("./", "../", "/")) or "/" in value or value.endswith((".tgz", ".tar.gz", ".zip")))):
                 reference = value
                 break
-    chartish = bool(set(lower) & (CHART_KEYS | REPOSITORY_KEYS | VERSION_KEYS))
-    repo = next((value for key, value in lower.items() if key in REPOSITORY_KEYS and isinstance(value, str)), None)
-    if reference is None and chartish and repo:
+    # A generic ``name`` plus ``url`` is common for non-Helm resources.
+    # Treat only an explicitly named repository field as chart context.
+    explicit_repo_keys = {"repository", "repo", "repourl", "helmrepo"}
+    repo = next((value for key, value in lower.items() if key in explicit_repo_keys and isinstance(value, str)), None)
+    if reference is None and repo:
         reference = next((value for key, value in lower.items() if key in CHART_KEYS and isinstance(value, str)), None)
     if reference is None:
         return None, None, {}
@@ -217,7 +248,7 @@ def walk_references(node: object, source: Path, root: Path, roots: list[Path], e
         # when its YAML key is arbitrary.  Keep scalar references source-level
         # occurrences (no logical instance) so data paths do not create
         # synthetic chart instances during cycle traversal.
-        if resolved or raw.startswith(("oci://", "http://", "https://")):
+        if resolved:
             yield {"reference": raw, "resolved": resolved, "context": {}, "yaml_path": yaml_path, "instance": ""}
 
 
@@ -238,14 +269,14 @@ def main() -> int:
     charts: dict[tuple[str, str], dict] = {}
     chart_paths = sorted({path.parent.resolve() for path in root.rglob("Chart.yaml") if inside(path, roots) and not any(part in SKIP_DIRS for part in path.relative_to(root).parts)})
     for chart_path in chart_paths:
-        name, version = chart_meta(chart_path)
+        name, version, chart_type = chart_meta(chart_path)
         chart_id = chart_identity(chart_path, name, version, {})
         charts[(str(chart_path), json.dumps({"context": {}, "instance": ""}, sort_keys=True))] = {"chart_id": chart_id, "chart": name, "instance": "", "version": version,
             "path": str(chart_path), "source": canonical_source(chart_path, root), "parent": None,
             "discovery_method": "filesystem", "discovery_source_file": None, "yaml_path": None,
             "discovery_source_path": None,
             "reference": None, "confidence": "HIGH", "resolution": "LOCAL_CHART", "status": "Discovered",
-            "embedded_dependency": False, "context": {}}
+            "embedded_dependency": False, "chart_type": chart_type, "context": {}}
 
     # Packaged charts are first-class artifact inputs even when no YAML file
     # happens to point at them. Extraction is content-addressed and guarded by
@@ -257,16 +288,21 @@ def main() -> int:
         packaged_chart = extract_package(package_path, extraction_root, roots)
         if not packaged_chart or not (packaged_chart / "Chart.yaml").is_file():
             continue
-        name, version = chart_meta(packaged_chart)
+        name, version, chart_type = chart_meta(packaged_chart)
         key = (str(packaged_chart), json.dumps({"context": {}, "instance": ""}, sort_keys=True))
         if key in charts:
             continue
+        vendored_parent = max((item for item in charts.values()
+                               if (Path(item["path"]) / "charts") in package_path.parents),
+                              key=lambda item: len(Path(item["path"]).parts), default=None)
         charts[key] = {"chart_id": chart_identity(packaged_chart, name, version, {}), "chart": name, "instance": "", "version": version,
-            "path": str(packaged_chart), "source": canonical_source(package_path, root), "parent": None,
+            "path": str(packaged_chart), "source": canonical_source(package_path, root),
             "discovery_method": "packaged chart", "discovery_source_file": canonical_source(package_path, root),
             "discovery_source_path": str(package_path), "yaml_path": None, "reference": package_path.name,
             "confidence": "HIGH", "resolution": "LOCAL_CHART", "status": "Discovered",
-            "embedded_dependency": False, "context": {}}
+            "embedded_dependency": bool(vendored_parent), "chart_type": chart_type,
+            "parent": vendored_parent["chart_id"] if vendored_parent else None,
+            "parent_chart_name": vendored_parent["chart"] if vendored_parent else None, "context": {}}
 
     # Establish structural parentage before following references. A standard
     # vendored child is represented in the graph but is not independently
@@ -311,11 +347,17 @@ def main() -> int:
         for dependency in chart_data.get("dependencies", []) if isinstance(chart_data.get("dependencies"), list) else []:
             if isinstance(dependency, dict) and dependency.get("name"):
                 references.append({"parent_chart": chart["chart_id"], "reference": dependency.get("name"), "repository": dependency.get("repository"),
+                                   "chart_reference": helm_reference(str(dependency.get("name")), dependency.get("repository")),
                                    "version": dependency.get("version"), "discovery_method": "Chart.yaml dependency", "source_file": canonical_source(chart_yaml, root),
                                    "source_path": str(chart_yaml.resolve()), "yaml_path": "dependencies", "context": {},
                                    "confidence": "HIGH", "resolution_status": "DECLARED_DEPENDENCY"})
         document_root = chart_path if chart.get("discovery_method") == "packaged chart" else (root if chart.get("parent") is None else chart_path)
         for source_file, document_index, document in read_yaml_files(document_root):
+            # Chart.yaml/Chart.lock declare dependency edges, not deployable
+            # chart occurrences. In particular an OCI repository is not a
+            # complete artifact reference.
+            if source_file.name in {"Chart.yaml", "Chart.lock"}:
+                continue
             owner = source_owner(source_file)
             if owner and Path(owner["path"]).resolve() != chart_path.resolve():
                 continue
@@ -350,19 +392,19 @@ def main() -> int:
                 if child_path and child_path.is_file():
                     child_path = extract_package(child_path, extraction_root, roots)
                 if child_path and child_path.is_dir() and (child_path / "Chart.yaml").is_file():
-                    child_name, child_version = chart_meta(child_path)
+                    child_name, child_version, child_type = chart_meta(child_path)
                     context = candidate.get("context") or {}
                     instance = str(candidate.get("instance") or "")
                     key = (str(child_path), json.dumps({"context": context, "instance": instance}, sort_keys=True, default=str))
                     if key not in charts and len(charts) < MAX_CHARTS:
                         child_id = chart_identity(child_path, child_name, child_version, {**context, "__instance": instance})
-                        embedded = (chart_path / "charts") in child_path.parents
+                        embedded = bool(relationship_parent and (chart_path / "charts") in child_path.parents)
                         charts[key] = {"chart_id": child_id, "chart": child_name, "instance": instance, "version": child_version, "path": str(child_path),
                         "source": canonical_source(child_path, root), "parent": relationship_parent, "parent_chart_name": chart.get("chart") if relationship_parent else "Root", "discovery_method": ref_entry["discovery_method"],
                             "discovery_source_file": ref_entry["source_file"], "discovery_source_path": str(source_file.resolve()),
                             "yaml_path": ref_entry["yaml_path"], "reference": raw,
                             "confidence": ref_entry["confidence"], "resolution": "LOCAL_CHART", "status": "Discovered",
-                            "embedded_dependency": embedded, "context": context}
+                            "embedded_dependency": embedded, "chart_type": child_type, "context": context}
                         queue.append(charts[key])
                     ref_entry.update(resolution_status="LOCAL_CHART", resolved_path=str(child_path), chart_name=child_name, chart_version=child_version)
                 elif raw.startswith(("oci://", "http://", "https://")) or candidate.get("repository"):
@@ -399,11 +441,14 @@ def main() -> int:
         dependency_name = str(reference.get("reference") or "")
         candidates = [item for item in charts.values()
                       if item.get("chart") == dependency_name and
-                      Path(parent["path"]) in Path(item["path"]).parents]
+                       (Path(parent["path"]) / "charts") in Path(item["path"]).parents and
+                       (not reference.get("version") or item.get("version") == reference.get("version"))]
         if not candidates:
             candidates = [item for item in charts.values()
                           if item.get("chart") == dependency_name and
                           item.get("discovery_method") == "packaged chart" and
+                           item.get("parent") == parent["chart_id"] and
+                           item.get("embedded_dependency") and
                           (not reference.get("version") or item.get("version") == reference.get("version"))]
         if candidates:
             child = min(candidates, key=lambda item: len(Path(item["path"]).parts))
@@ -414,13 +459,14 @@ def main() -> int:
                 child["embedded_dependency"] = (package_source.parent.name == "charts" and
                                                   Path(parent["path"]).resolve() in package_source.resolve().parents)
             reference.update(resolution_status="LOCAL_CHART", resolved_path=child["path"],
-                             chart_name=child.get("chart"), chart_version=child.get("version"))
+                             chart_name=child.get("chart"), chart_version=child.get("version"),
+                             chart_type=child.get("chart_type"))
         else:
-            unresolved.append({"type": "Helm Chart", "item": dependency_name,
-                               "reason": "Chart.yaml dependency was declared but no local chart or permitted configured repository artifact was available.",
-                               "source_file": reference.get("source_file", "—"), "yaml_path": reference.get("yaml_path", "dependencies"),
-                               "repository": reference.get("repository"), "version": reference.get("version"),
-                               "parent_chart": reference.get("parent_chart")})
+            # The parent Helm render decides whether this dependency is
+            # available (including an allowed dependency build). Reporting it
+            # here would create stale/duplicate missing evidence after a
+            # successful download.
+            reference["chart_reference"] = helm_reference(dependency_name, reference.get("repository"))
 
     # Keep a bounded, stable set of references even when a map and its scalar
     # child both expose the same chart signal.
@@ -470,11 +516,12 @@ def main() -> int:
 
     entries = []
     for chart in charts.values():
-        if chart.get("embedded_dependency"):
+        if chart.get("embedded_dependency") or chart.get("chart_type") == "library":
             continue
         if chart.get("source_only"):
             continue
         entry = {"path": chart["path"], "name": chart["chart"], "instance": chart.get("instance") or "", "release": chart["chart"], "version": chart.get("version"),
+                 "chart_type": chart.get("chart_type", "application"),
                  "declared_by": chart.get("discovery_source_file") or "filesystem", "declared_enabled": "unknown",
                  "chart_id": chart["chart_id"], "parent_chart": chart.get("parent"), "parent_chart_name": chart.get("parent_chart_name") or "Root",
                  "discovery_method": chart.get("discovery_method"),
@@ -493,6 +540,8 @@ def main() -> int:
         repository = reference.get("repository")
         if reference.get("resolution_status") == "LOCAL_CHART" or not raw:
             continue
+        if reference.get("discovery_method") == "Chart.yaml dependency":
+            continue
         if not (repository or raw.startswith("oci://")):
             continue
         context_key = json.dumps(reference.get("context") or {}, sort_keys=True, default=str)
@@ -500,7 +549,10 @@ def main() -> int:
         if key in known_remote:
             continue
         known_remote.add(key)
-        entry = {"name": Path(raw.rstrip("/")).name or raw, "instance": reference.get("instance") or "", "reference": raw, "repository": repository,
+        complete_reference = helm_reference(raw, repository)
+        entry = {"name": Path(raw.rstrip("/")).name or raw, "instance": reference.get("instance") or "", "reference": complete_reference,
+                        "repository": None if repository and repository.startswith("oci://") else repository,
+                        "source_repository": repository,
                         "version": reference.get("version"), "declared_by": reference.get("source_file"),
                         "declared_enabled": "unknown", "chart_id": hashlib.sha256(json.dumps(key).encode()).hexdigest()[:24],
                         "parent_chart": reference.get("parent_chart"), "parent_chart_name": reference.get("parent_chart_name") or "Root", "discovery_method": reference.get("discovery_method"),

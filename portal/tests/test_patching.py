@@ -306,6 +306,10 @@ def run_worker(
         elif command[0] == "grype" and stdout_path:
             report = before if "before" in stdout_path.name else after
             stdout_path.write_text(json.dumps(report), encoding="utf-8")
+        elif command[0] == "syft" and stdout_path:
+            stdout_path.write_text('{"artifacts":[]}', encoding="utf-8")
+        elif command[0] in {"trivy", "dockle"} and "--output" in command:
+            Path(command[command.index("--output") + 1]).write_text("{}", encoding="utf-8")
         elif command[:2] == ["docker", "save"]:
             archive_path = Path(command[command.index("--output") + 1])
             archive_path.write_bytes(b"not an image archive") if corrupt_archive else make_image_tar(archive_path)
@@ -356,6 +360,36 @@ def test_public_oci_to_download_worker_flow(monkeypatch, tmp_path: Path):
     trust_copies = [command for command, _ in calls if command[:2] == ["docker", "cp"]]
     assert any("cats-patch-ca-bundle.pem" in " ".join(command) for command in trust_copies)
     assert not any("cats-custom-ca.pem" in " ".join(command) for command in trust_copies)
+
+
+def test_remediation_worker_refuses_missing_os_mirror_without_public_fallback(monkeypatch, tmp_path: Path):
+    config = {"job_id": "job-mirror-required", "source_mode": "oci",
+              "source_image": "registry.internal/library/alpine:3.20", "output_mode": "download",
+              "remediation_evidence": True, "require_repository_policy": True,
+              "repository_policies": {"debian": {"mode": "custom", "url": "https://mirror.internal/debian"}}}
+    code, output, _state, calls = run_worker(monkeypatch, tmp_path, config, grype_report([]), grype_report([]),
+                                             source_credentials=("", ""))
+    assert code == 0
+    result = json.loads((output / "patch-result.json").read_text(encoding="utf-8"))
+    assert result["patch_status"] == "UNSUPPORTED"
+    assert "explicit package repository mirror" in result["reason"]
+    assert not any(command and command[0] == "copa" for command, _ in calls)
+
+
+def test_remediation_worker_creates_fresh_full_grype_report(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(patch_worker.shutil, "which", lambda name: f"/usr/bin/{name}" if name in {"syft", "trivy", "dockle"} else None)
+    config = {"job_id": "job-remediation-evidence", "source_mode": "oci",
+              "source_image": "registry.internal/library/alpine:3.20", "output_mode": "download",
+              "remediation_evidence": True, "require_repository_policy": True,
+              "repository_policies": {"alpine": {"mode": "custom", "url": "https://mirror.internal/alpine"}}}
+    code, output, _state, calls = run_worker(monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2.0"])]), grype_report([]), source_credentials=("", ""))
+    assert code == 0
+    result = json.loads((output / "patch-result.json").read_text(encoding="utf-8"))
+    assert result["remediation_evidence"]["grype_full"] == "complete"
+    assert all(result["remediation_evidence"][name] == "complete" for name in ("sbom", "trivy", "dockle"))
+    assert (output / "grype-full-after.json").is_file()
+    assert any(command[0] == "grype" and "--only-fixed" not in command for command, _ in calls)
 
 
 def test_private_ca_and_internal_mirror_reach_target_before_copa(monkeypatch, tmp_path: Path):

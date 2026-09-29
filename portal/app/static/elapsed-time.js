@@ -8,6 +8,8 @@
   const TERMINAL_STATUSES = new Set([
     'complete', 'completed', 'incomplete', 'error', 'failed', 'cancelled',
     'validated', 'review_required', 'not_remediable', 'verified',
+    'bundle_ready', 'bundle_partial', 'publication_partial', 'evidence_partial',
+    'validation_failed', 'validation_unavailable',
     'partially_verified', 'could_not_validate', 'not_attempted'
   ]);
   const controllers = new WeakMap();

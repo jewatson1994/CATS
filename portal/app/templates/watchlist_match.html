@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block title %}Watchlist evidence · CATS{% endblock %}
+{% block content %}
+<section class="heading"><div><p class="eyebrow">WARNING EVIDENCE</p><h1>{{ match.component_name }}</h1><p>Configured Dependency Watchlist match in {{ service.name }}. This warning does not change compliance status.</p></div></section>
+<section class="panel padded"><dl class="detail-grid-list"><dt>Component</dt><dd>{{ match.component_name }}</dd><dt>Version</dt><dd>{{ match.component_version or '—' }}</dd><dt>Ecosystem</dt><dd>{{ match.ecosystem or '—' }}</dd><dt>PURL</dt><dd><code>{{ match.component_purl or '—' }}</code></dd><dt>Image</dt><dd><code>{{ match.image }}</code></dd><dt>SBOM scan</dt><dd>{{ match.execution.execution_key }} · {{ cats_date(match.execution.scanned_at) }}</dd><dt>Watchlist entry</dt><dd>{{ match.entry.purl or match.entry.name }}{% if match.entry.version_constraint %} {{ match.entry.version_constraint }}{% endif %}</dd></dl><p><a href="/services/{{ service.service_key }}?finding_state=warnings">Back to warnings</a></p></section>
+{% endblock %}

@@ -21,6 +21,7 @@ class Service(Base):
     owner: Mapped[str | None] = mapped_column(String(240))
     poc: Mapped[str | None] = mapped_column(String(240))
     manual_version: Mapped[str | None] = mapped_column(String(120))
+    assessment_status: Mapped[str] = mapped_column(String(32), default="assessment_pending")
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     staging_original_name: Mapped[str | None] = mapped_column(String(240))
     staging_name_generated: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -36,6 +37,48 @@ class Service(Base):
     deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="service")
     images: Mapped[list["ServiceImage"]] = relationship(back_populates="service")
     artifacts: Mapped[list["ServiceArtifact"]] = relationship(back_populates="service")
+    watchlist_matches: Mapped[list["DependencyWatchlistMatch"]] = relationship(back_populates="service")
+
+
+class DependencyWatchlistEntry(Base):
+    __tablename__ = "dependency_watchlist_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    purl: Mapped[str] = mapped_column(String(700), default="")
+    ecosystem: Mapped[str] = mapped_column(String(80), default="")
+    name: Mapped[str] = mapped_column(String(300), default="")
+    version_constraint: Mapped[str] = mapped_column(String(120), default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DependencyWatchlistMatch(Base):
+    __tablename__ = "dependency_watchlist_matches"
+    __table_args__ = (UniqueConstraint("entry_id", "execution_id", "component_purl", "component_name", "component_version", "image", name="uq_watchlist_match_evidence"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entry_id: Mapped[int] = mapped_column(ForeignKey("dependency_watchlist_entries.id"), index=True)
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id"), index=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    component_name: Mapped[str] = mapped_column(String(300))
+    component_version: Mapped[str] = mapped_column(String(200), default="")
+    component_purl: Mapped[str] = mapped_column(String(700), default="")
+    ecosystem: Mapped[str] = mapped_column(String(80), default="")
+    image: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    entry: Mapped["DependencyWatchlistEntry"] = relationship()
+    execution: Mapped["Execution"] = relationship()
+    service: Mapped["Service"] = relationship(back_populates="watchlist_matches")
+
+
+class SecurityDataSource(Base):
+    __tablename__ = "security_data_sources"
+    key: Mapped[str] = mapped_column(String(30), primary_key=True)
+    source: Mapped[str] = mapped_column(Text, default="")
+    installed_version: Mapped[str | None] = mapped_column(String(240))
+    installed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(30), default="NEVER_UPDATED")
+    failure_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class Group(Base):
@@ -229,6 +272,9 @@ class RemediationExecution(Base):
     requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     finding_type: Mapped[str | None] = mapped_column(String(30))
     finding_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    output_mode: Mapped[str] = mapped_column(String(20), default="publish")
+    stages: Mapped[dict] = mapped_column(JSON, default=dict)
+    retry_of_id: Mapped[int | None] = mapped_column(ForeignKey("remediation_executions.id"), index=True)
     status: Mapped[str] = mapped_column(String(30), default="queued", index=True)
     phase: Mapped[str] = mapped_column(String(50), default="queued")
     original_revision: Mapped[str | None] = mapped_column(String(240))
@@ -401,9 +447,26 @@ class UserRoleAssignment(Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), index=True)
     service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"), index=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), index=True)
+    source: Mapped[str] = mapped_column(String(20), default="local")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     user: Mapped["User"] = relationship(back_populates="role_assignments")
     role: Mapped["Role"] = relationship(back_populates="assignments")
+    service: Mapped[Service | None] = relationship()
+    group: Mapped[Group | None] = relationship()
+
+
+class OidcClaimMapping(Base):
+    __tablename__ = "oidc_claim_mappings"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    claim_path: Mapped[str] = mapped_column(String(240))
+    expected_value: Mapped[str] = mapped_column(String(300))
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"))
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+    global_scope: Mapped[bool] = mapped_column(Boolean, default=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    role: Mapped[Role] = relationship()
     service: Mapped[Service | None] = relationship()
     group: Mapped[Group | None] = relationship()
 
@@ -456,6 +519,9 @@ class PoamEntry(Base):
     __tablename__ = "poam_entries"
     id: Mapped[int] = mapped_column(primary_key=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    service_version: Mapped[str | None] = mapped_column(String(120))
+    exchange_key: Mapped[str | None] = mapped_column(String(64))
+    supplemental_fields: Mapped[dict | None] = mapped_column(JSON)
     finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), index=True)
     policy_finding_id: Mapped[int | None] = mapped_column(ForeignKey("policy_findings.id"), index=True)
     item_type: Mapped[str] = mapped_column(String(40), index=True)
@@ -523,3 +589,64 @@ class PortalSetting(Base):
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_by: Mapped[User | None] = relationship()
+
+
+class ExportTemplate(Base):
+    __tablename__ = "export_templates"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    definition: Mapped[dict] = mapped_column(JSON)
+
+
+class ServiceMetadata(Base):
+    __tablename__ = "service_metadata"
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), primary_key=True)
+    values: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class InventoryRecord(Base):
+    """Version-specific, manually maintained network/asset inventory.
+
+    Discovered inventory stays in immutable Execution evidence. This table only
+    owns imported/manual information, with explicit identity and provenance.
+    """
+    __tablename__ = "inventory_records"
+    __table_args__ = (UniqueConstraint("service_id", "version", "dataset", "record_key", name="uq_inventory_record"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    version: Mapped[str] = mapped_column(String(120))
+    dataset: Mapped[str] = mapped_column(String(20))
+    record_key: Mapped[str] = mapped_column(String(64))
+    values: Mapped[dict] = mapped_column(JSON)
+    updated_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ExchangePreview(Base):
+    __tablename__ = "exchange_previews"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    version: Mapped[str] = mapped_column(String(120))
+    dataset: Mapped[str] = mapped_column(String(20))
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BundlePreview(Base):
+    __tablename__ = "bundle_previews"
+    token: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    target_key: Mapped[str] = mapped_column(String(120))
+    payload: Mapped[dict] = mapped_column(JSON)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ServiceTransferProvenance(Base):
+    __tablename__ = "service_transfer_provenance"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    detail: Mapped[dict] = mapped_column(JSON)

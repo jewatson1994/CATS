@@ -79,6 +79,76 @@ def add_user(username, role_name, service_id=None):
         db.add(UserRoleAssignment(user_id=user.id, role_id=role.id, service_id=service_id)); db.commit()
 
 
+def test_watchlist_warning_dashboard_and_authorization():
+    client = new_client()
+    saved = client.post("/admin/dependency-watchlist", data={"csrf_token": csrf(client), "action": "save",
+        "name": "requests", "ecosystem": "python", "version_constraint": ">=2.30", "enabled": "true"}, follow_redirects=False)
+    assert saved.status_code == 303
+    body = payload("watchlist-run", datetime.now(timezone.utc), [])
+    body["sbom_components"] = [{"name": "requests", "version": "2.31.0", "ecosystem": "python",
+        "purl": "pkg:pypi/requests@2.31.0", "image": "registry.internal/app:1"},
+        {"name": "request-helper", "version": "2.31.0", "ecosystem": "python", "image": "registry.internal/app:1"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    warnings = client.get("/services/payments-service?finding_state=warnings")
+    assert warnings.status_code == 200 and "Dependency Watchlist" in warnings.text
+    dashboard = client.get("/cybersecurity")
+    assert dashboard.status_code == 200 and "Service Security Matrix" in dashboard.text
+    assert "Payments Service" in client.get("/cybersecurity?attention=watchlist&component=requests").text
+    assert "No services match" in client.get("/cybersecurity?component=not-present").text
+    with SessionLocal() as db:
+        from app.models import DependencyWatchlistMatch
+        matches = db.scalars(select(DependencyWatchlistMatch)).all()
+        assert len(matches) == 1 and matches[0].component_name == "requests"
+        assert not db.scalars(select(Finding)).all()
+        detail_url = f"/services/payments-service/watchlist/{matches[0].id}"
+    assert "pkg:pypi/requests@2.31.0" in client.get(detail_url).text
+    add_user("assessor", "Assessor")
+    viewer = new_client("assessor")
+    assert viewer.post("/admin/dependency-watchlist", data={"csrf_token": csrf(viewer), "name": "secret"}).status_code == 403
+
+
+def test_oidc_claim_mapping_preserves_scope_and_local_roles():
+    from app.auth import provision_oidc_user
+    from app.models import OidcClaimMapping
+    with SessionLocal() as db:
+        service = Service(service_key="claim-service", name="Claim Service")
+        other = Service(service_key="other-service", name="Other Service")
+        db.add_all([service, other]); db.flush()
+        role = db.scalar(select(Role).where(Role.name == "Service Manager"))
+        db.add(OidcClaimMapping(claim_path="custom.nested.roles", expected_value="owners",
+            role_id=role.id, service_id=service.id, enabled=True))
+        db.flush()
+        user = provision_oidc_user(db, {"sub": "subject-1", "preferred_username": "claim-user",
+            "custom": {"nested": {"roles": ["owners", "other"]}}})
+        db.commit()
+        db.refresh(user)
+        auth = AuthContext(user, UserSession(token_hash="dummy", csrf_token="dummy", user_id=user.id,
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+        assert auth.has("service.edit", service.id)
+        assert not auth.has("service.edit", other.id)
+        assert not auth.has("config.manage")
+        import pytest
+        with pytest.raises(ValueError):
+            provision_oidc_user(db, {"sub": "subject-2", "preferred_username": "unmapped-user",
+                "custom": {"nested": {"roles": "none"}}})
+
+
+def test_security_data_upload_is_authorized_and_audited(tmp_path, monkeypatch):
+    monkeypatch.setenv("CATS_POLICY_DATA_DIR", str(tmp_path))
+    client = new_client()
+    response = client.post("/admin/configuration/security-data/kev", data={"csrf_token": csrf(client), "action": "upload"},
+        files={"file": ("kev.json", b'{"vulnerabilities":[{"cveID":"CVE-2026-0001"}]}', "application/json")},
+        follow_redirects=False)
+    assert response.status_code == 303
+    assert "CVE-2026-0001" in (tmp_path / "kev.json").read_text()
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "security_data.updated"))
+    add_user("security-viewer", "Assessor")
+    viewer = new_client("security-viewer")
+    denied = viewer.post("/admin/configuration/security-data/kev", data={"csrf_token": csrf(viewer), "action": "refresh"})
+    assert denied.status_code == 403
+
+
 def test_login_and_http_cookie_mode():
     client = new_client()
     assert client.get("/").status_code == 200
@@ -376,6 +446,7 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     from app import main as portal_main
 
     client = new_client()
+    assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False).status_code == 303
     data = payload("remediation-source", datetime.now(timezone.utc), [])
     data["policy_findings"] = [{
         "finding": "KSV-allowPrivilegeEscalation", "severity": "High", "target": "Deployment/payments",
@@ -400,6 +471,160 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     report = client.get(location)
     assert report.status_code == 200
     assert "Before / After" in report.text and "Deployment validation" in report.text and "Review Required" in report.text
+    retry = client.post(location + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert retry.status_code == 303
+    with SessionLocal() as db:
+        newer = db.scalar(select(RemediationExecution).where(RemediationExecution.retry_of_id == job.id))
+        assert newer and newer.job_key != job.job_key and newer.output_mode == job.output_mode
+
+
+def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_history():
+    client = new_client()
+    with SessionLocal() as db:
+        db.add(Service(service_key="payments-service", name="Payments Service"))
+        db.commit()
+    assert "Enable Remediation" in client.get("/admin/configuration").text
+    page = client.get("/services/payments-service?remediations=true&tab=pipeline")
+    assert page.status_code == 200 and "Remediate Service" not in page.text
+    denied = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)})
+    assert denied.status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(RemediationExecution)) is None
+    enabled = client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False)
+    assert enabled.status_code == 303
+    assert "Remediate Service" in client.get("/services/payments-service?remediations=true&tab=pipeline").text
+    add_user("remediation-viewer", "Assessor")
+    viewer = new_client("remediation-viewer")
+    assert viewer.post("/services/payments-service/remediate", data={"csrf_token": csrf(viewer)}).status_code == 403
+    with SessionLocal() as db:
+        other = Service(service_key="other-service", name="Other Service")
+        db.add(other); db.commit(); other_id = other.id
+    add_user("other-manager", "Service Manager", service_id=other_id)
+    manager = new_client("other-manager")
+    assert manager.post("/services/payments-service/remediate", data={"csrf_token": csrf(manager)}).status_code == 403
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        db.add(RemediationExecution(job_key="R-CONCURRENT", service_id=service.id, requested_by_id=admin.id,
+                                    output_mode="publish", status="running", phase="patch_images"))
+        db.commit()
+    assert client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}).status_code == 409
+    assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client)}, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        assert db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == "R-CONCURRENT")).status == "running"
+    assert "R-CONCURRENT" in client.get("/services/payments-service?remediations=true&tab=pipeline").text
+    assert client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}).status_code == 403
+    with SessionLocal() as db:
+        assert db.scalar(select(AuditEvent).where(AuditEvent.action == "remediation.feature_toggled"))
+
+
+def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypatch):
+    from app import main as portal_main
+    from app.models import PortalSetting
+    from app import validator_client
+
+    client = new_client()
+    client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
+    data = payload("remediation-remote", datetime.now(timezone.utc), [])
+    data["helm_source_files"] = {
+        "Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
+        "values.yaml": "image: registry.internal/payments:1\n",
+        "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: {{ .Values.image }}\n",
+    }
+    data["service_overview"] = {"rendered_resources": [{
+        "apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "payments"},
+        "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
+                                  "values_file": "values.yaml", "values_key": ".Values.image", "ambiguous": False}],
+        "spec": {"template": {"spec": {"containers": [{"name": "payments", "image": "registry.internal/payments:1"}]}}},
+    }]}
+    assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        db.add(PortalSetting(key="validator_configuration", value='{"endpoint":"https://validator.internal"}'))
+        db.commit()
+
+    candidate = "registry.internal/remediated/payments@sha256:" + "a" * 64
+    def fake_patch(_db, _record, _service, plan):
+        for image in plan["images"]:
+            image.update(candidate=candidate, patch_status="PATCHED", classification="AUTO-REMEDIABLE",
+                         remediation_evidence={"sbom": "complete", "trivy": "complete", "dockle": "complete"})
+    def fake_static(candidate_dir, _payload, _plan, validation):
+        (candidate_dir / ".cats-rendered.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: " + candidate + "\n", encoding="utf-8")
+        validation["status"] = "PASS"
+        validation["checks"]["trivy_config_rescan"] = {"status": "PASS"}
+        validation["checks"]["vulnerability_rescan"] = {"status": "PASS"}
+        return validation
+    submitted = []
+    def fake_validate(_config, package):
+        submitted.append(package)
+        return {"status": "VERIFIED", "cleanup_status": "COMPLETE"}
+    monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
+    monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
+    monkeypatch.setattr(validator_client, "validate", fake_validate)
+    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert response.status_code == 303
+    assert submitted[0]["manifest"]["referenced_images"] == [candidate]
+    assert candidate in submitted[0]["artifact"]["source_files"]["values.yaml"]
+    assert "1.0.0-cats." in submitted[0]["artifact"]["source_files"]["Chart.yaml"]
+    monkeypatch.setattr(validator_client, "validate", lambda _config, _package: {"status": "FAILED", "cleanup_status": "COMPLETE"})
+    retry = client.post(response.headers["location"] + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert retry.status_code == 303
+    with SessionLocal() as db:
+        rerun = db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == retry.headers["location"].split("/")[-1]))
+        assert rerun.validation_results["deployment"]["status"] == "FAILED"
+        assert Path(rerun.artifact_path).is_file()
+
+
+def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(monkeypatch):
+    from app import main as portal_main
+    client = new_client()
+    client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
+    data = payload("remediation-bundle", datetime.now(timezone.utc), [])
+    data["helm_source_files"] = {"Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
+                                 "values.yaml": "image: registry.internal/payments:1\n"}
+    data["service_overview"] = {"rendered_resources": [{"apiVersion": "apps/v1", "kind": "Deployment",
+        "metadata": {"name": "payments"},
+        "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
+                                  "values_file": "values.yaml", "values_key": ".Values.image", "ambiguous": False}],
+        "spec": {"template": {"spec": {"containers": [{"name": "payments", "image": "registry.internal/payments:1"}]}}}}]}
+    assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
+    patch_key = "a" * 32
+    candidate = "registry.internal/remediated/payments:1"
+    output = portal_main.PATCH_JOB_ROOT / patch_key / "output"
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "patched-image.tar").write_bytes(b"archive")
+    (output / "grype-after.json").write_text('{"matches":[]}', encoding="utf-8")
+    (output / "remediated-sbom.json").write_text('{"artifacts":[]}', encoding="utf-8")
+    def fake_patch(_db, _record, _service, plan):
+        for image in plan["images"]:
+            image.update(candidate=candidate, digest="b" * 64, patch_job_id=patch_key,
+                         patch_status="PATCHED", classification="AUTO-REMEDIABLE",
+                         remediation_evidence={"sbom": "complete", "trivy": "complete", "dockle": "complete"})
+    def fake_static(candidate_dir, _payload, _plan, validation):
+        (candidate_dir / ".cats-rendered.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: " + candidate + "\n", encoding="utf-8")
+        validation["status"] = "PASS"
+        validation["checks"]["trivy_config_rescan"] = {"status": "PASS"}
+        validation["checks"]["vulnerability_rescan"] = {"status": "PASS"}
+        return validation
+    monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
+    monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
+    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client),
+        "output_mode": "bundle"}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        job = db.scalar(select(RemediationExecution))
+        assert job.output_mode == "bundle"
+        assert job.status in {"bundle_ready", "bundle_partial"}
+        with ZipFile(job.artifact_path) as bundle:
+            names = set(bundle.namelist())
+            assert {"manifest.json", f"images/{patch_key}.tar", f"scans/{patch_key}-grype-after.json",
+                    f"sbom/{patch_key}.json"} <= names
+            manifest = json.loads(bundle.read("manifest.json"))
+            assert manifest["images"][0]["remediated"] == candidate
+            assert "remediation-plan.yaml" not in names
 
 
 def test_administrator_can_save_oci_registry():

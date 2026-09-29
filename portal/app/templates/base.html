@@ -17,6 +17,7 @@
     {% if current_user %}
     <nav class="account-nav" aria-label="Primary navigation">
       <a href="/">Services</a>
+      <a class="{% if request.url.path.startswith('/cybersecurity') %}active{% endif %}" href="/cybersecurity">Cybersecurity</a>
       <a class="{% if request.url.path.startswith('/scan') %}active{% endif %}" href="/scan">Scan</a>
       <a class="{% if request.url.path.startswith('/sbom') %}active{% endif %}" href="/sbom">SBOM</a>
       <a href="/patch">Patch</a>

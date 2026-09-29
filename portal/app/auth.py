@@ -16,11 +16,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Form, HTTPException, Request, Response
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from .database import SessionLocal, get_db
-from .models import AuditEvent, Group, Role, Service, User, UserRoleAssignment, UserSession
+from .models import AuditEvent, Group, OidcClaimMapping, Role, Service, User, UserRoleAssignment, UserSession
 
 
 def oidc_enabled(mode: str | None = None) -> bool:
@@ -119,13 +119,20 @@ def oidc_exchange_code(code: str, configuration: dict | None = None, ca_bundle: 
     return tokens, discovery
 
 
-def verify_oidc_id_token(tokens: dict, discovery: dict, expected_nonce: str | None, configuration: dict | None = None) -> dict:
+def verify_oidc_id_token(tokens: dict, discovery: dict, expected_nonce: str | None, configuration: dict | None = None, ca_bundle: str | None = None) -> dict:
     if jwt is None:
         raise ValueError("OIDC support requires PyJWT; install the portal requirements")
     token = tokens.get("id_token")
     if not token:
         raise ValueError("OIDC token response did not include an ID token")
-    signing_key = jwt.PyJWKClient(discovery["jwks_uri"]).get_signing_key_from_jwt(token)
+    context = ssl.create_default_context()
+    if ca_bundle:
+        if "BEGIN CERTIFICATE" in ca_bundle:
+            context.load_verify_locations(cadata=ca_bundle)
+        else:
+            context.load_verify_locations(cafile=ca_bundle)
+    jwks_client = jwt.PyJWKClient(discovery["jwks_uri"], ssl_context=context) if ca_bundle else jwt.PyJWKClient(discovery["jwks_uri"])
+    signing_key = jwks_client.get_signing_key_from_jwt(token)
     config = oidc_configuration(configuration)
     # Some providers publish a browser-facing authority while server-side
     # discovery uses a private address. Both values are administrator-
@@ -150,7 +157,12 @@ def oidc_claim_values(claims: dict, path: str) -> list[str]:
     value = nested_claim(claims, path, [])
     if isinstance(value, str):
         return [value]
-    return [str(item) for item in value] if isinstance(value, list) else []
+    return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def matching_claim_mappings(claims: dict, mappings: list[OidcClaimMapping]) -> list[OidcClaimMapping]:
+    return [mapping for mapping in mappings if mapping.enabled and mapping.expected_value in oidc_claim_values(claims, mapping.claim_path)
+            and bool(mapping.global_scope or mapping.service_id or mapping.group_id)]
 
 
 def oidc_role_names(claims: dict, configuration: dict | None = None) -> list[str]:
@@ -182,17 +194,43 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
     user.external_subject = subject
     user.display_name = str(claims.get("name") or claims.get("email") or user.display_name)[:240]
     user.enabled = True
+    configured_mappings = db.scalars(select(OidcClaimMapping).order_by(OidcClaimMapping.id)).all()
+    # OIDC grants are a synchronized projection of the current token, not
+    # durable entitlements.  Remove the previous projection on every login,
+    # including deployments still using the environment-based compatibility
+    # mappings.  Locally managed assignments are intentionally preserved.
+    existing_oidc = db.scalars(select(UserRoleAssignment).where(
+        UserRoleAssignment.user_id == user.id, UserRoleAssignment.source == "oidc")).all()
+    for assignment in existing_oidc:
+        db.delete(assignment)
+    db.flush()
+    if configured_mappings:
+        desired = matching_claim_mappings(claims, configured_mappings)
+        assigned = set()
+        for mapping in desired:
+            if db.get(Role, mapping.role_id) is None:
+                continue
+            identity = (mapping.role_id, mapping.service_id, mapping.group_id, mapping.global_scope)
+            if identity in assigned:
+                continue
+            assigned.add(identity)
+            db.add(UserRoleAssignment(user_id=user.id, role_id=mapping.role_id,
+                service_id=mapping.service_id, group_id=mapping.group_id, source="oidc"))
+        db.flush()
+        if not assigned and not db.scalar(select(UserRoleAssignment.id).where(
+                UserRoleAssignment.user_id == user.id, UserRoleAssignment.source == "local")):
+            raise ValueError("OIDC claims did not map to a scoped CATS role")
+        return user
     role_by_name = {role.name.lower(): role for role in db.scalars(select(Role))}
     mapping = json.loads(os.getenv("CATS_OIDC_ROLE_MAP", "{}"))
     requested = [mapping.get(role, role) for role in oidc_role_names(claims, configuration)]
     default_role = os.getenv("CATS_OIDC_DEFAULT_ROLE", "").strip()
     if default_role:
         requested.append(default_role)
-    roles = [role_by_name[name.lower()] for name in requested if name.lower() in role_by_name]
-    if not roles:
-        raise ValueError("OIDC user did not map to a CATS role")
+    global_roles = [role_by_name[name.lower()] for name in requested if name.lower() in role_by_name]
     groups_by_name = {group.name.lower(): group for group in db.scalars(select(Group))}
     group_role_map = json.loads(os.getenv("CATS_OIDC_GROUP_ROLE_MAP", "{}"))
+    assigned = False
     for group_name in oidc_groups(claims, configuration):
         group = groups_by_name.get(group_name.lower())
         if not group:
@@ -203,13 +241,16 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
         role_name = group_role_map.get(group_name) or group_role_map.get(group.name) or os.getenv("CATS_OIDC_GROUP_DEFAULT_ROLE", "Service Manager")
         role = role_by_name.get(str(role_name).lower())
         if role:
-            roles.append(role)
             if not any(a.role_id == role.id and a.group_id == group.id for a in user.role_assignments):
-                db.add(UserRoleAssignment(user=user, role=role, group=group))
+                db.add(UserRoleAssignment(user=user, role=role, group=group, source="oidc"))
+            assigned = True
     existing_global = [a for a in user.role_assignments if a.group_id is None and a.service_id is None]
-    for role in set(roles):
+    for role in set(global_roles):
         if not any(a.role_id == role.id and a.group_id is None and a.service_id is None for a in existing_global):
-            db.add(UserRoleAssignment(user=user, role=role))
+            db.add(UserRoleAssignment(user=user, role=role, source="oidc"))
+        assigned = True
+    if not assigned:
+        raise ValueError("OIDC user did not map to a CATS role")
     db.flush()
     return user
 
@@ -235,6 +276,18 @@ PERMISSIONS = {
     "scan.ingest": "Ingest completed scans into scoped services",
     "evidence.remove": "Remove current missing-evidence observations",
     "remediation.execute": "Create and validate remediation candidates",
+    "template.view": "View export templates",
+    "template.manage": "Configure export templates globally",
+    "metadata.view": "View reusable service metadata",
+    "metadata.edit": "Edit reusable service metadata",
+    "ppsm.import": "Import service network inventory",
+    "ppsm.export": "Export service network inventory",
+    "poam.import": "Import service POA&M entries",
+    "poam.export": "Export service POA&M entries",
+    "assets.import": "Import service asset inventory",
+    "assets.export": "Export service asset inventory",
+    "bundle.import": "Import a service bundle",
+    "bundle.export": "Export a service bundle",
 }
 
 SYSTEM_ROLES = {
@@ -290,6 +343,13 @@ def token_hash(token: str) -> str:
 
 def seed_auth():
     with SessionLocal() as db:
+        # Schema DDL is serialized separately; seed rows also need a shared
+        # database lock when several portal workers start together.
+        dialect = db.get_bind().dialect.name
+        if dialect == "postgresql":
+            db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 485018035650})
+        elif dialect == "sqlite":
+            db.execute(text("BEGIN IMMEDIATE"))
         for name, permissions in SYSTEM_ROLES.items():
             role = db.scalar(select(Role).where(Role.name == name))
             if not role:
