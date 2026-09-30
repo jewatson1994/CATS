@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import definition_routes, main
+from app.oci_diagnostics import OciPullFailure
 
 
 DEFINITION = b"""services:
@@ -26,7 +27,7 @@ def test_public_scan_accepts_definition_and_preserves_mixed_inputs(monkeypatch, 
 
     def acquire(component, certificates):
         acquired.append(component)
-        return component["reference"], {}, component["chart_name"], component["version"]
+        return component["reference"], {}, component["chart_name"], component["version"], []
 
     monkeypatch.setattr(definition_routes, "acquire_component", acquire)
     monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append((args, kwargs)) or "test-job")
@@ -70,7 +71,7 @@ def test_public_scan_accepts_sibling_oci_fields(monkeypatch):
 
     def acquire(component, _certificates):
         acquired.append(component)
-        return component["reference"], {}, component["chart_name"], component["version"]
+        return component["reference"], {}, component["chart_name"], component["version"], []
 
     monkeypatch.setattr(definition_routes, "acquire_component", acquire)
     monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
@@ -103,6 +104,37 @@ def test_public_scan_reports_component_acquisition_failure(monkeypatch):
     assert "second :: OCI Helm charts require Helm in the scanner image" in response.text
 
 
+def test_public_scan_preserves_safe_oci_diagnostics_for_each_component(monkeypatch):
+    started = []
+
+    def acquire(component, _certificates):
+        if component["logical_name"] == "first":
+            raise OciPullFailure(component["reference"], exit_code=1,
+                                 stderr="unauthorized; Authorization: Bearer secret-token")
+        return component["reference"], {}, component["chart_name"], component["version"], []
+
+    monkeypatch.setattr(definition_routes, "acquire_component", acquire)
+    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
+    response = TestClient(main.app).post(
+        "/scan", files={"service_definition": ("catalog.yml", DEFINITION, "application/yaml")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert len(started[0]["definition_sources"]) == 1
+    skipped = started[0]["definition_skipped"][0]
+    assert "first :: OCI registry authentication required or denied" in skipped
+    assert "category=authentication_denied" in skipped
+    assert "Helm exit 1" in skipped
+    assert "reference=oci://registry.example.test/charts/first:1.2.3" in skipped
+    assert "secret-token" not in skipped
+
+
+def test_scan_page_exposes_skipped_chart_entries_safely():
+    template = (Path(__file__).parents[1] / "app" / "templates" / "self_service.html").read_text(encoding="utf-8")
+    assert 'data-skipped-chart-details' in template
+    assert 'item.textContent = entry' in template
+
+
 @pytest.mark.parametrize("filename,body,message", [
     ("catalog.txt", DEFINITION, "YAML or YML"),
     ("catalog.yaml", b"services: [", "YAML"),
@@ -133,9 +165,9 @@ def test_public_scan_isolates_unresolved_definition_component(monkeypatch):
     ociRepo: {url: 'oci://registry.example.test/charts/valid', repoName: valid, tag: 1.2.3}
   broken:
     sourceType: oci
-    ociRepo: {url: 'oci://registry.example.test/charts/broken', repoName: broken, tag: latest}
+    ociRepo: {url: 'oci://registry.example.test/charts/broken', repoName: broken, tag: '*'}
 """
-    monkeypatch.setattr(definition_routes, "acquire_component", lambda component, _: (component["reference"], {}, "valid", "1.2.3"))
+    monkeypatch.setattr(definition_routes, "acquire_component", lambda component, _: (component["reference"], {}, "valid", "1.2.3", []))
     monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
     response = TestClient(main.app).post(
         "/scan", files={"service_definition": ("catalog.yaml", definition, "application/yaml")},

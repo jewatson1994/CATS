@@ -21,6 +21,7 @@ class Service(Base):
     owner: Mapped[str | None] = mapped_column(String(240))
     poc: Mapped[str | None] = mapped_column(String(240))
     manual_version: Mapped[str | None] = mapped_column(String(120))
+    current_version_id: Mapped[int | None] = mapped_column(ForeignKey("service_versions.id", use_alter=True), index=True)
     assessment_status: Mapped[str] = mapped_column(String(32), default="assessment_pending")
     lifecycle_status: Mapped[str] = mapped_column(String(20), default="active", index=True)
     staging_original_name: Mapped[str | None] = mapped_column(String(240))
@@ -38,6 +39,21 @@ class Service(Base):
     images: Mapped[list["ServiceImage"]] = relationship(back_populates="service")
     artifacts: Mapped[list["ServiceArtifact"]] = relationship(back_populates="service")
     watchlist_matches: Mapped[list["DependencyWatchlistMatch"]] = relationship(back_populates="service")
+    versions: Mapped[list["ServiceVersion"]] = relationship(back_populates="service", foreign_keys="ServiceVersion.service_id", passive_deletes=True)
+    current_version: Mapped["ServiceVersion | None"] = relationship(foreign_keys=[current_version_id], post_update=True)
+
+
+class ServiceVersion(Base):
+    """Durable release identity shared by manual and pipeline scans."""
+
+    __tablename__ = "service_versions"
+    __table_args__ = (UniqueConstraint("service_id", "version", name="uq_service_version"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    version: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    service: Mapped[Service] = relationship(back_populates="versions", foreign_keys=[service_id])
+    executions: Mapped[list["Execution"]] = relationship(back_populates="service_version")
 
 
 class DependencyWatchlistEntry(Base):
@@ -86,6 +102,7 @@ class Group(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     description: Mapped[str] = mapped_column(Text, default="")
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     services: Mapped[list[Service]] = relationship(secondary="service_groups", back_populates="groups")
 
@@ -101,6 +118,7 @@ class Execution(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     execution_key: Mapped[str] = mapped_column(String(240), unique=True, index=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    service_version_id: Mapped[int | None] = mapped_column(ForeignKey("service_versions.id"), index=True)
     scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     complete: Mapped[bool] = mapped_column(Boolean)
     scan_scope: Mapped[str] = mapped_column(String(20), default="service", index=True)
@@ -110,6 +128,7 @@ class Execution(Base):
     scanner_db_built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[dict] = mapped_column(JSON)
     service: Mapped["Service"] = relationship(back_populates="executions")
+    service_version: Mapped["ServiceVersion | None"] = relationship(back_populates="executions")
     deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="execution")
 
 

@@ -35,5 +35,9 @@ def oci_pull_arguments(reference: str) -> list[str]:
     tail = reference.rsplit("/", 1)[-1]
     if ":" in tail:
         base, version = reference.rsplit(":", 1)
+        # OCI chart tags are chart versions, not a literal "latest" tag.
+        # Helm resolves the newest available version when --version is absent.
+        if version == "latest":
+            return [base]
         return [base, "--version", version]
     return [reference]

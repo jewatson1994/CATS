@@ -126,8 +126,13 @@ class TransferCoreTests(unittest.TestCase):
             with self.assertRaises(ValueError): t.safe_sources(sources, [])
 
     def test_every_domain_table_roundtrips_with_foreign_keys_enabled(self):
-        parents = {"services": self.service.id, "executions": self.execution.id, "users": self.user.id}
-        for model in t.MODELS[2:]:
+        version = m.ServiceVersion(service_id=self.service.id, version="1", created_at=self.now)
+        self.db.add(version); self.db.flush()
+        self.execution.service_version_id = version.id
+        self.service.current_version_id = version.id
+        parents = {"services": self.service.id, "service_versions": version.id,
+                   "executions": self.execution.id, "users": self.user.id}
+        for model in t.MODELS[3:]:
             values = {}
             for column in model.__table__.columns:
                 if column.name == "id" or column.nullable or column.default is not None:

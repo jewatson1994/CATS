@@ -1,0 +1,14 @@
+{% if can('service.export', view.service.id) %}
+<details class="actions-menu"><summary class="secondary-button">Export ▾</summary><div class="actions-menu-popover">
+  <a href="/services/{{ view.service.service_key }}/export.xlsx">All</a>
+  <hr>
+  <a href="/services/{{ view.service.service_key }}/exports/diagrams.zip">Diagrams</a>
+  <a href="/services/{{ view.service.service_key }}/exports/ppsm.xlsx">PPSM</a>
+  <a href="/services/{{ view.service.service_key }}/exports/poam.xlsx">POA&amp;M</a>
+  <a href="/services/{{ view.service.service_key }}/exports/mitigations.xlsx">Mitigations</a>
+  <a href="/services/{{ view.service.service_key }}/exports/asset_list.xlsx">Asset List</a>
+  <a href="/services/{{ view.service.service_key }}/exports/findings.xlsx">Findings</a>
+  <a href="/services/{{ view.service.service_key }}/exports/sbom.json">SBOM components</a>
+  {% if can('bundle.export', view.service.id) %}<hr><a href="/services/{{ view.service.service_key }}/bundle.zip">Portable Service Bundle</a>{% endif %}
+</div></details>
+{% endif %}

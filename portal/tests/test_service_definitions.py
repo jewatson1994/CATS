@@ -119,10 +119,16 @@ def test_credentials_not_exposed(url):
     assert 'secret' not in json.dumps(result)
 
 
-@pytest.mark.parametrize('version', ['latest', '*', '>=1.0', ''])
+@pytest.mark.parametrize('version', ['*', '>=1.0', ''])
 def test_exact_version_required(version):
     result = parse_definition(catalog().replace('v1.20.2', '"' + version + '"'))
     assert result['components'][0]['status'] == 'unresolved'
+
+
+def test_latest_is_a_normalized_helm_declaration():
+    result = parse_definition(catalog().replace('v1.20.2', 'latest'))
+    assert result['components'][0]['status'] == 'normalized'
+    assert result['components'][0]['version'] == 'latest'
 
 
 def test_alias_expansion_budget(monkeypatch):

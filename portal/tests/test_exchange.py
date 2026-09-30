@@ -44,6 +44,14 @@ def test_version_isolation_and_ui():
     client = new_client()
     seed(client)
     seed(client, "1.5", "CVE-NEW", 1)
+    for page in ("/services/payments-service?overview=true", "/services/payments-service?findings_view=raw", "/services/payments-service?findings_view=simplified"):
+        header = client.get(page)
+        assert header.status_code == 200
+        assert "Version:" in header.text
+        assert 'class="actions-menu version-menu"' in header.text
+        assert "/services/payments-service/history?version=1.4" in header.text
+        assert "/services/payments-service/history?version=1.5" in header.text
+        assert "Historical versions</a>" not in header.text
     with SessionLocal() as db:
         service = db.scalar(select(Service))
         _, rows = context_and_rows(db, service, "1.4", "poam", "admin")

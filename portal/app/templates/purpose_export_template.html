@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} export template · CATS{% endblock %}
+{% block content %}
+<a class="back" href="/admin/general-policy?group_id={{ group_id or '' }}">&larr; General Policy</a>
+<section class="heading"><div><p class="eyebrow">EXPORT TEMPLATES</p><h1>{{ name }}</h1>
+<p>Choose columns, set their Excel headings, and use the order controls to arrange them. Changes affect future downloads.</p></div></section>
+<section class="panel padded purpose-template-editor">
+{% if saved %}<p role="status" class="save-confirmation">Template saved.</p>{% endif %}
+<p>Policy: <strong>{{ mode|capitalize }}</strong> · Effective template: <strong>{{ source }}</strong></p>
+<form method="post" action="/admin/general-policy/export-templates/{{ kind }}?group_id={{ group_id or '' }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <div class="table-wrap"><table><thead><tr><th>Include</th><th>Field</th><th>Excel Heading</th><th>Order</th></tr></thead>
+  <tbody id="purpose-template-columns">
+  {% for column in columns %}<tr><td><label><input type="checkbox" name="enabled" value="{{ column.field }}" {% if column.enabled %}checked{% endif %}><span class="sr-only">Include {{ labels[column.field] }}</span></label></td>
+    <td>{{ labels[column.field] }}<input type="hidden" name="field" value="{{ column.field }}"></td>
+    <td><label><span class="sr-only">Excel heading for {{ labels[column.field] }}</span><input name="heading" maxlength="120" required value="{{ column.heading }}" data-default="{{ defaults[column.field] }}"></label><button type="button" class="button-secondary default-heading">Default heading</button></td>
+    <td><button type="button" class="button-secondary move-up" aria-label="Move {{ labels[column.field] }} up">↑</button> <button type="button" class="button-secondary move-down" aria-label="Move {{ labels[column.field] }} down">↓</button></td></tr>{% endfor %}
+  </tbody></table></div>
+  <div class="config-actions"><button type="submit">Save custom template{% if group_id %} for this group{% endif %}</button></div>
+</form>
+<form method="post" action="/admin/general-policy/export-templates/{{ kind }}/reset?group_id={{ group_id or '' }}" class="purpose-template-reset">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">{% if group_id %}<button type="submit" name="mode" value="inherit" class="button-secondary">Inherit parent</button> <button type="submit" name="mode" value="default" class="button-secondary">Use CATS Default</button>{% else %}<button type="submit" class="button-secondary">Restore built-in defaults</button>{% endif %}
+</form>
+</section>
+<script>
+document.getElementById('purpose-template-columns').addEventListener('click', event => {
+  const button = event.target.closest('button');
+  if (!button) return;
+  const row = button.closest('tr');
+  if (button.classList.contains('default-heading')) row.querySelector('input[name="heading"]').value = row.querySelector('input[name="heading"]').dataset.default;
+  if (button.classList.contains('move-up') && row.previousElementSibling) row.before(row.previousElementSibling);
+  if (button.classList.contains('move-down') && row.nextElementSibling) row.after(row.nextElementSibling);
+  button.focus();
+});
+</script>
+{% endblock %}

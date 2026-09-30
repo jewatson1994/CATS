@@ -178,8 +178,8 @@ def _component(name, entry, adapter):
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,239}', chart):
         output['reason'] = 'Invalid chart name'
         return output
-    if version.lower() == 'latest' or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.+-]{0,119}', version):
-        output['reason'] = 'An exact chart version or tag is required'
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.+-]{0,119}', version):
+        output['reason'] = 'A valid chart version or tag is required'
         return output
     try:
         parsed = urlsplit(repository)

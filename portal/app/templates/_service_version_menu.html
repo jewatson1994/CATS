@@ -1,0 +1,12 @@
+<span class="service-version">Version:
+  {% if view.version and view.version != 'Unknown' %}
+  <details class="actions-menu version-menu">
+    <summary aria-label="View historical versions for {{ view.service.name }}">{{ view.version }}</summary>
+    <div class="actions-menu-popover">
+      {% for item in history_versions if item != 'Unknown' %}
+      <a href="/services/{{ view.service.service_key }}/history?version={{ item|urlencode }}">{{ item }}</a>
+      {% endfor %}
+    </div>
+  </details>
+  {% else %}<span class="version-unknown">Unknown</span>{% endif %}
+</span>

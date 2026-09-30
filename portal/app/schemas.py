@@ -14,6 +14,14 @@ class ServicePayload(BaseModel):
     poc: str | None = None
     groups: list[str] = Field(default_factory=list)
 
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("Service version must be nonblank and contain no control characters")
+        return value
+
 
 class FindingPayload(BaseModel):
     cve: str
@@ -80,7 +88,13 @@ class ExecutionPayload(BaseModel):
     @field_validator("sbom_components")
     @classmethod
     def validate_sbom_components(cls, components: list[dict[str, str]]) -> list[dict[str, str]]:
-        allowed = {"name": 300, "version": 200, "ecosystem": 80, "purl": 700, "image": 1000}
+        allowed = {"name": 300, "version": 200, "ecosystem": 80, "purl": 700, "image": 1000,
+                   "image_digest": 180, "cpe": 700, "supplier": 300, "author": 300,
+                   "architecture": 120, "hashes": 1000, "copyright": 500,
+                   "license_declared": 500, "license_detected": 500,
+                   "license_expression": 500, "license_source": 120,
+                     "location": 1000, "sbom": 300, "dependency_parents": 1000,
+                     "dependency_children": 1000}
         for component in components:
             if any(key not in allowed or len(value) > allowed[key] for key, value in component.items()):
                 raise ValueError("SBOM component field is invalid or too long")

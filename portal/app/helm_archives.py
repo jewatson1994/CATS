@@ -21,10 +21,18 @@ def compressed_limit() -> int:
 
 def extract_chart(archive, filename: str, charts_dir: Path) -> None:
     stream = BytesIO(archive) if isinstance(archive, bytes) else archive
-    stream.seek(0, 2)
-    if stream.tell() > compressed_limit():
+    try:
+        stream.seek(0, 2)
+        archive_size = stream.tell()
+        stream.seek(0)
+        signature = stream.read(4)
+        stream.seek(0)
+    except (OSError, ValueError) as exc:
+        raise ValueError("Helm chart archive could not be read from the input stream") from exc
+    if not archive_size:
+        raise ValueError("Helm chart archive is empty")
+    if archive_size > compressed_limit():
         raise ValueError("Helm chart exceeds configured compressed archive limit")
-    stream.seek(0)
     expanded_limit = limit("CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES", 1024 * 1024 * 1024)
     member_limit = limit("CATS_PUBLIC_MAX_CHART_MEMBERS", 10000)
     charts_dir.mkdir(parents=True, exist_ok=True)
@@ -54,7 +62,7 @@ def extract_chart(archive, filename: str, charts_dir: Path) -> None:
     with tempfile.TemporaryDirectory(prefix=".chart-", dir=charts_dir.parent) as temporary:
         root = Path(temporary)
         try:
-            if filename.lower().endswith(".zip"):
+            if signature.startswith(b"PK\x03\x04") or filename.lower().endswith(".zip"):
                 with ZipFile(stream) as bundle:
                     for member in bundle.infolist():
                         path = validate(member.filename, member.file_size)
@@ -68,8 +76,11 @@ def extract_chart(archive, filename: str, charts_dir: Path) -> None:
                             target.parent.mkdir(parents=True, exist_ok=True)
                             with bundle.open(member) as source, target.open("wb") as output:
                                 shutil.copyfileobj(source, output, 1024 * 1024)
-            elif filename.lower().endswith((".tgz", ".tar.gz", ".tar")):
-                with tarfile.open(fileobj=stream, mode="r|*") as bundle:
+            elif signature.startswith(b"\x1f\x8b") or filename.lower().endswith((".tgz", ".tar.gz", ".tar")):
+                # The spool is seekable.  Python's streaming gzip reader does
+                # not handle every valid optional gzip header field (notably
+                # FEXTRA); the regular reader does.
+                with tarfile.open(fileobj=stream, mode="r:*") as bundle:
                     for member in bundle:
                         path = validate(member.name, member.size)
                         if not (member.isfile() or member.isdir()):
@@ -91,4 +102,10 @@ def extract_chart(archive, filename: str, charts_dir: Path) -> None:
             for item in root.iterdir():
                 shutil.move(str(item), str(destination / item.name))
         except (tarfile.TarError, BadZipFile, OSError, EOFError) as exc:
-            raise ValueError("Helm chart archive could not be read") from exc
+            if isinstance(exc, BadZipFile):
+                reason = "Helm chart ZIP archive is invalid or corrupt"
+            elif signature.startswith(b"\x1f\x8b"):
+                reason = "Helm chart gzip or tar data is invalid, corrupt, or unreadable"
+            else:
+                reason = "Helm chart tar archive is invalid, corrupt, or unreadable"
+            raise ValueError(reason) from exc

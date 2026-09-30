@@ -185,8 +185,7 @@ def history_page(service_key: str, request: Request, version: str = "", db=Depen
         ServiceTransferProvenance.service_id == service.id))
         for item in provenance.detail.get("historical_executions", [])]
     imported_versions = list(dict.fromkeys(str((item.get("raw_payload", item).get("service") or {}).get("version") or "Unknown") for item in imported))
-    local_versions = versions(db, service)
-    choices = list(dict.fromkeys(local_versions + imported_versions))
+    choices = history_version_choices(db, service, imported_versions)
     if not version and imported and not db.scalar(select(Execution.id).where(Execution.service_id == service.id).limit(1)):
         version = imported_versions[0]
     try:
@@ -218,9 +217,18 @@ def history_page(service_key: str, request: Request, version: str = "", db=Depen
         imported_snapshots=imported_snapshots))
 
 
-def page(request, auth, **values):
+def history_version_choices(db, service, imported_versions=None):
+    if imported_versions is None:
+        imported_versions = [str((item.get("raw_payload", item).get("service") or {}).get("version") or "Unknown")
+                             for provenance in db.scalars(select(ServiceTransferProvenance).where(
+                                 ServiceTransferProvenance.service_id == service.id))
+                             for item in provenance.detail.get("historical_executions", [])]
+    return list(dict.fromkeys(versions(db, service) + list(imported_versions)))
+
+
+def page(request, auth, status_code=200, **values):
     from .main import templates, page_context
-    return templates.TemplateResponse(request, "exchange.html", page_context(auth, **values))
+    return templates.TemplateResponse(request, "exchange.html", page_context(auth, **values), status_code=status_code)
 
 
 def service_for(db, auth, service_key, permission):
@@ -302,10 +310,14 @@ def preview_import(service_key: str, template: str, request: Request, version: s
     try:
         version, _ = selected_evidence(db, service, version)
         from .exchange_limits import workbook_bytes
-        preview = parse_workbook(upload.file.read(workbook_bytes() + 1), definition)
+        from .purpose_exports import import_heading_aliases
+        preview = parse_workbook(upload.file.read(workbook_bytes() + 1), definition,
+                                 import_heading_aliases(db, dataset, service))
         context, rows = context_and_rows(db, service, version, dataset, auth.user.username)
     except (ValueError, TypeError) as exc:
-        raise HTTPException(422, detail=str(exc)) from exc
+        return page(request, auth, status_code=422, service=service, version=version, versions=versions(db, service),
+            catalog=catalog(db), selected_template=template, definition=definition,
+            import_error=str(exc), metadata=None)
     from .exchange import record_key
     existing = {record_key(dataset, row): row for row in rows}
     preview["conflicts"] = [item["key"] for item in preview["rows"] if item["key"] in existing]

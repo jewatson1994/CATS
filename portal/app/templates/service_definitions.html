@@ -3,7 +3,7 @@
 {% block content %}
 <a class="back" href="/services/{{ service.service_key }}">&larr; {{ service.name }}</a>
 <section class="heading"><div><p class="eyebrow">{{ service.service_key }}</p><h1>Service definitions / chart catalogs</h1>
-<p>Upload a definition to preview every declared component. CATS retains the original, acquires exact chart versions, and scans each available chart. Singularity enabled values never change scan scope.</p></div></section>
+<p>Upload a definition to preview every declared component. CATS retains the original, resolves requested chart versions (including latest), and scans each acquired chart. Singularity enabled values never change scan scope.</p></div></section>
 {% if can('service.edit', service.id) %}
 <form method="post" enctype="multipart/form-data" action="/services/{{ service.service_key }}/definitions/preview">
   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -16,8 +16,8 @@
 <section><h2>Preview: {{ preview_filename }}</h2>
   <p>Adapter: {{ preview.adapter_label }} · Declared: {{ preview.counts.declared }} · Chart sources: {{ preview.counts.normalized }} · Unsupported: {{ preview.counts.unsupported }} · Unresolved: {{ preview.counts.unresolved }}</p>
   <form method="post" action="/services/{{ service.service_key }}/definitions/confirm/{{ preview_token }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button>Retain and process all components</button></form>
-  <table><thead><tr><th>Component</th><th>Source</th><th>Chart</th><th>Version</th><th>Status</th></tr></thead><tbody>
-  {% for component in preview.components %}<tr><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}</td><td>{{ component.version or '—' }}</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}</td></tr>{% endfor %}
+  <table><thead><tr><th>Component</th><th>Source</th><th>Chart</th><th>Requested Version</th><th>Resolved Version</th><th>Status</th></tr></thead><tbody>
+  {% for component in preview.components %}<tr><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}</td><td>{{ component.version or '—' }}</td><td>—</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}</td></tr>{% endfor %}
   </tbody></table>
 </section>
 {% endif %}
@@ -28,11 +28,17 @@
   {% if can('service.edit', service.id) %}<form method="post" action="/services/{{ service.service_key }}/definitions/{{ definition.id }}/reprocess"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit">Reprocess retained original</button></form>{% endif %}
   <label>Search components <input type="search" class="definition-search" placeholder="Name, chart or source"></label>
   <label>Filter <select class="definition-filter"><option value="all">All</option><option value="helm">Helm</option><option value="oci">OCI</option><option value="unsupported">Unsupported</option><option value="failed">Failed</option><option value="complete">Complete</option></select></label>
-  <table class="definition-components"><thead><tr><th>Component</th><th>Source</th><th>Chart / version</th><th>Status</th></tr></thead><tbody>
+  <table class="definition-components"><thead><tr><th>Component</th><th>Source</th><th>Chart</th><th>Requested Version</th><th>Resolved Version</th><th>Status</th></tr></thead><tbody>
   {% for component in definition.source_metadata.components %}
-  <tr data-type="{{ component.source_type }}" data-status="{{ component.status }}"><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}{% if component.version %} / {{ component.version }}{% endif %}</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}{% if component.scan_job_id %}<br><a href="/scan?job_id={{ component.scan_job_id }}">Scan {{ component.scan_job_id[:8] }}</a>{% endif %}</td></tr>
+  <tr data-type="{{ component.source_type }}" data-status="{{ component.status }}"><td>{{ component.logical_name }}</td><td>{{ component.source_type }}{% if component.repository %}<br><small>{{ component.repository }}</small>{% endif %}</td><td>{{ component.chart_name or '—' }}</td><td>{{ component.version or '—' }}</td><td>{{ component.resolved_version or '—' }}{% if component.chart_app_version %}<br><small>Chart appVersion: {{ component.chart_app_version }}</small>{% endif %}</td><td>{{ component.status }}{% if component.reason %}: {{ component.reason }}{% endif %}{% if component.acquisition_diagnostic %}<details><summary>Acquisition details</summary><small>Stage: {{ component.acquisition_diagnostic.acquisition_stage }}<br>Category: {{ component.acquisition_diagnostic.failure_category }}<br>Reference: {{ component.acquisition_diagnostic.attempted_reference }}<br>Helm exit: {{ component.acquisition_diagnostic.helm_exit_code if component.acquisition_diagnostic.helm_exit_code is not none else '—' }}<br>{{ component.acquisition_diagnostic.safe_stderr_summary or component.acquisition_diagnostic.safe_stdout_summary or '' }}</small></details>{% endif %}{% if component.scan_job_id %}<br><a href="/scan?job_id={{ component.scan_job_id }}">Scan {{ component.scan_job_id[:8] }} (rendered images)</a>{% endif %}</td></tr>
   {% endfor %}
   </tbody></table>
+  {% if definition.source_metadata.run_history %}<details><summary>Previous assessment runs ({{ definition.source_metadata.run_history|length }})</summary>
+    {% for run in definition.source_metadata.run_history %}<h4>Run {{ run.run_id[:8] }}</h4>
+    <table><thead><tr><th>Component</th><th>Requested Version</th><th>Resolved Version</th><th>Status</th></tr></thead><tbody>
+    {% for component in run.components %}<tr><td>{{ component.logical_name }}</td><td>{{ component.version or '—' }}</td><td>{{ component.resolved_version or '—' }}</td><td>{{ component.status }}</td></tr>{% endfor %}
+    </tbody></table>{% endfor %}
+  </details>{% endif %}
 </article>
 {% else %}<p>No retained definitions yet.</p>{% endfor %}
 </section>

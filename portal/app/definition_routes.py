@@ -8,10 +8,13 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select, update
+import yaml
 
 from .auth import require_user, record_audit
 from .database import SessionLocal, get_db
 from .models import BundlePreview, Service, ServiceArtifact, ServiceArtifactRevision, User
+from .helm_downloads import close_downloads
+from .oci_diagnostics import OciPullFailure
 from .service_definitions import DefinitionError, parse_definition
 
 router = APIRouter()
@@ -139,7 +142,10 @@ def definition_reprocess(service_key: str, artifact_id: int, csrf_token: str = F
         original = artifact.revisions[0].files
         parsed = parse_definition(next(iter(original.values())), (artifact.source_metadata or {}).get("adapter", "auto"))
         meta = dict(artifact.source_metadata or {})
-        meta.update(components=parsed["components"], counts=parsed["counts"], run_id=uuid.uuid4().hex)
+        history = list(meta.get("run_history") or [])
+        history.append({"run_id": meta.get("run_id"), "components": meta.get("components", [])})
+        meta.update(components=parsed["components"], counts=parsed["counts"],
+                    run_id=uuid.uuid4().hex, run_history=history)
         artifact.source_metadata = meta
         service.assessment_status = "assessment_pending"
         record_audit(db, auth, "definition.reprocess_requested", "service_artifact", artifact.id,
@@ -190,20 +196,42 @@ def acquire_component(component, certificates):
     if component["source_type"] == "helm":
         catalog = main._discover_helm_repository(component["repository"], certificates)
         entry = next((item for item in catalog.get("charts", []) if item.get("name") == component["chart_name"]), None)
-        version = next((v for v in (entry or {}).get("versions", []) if str(v.get("version")) == component["version"]), None)
-        if not version or not version.get("url"):
-            raise ValueError("Exact chart version is absent from repository catalog")
+        requested = component["version"]
+        version = ((entry or {}).get("latest") if requested == "latest" else
+                   next((v for v in (entry or {}).get("versions", []) if str(v.get("version")) == requested), None))
+        if not version or not version.get("url") or not version.get("version") or str(version["version"]) == "latest":
+            raise ValueError("Requested chart version is absent from repository catalog")
         source_url = version["url"]
+        expected_version = str(version.get("version") or "")
     else:
         source_url = component["reference"]
     archives = main._download_public_chart(source_url, certificates)
-    files, count = main._retained_helm_sources(archives)
-    actual_name, actual_version = main._chart_identity(files)
-    if count != 1 or actual_version != component["version"] or (
-        component["source_type"] == "helm" and actual_name != component["chart_name"]
-    ):
-        raise ValueError("Retrieved chart identity or exact version did not match the declaration")
-    return source_url, files, actual_name, actual_version
+    try:
+        files, count = main._retained_helm_sources(archives, preserve_archives=True)
+        actual_name, actual_version = main._chart_identity(files)
+        expected = expected_version if component["source_type"] == "helm" else component["version"]
+        if count != 1 or not actual_version or (expected != "latest" and actual_version != expected) or (
+            actual_name != component["chart_name"]
+        ):
+            raise ValueError("Retrieved chart identity or exact version did not match the declaration")
+        return source_url, files, actual_name, actual_version, archives
+    except BaseException:
+        close_downloads(archives)
+        raise
+
+
+def _chart_app_version(files):
+    """Retain chart application version separately from the Helm chart version."""
+    markers = [(name, data) for name, data in files.items()
+               if name.split("/")[-1] == "Chart.yaml" and
+               len(name.replace("\\", "/").strip("/").split("/")) <= 2]
+    if len(markers) != 1:
+        return None
+    try:
+        chart = yaml.safe_load(markers[0][1])
+    except (yaml.YAMLError, TypeError, UnicodeDecodeError):
+        return None
+    return str(chart.get("appVersion")) if isinstance(chart, dict) and chart.get("appVersion") is not None else None
 
 
 def process_definition(artifact_id, user_id):
@@ -222,12 +250,14 @@ def process_definition(artifact_id, user_id):
         if component.get("status") != "normalized":
             continue
         _status(artifact_id, run_id, index, "acquiring")
+        archives = []
         try:
             with SessionLocal() as db:
                 configuration = main.get_global_configuration(db)
                 certificates = main.parse_json(configuration.get("trusted_ca_certificates"), [])
                 certificates = certificates if isinstance(certificates, list) else []
-            source_url, files, actual_name, actual_version = acquire_component(component, certificates)
+            source_url, files, actual_name, actual_version, archives = acquire_component(component, certificates)
+            app_version = _chart_app_version(files)
             with SessionLocal() as db:
                 definition = db.get(ServiceArtifact, artifact_id)
                 if (definition.source_metadata or {}).get("run_id") != run_id:
@@ -242,7 +272,9 @@ def process_definition(artifact_id, user_id):
                         "definition_revision": definition.revisions[0].revision_number,
                         "component_index": index, "logical_name": component["logical_name"],
                         "declared_chart_name": component["chart_name"],
-                        "declared_version": component["version"]})
+                        "declared_version": component["version"],
+                        "resolved_version": actual_version, "chart_yaml_version": actual_version,
+                        "chart_app_version": app_version, "run_id": run_id})
                 db.add(chart); db.flush()
                 db.add(main._artifact_revision(files, artifact_id=chart.id, number=1,
                     label="ORIGINAL", user_id=user_id, source_metadata=chart.source_metadata))
@@ -255,15 +287,30 @@ def process_definition(artifact_id, user_id):
                                  component_index=index, chart_version=actual_version)
                 chart_id = chart.id
                 db.commit()
-            _status(artifact_id, run_id, index, "scanning", chart_artifact_id=chart_id)
-            scan_archives = main._download_public_chart(source_url, certificates)
-            job_id = main._start_public_scan("", chart_archives=scan_archives,
+            _status(artifact_id, run_id, index, "scanning", chart_artifact_id=chart_id,
+                    resolved_version=actual_version, chart_yaml_version=actual_version,
+                    chart_app_version=app_version)
+            for archive, _ in archives:
+                if hasattr(archive, "seek"):
+                    archive.seek(0)
+            job_id = main._start_public_scan("", chart_archives=archives,
                 ingest_service_id=service_key, trusted_ca_certificates=certificates,
                 definition_context={"artifact_id": artifact_id, "run_id": run_id,
                                     "index": index, "chart_artifact_id": chart_id})
             _status(artifact_id, run_id, index, "scanning", chart_artifact_id=chart_id, scan_job_id=job_id)
         except Exception as exc:
-            # Source URL, worker command and private credentials are never copied into UI or audit.
-            category = "acquisition_failed" if not isinstance(exc, HTTPException) else "acquisition_failed"
-            reason = str(exc) if isinstance(exc, ValueError) and str(exc).startswith(("Exact chart", "Retrieved chart")) else type(exc).__name__
-            _status(artifact_id, run_id, index, category, reason)
+            # Only fixed, classified text reaches retained metadata or the UI.
+            if isinstance(exc, OciPullFailure):
+                _status(artifact_id, run_id, index, "acquisition_failed", exc.detail,
+                        acquisition_diagnostic=exc.diagnostic)
+            else:
+                reason = (str(exc) if isinstance(exc, ValueError) and
+                          str(exc).startswith(("Requested chart", "Retrieved chart")) else
+                          "Chart acquisition failed")
+                _status(artifact_id, run_id, index, "acquisition_failed", reason,
+                        acquisition_diagnostic={
+                            "attempted_reference": component.get("reference"),
+                            "acquisition_stage": "chart_acquisition",
+                            "failure_category": "unknown_acquisition_failure"})
+        finally:
+            close_downloads(archives)
