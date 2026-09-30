@@ -4,6 +4,13 @@
 # Supply the environment-specific CatScan image at build time. The local
 # default avoids embedding any registry hostname in the image definition.
 ARG CATSCAN_BASE_IMAGE=catscan-base:local
+FROM node:24.19.0-alpine AS frontend
+WORKDIR /build/frontend
+COPY portal/frontend/package.json portal/frontend/pnpm-lock.yaml portal/frontend/pnpm-workspace.yaml ./
+RUN npm install --global pnpm@11.19.0 && pnpm install --frozen-lockfile
+COPY portal/frontend/ ./
+RUN pnpm build
+
 FROM ${CATSCAN_BASE_IMAGE}
 
 ARG CATS_VERSION=""
@@ -50,6 +57,7 @@ RUN sed -i 's/^psycopg\[binary\]==/psycopg==/' /tmp/cats-portal-requirements.txt
     && rm -f /tmp/cats-portal-requirements.txt
 
 COPY portal/app ./app
+COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 COPY cats-image/policy /app/policy
 COPY scanning-main/scripts /opt/cats/scanning/scripts
 COPY cats-scanner/catscan-validate-offline-release /usr/local/bin/catscan-validate-offline-release

@@ -33,7 +33,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.templating import Jinja2Templates
+from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true
 from sqlalchemy.exc import IntegrityError
