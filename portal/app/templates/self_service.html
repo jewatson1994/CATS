@@ -23,6 +23,10 @@
     {% if authenticated_ingest %}
     <label for="ingest-service">Ingest completed scan into <span class="muted">(only services within your role, group, and service scope)</span></label>
     <select id="ingest-service" name="ingest_service_id"><option value="">Do not ingest (temporary results only)</option>{% for service in authenticated_services %}<option value="{{ service.service_key }}"{% if service.service_key == ingest_service_id %} selected{% endif %}>{{ service.name }} ({{ service.service_key }})</option>{% endfor %}</select>
+    <label for="ingest-service-version">Service Version <span class="muted">(select an existing version or enter a new one)</span></label>
+    <input id="ingest-service-version" name="ingest_service_version" list="ingest-version-options" maxlength="120" value="{{ ingest_service_version or '' }}" autocomplete="off">
+    <datalist id="ingest-version-options"></datalist>
+    <script type="application/json" id="ingest-version-data">{{ service_version_options | tojson }}</script>
     {% endif %}
     {% endif %}
     {% if mode == 'sbom' %}
@@ -50,6 +54,7 @@
       {% endfor %}
     </div>
     <p class="muted self-service-status" data-job-status><span data-job-status-text>{{ status_message or ('Waiting for SBOM worker…' if mode == 'sbom' else 'Waiting for scan worker…') }}</span><span data-job-elapsed data-elapsed-time data-started-at="{{ job.started_at or '' }}" data-finished-at="{{ job.finished_at or '' }}" data-status="{{ job.status or '' }}"></span></p>
+    {% if mode == 'scan' %}<details data-skipped-chart-details hidden><summary>Charts not acquired</summary><ul data-skipped-chart-list></ul></details>{% endif %}
     <div class="scan-result-actions" data-job-actions hidden>{% if mode == 'scan' %}<a class="secondary-button is-disabled" data-html-link aria-disabled="true" tabindex="-1">Open HTML overview</a><a class="secondary-button is-disabled" data-results-link aria-disabled="true" tabindex="-1">Detailed results</a><a class="secondary-button is-disabled" data-excel-link aria-disabled="true" tabindex="-1">Download Excel</a>{% endif %}<a class="secondary-button is-disabled" data-artifacts-link aria-disabled="true" tabindex="-1">{{ 'Download SBOMs' if mode == 'sbom' else 'Download artifacts' }}</a><a class="secondary-button is-disabled" data-logs-link aria-disabled="true" tabindex="-1">View debug log</a></div>
     <div class="scan-result-actions" data-cancel-actions hidden><button type="button" class="secondary-button" data-cancel-scan>Cancel scan</button></div>
   </div>
@@ -60,6 +65,27 @@
   const form = document.querySelector('.self-service-form');
   const button = form?.querySelector('[data-start-scan]');
   if (!form || !button) return;
+  const serviceSelect = form.querySelector('#ingest-service');
+  const versionInput = form.querySelector('#ingest-service-version');
+  const versionOptions = form.querySelector('#ingest-version-options');
+  const versionData = document.querySelector('#ingest-version-data');
+  if (serviceSelect && versionInput && versionOptions && versionData) {
+    const versions = JSON.parse(versionData.textContent || '{}');
+    const refreshVersions = () => {
+      versionOptions.replaceChildren(...(versions[serviceSelect.value] || []).map(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        return option;
+      }));
+      versionInput.required = Boolean(serviceSelect.value);
+      versionInput.disabled = !serviceSelect.value;
+    };
+    serviceSelect.addEventListener('change', () => {
+      versionInput.value = '';
+      refreshVersions();
+    });
+    refreshVersions();
+  }
   form.addEventListener('submit', () => {
     if (button.disabled) return;
     button.disabled = true;
@@ -86,6 +112,8 @@
   const artifactLink = root.querySelector('[data-artifacts-link]');
   const excelLink = root.querySelector('[data-excel-link]');
   const logsLink = root.querySelector('[data-logs-link]');
+  const skippedDetails = root.querySelector('[data-skipped-chart-details]');
+  const skippedList = root.querySelector('[data-skipped-chart-list]');
   const jobKind = {{ mode|tojson }};
   const ingestServiceId = {{ ingest_service_id|tojson }};
   let ingestStarted = false;
@@ -104,6 +132,15 @@
       const response = await fetch(`/api/public/jobs/${jobId}`, {headers:{Accept:'application/json'}});
       if (!response.ok) throw new Error('status request failed');
       const job = await response.json();
+      if (skippedDetails && skippedList) {
+        const entries = Array.isArray(job.skipped_charts) ? job.skipped_charts : [];
+        skippedDetails.hidden = entries.length === 0;
+        skippedList.replaceChildren(...entries.map((entry) => {
+          const item = document.createElement('li');
+          item.textContent = entry;
+          return item;
+        }));
+      }
       const current = job.phase || 'queued';
       const order = {{ progress_order|tojson }};
       const currentIndex = order.indexOf(current);

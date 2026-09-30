@@ -28,9 +28,11 @@ from typing import Any
 from zoneinfo import ZoneInfo, available_timezones
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true
@@ -53,7 +55,7 @@ from .auth import (
     provision_oidc_user, verify_oidc_id_token,
 )
 from .models import (
-    ExceptionRecord, Execution, Finding, FindingObservation, PolicyFinding,
+    ExceptionRecord, Execution, Finding, FindingObservation, PolicyFinding, ServiceVersion,
     PolicyExceptionRecord, Service, Group,
     ServiceArchiveEvent, ServiceDeletionAudit, ServiceImage, User, UserSession, Role,
     UserRoleAssignment, WorkflowRequest, AuditEvent, PortalSetting, PoamEntry,
@@ -74,6 +76,7 @@ from .schemas import ExecutionPayload
 from .policy_data import epss_scores, kev_cves, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
+from .purpose_exports import CATALOG as PURPOSE_CATALOG, NAMES as PURPOSE_NAMES, default_template as purpose_default_template, template_for as purpose_template_for, template_policy as purpose_template_policy, template_for_service as purpose_template_for_service, policy_key as purpose_policy_key, validate_template as validate_purpose_template, setting_key as purpose_setting_key, workbook_for as purpose_workbook_for
 from .helm_diagram import build_helm_diagram
 from .architecture import build_architecture_graph
 from .architecture_evidence import architecture_summary_json, architecture_verification
@@ -101,6 +104,49 @@ from .preview_cleanup import preview_cleanup_lifespan
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection)
     upgrade_connection(connection)
+    if "current_version_id" not in {column["name"] for column in inspect(connection).get_columns("services")}:
+        connection.execute(text("ALTER TABLE services ADD COLUMN current_version_id INTEGER REFERENCES service_versions(id)"))
+    if "service_version_id" not in {column["name"] for column in inspect(connection).get_columns("executions")}:
+        connection.execute(text("ALTER TABLE executions ADD COLUMN service_version_id INTEGER REFERENCES service_versions(id)"))
+    # Legacy evidence keeps its recorded release when one exists. A missing or
+    # fabricated Unknown release is explicitly unversioned, never guessed.
+    for legacy in connection.execute(text(
+        "SELECT id, service_id, raw_payload FROM executions WHERE service_version_id IS NULL ORDER BY id"
+    )).mappings():
+        raw = legacy["raw_payload"]
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except (TypeError, ValueError):
+                raw = {}
+        service_data = raw.get("service") if isinstance(raw, dict) else None
+        recorded = str((service_data or {}).get("version") or "").strip() if isinstance(service_data, dict) else ""
+        version_label = recorded if recorded and recorded.lower() != "unknown" else "Unversioned"
+        version_id = connection.execute(text(
+            "SELECT id FROM service_versions WHERE service_id = :service_id AND version = :version"
+        ), {"service_id": legacy["service_id"], "version": version_label}).scalar_one_or_none()
+        if version_id is None:
+            version_id = connection.execute(text(
+                "INSERT INTO service_versions (service_id, version, created_at) "
+                "VALUES (:service_id, :version, :created_at) RETURNING id"
+            ), {"service_id": legacy["service_id"], "version": version_label,
+                "created_at": datetime.now(timezone.utc)}).scalar_one()
+        connection.execute(text(
+            "UPDATE executions SET service_version_id = :version_id WHERE id = :id"
+        ), {"version_id": version_id, "id": legacy["id"]})
+    for service_row in connection.execute(text(
+        "SELECT id, manual_version FROM services WHERE current_version_id IS NULL"
+    )).mappings():
+        latest = connection.execute(text(
+            "SELECT service_version_id FROM executions WHERE service_id = :service_id "
+            "AND complete = TRUE AND scan_scope = 'service' AND service_version_id IS NOT NULL "
+            "ORDER BY scanned_at DESC, id DESC LIMIT 1"
+        ), {"service_id": service_row["id"]}).scalar_one_or_none()
+        if latest is not None:
+            connection.execute(text("UPDATE services SET current_version_id = :version_id WHERE id = :id"),
+                               {"version_id": latest, "id": service_row["id"]})
+    if "parent_id" not in {column["name"] for column in inspect(connection).get_columns("groups")}:
+        connection.execute(text("ALTER TABLE groups ADD COLUMN parent_id INTEGER REFERENCES groups(id)"))
     if "poc" not in {column["name"] for column in inspect(connection).get_columns("services") }:
         connection.execute(text("ALTER TABLE services ADD COLUMN poc VARCHAR(240)"))
     if "manual_version" not in {column["name"] for column in inspect(connection).get_columns("services") }:
@@ -283,6 +329,42 @@ root = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=root / "static"), name="static")
 templates = Jinja2Templates(directory=root / "templates")
 templates.env.globals["cats_deployed_version"] = deployed_version()
+
+
+def _api_error_request(request: Request) -> bool:
+    return request.url.path.startswith("/api/") or (
+        "application/json" in request.headers.get("accept", "")
+        and "text/html" not in request.headers.get("accept", "")
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def expected_http_error(request: Request, exc: StarletteHTTPException):
+    if _api_error_request(request):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+    descriptions = {403: "You do not have permission to access this page or perform this action.",
+                    404: "The requested page or item was not found."}
+    detail = descriptions.get(exc.status_code, str(exc.detail) if isinstance(exc.detail, str) else "The request could not be completed.")
+    return templates.TemplateResponse(request, "request_error.html",
+                                      {"detail": detail, "home_url": request.url_for("dashboard")},
+                                      status_code=exc.status_code, headers=exc.headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def expected_validation_error(request: Request, exc: RequestValidationError):
+    if _api_error_request(request):
+        return JSONResponse({"detail": jsonable_encoder(exc.errors())}, status_code=422)
+    return templates.TemplateResponse(request, "request_error.html",
+                                      {"detail": "Please check the submitted fields and try again.",
+                                       "home_url": request.url_for("dashboard")}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception):
+    logging.getLogger("cats.portal").exception("Unexpected request failure", exc_info=exc)
+    if _api_error_request(request):
+        return JSONResponse({"detail": "Something went wrong while processing your request."}, status_code=500)
+    return templates.TemplateResponse(request, "boozled.html", {"home_url": request.url_for("dashboard")}, status_code=500)
 
 # Public scan jobs are deliberately ephemeral. The worker writes only to a
 # temporary job directory and the in-memory index is lost on process restart.
@@ -1339,9 +1421,11 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         elif exception and now < aware(exception.expires_at) <= warning_cutoff:
             warning_items.append({"type": "Exception", "item": finding.cve, "reason": "Exception expires soon", "due": aware(exception.expires_at),
                                   "href": f"/services/{service.service_key}/findings/{finding.id}"})
-    last_execution = max((aware(e.scanned_at) for e in service.executions), default=None)
-    latest_execution = max(service.executions, key=lambda e: aware(e.scanned_at), default=None)
-    version = service.manual_version or (latest_execution.raw_payload.get("service", {}).get("version") if latest_execution else None)
+    current_executions = [e for e in service.executions if
+                          service.current_version_id is None or e.service_version_id == service.current_version_id]
+    last_execution = max((aware(e.scanned_at) for e in current_executions), default=None)
+    latest_execution = max(current_executions, key=lambda e: (aware(e.scanned_at), e.id), default=None)
+    version = (service.current_version.version if service.current_version else None) or service.manual_version or (latest_execution.raw_payload.get("service", {}).get("version") if latest_execution else None)
     skipped_images = latest_execution.raw_payload.get("skipped_images", []) if latest_execution else []
     skipped_charts = latest_execution.raw_payload.get("skipped_charts", []) if latest_execution else []
     policy_active_all = [finding for finding in service.policy_findings if finding.active]
@@ -2453,12 +2537,58 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
          and configuration.get("skipped_images_incomplete", "true") == "true")
         or bool(payload.skipped_charts)
     )
-    if effective_complete and scan_scope == "service":
+    incoming_version = payload.service.version.strip()
+    version_label = incoming_version if incoming_version.lower() != "unknown" else "Unversioned"
+    service_version = db.scalar(select(ServiceVersion).where(
+        ServiceVersion.service_id == service.id, ServiceVersion.version == version_label,
+    ))
+    version_created = service_version is None
+    if service_version is None:
+        service_version = ServiceVersion(service_id=service.id, version=version_label)
+        db.add(service_version)
+        db.flush()
+        db.add(AuditEvent(action="service.version_created", target_type="service_version",
+                          target_id=str(service_version.id),
+                          detail={"service_id": service.id, "version": version_label}))
+    previous_current_version_id = service.current_version_id
+    current_version_execution = db.scalar(select(Execution).where(
+        Execution.service_id == service.id,
+        Execution.service_version_id == previous_current_version_id,
+        Execution.complete.is_(True),
+        Execution.scan_scope == "service",
+    ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if previous_current_version_id else None
+    # A delayed upload of an older release is historical evidence, even when
+    # that release has never been seen before. Arrival order is not release order.
+    may_promote = (
+        previous_current_version_id is None
+        or previous_current_version_id == service_version.id
+        or (version_created and (
+            current_version_execution is None
+            or aware(payload.scanned_at) > aware(current_version_execution.scanned_at)
+        ))
+    )
+    if effective_complete and scan_scope == "service" and may_promote:
+        service.current_version_id = service_version.id
+        if previous_current_version_id != service_version.id:
+            db.add(AuditEvent(action="service.current_version_changed", target_type="service",
+                              target_id=str(service.id), detail={"previous_version_id": previous_current_version_id,
+                                                                "version_id": service_version.id,
+                                                                "version": version_label}))
+    # Keep an out-of-order scan as evidence without rolling back the current
+    # release's reconciled posture. This applies within a version as well as
+    # across versions.
+    current_ingest = (
+        service.current_version_id == service_version.id
+        and (current_version_execution is None
+             or aware(payload.scanned_at) >= aware(current_version_execution.scanned_at))
+    )
+    if effective_complete and scan_scope == "service" and current_ingest:
         service.assessment_status = "assessed"
     if payload.helm_source_files and isinstance(payload.service_overview, dict):
         _enrich_values_source_mappings({"service_overview": payload.service_overview}, payload.helm_source_files)
     execution = Execution(
-        execution_key=payload.execution_id, service=service, scanned_at=payload.scanned_at,
+        execution_key=payload.execution_id, service=service, service_version=service_version,
+        scanned_at=payload.scanned_at,
         complete=effective_complete, scan_scope=scan_scope, scope_image=scope_image,
         pipeline_url=payload.pipeline_url,
         commit_sha=payload.commit_sha, scanner_db_built_at=payload.scanner_db_built_at,
@@ -2481,6 +2611,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     image_cache: dict[tuple[str, str | None], ServiceImage | None] = {}
 
     def ensure_ingest_image(reference: str | None, digest: str | None = None) -> ServiceImage | None:
+        if not current_ingest:
+            return None
         identity = _image_identity(reference, digest)
         if identity not in image_cache:
             image_cache[identity] = _ensure_service_image(db, service, reference, digest)
@@ -2492,16 +2624,17 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         if not finding:
             finding = Finding(service=service, cve=item.cve, severity=item.severity,
                               first_seen=payload.scanned_at, episode_started=payload.scanned_at,
-                              last_seen=payload.scanned_at, active=True)
+                              last_seen=payload.scanned_at, active=current_ingest)
             db.add(finding)
             finding_by_cve[item.cve] = finding
-        elif not finding.active:
+        elif current_ingest and not finding.active:
             finding.active = True
             finding.episode_started = payload.scanned_at
             finding.resolved_at = None
             finding.recurrence_count += 1
-        finding.last_seen = payload.scanned_at
-        finding.severity = item.severity
+        if current_ingest:
+            finding.last_seen = payload.scanned_at
+            finding.severity = item.severity
         evidence = dict(item.evidence or {})
         evidence.setdefault("kev", item.kev)
         if item.epss is not None:
@@ -2529,7 +2662,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             if version and version != "—":
                 reference = f"{reference}:{version}"
             ensure_ingest_image(reference, artifact.get("digest"))
-    if effective_complete:
+    if effective_complete and current_ingest:
         if scan_scope == "image":
             ensure_ingest_image(scope_image)
             _reconcile_image_scope(db, service, scope_image or "", observed, payload.scanned_at)
@@ -2538,7 +2671,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
                 if finding.cve not in observed:
                     finding.active = False
                     finding.resolved_at = payload.scanned_at
-    sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at, effective_complete)
+    if current_ingest:
+        sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at, effective_complete)
     for image in db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all():
         if image.id not in known_service_image_ids:
             db.add(AuditEvent(
@@ -2598,7 +2732,7 @@ def public_home(request: Request, auth: AuthContext | None = Depends(optional_us
     })
 
 
-def self_service_context(request: Request, mode: str, image_list: str = "", chart_url: str = "", status_message: str | None = None, job_id: str | None = None, auth: AuthContext | None = None, services: list[Service] | None = None, ingest_service_id: str = "", archive_names: list[str] | None = None, sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5"):
+def self_service_context(request: Request, mode: str, image_list: str = "", chart_url: str = "", status_message: str | None = None, job_id: str | None = None, auth: AuthContext | None = None, services: list[Service] | None = None, ingest_service_id: str = "", archive_names: list[str] | None = None, sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", ingest_service_version: str = ""):
     with PUBLIC_JOB_LOCK:
         job_snapshot = dict(PUBLIC_JOBS.get(job_id, {})) if job_id else {}
     descriptions = {
@@ -2617,7 +2751,10 @@ def self_service_context(request: Request, mode: str, image_list: str = "", char
         "mode": mode, "description": descriptions[mode], "image_list": image_list, "chart_url": chart_url,
         "archive_names": archive_names or [],
         "authenticated_services": services or [], "authenticated_ingest": bool(auth and auth.accessible_service_ids("scan.ingest") != set()),
+        "service_version_options": {service.service_key: [version.version for version in service.versions]
+                                    for service in (services or [])},
         "ingest_service_id": ingest_service_id,
+        "ingest_service_version": ingest_service_version,
         "status_message": status_message, "job_id": job_id, "job": job_snapshot,
         "sbom_output_formats": SBOM_OUTPUT_FORMATS,
         "selected_sbom_formats": sbom_formats or ["cyclonedx-json"],
@@ -2653,14 +2790,14 @@ def _safe_chart_member(name: str) -> bool:
     return bool(normalized) and not normalized.startswith("/") and ".." not in normalized.split("/")
 
 
-def _stage_public_chart(input_dir: Path, archive: bytes, filename: str) -> None:
+def _stage_public_chart(input_dir: Path, archive: bytes, filename: str, *, close_archive: bool = True) -> None:
     """Extract one uploaded Helm archive into the ephemeral charts directory."""
     try:
         extract_chart(archive, filename or "chart.tgz", input_dir / "charts")
     except ValueError as exc:
         raise HTTPException(status_code=413 if "exceeds configured" in str(exc) else 400, detail=str(exc)) from exc
     finally:
-        if isinstance(archive, DownloadedChart):
+        if close_archive and isinstance(archive, DownloadedChart):
             archive.close()
 
 
@@ -2713,9 +2850,10 @@ def _fetch_public_url(url: str, certificates: list[dict] | None = None) -> tuple
 
 def _download_oci_chart(reference: str, certificates: list[dict] | None = None) -> list[tuple[DownloadedChart, str]]:
     """Pull one public OCI Helm chart using the bundled Helm executable."""
+    from .oci_diagnostics import OciPullFailure
     helm = shutil.which("helm") or "/usr/local/bin/helm"
     if not Path(helm).exists() and shutil.which(helm) is None:
-        raise HTTPException(status_code=400, detail="OCI Helm charts require Helm in the scanner image")
+        raise OciPullFailure(reference, category="helm_execution_failure")
     max_bytes = compressed_limit()
     output = []
     try:
@@ -2732,16 +2870,9 @@ def _download_oci_chart(reference: str, certificates: list[dict] | None = None) 
                 )
             check_space(destination)
             if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "").casefold()
-                if any(term in detail for term in ("unauthorized", "authentication required", "denied")):
-                    message = "OCI Helm authentication failed"
-                elif any(term in detail for term in ("certificate", "x509", "tls")):
-                    message = "OCI Helm TLS certificate verification failed. Configure the issuing CA in CATS Trusted CA settings if this source is authorized."
-                elif "timeout" in detail or "timed out" in detail:
-                    message = "OCI Helm acquisition timed out"
-                else:
-                    message = "OCI Helm chart could not be pulled"
-                raise HTTPException(status_code=400, detail=message)
+                raise OciPullFailure(reference, exit_code=result.returncode,
+                                     stderr=result.stderr or "", stdout=result.stdout or "",
+                                     ca_file_used=bool(ca_file))
             archives = sorted(Path(destination).glob("*.tgz")) + sorted(Path(destination).glob("*.tar.gz"))
             if not archives:
                 raise HTTPException(status_code=400, detail="Helm did not produce an OCI chart archive")
@@ -2757,10 +2888,11 @@ def _download_oci_chart(reference: str, certificates: list[dict] | None = None) 
         raise
     except subprocess.TimeoutExpired as exc:
         close_downloads(output)
-        raise HTTPException(status_code=408, detail="OCI Helm acquisition timed out") from exc
+        raise OciPullFailure(reference, category="timeout") from exc
     except (OSError, subprocess.SubprocessError) as exc:
         close_downloads(output)
-        raise HTTPException(status_code=400, detail="OCI Helm chart could not be pulled") from exc
+        raise OciPullFailure(reference, category="helm_execution_failure" if isinstance(exc, OSError)
+                             else "unknown_acquisition_failure") from exc
     except BaseException:
         close_downloads(output)
         raise
@@ -2779,7 +2911,9 @@ def _download_public_chart(url: str, certificates: list[dict] | None = None) -> 
     fetch_url = urllib.parse.urlunparse(parsed._replace(fragment=""))
     data, final_url = _fetch_public_stream(fetch_url, certificates)
     final_path = urllib.parse.urlparse(final_url).path.lower()
-    if final_path.endswith((".tgz", ".tar.gz", ".tar", ".zip")):
+    signature = data.read(4)
+    data.seek(0)
+    if final_path.endswith((".tgz", ".tar.gz", ".tar", ".zip")) or signature.startswith((b"\x1f\x8b", b"PK\x03\x04")):
         return [(data, Path(final_path).name or "chart.tgz")]
 
     try:
@@ -3015,6 +3149,15 @@ def _public_chart_skip_entry(source: str, error: object) -> str:
     worker.  Keep the source first so it remains useful even when the error
     text is abbreviated.
     """
+    from .oci_diagnostics import OciPullFailure
+
+    if isinstance(error, OciPullFailure):
+        diagnostic = error.diagnostic
+        exit_code = diagnostic["helm_exit_code"]
+        exit_detail = f"; Helm exit {exit_code}" if exit_code is not None else ""
+        detail = (f"{error.detail} [category={diagnostic['failure_category']}"
+                  f"{exit_detail}; reference={diagnostic['attempted_reference']}]")
+        return f"{source} :: {detail}"
     detail = str(getattr(error, "detail", error)).strip().replace("\r", " ").replace("\n", " ")
     return f"{source} :: {detail[-500:] or 'chart could not be retrieved'}"
 
@@ -3042,15 +3185,16 @@ def _collect_helm_source_files(charts_dir: Path) -> dict[str, str]:
     return files
 
 
-def _retained_helm_sources(archives: list[tuple[bytes, str]]) -> tuple[dict[str, str], int]:
+def _retained_helm_sources(archives: list[tuple[bytes, str]], *, preserve_archives: bool = False) -> tuple[dict[str, str], int]:
     """Use the scanner's guarded archive staging to produce one retained snapshot."""
     if not archives:
         raise HTTPException(status_code=422, detail="No Helm chart archives were supplied")
     with ExitStack() as cleanup, tempfile.TemporaryDirectory(prefix="cats-artifact-helm-") as temporary:
-        cleanup.callback(close_downloads, archives)
+        if not preserve_archives:
+            cleanup.callback(close_downloads, archives)
         root = Path(temporary)
         for archive, filename in archives:
-            _stage_public_chart(root, archive, filename)
+            _stage_public_chart(root, archive, filename, close_archive=not preserve_archives)
         charts_dir = root / "charts"
         source = _collect_helm_source_files(charts_dir)
         if not source:
@@ -3217,7 +3361,7 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
         resource["_cats_source_mappings"] = mappings
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "") -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     chart_urls = [url.strip() for url in (chart_urls or []) if url.strip()]
@@ -3244,7 +3388,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     job_input.mkdir(parents=True, exist_ok=True)
     write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
     skipped_charts: list[str] = list(definition_skipped or [])
-    for chart_url in list(dict.fromkeys(chart_urls + definition_sources)):
+    for chart_url in list(dict.fromkeys(chart_urls)):
         # A repository or OCI endpoint is external evidence.  Its failure
         # must not discard otherwise usable images/charts from this scan.
         # Preserve the failed source for report-to-portal, which turns it
@@ -3272,7 +3416,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
             raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
         (image_dir / safe_name).write_bytes(image_bytes)
     with PUBLIC_JOB_LOCK:
-        PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": job_kind, "status": "queued", "phase": "queued", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat()}
+        PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": job_kind, "status": "queued", "phase": "queued", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat()}
     PUBLIC_WORKERS.submit(_run_public_scan, job_id, "\n".join(lines) + "\n")
     return job_id
 
@@ -3283,6 +3427,7 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
     chart_url = ""
     archive_names: list[str] = []
     ingest_service_id = ""
+    ingest_service_version = ""
     if job_id:
         job_input = PUBLIC_JOB_ROOT / job_id / "input" / "images.txt"
         if job_input.exists():
@@ -3296,6 +3441,7 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
             chart_url = str(job.get("chart_url") or "")
             archive_names = [str(name) for name in (job.get("archive_names") or [])]
             ingest_service_id = str(job.get("ingest_service_id") or "")
+            ingest_service_version = str(job.get("ingest_service_version") or "")
     services = []
     if auth and auth.accessible_service_ids("scan.ingest") != set():
         scoped = auth.accessible_service_ids("scan.ingest")
@@ -3303,11 +3449,12 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
         services = list(db.scalars(query))
         if scoped is not None:
             services = [service for service in services if service.id in scoped]
-    return self_service_context(request, "scan", image_list=image_list, chart_url=chart_url, archive_names=archive_names, job_id=job_id, auth=auth, services=services, ingest_service_id=ingest_service_id)
+    return self_service_context(request, "scan", image_list=image_list, chart_url=chart_url, archive_names=archive_names, job_id=job_id, auth=auth, services=services, ingest_service_id=ingest_service_id, ingest_service_version=ingest_service_version)
 
 
 @app.post("/scan", response_class=HTMLResponse)
-async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+    chart_archives = []
     try:
         chart_uploads = [chart_archive] if chart_archive and chart_archive.filename else []
         # FastAPI accepts repeated chart_archive fields as a list; inspect the
@@ -3354,6 +3501,12 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                 raise HTTPException(status_code=404, detail="Selected service was not found")
             if not auth.has("scan.ingest", service.id):
                 raise HTTPException(status_code=403, detail="Selected service is outside your scope")
+            ingest_service_version = ingest_service_version.strip()
+            if not ingest_service_version:
+                current = db.get(ServiceVersion, service.current_version_id) if service.current_version_id else None
+                ingest_service_version = current.version if current else (service.manual_version or "").strip()
+            if not ingest_service_version or len(ingest_service_version) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in ingest_service_version):
+                raise HTTPException(status_code=422, detail="Choose or enter a valid service version before ingesting")
         trusted_cas = parse_json(get_global_configuration(db).get("trusted_ca_certificates"), [])
         trusted_cas = trusted_cas if isinstance(trusted_cas, list) else []
         if definition_summary:
@@ -3362,8 +3515,9 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                     definition_skipped.append(_public_chart_skip_entry(component["logical_name"], component["reason"]))
                     continue
                 try:
-                    source_url, _, _, _ = acquire_component(component, trusted_cas)
+                    source_url, _, _, _, acquired_archives = acquire_component(component, trusted_cas)
                     definition_sources.append(source_url)
+                    chart_archives.extend(acquired_archives)
                 except Exception as exc:
                     definition_skipped.append(_public_chart_skip_entry(component["logical_name"], exc))
             if not definition_sources and not image_list.strip() and not image_archive and not chart_archives and not chart_url.strip():
@@ -3373,9 +3527,12 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                 raise HTTPException(status_code=422, detail=f"No service-definition components could be acquired. {failures}")
         job_id = _start_public_scan(image_list, chart_archives, chart_url.splitlines(), image_archive, ingest_service_id or None,
                                     trusted_ca_certificates=trusted_cas, definition_sources=definition_sources,
-                                    definition_skipped=definition_skipped, definition_summary=definition_summary)
+                                    definition_skipped=definition_skipped, definition_summary=definition_summary,
+                                    ingest_service_version=ingest_service_version)
     except HTTPException as exc:
         return self_service_context(request, "scan", image_list, chart_url, str(exc.detail), auth=auth)
+    finally:
+        close_downloads(chart_archives)
     # Redirect after a successful submission so refreshing the browser only
     # reloads the existing job rather than replaying the POST and starting a
     # second scan.
@@ -3854,6 +4011,7 @@ def ingest_public_scan(
         ingest_stage = "bind_service"; stage_started = time.perf_counter()
         with PUBLIC_JOB_LOCK:
             job_input_images = [line.strip() for line in str(PUBLIC_JOBS.get(job_id, {}).get("image_list") or "").splitlines() if line.strip()]
+            selected_service_version = str(PUBLIC_JOBS.get(job_id, {}).get("ingest_service_version") or "").strip()
         candidate_images = {
             str(item.get("image") or "").strip()
             for item in (data.get("findings") or [])
@@ -3873,7 +4031,13 @@ def ingest_public_scan(
             **data.get("service", {}),
             "id": service.service_key,
             "name": service.name,
-            "version": service.manual_version or data.get("service", {}).get("version") or "Unknown",
+            "version": (
+                selected_service_version
+                or (service.current_version.version if service.current_version else "")
+                or service.manual_version
+                or data.get("service", {}).get("version")
+                or "Unversioned"
+            ),
             "owner": service.owner,
             "poc": service.poc,
             "groups": [group.name for group in service.groups],
@@ -5653,6 +5817,13 @@ def service_detail(
     activity: bool = False,
     architecture: bool = False,
     artifacts: bool = False,
+    dependencies: bool = False,
+    dependency_execution: int | None = None,
+    dependency_type: str = "",
+    dependency_image: str = "",
+    dependency_license: str = "",
+    dependency_filter: str = "all",
+    dependency_epss: float | None = None,
     validation: bool = False,
     validation_run: str | None = None,
     findings: bool = False,
@@ -5689,7 +5860,9 @@ def service_detail(
         overview = False
     configuration = configuration_for_service(db, service)
     view = service_view(service, now, configuration)
-    latest_scan = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+    latest_scan = max((item for item in service.executions if
+                       service.current_version_id is None or item.service_version_id == service.current_version_id),
+                      key=lambda item: (aware(item.scanned_at), item.id), default=None)
     if latest_scan:
         matches = db.scalars(select(DependencyWatchlistMatch).where(
             DependencyWatchlistMatch.execution_id == latest_scan.id).order_by(DependencyWatchlistMatch.id)).all()
@@ -5727,6 +5900,69 @@ def service_detail(
             validation_runs=[deployment_validation_view(item) for item in validation_records],
             can_validate=auth.has("remediation.execute", service.id) and not validation_unavailable_reason,
             validation_unavailable_reason=validation_unavailable_reason,
+            archive_pending=archive_pending, now=now,
+        ))
+    if dependencies:
+        from .dependency_view import dependency_rows
+        from .exchange_routes import history_version_choices
+        latest = (next((item for item in service.executions if item.id == dependency_execution), None)
+                  if dependency_execution is not None else latest_scan)
+        if dependency_execution is not None and latest is None:
+            raise HTTPException(404, detail="Dependency evidence not found for this service")
+        matches = db.scalars(select(DependencyWatchlistMatch).where(
+            DependencyWatchlistMatch.execution_id == latest.id)).all() if latest else []
+        all_rows = dependency_rows(latest, matches, service.findings, risk_metadata)
+        search = q.casefold().strip()
+        rows = [row for row in all_rows if
+                (not search or search in " ".join(str(row.get(key) or "") for key in
+                 ("name", "version", "purl", "cpe", "image", "license_declared", "license_expression")).casefold())
+                and (not dependency_type or row["type"] == dependency_type)
+                and (not dependency_image or row["image"] == dependency_image)
+                and (not dependency_license or dependency_license.casefold() in " ".join(
+                    str(row.get(key) or "") for key in ("license_declared", "license_detected", "license_expression")
+                ).casefold())
+                and (dependency_filter == "all" or
+                     (dependency_filter == "vulnerable" and row["vulnerabilities"]) or
+                     (dependency_filter == "kev" and row["kev"]) or
+                     (dependency_filter == "fixed" and row["fixed_versions"]) or
+                     (dependency_filter == "watchlisted" and row["watchlisted"]) or
+                     (dependency_filter == "license_unknown" and not (row.get("license_declared") or row.get("license_detected") or row.get("license_expression"))) or
+                     (dependency_filter.lower() == row["severity"].lower()))
+                and (dependency_epss is None or row["epss"] is not None and row["epss"] >= dependency_epss)]
+        size = max(10, min(page_size, 100))
+        current_page = max(1, page)
+        total_pages = max(1, (len(rows) + size - 1) // size)
+        current_page = min(current_page, total_pages)
+        page_rows = rows[(current_page - 1) * size:current_page * size]
+        query_args = {"dependencies": "true", "q": q, "dependency_type": dependency_type,
+                      "dependency_image": dependency_image, "dependency_license": dependency_license,
+                      "dependency_filter": dependency_filter,
+                      "page_size": size}
+        if dependency_execution is not None:
+            query_args["dependency_execution"] = dependency_execution
+        if dependency_epss is not None:
+            query_args["dependency_epss"] = dependency_epss
+        page_url = f"/services/{service.service_key}?{urllib.parse.urlencode(query_args)}&page="
+        return templates.TemplateResponse(request, "service_dependencies.html", page_context(auth,
+            view={**view, "version": ((latest.raw_payload or {}).get("service") or {}).get("version") or "Unknown"} if latest else view,
+            service=service, dependency_rows=page_rows, dependency_total=len(rows),
+            dependency_all_total=len(all_rows), dependency_page=current_page,
+            dependency_pages=total_pages, dependency_page_url=page_url,
+            dependency_types=sorted({row["type"] for row in all_rows if row["type"]}),
+            dependency_images=sorted({row["image"] for row in all_rows if row["image"]}),
+            dependency_query={"q": q, "type": dependency_type, "image": dependency_image,
+                              "license": dependency_license,
+                              "filter": dependency_filter, "epss": dependency_epss},
+            dependency_executions=sorted(service.executions, key=lambda item: (aware(item.scanned_at), item.id), reverse=True),
+            dependency_selected_execution=latest,
+            dependency_artifacts=len({row["image"] for row in all_rows}),
+            vulnerable_components=sum(bool(row["vulnerabilities"]) for row in all_rows),
+            critical_components=sum(row["severity"].lower() == "critical" for row in all_rows),
+            kev_components=sum(bool(row["kev"]) for row in all_rows),
+            fixed_components=sum(bool(row["fixed_versions"]) for row in all_rows),
+            license_unknown_components=sum(not (row.get("license_declared") or row.get("license_detected") or row.get("license_expression")) for row in all_rows),
+            watchlisted_components=sum(bool(row["watchlisted"]) for row in all_rows),
+            history_versions=history_version_choices(db, service),
             archive_pending=archive_pending, now=now,
         ))
     if architecture:
@@ -5961,9 +6197,10 @@ def service_detail(
         page = max(1, min(page, total_pages))
         page_start = (page - 1) * page_size
         displayed_warning_items = all_items[page_start:page_start + page_size]
+        from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service.html", page_context(auth,
             remediation_enabled=remediation_enabled(db),
-            view=view, findings=[], affected_images={}, policy_findings=[], noncompliance_items=[],
+            view=view, history_versions=history_version_choices(db, service), findings=[], affected_images={}, policy_findings=[], noncompliance_items=[],
             warning_items=displayed_warning_items, now=now, active_exception=active_exception,
             finding_state=finding_state, groups=db.scalars(select(Group).order_by(Group.name)).all(),
             overdue_days=view["overdue_days"], saved=request.query_params.get("saved") == "1",
@@ -6002,7 +6239,7 @@ def service_detail(
         displayed_items = all_items[page_start:page_start + page_size]
         findings = [] if finding_state in {"noncompliant", "overdue"} else displayed_items
         displayed_policy_findings = []
-    latest_execution = max(service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
+    latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
     if overview:
         raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         raw_overview = raw_overview if isinstance(raw_overview, dict) else {}
@@ -6018,6 +6255,9 @@ def service_detail(
             # page.  Do not run docker manifest inspect while navigating.
             digest_resolver=None,
         )
+        removable_keys = _current_removable_evidence_keys(latest_payload, latest_execution.complete) if latest_execution else set()
+        for row in overview_data["missing_evidence"]:
+            row["removable"] = _missing_evidence_key(row) in removable_keys
         architecture_execution = latest_architecture_execution(service.executions)
         architecture_payload = dict(architecture_execution.raw_payload) if architecture_execution and isinstance(architecture_execution.raw_payload, dict) else {}
         architecture_overview = architecture_payload.get("service_overview") if isinstance(architecture_payload.get("service_overview"), dict) else {}
@@ -6030,8 +6270,9 @@ def service_detail(
             artifact_revision_id=architecture_revision.id if architecture_revision else None,
         )
         architecture_graph = build_architecture_graph(architecture_payload, runtime_evidence=deployment_validation_view(architecture_verification_state.get("run")))
+        from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
-            view=view, overview_data=overview_data, latest_execution=latest_execution,
+            view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
             deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=service.images,
@@ -6064,7 +6305,9 @@ def service_detail(
         severity_rank = {"unknown": 0, "negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
         simplified_findings = []
         for group in simplified_groups.values():
-            group["cves"] = sorted(group["cves"])
+            ordered_findings = sorted(zip(group["cves"], group["finding_ids"]))
+            group["cves"] = [cve for cve, _ in ordered_findings]
+            group["finding_ids"] = [finding_id for _, finding_id in ordered_findings]
             group["images"] = sorted(group["images"])
             group["fixed_versions"] = sorted(group["fixed_versions"])
             group["fixed_version"] = ", ".join(group["fixed_versions"])
@@ -6077,8 +6320,9 @@ def service_detail(
         start = (page - 1) * page_size
         simplified_findings = simplified_findings[start:start + page_size]
         groups = db.scalars(select(Group).order_by(Group.name)).all()
+        from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_simplified.html", page_context(auth,
-            view=view, simplified_findings=simplified_findings, now=now, finding_type=finding_type, archive_pending=archive_pending, groups=groups,
+            view=view, history_versions=history_version_choices(db, service), simplified_findings=simplified_findings, now=now, finding_type=finding_type, archive_pending=archive_pending, groups=groups,
             query=q, resource=resource, severity=severity, severity_options=severity_options,
             pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view=selected_findings_view,
             page=page, page_size=page_size, total_items=total_items, total_pages=total_pages,
@@ -6109,9 +6353,10 @@ def service_detail(
             item["images"] = [item["evidence_image"]] if item.get("evidence_image") else []
     latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
     remediation_classes = {item.id: classify_policy_finding(item, latest_payload) for item in displayed_policy_findings}
+    from .exchange_routes import history_version_choices
     return templates.TemplateResponse(request, "service.html", page_context(auth,
         remediation_enabled=remediation_enabled(db),
-        view=view, findings=findings, affected_images=affected_images,
+        view=view, history_versions=history_version_choices(db, service), findings=findings, affected_images=affected_images,
         policy_findings=displayed_policy_findings,
         noncompliance_items=displayed_items if finding_state in {"noncompliant", "overdue"} else [],
         now=now, active_exception=active_exception, finding_state=finding_state, groups=groups,
@@ -6566,6 +6811,106 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
                      "error": image.scan_error})
     db.commit()
     return {"images": rows}
+
+
+@app.get("/services/{service_key}/exports/{kind}.xlsx")
+def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(get_db),
+                            auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    if kind not in PURPOSE_CATALOG:
+        raise HTTPException(404)
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    columns, _, _ = purpose_template_for_service(db, kind, service)
+    return workbook_response(purpose_workbook_for(db, service, kind, columns),
+                             f"{service.service_key}-{kind}.xlsx")
+
+
+def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:
+    from .exchange import literal
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "CATS Export"
+    sheet.append(headers)
+    for row in rows:
+        sheet.append([None] * len(headers))
+        for index, value in enumerate(row, 1):
+            literal(sheet.cell(sheet.max_row, index), value)
+    format_sheet(sheet)
+    return book
+
+
+@app.get("/services/{service_key}/exports/mitigations.xlsx")
+def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).order_by(PoamEntry.id)).all()
+    rows = [[item.id, item.service_version, item.item_type, item.title, item.remediation,
+             item.status, item.due_date.isoformat() if item.due_date else "", item.ticket or ""]
+            for item in entries if item.remediation]
+    return workbook_response(_focused_export_book(
+        ["Entry ID", "Service Version", "Type", "Title", "Mitigation", "Status", "Due Date", "Ticket"], rows),
+        f"{service_key}-mitigations.xlsx")
+
+
+@app.get("/services/{service_key}/exports/findings.xlsx")
+def export_service_findings(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key).options(
+        selectinload(Service.executions), selectinload(Service.findings).selectinload(Finding.observations),
+        selectinload(Service.policy_findings)))
+    if service is None:
+        raise HTTPException(404)
+    latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+    rows = []
+    for finding in service.findings:
+        for observation in finding.observations:
+            if latest and observation.execution_id == latest.id:
+                rows.append(["Vulnerability", finding.cve, finding.severity, finding.active,
+                    observation.image, observation.package, observation.installed_version,
+                    observation.fixed_version, finding.first_seen.isoformat(), finding.last_seen.isoformat()])
+    for finding in service.policy_findings:
+        rows.append(["Configuration", finding.finding, finding.severity, finding.active,
+            finding.target or "", "", "", "", finding.first_seen.isoformat(), finding.last_seen.isoformat()])
+    return workbook_response(_focused_export_book(
+        ["Type", "Finding", "Severity", "Active", "Image or Target", "Package", "Installed Version",
+         "Fixed Version", "First Seen", "Last Seen"], rows), f"{service_key}-findings.xlsx")
+
+
+@app.get("/services/{service_key}/exports/diagrams.zip")
+def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    if service is None:
+        raise HTTPException(404)
+    latest = latest_architecture_execution(service.executions)
+    if latest is None:
+        raise HTTPException(422, detail="No architecture evidence is available to diagram")
+    graph = build_architecture_graph(latest.raw_payload or {})
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        for view_name in ("all", "configuration", "containers", "flow", "network", "storage"):
+            archive.writestr(f"architecture-{view_name}.svg", build_architecture_svg(graph, view_name))
+        archive.writestr("helm-diagram.svg", build_helm_diagram(service, latest))
+    output.seek(0)
+    return StreamingResponse(output, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{service_key}-diagrams.zip"'})
+
+
+@app.get("/services/{service_key}/exports/sbom.json")
+def export_service_sbom_components(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    if service is None:
+        raise HTTPException(404)
+    latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+    if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
+        raise HTTPException(422, detail="No retained SBOM component evidence is available")
+    return JSONResponse({"format": "cats-retained-sbom-components-v1", "service": service_key,
+        "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]},
+        headers={"Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
 
 
 @app.get("/services/{service_key}/export.xlsx")
@@ -7350,10 +7695,49 @@ def _missing_evidence_key(row: dict) -> tuple[str, str, str]:
     return (str(row.get("type") or "Other").strip().lower(), str(row.get("item") or row.get("reference") or row.get("name") or row.get("image") or row.get("chart") or row.get("resource") or "").strip(), str(row.get("source_file") or row.get("source_path") or row.get("filepath") or row.get("file") or row.get("chart_path") or row.get("values_file") or row.get("template") or row.get("provenance") or row.get("source") or row.get("resource_path") or "").strip())
 
 
+def _evidence_source_key(value: object, field: str, overview: dict) -> tuple[str, str, str] | None:
+    """Use the same normalization as the displayed Missing Evidence table."""
+    if field == "skipped_images":
+        rows = normalize_overview({"images": overview.get("images") or overview.get("container_images") or []},
+                                  skipped_images=[value])["missing_evidence"]
+    elif field == "skipped_charts":
+        rows = normalize_overview({}, skipped_charts=[value])["missing_evidence"]
+    elif field == "dependencies":
+        rows = normalize_overview({"dependencies": [value]})["missing_evidence"]
+    else:
+        rows = normalize_overview({"missing_evidence": [value]})["missing_evidence"]
+    return _missing_evidence_key(rows[0]) if rows else None
+
+
+def _current_removable_evidence_keys(payload: dict, complete: bool) -> set[tuple[str, str, str]]:
+    overview = payload.get("service_overview") or {}
+    if not isinstance(overview, dict):
+        overview = {}
+    keys = set()
+    for container, field in ((overview, "missing_evidence"), (overview, "evidence"),
+                             (payload, "skipped_images"), (payload, "skipped_charts")):
+        values = container.get(field)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            key = _evidence_source_key(value, field, overview)
+            if key:
+                keys.add(key)
+    if not complete and not keys:
+        keys.add(("other", "Assessment", ""))
+    for value in overview.get("dependencies") or []:
+        key = _evidence_source_key(value, "dependencies", overview)
+        if key:
+            keys.add(key)
+    return keys
+
+
 @app.post("/services/{service_key}/missing-evidence/remove")
 def remove_missing_evidence(
+    request: Request,
     service_key: str, evidence_type: str = Form(), item: str = Form(), source_file: str = Form(default=""),
-    csrf_token: str = Form(), db: Session = Depends(get_db), auth: AuthContext = Depends(require_user),
+    csrf_token: str = Form(), execution_id: int | None = Form(default=None),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_user),
 ):
     check_csrf(auth, csrf_token)
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
@@ -7361,42 +7745,48 @@ def remove_missing_evidence(
         raise HTTPException(404)
     if not auth.has("evidence.remove", service.id):
         raise HTTPException(403, detail="Permission denied")
-    latest = max(service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
+    latest = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
+    def stale():
+        if _api_error_request(request):
+            raise HTTPException(409, detail="That evidence observation is no longer current. The service evidence has changed since this page was loaded.")
+        return RedirectResponse(f"/services/{service.service_key}?overview=true&evidence_notice=stale", status_code=303)
+    if latest and execution_id is not None and latest.id != execution_id:
+        return stale()
     if not latest or not isinstance(latest.raw_payload, dict):
-        raise HTTPException(409, detail="No current evidence observation is available")
+        return stale()
     payload = dict(latest.raw_payload)
     overview = dict(payload.get("service_overview") or {})
     target = (str(evidence_type).strip().lower(), str(item).strip(), str(source_file).strip())
+    displayed = normalize_overview(overview, skipped_images=payload.get("skipped_images") or [],
+                                   skipped_charts=payload.get("skipped_charts") or [],
+                                   incomplete=not latest.complete)["missing_evidence"]
+    if target not in {_missing_evidence_key(row) for row in displayed}:
+        return stale()
     removed = False
     # The assessment-level row is a derived observation used only when an
     # incomplete execution has no concrete evidence item.  It has no list
     # entry to delete, so removing it resolves the current execution's
     # incomplete state.  A future execution is authoritative and can recreate
     # the row if it is incomplete again.
-    if target[1].casefold() == "assessment" and not (
-        overview.get("missing_evidence") or overview.get("evidence")
-        or payload.get("skipped_images") or payload.get("skipped_charts")
-    ):
+    if target == ("other", "Assessment", "") and target in _current_removable_evidence_keys(payload, latest.complete):
         latest.complete = True
         payload["incomplete"] = False
         removed = True
-    for container, field in ((overview, "missing_evidence"), (overview, "evidence"), (payload, "skipped_images"), (payload, "skipped_charts")):
+    for container, field in ((overview, "missing_evidence"), (overview, "evidence"),
+                             (overview, "dependencies"), (payload, "skipped_images"), (payload, "skipped_charts")):
         values = container.get(field)
         if not isinstance(values, list):
             continue
         kept = []
         for value in values:
-            if isinstance(value, dict):
-                candidate = _missing_evidence_key({"type": value.get("type") or ("Image" if field == "skipped_images" else "Chart" if field == "skipped_charts" else "Other"), **value})
-            else:
-                candidate = ("image" if field == "skipped_images" else "chart" if field == "skipped_charts" else "other", str(value).split(" :: ", 1)[0].strip(), "")
-            if candidate == target or (candidate[0] == target[0] and candidate[1] == target[1] and not target[2]):
+            candidate = _evidence_source_key(value, field, overview)
+            if candidate == target:
                 removed = True
             else:
                 kept.append(value)
         container[field] = kept
     if not removed:
-        raise HTTPException(404, detail="That evidence observation is no longer current")
+        return stale()
     payload["service_overview"] = overview
     latest.raw_payload = payload
     record_audit(db, auth, "missing_evidence.removed", "service", service.id,
@@ -7643,6 +8033,9 @@ def delete_service(
         db.execute(delete(ServiceArtifactRevision).where(ServiceArtifactRevision.artifact_id.in_(artifact_ids)))
         db.execute(delete(ServiceArtifact).where(ServiceArtifact.id.in_(artifact_ids)))
     db.execute(delete(Execution).where(Execution.service_id == service.id))
+    service.current_version_id = None
+    db.flush()
+    db.execute(delete(ServiceVersion).where(ServiceVersion.service_id == service.id))
     db.execute(delete(ServiceImage).where(ServiceImage.service_id == service.id))
     db.execute(delete(ServiceArchiveEvent).where(ServiceArchiveEvent.service_id == service.id))
     db.add(ServiceDeletionAudit(service_key=service.service_key, service_name=service.name,
@@ -7875,6 +8268,12 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
     events = db.scalars(query.limit(10)).all()
     return templates.TemplateResponse(request, "general_policy.html", page_context(
         auth, events=events, groups=groups, selected_group_id=selected_group_id,
+        selected_group=db.get(Group, selected_group_id) if selected_group_id is not None else None,
+        export_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
+                           "source": purpose_template_policy(db, kind, selected_group_id)[1],
+                           "mode": purpose_template_policy(db, kind, selected_group_id)[2],
+                           "enabled_count": sum(c["enabled"] for c in purpose_template_policy(db, kind, selected_group_id)[0])}
+                          for kind in PURPOSE_CATALOG],
         configuration=configuration, saved=request.query_params.get("saved") == "1",
         retained_count=retained_count, shown_count=len(events),
     ))
@@ -8118,6 +8517,8 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
         oidc_groups=db.scalars(select(Group).order_by(Group.name)).all(),
         oidc_services=db.scalars(select(Service).order_by(Service.name)).all(),
         security_data_sources={row.key: row for row in db.scalars(select(SecurityDataSource))},
+        purpose_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
+                            "customized": purpose_template_for(db, kind)[1]} for kind in PURPOSE_CATALOG],
         validator=validator_display, validator_result=request.query_params.get("validator_result", ""),
         cyber_warning_policy=parse_json(configuration.get("cyber_warning_policy"), {}),
         signing=signing.public_metadata(configuration),
@@ -8126,6 +8527,111 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
         repository_result=request.query_params.get("repository_result", ""),
         oidc_result=request.query_params.get("oidc_result", ""),
     ))
+
+
+@app.post("/admin/general-policy/group-parent")
+def update_group_parent(group_id: str, parent_id: str = Form(""), csrf_token: str = Form(),
+                        db: Session = Depends(get_db), auth: AuthContext = Depends(require_config_scope)):
+    check_csrf(auth, csrf_token)
+    scope = requested_group_scope(group_id, db, auth)
+    if scope is None:
+        raise HTTPException(422, detail="Choose a group")
+    group = db.get(Group, scope)
+    if group is None:
+        raise HTTPException(404)
+    try:
+        parent = db.get(Group, int(parent_id)) if parent_id else None
+    except ValueError as exc:
+        raise HTTPException(422, detail="Invalid parent group") from exc
+    if parent_id and parent is None:
+        raise HTTPException(422, detail="Parent group not found")
+    if parent is not None and not auth.can_manage_group(parent.id):
+        raise HTTPException(403, detail="Parent group is outside your configuration scope")
+    ancestor = parent
+    visited = {scope}
+    while ancestor is not None:
+        if ancestor.id in visited:
+            raise HTTPException(422, detail="Group inheritance would create a cycle")
+        visited.add(ancestor.id)
+        ancestor = db.get(Group, ancestor.parent_id) if ancestor.parent_id else None
+    group.parent_id = parent.id if parent else None
+    record_audit(db, auth, "group.parent.updated", "group", scope, parent_id=group.parent_id)
+    db.commit()
+    return RedirectResponse(f"/admin/general-policy?group_id={scope}&saved=1", status_code=303)
+
+
+@app.get("/admin/configuration/export-templates/{kind}", response_class=HTMLResponse)
+@app.get("/admin/general-policy/export-templates/{kind}", response_class=HTMLResponse)
+def purpose_template_page(kind: str, request: Request, group_id: str = "", db: Session = Depends(get_db),
+                          auth: AuthContext = Depends(require_config_scope)):
+    if kind not in PURPOSE_CATALOG:
+        raise HTTPException(404)
+    scope = requested_group_scope(group_id, db, auth)
+    columns, source, mode = purpose_template_policy(db, kind, scope)
+    labels = dict(PURPOSE_CATALOG[kind])
+    defaults = dict(PURPOSE_CATALOG[kind])
+    return templates.TemplateResponse(request, "purpose_export_template.html", page_context(
+        auth, kind=kind, name=PURPOSE_NAMES[kind], columns=columns, labels=labels,
+        defaults=defaults, source=source, mode=mode, group_id=scope,
+        saved=request.query_params.get("saved") == "1"))
+
+
+@app.post("/admin/configuration/export-templates/{kind}")
+@app.post("/admin/general-policy/export-templates/{kind}")
+def purpose_template_update(kind: str, field: list[str] = Form(), heading: list[str] = Form(),
+                            enabled: list[str] | None = Form(None), csrf_token: str = Form(), group_id: str = "",
+                            db: Session = Depends(get_db), auth: AuthContext = Depends(require_config_scope)):
+    check_csrf(auth, csrf_token)
+    if kind not in PURPOSE_CATALOG:
+        raise HTTPException(404)
+    scope = requested_group_scope(group_id, db, auth)
+    if len(field) != len(heading):
+        raise HTTPException(422, detail="Template fields and headings do not match")
+    try:
+        columns = validate_purpose_template(kind, [
+            {"field": name, "heading": label, "enabled": name in (enabled or [])}
+            for name, label in zip(field, heading)])
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from None
+    key = purpose_policy_key(kind, scope) if scope is not None else purpose_setting_key(kind)
+    setting = db.scalar(select(PortalSetting).where(PortalSetting.key == key))
+    if setting is None:
+        setting = PortalSetting(key=key, group_id=scope)
+        db.add(setting)
+    setting.value = json.dumps({"mode": "custom", "columns": columns} if scope is not None else columns, separators=(",", ":"))
+    setting.updated_by_id = auth.user.id
+    setting.updated_at = utcnow()
+    record_audit(db, auth, "export_template.updated", "portal_setting", key,
+                 template=kind, group_id=scope, enabled_fields=sum(c["enabled"] for c in columns))
+    db.commit()
+    return RedirectResponse(f"/admin/general-policy/export-templates/{kind}?group_id={scope or ''}&saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/export-templates/{kind}/reset")
+@app.post("/admin/general-policy/export-templates/{kind}/reset")
+def purpose_template_reset(kind: str, csrf_token: str = Form(), group_id: str = "", mode: str = Form("inherit"),
+                           db: Session = Depends(get_db), auth: AuthContext = Depends(require_config_scope)):
+    check_csrf(auth, csrf_token)
+    if kind not in PURPOSE_CATALOG:
+        raise HTTPException(404)
+    scope = requested_group_scope(group_id, db, auth)
+    if scope is not None and mode not in {"inherit", "default"}:
+        raise HTTPException(422, detail="Invalid template policy")
+    key = purpose_policy_key(kind, scope) if scope is not None else purpose_setting_key(kind)
+    setting = db.scalar(select(PortalSetting).where(PortalSetting.key == key))
+    if setting is not None and (scope is None or mode == "inherit"):
+        db.delete(setting)
+    elif scope is not None and mode == "default":
+        if setting is None:
+            setting = PortalSetting(key=key, group_id=scope)
+            db.add(setting)
+        setting.value = '{"mode":"default"}'
+        setting.updated_by_id = auth.user.id
+        setting.updated_at = utcnow()
+    record_audit(db, auth, "export_template.policy" if scope is not None else "export_template.reset",
+                 "portal_setting", key, template=kind, group_id=scope, mode=mode)
+    db.commit()
+    return RedirectResponse(f"/admin/general-policy/export-templates/{kind}?group_id={scope or ''}&saved=1", status_code=303)
 
 
 @app.get("/admin/compliance", response_class=HTMLResponse)

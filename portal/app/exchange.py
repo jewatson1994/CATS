@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from .models import Execution, InventoryRecord, ServiceMetadata, PoamEntry
 from .overview import normalize_overview
-from .exchange_limits import workbook_bytes
+from .exchange_limits import workbook_bytes, workbook_expanded_bytes, workbook_members, workbook_rows, workbook_columns
 from .exchange_validation import validate_values
 
 
@@ -248,7 +248,7 @@ def workbook(template, context, rows):
     return result
 
 
-def parse_workbook(data, template):
+def parse_workbook(data, template, extra_aliases=None):
     """Bounded workbook parser. It never evaluates formulas or trusts hidden IDs."""
     limit = workbook_bytes()
     if len(data) > limit:
@@ -256,44 +256,59 @@ def parse_workbook(data, template):
     try:
         with ZipFile(BytesIO(data)) as archive:
             members = archive.infolist()
-            if len(members) > 2000 or sum(m.file_size for m in members) > 100 * 1024 * 1024:
+            if len(members) > workbook_members() or sum(m.file_size for m in members) > workbook_expanded_bytes():
                 raise ValueError("Workbook exceeds expanded/member safety limits")
             if len({m.filename for m in members}) != len(members):
                 raise ValueError("Workbook contains duplicate ZIP entries")
         book = load_workbook(BytesIO(data), read_only=True, data_only=False, keep_links=False)
     except (BadZipFile, KeyError, OSError, ParseError) as exc:
         raise ValueError("Malformed XLSX workbook") from exc
-    mappings = {m["label"]: m for m in template["columns"] if m.get("direction", "both") in {"both", "import"} and m["field"] in FIELDS[template["dataset"]] and m["field"] != "row.number"}
+    mappings = [m for m in template["columns"] if m.get("direction", "both") in {"both", "import"} and m["field"] in FIELDS[template["dataset"]] and m["field"] != "row.number"]
     domain_required = REQUIRED[template["dataset"]]
-    if not domain_required.issubset({m["field"] for m in mappings.values()}):
+    if not domain_required.issubset({m["field"] for m in mappings}):
         book.close()
         raise ValueError("Template lacks required import identity fields")
-    required = {m["label"] for m in mappings.values() if m.get("required") or m["field"] in domain_required}
+    required = {m["field"] for m in mappings if m.get("required") or m["field"] in domain_required}
+    def normalized(value):
+        return re.sub(r"[^a-z0-9]", "", str(value or "").casefold())
+    headings = {}
+    for mapping in mappings:
+        for heading in (mapping["label"], FIELDS[template["dataset"]][mapping["field"]], mapping["field"],
+                        *mapping.get("aliases", []), *(extra_aliases or {}).get(mapping["field"], [])):
+            headings.setdefault(normalized(heading), set()).add(mapping["field"])
+    by_field = {mapping["field"]: mapping for mapping in mappings}
     rows, errors, ignored, seen = [], [], [], set()
     try:
-        sheet = book.worksheets[0]
-        if sheet.max_row > 10050 or sheet.max_column > 100:
-            raise ValueError("Workbook exceeds 10,000 rows or 100 columns")
-        iterator = sheet.iter_rows()
-        headers = None
-        for number, cells in enumerate(iterator, 1):
-            labels = [str(c.value or "").strip() for c in cells]
-            if set(labels) & set(mappings) and required.issubset(labels):
-                if len([x for x in labels if x]) != len(set(x for x in labels if x)):
-                    raise ValueError("Duplicate column labels")
-                headers = labels
-                ignored = [label for label in labels if label and label not in mappings]
-                break
-            if number >= 100:
-                break
-        if headers is None:
-            raise ValueError("Missing required columns or unrecognized table header")
-        for number, cells in enumerate(iterator, number + 1):
+        candidates = []
+        for sheet in book.worksheets:
+            if sheet.max_row > workbook_rows() + 100 or sheet.max_column > workbook_columns():
+                raise ValueError("Workbook exceeds configured row or column limit")
+            for number, cells in enumerate(sheet.iter_rows(max_row=min(sheet.max_row, 100)), 1):
+                labels = [str(c.value or "").strip() for c in cells]
+                fields = [headings.get(normalized(label), set()) if label else set() for label in labels]
+                matched = {next(iter(item)) for item in fields if len(item) == 1}
+                if required.issubset(matched):
+                    candidates.append((len(matched), sheet, number, labels, fields))
+        if not candidates:
+            raise ValueError("Required columns were not found. Check workbook headings or configure aliases.")
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+            raise ValueError("Multiple possible tables were found. Use a workbook with one clear table.")
+        _, sheet, header_number, headers, matched_fields = candidates[0]
+        if any(len(item) > 1 for item in matched_fields):
+            raise ValueError("Ambiguous column heading; configure a unique alias before importing")
+        selected_fields = [next(iter(item)) if item else None for item in matched_fields]
+        used = [field for field in selected_fields if field]
+        if len(used) != len(set(used)):
+            raise ValueError("Multiple columns map to the same field; remove or rename one column")
+        ignored = [label for label, field in zip(headers, selected_fields) if label and not field]
+        iterator = sheet.iter_rows(min_row=header_number + 1)
+        for number, cells in enumerate(iterator, header_number + 1):
             if all(c.value is None for c in cells):
                 continue
             values = {}
-            for label, cell in zip(headers, cells):
-                if label in mappings:
+            for field, cell in zip(selected_fields, cells):
+                if field:
                     if cell.data_type == "f":
                         errors.append(f"Row {number}: formulas are not importable")
                     value = cell.value
@@ -301,8 +316,8 @@ def parse_workbook(data, template):
                         value = value.isoformat()
                     if value is not None and len(str(value)) > 8000:
                         errors.append(f"Row {number}: cell exceeds 8,000 characters")
-                    values[mappings[label]["field"]] = value
-            for mapping in mappings.values():
+                    values[field] = value
+            for mapping in mappings:
                 if (mapping.get("required") or mapping["field"] in domain_required) and values.get(mapping["field"]) in (None, ""):
                     errors.append(f"Row {number}: missing {mapping['label']}")
             if template["dataset"] == "ppsm":
@@ -333,8 +348,8 @@ def parse_workbook(data, template):
                 errors.append(f"Row {number}: duplicate record identity")
             seen.add(key)
             rows.append({"key": key, "values": values})
-            if len(rows) > 10000:
-                raise ValueError("Workbook exceeds 10,000 rows")
+            if len(rows) > workbook_rows():
+                raise ValueError("Workbook exceeds configured row limit")
     finally:
         book.close()
-    return {"rows": rows, "errors": errors, "ignored": ignored, "mapped": list(mappings), "recognized": len(rows)}
+    return {"rows": rows, "errors": errors, "ignored": ignored, "mapped": [by_field[field]["label"] for field in used], "recognized": len(rows), "worksheet": sheet.title, "header_row": header_number}

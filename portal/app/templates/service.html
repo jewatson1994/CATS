@@ -12,7 +12,7 @@
       <span class="service-poc">POC: {{ view.service.poc or "No POC recorded" }}</span>
     </div>
     <div class="service-meta">
-      <span>Version {{ view.version or "Unknown" }}</span>
+      {% include "_service_version_menu.html" %}
       <span>Owner: {{ view.service.owner or "No owner recorded" }}</span>
       <span>Groups: {{ view.service.groups|map(attribute='name')|join(', ') or "Unassigned" }}</span>
     </div>
@@ -20,13 +20,10 @@
   </div>
   <div class="service-page-actions">
     <a class="secondary-button" href="/services/{{ view.service.service_key }}/definitions">Service definitions / chart catalogs</a>
-    <a class="secondary-button" href="/services/{{ view.service.service_key }}/history">Historical versions</a>
     <a class="secondary-button" href="/services/{{ view.service.service_key }}/exchange">Versions &amp; spreadsheet exchange</a>
     {% if view.service.assessment_status != 'assessed' %}<span class="status large warning">Assessment Pending</span>{% else %}<span class="status large {{ 'ok' if view.compliant else 'bad' }}">{{ "Compliant" if view.compliant else "Non-Compliant" }}</span>{% endif %}
     <span class="latest-evidence">Latest Evidence: <strong>{{ cats_datetime(view.last_execution) if view.last_execution else 'None received' }}</strong></span>
-    {% if can('service.export', view.service.id) %}
-    <a class="secondary-button" href="/services/{{ view.service.service_key }}/export.xlsx">Export to Excel</a>
-    {% endif %}
+    {% include "_service_export_menu.html" %}
     {% if can('service.edit', view.service.id) or (not view.archive and can('archive.request', view.service.id)) %}
     {% if archive_pending %}<span class="status warning">ARCHIVAL PENDING</span>{% endif %}
     <details class="actions-menu"><summary class="secondary-button">Actions</summary><div class="actions-menu-popover">{% if can('service.edit', view.service.id) %}<button type="button" onclick="document.getElementById('service-edit-dialog').showModal()">Edit</button>{% endif %}{% if not view.archive and can('archive.request', view.service.id) %}<button type="button" onclick="document.getElementById('service-actions-dialog').showModal()">Archive</button>{% endif %}</div></details>

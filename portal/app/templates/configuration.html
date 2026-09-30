@@ -161,7 +161,7 @@
     'Cybersecurity warning policy': 'security',
     'Deployment Validation Sandbox': 'integrations', 'OCI registries': 'integrations',
     'Trusted CA certificates': 'integrations', 'Operating-system repositories': 'integrations',
-    'Security Data Sources': 'data'
+    'Security Data Sources': 'data', 'Export Templates': 'data'
   };
   sections.forEach(section => { section.dataset.settingsCategory = categories[section.querySelector('h2')?.textContent.trim()] || 'general'; });
   const identity = panel.querySelector('select[name="identity_mode"]');

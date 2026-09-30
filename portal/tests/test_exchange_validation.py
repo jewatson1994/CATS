@@ -2,6 +2,8 @@ from io import BytesIO
 
 import pytest
 
+from openpyxl import Workbook
+
 from app.exchange import builtins, missing_fields, parse_workbook, workbook
 from app.exchange_validation import validate_values
 
@@ -54,3 +56,33 @@ def test_configurable_workbook_byte_limit(monkeypatch):
     monkeypatch.setenv("CATS_WORKBOOK_MAX_BYTES", "4")
     with pytest.raises(ValueError, match="configured 4-byte"):
         parse_workbook(b"12345", builtins()["ppsm"])
+
+
+def test_external_workbook_detects_sheet_header_aliases_and_extra_columns():
+    definition = builtins()["ppsm"]
+    next(item for item in definition["columns"] if item["field"] == "network.port")["aliases"] = ["Destination Port"]
+    book = Workbook()
+    book.active.title = "Instructions"
+    sheet = book.create_sheet("Organization inventory")
+    sheet.append(["Network approval schedule"])
+    sheet.append(["Protocol", "Unrelated notes", "Destination Port", "Data Service"])
+    sheet.append(["TCP", "ignored", 443, "HTTPS"])
+    output = BytesIO()
+    book.save(output)
+    result = parse_workbook(output.getvalue(), definition)
+    assert result["worksheet"] == "Organization inventory"
+    assert result["header_row"] == 2
+    assert result["ignored"] == ["Unrelated notes"]
+    assert result["rows"][0]["values"]["network.port"] == 443
+    assert result["errors"] == []
+
+
+def test_duplicate_mapped_columns_are_rejected():
+    book = Workbook()
+    sheet = book.active
+    sheet.append(["Port", "network.port", "Protocol"])
+    sheet.append([443, 443, "TCP"])
+    output = BytesIO()
+    book.save(output)
+    with pytest.raises(ValueError, match="same field"):
+        parse_workbook(output.getvalue(), builtins()["ppsm"])

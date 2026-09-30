@@ -34,6 +34,9 @@
     {% if request.url.path.startswith('/services/') and request.query_params.get('saved') == '1' %}
     <div class="save-confirmation" role="status">Service information saved successfully.</div>
     {% endif %}
+    {% if request.url.path.startswith('/services/') and request.query_params.get('evidence_notice') == 'stale' %}
+    <div class="save-confirmation" role="alert">That evidence observation is no longer current. The service evidence has changed since this page was loaded. <a href="{{ request.url.path }}?overview=true">View current evidence</a>.</div>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

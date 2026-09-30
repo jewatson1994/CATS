@@ -18,7 +18,7 @@ from .exchange_limits import bound, bundle_bytes
 from .service_bundle import encode
 from .schemas import ExecutionPayload
 
-MODELS = [m.Service, m.Execution, m.Finding, m.PolicyFinding, m.ServiceImage,
+MODELS = [m.Service, m.ServiceVersion, m.Execution, m.Finding, m.PolicyFinding, m.ServiceImage,
     m.ServiceArtifact, m.ServiceArtifactRevision, m.FindingObservation,
     m.ExceptionRecord, m.PolicyExceptionRecord, m.PoamEntry, m.PoamHistory,
     m.WorkflowRequest, m.PoamChangeRequest, m.PatchExecution,
@@ -26,7 +26,7 @@ MODELS = [m.Service, m.Execution, m.Finding, m.PolicyFinding, m.ServiceImage,
     m.ServiceMetadata, m.InventoryRecord, m.DependencyWatchlistEntry,
     m.DependencyWatchlistMatch, m.ServiceTransferProvenance]
 TABLES = {model.__tablename__: model for model in MODELS}
-PORTABLE = {"services", "service_images", "service_artifacts", "service_artifact_revisions",
+PORTABLE = {"services", "service_versions", "service_images", "service_artifacts", "service_artifact_revisions",
     "poam_entries", "poam_history", "service_archive_events", "service_metadata",
     "inventory_records"}
 OWNED_BY = {
@@ -115,8 +115,13 @@ def scrub(value, path="", excluded=None):
     return value
 
 
-def schema_signature(legacy=False):
-    return sha256(encode({name: [(c.name, str(c.type), c.nullable) for c in model.__table__.columns if not (legacy and name == "services" and c.name == "assessment_status")] for name, model in TABLES.items()})).hexdigest()
+def schema_signature(legacy=False, pre_service_versions=False):
+    columns = {name: [(c.name, str(c.type), c.nullable) for c in model.__table__.columns
+                      if not (legacy and name == "services" and c.name == "assessment_status")
+                      and not (pre_service_versions and (name, c.name) in {
+                          ("services", "current_version_id"), ("executions", "service_version_id")})]
+               for name, model in TABLES.items() if not (pre_service_versions and name == "service_versions")}
+    return sha256(encode(columns)).hexdigest()
 
 
 def record(row):
@@ -315,15 +320,25 @@ def parse_service(data):
             if sum(x.file_size for x in members) > bundle_bytes() + 65536 or archive.getinfo("manifest.json").file_size > 65536:
                 raise ValueError("Bundle exceeds expanded-byte limit")
             manifest = load_json(archive.read("manifest.json"))
-            signatures = {schema_signature()}
+            signatures = {schema_signature(), schema_signature(pre_service_versions=True)}
             if manifest.get("schema_version") == 2:
-                signatures.add(schema_signature(legacy=True))
+                signatures.update({schema_signature(legacy=True), schema_signature(legacy=True, pre_service_versions=True)})
             if manifest["format"] != "cats-service-bundle" or manifest["schema_version"] not in {2, 3} or manifest["compatibility"]["relational_schema"] not in signatures:
                 raise ValueError("Unsupported bundle format/schema or incompatible CATS schema")
             body = archive.read("service.json")
             if manifest["files"] != {"service.json": {"bytes": len(body), "sha256": sha256(body).hexdigest()}}:
                 raise ValueError("Bundle integrity check failed")
         state = load_json(body)
+        if manifest["compatibility"]["relational_schema"] in {
+                schema_signature(pre_service_versions=True), schema_signature(legacy=True, pre_service_versions=True)}:
+            # The source bytes were integrity-checked above. Project older
+            # bundles into the additive version schema before validating them.
+            state["records"]["service_versions"] = []
+            for service in state["records"]["services"]:
+                service["current_version_id"] = None
+            for execution in state["records"]["executions"]:
+                execution["service_version_id"] = None
+            manifest["counts"]["service_versions"] = 0
         if manifest["schema_version"] == 2 and "assessment_status" in m.Service.__table__.columns:
             for service in state["records"]["services"]:
                 service.setdefault("assessment_status", "assessment_pending")

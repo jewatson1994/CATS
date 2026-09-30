@@ -75,3 +75,12 @@ def test_active_scanner_scripts_do_not_depend_on_repository_checkout():
     for name in active:
         text = (ROOT / "scripts" / name).read_text(encoding="utf-8")
         assert "git clone" not in text
+
+
+def test_offline_trivy_checks_status_reports_embedded_fallback():
+    text = (ROOT / "scripts" / "scan-configurations.sh").read_text(encoding="utf-8")
+    assert 'if is_true "$TRIVY_SKIP_CHECK_UPDATE"; then' in text
+    assert 'if [ -d "${TRIVY_CACHE_DIR}/policy/content" ]; then' in text
+    assert 'checks_mode="cached"' in text
+    assert 'checks_mode="embedded_fallback"' in text
+    assert 'trivy_checks: {mode: $checks_mode}' in text

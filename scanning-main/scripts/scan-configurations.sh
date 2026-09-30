@@ -121,6 +121,18 @@ merge_policy_findings() {
 
 write_status() {
   local complete=true
+  local checks_mode="update_allowed"
+  if is_true "$TRIVY_SKIP_CHECK_UPDATE"; then
+    if [ -d "${TRIVY_CACHE_DIR}/policy/content" ]; then
+      checks_mode="cached"
+    else
+      checks_mode="embedded_fallback"
+    fi
+  fi
+  if [ "$checks_mode" = "embedded_fallback" ] && \
+     { is_true "$TRIVY_CONFIG_SCAN_ENABLED" || is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED"; }; then
+    echo "Trivy checks: no offline policy cache; configuration scans fall back to embedded checks (check updates disabled)." >&2
+  fi
   [ "$FAILURES" -eq 0 ] && [ "$HELM_SKIPPED" -eq 0 ] || complete=false
   jq -n \
     --argjson enabled "$(if is_true "$TRIVY_CONFIG_SCAN_ENABLED" || is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED" || is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED" || is_true "$HELM_SCAN_ENABLED"; then echo true; else echo false; fi)" \
@@ -134,11 +146,13 @@ write_status() {
     --argjson helm_skipped "$HELM_SKIPPED" \
     --argjson failures "$FAILURES" \
     --arg offline "$TRIVY_OFFLINE" \
+    --arg checks_mode "$checks_mode" \
     --arg dependency_mode "$HELM_DEPENDENCY_MODE" \
     '{
       enabled: $enabled,
       complete: $complete,
       offline: ($offline | ascii_downcase) == "true",
+      trivy_checks: {mode: $checks_mode},
       helm_dependency_mode: $dependency_mode,
       source: {requested: $source_requested, succeeded: $source_succeeded},
       dockle: {requested: $dockle_requested, succeeded: $dockle_succeeded},

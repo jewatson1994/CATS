@@ -24,7 +24,7 @@ from sqlalchemy import event, select
 from app.auth import AuthContext, hash_password, seed_auth, token_hash
 from app.database import Base, SessionLocal, engine
 from app.main import app, configuration_for_service
-from app.models import AuditEvent, DeploymentValidationRun, ExceptionRecord, Execution, Finding, Group, PoamEntry, PolicyExceptionRecord, PolicyFinding, PortalSetting, RemediationExecution, Role, Service, ServiceArchiveEvent, ServiceArtifact, ServiceArtifactRevision, ServiceImage, User, UserRoleAssignment, UserSession, WorkflowRequest
+from app.models import AuditEvent, DeploymentValidationRun, ExceptionRecord, Execution, Finding, Group, PoamEntry, PolicyExceptionRecord, PolicyFinding, PortalSetting, RemediationExecution, Role, Service, ServiceVersion, ServiceArchiveEvent, ServiceArtifact, ServiceArtifactRevision, ServiceImage, User, UserRoleAssignment, UserSession, WorkflowRequest
 
 pipeline_headers = {"Authorization": "Bearer test-token"}
 
@@ -64,6 +64,71 @@ def ingest(client, execution="run-1", cves=None, service_id="payments-service", 
     return client.post("/api/v1/pipeline-results", json=payload(execution, when, cves or [], service_id, complete, skipped_images), headers=pipeline_headers)
 
 
+def test_service_versions_reuse_identity_and_link_executions():
+    client = new_client()
+    for execution_key, version in (("release-a-1", "release-A"), ("release-a-2", " release-A "), ("release-b-1", "release-B")):
+        body = payload(execution_key, datetime.now(timezone.utc), [])
+        body["service"]["version"] = version
+        assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        versions = db.scalars(select(ServiceVersion).where(ServiceVersion.service_id == service.id)).all()
+        assert {row.version for row in versions} == {"release-A", "release-B"}
+        assert service.current_version.version == "release-B"
+        linked = db.scalars(select(Execution).where(Execution.service_id == service.id).order_by(Execution.id)).all()
+        assert [row.service_version.version for row in linked] == ["release-A", "release-A", "release-B"]
+
+
+def test_incomplete_scan_does_not_promote_service_version():
+    client = new_client()
+    first = payload("current-release", datetime.now(timezone.utc), [])
+    first["service"]["version"] = "release-A"
+    assert client.post("/api/v1/pipeline-results", json=first, headers=pipeline_headers).status_code == 201
+    second = payload("incomplete-release", datetime.now(timezone.utc), [], complete=False)
+    second["service"]["version"] = "release-B"
+    assert client.post("/api/v1/pipeline-results", json=second, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.current_version.version == "release-A"
+        assert db.scalar(select(Execution).where(Execution.execution_key == "incomplete-release")).service_version.version == "release-B"
+
+
+def test_delayed_historical_version_does_not_replace_current_posture():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    current = payload("current-release", now, ["CVE-CURRENT"], service_id="delayed-release")
+    current["service"]["version"] = "release-2"
+    assert client.post("/api/v1/pipeline-results", json=current, headers=pipeline_headers).status_code == 201
+    historical = payload("delayed-old-release", now - timedelta(days=10), ["CVE-OLD"], service_id="delayed-release")
+    historical["service"]["version"] = "release-1"
+    assert client.post("/api/v1/pipeline-results", json=historical, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "delayed-release"))
+        assert service.current_version.version == "release-2"
+        findings = {finding.cve: finding.active for finding in db.scalars(select(Finding).where(Finding.service_id == service.id))}
+        assert findings == {"CVE-CURRENT": True, "CVE-OLD": False}
+        assert len(service.versions) == 2
+    page = client.get("/services/delayed-release?overview=true")
+    assert page.status_code == 200
+    assert "release-2" in page.text
+
+
+def test_delayed_scan_of_current_version_does_not_replace_current_posture():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    current = payload("current-scan", now, ["CVE-CURRENT"], service_id="same-release")
+    current["service"]["version"] = "release-2"
+    assert client.post("/api/v1/pipeline-results", json=current, headers=pipeline_headers).status_code == 201
+    delayed = payload("delayed-scan", now - timedelta(days=1), ["CVE-OLD"], service_id="same-release")
+    delayed["service"]["version"] = "release-2"
+    assert client.post("/api/v1/pipeline-results", json=delayed, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "same-release"))
+        findings = {finding.cve: finding.active for finding in db.scalars(select(Finding).where(Finding.service_id == service.id))}
+        assert findings == {"CVE-CURRENT": True, "CVE-OLD": False}
+        assert len(service.executions) == 2
+
+
 def helm_payload(execution="helm-validation", service_id="payments-service"):
     body = payload(execution, datetime.now(timezone.utc), [], service_id)
     body.update({"artifact_type": "helm", "helm_source_files": {"Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.0.0\n"}})
@@ -89,6 +154,11 @@ def test_watchlist_warning_dashboard_and_authorization():
         "purl": "pkg:pypi/requests@2.31.0", "image": "registry.internal/app:1"},
         {"name": "request-helper", "version": "2.31.0", "ecosystem": "python", "image": "registry.internal/app:1"}]
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    dependencies = client.get("/services/payments-service?dependencies=true&dependency_filter=watchlisted")
+    assert dependencies.status_code == 200, dependencies.text
+    assert "Software Supply Chain" in dependencies.text
+    assert "WATCHLIST MATCH" in dependencies.text
+    assert "requests" in dependencies.text
     warnings = client.get("/services/payments-service?finding_state=warnings")
     assert warnings.status_code == 200 and "Dependency Watchlist" in warnings.text
     dashboard = client.get("/cybersecurity")
@@ -1173,7 +1243,7 @@ def test_administrator_can_edit_service_metadata():
     }, follow_redirects=False)
     assert response.status_code == 303
     page = client.get("/services/payments-service").text
-    assert "Payments Platform" in page and "Version 3.0" in page and "Payments service metadata" in page
+    assert "Payments Platform" in page and "3.0" in page and "Payments service metadata" in page
 
 
 def test_edit_service_preserves_service_tab_query_rename_and_confirmation():
@@ -1233,6 +1303,23 @@ def test_findings_filter_controls_and_view_selector_keep_expected_contract():
     assert "--finding-filter-height:42px" in css
     assert ".finding-view-selector{display:inline-flex" in css
     assert "margin:0 0 .75rem" in css
+
+
+def test_simplified_findings_offer_per_cve_actions_without_view_raw():
+    client = new_client()
+    assert ingest(client, cves=["CVE-2099-0002", "CVE-2099-0001"]).status_code == 201
+    page = client.get("/services/payments-service?findings_view=simplified")
+    assert page.status_code == 200
+    assert "View raw" not in page.text
+    for label in ("Request Exception", "Add POA&amp;M Entry", "Add Mitigation"):
+        assert page.text.count(f">{label}</button>") == 2
+    with SessionLocal() as db:
+        findings = {finding.cve: finding.id for finding in db.scalars(select(Finding)).all()}
+    for cve, finding_id in findings.items():
+        assert f'href="/services/payments-service/findings/{finding_id}">{cve}</a>' in page.text
+        assert f'data-finding-id="{finding_id}" data-cve="{cve}"' in page.text
+    for dialog_id in ("shared-exception-dialog", "shared-poam-dialog", "shared-mitigation-dialog"):
+        assert f'id="{dialog_id}"' in page.text
 
 
 def _helm_chart_archive(name: str, extra_name: str = "templates/deployment.yaml", extra_content: str = "apiVersion: apps/v1\nkind: Deployment\n") -> bytes:
@@ -1335,7 +1422,8 @@ def test_helm_archive_traversal_and_links_are_rejected():
         bundle.addfile(member, BytesIO(data))
     response = client.post("/services/payments-service/artifacts/acquire", data={
         "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
-    }, files={"files": ("unsafe.tgz", output.getvalue(), "application/gzip")})
+    }, files={"files": ("unsafe.tgz", output.getvalue(), "application/gzip")},
+        headers={"accept": "application/json"})
     assert response.status_code == 400
     assert "unsafe path" in response.json()["detail"]
 
@@ -1351,7 +1439,8 @@ def test_helm_archive_traversal_and_links_are_rejected():
         bundle.addfile(symlink)
     response = client.post("/services/payments-service/artifacts/acquire", data={
         "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "upload",
-    }, files={"files": ("linked.tgz", linked.getvalue(), "application/gzip")})
+    }, files={"files": ("linked.tgz", linked.getvalue(), "application/gzip")},
+        headers={"accept": "application/json"})
     assert response.status_code == 400
     assert "unsafe link" in response.json()["detail"]
 
@@ -1364,9 +1453,16 @@ def test_helm_repository_and_tls_failures_are_specific_and_secure(monkeypatch):
     invalid = client.post("/services/payments-service/artifacts/acquire", data={
         "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "repository",
         "source_reference": "https://charts.example.invalid",
-    })
+    }, headers={"accept": "application/json"})
     assert invalid.status_code == 400
     assert "valid index.yaml" in invalid.json()["detail"]
+    browser_invalid = client.post("/services/payments-service/artifacts/acquire", data={
+        "csrf_token": csrf(client), "artifact_type": "helm", "source_method": "repository",
+        "source_reference": "https://charts.example.invalid",
+    }, headers={"accept": "text/html"})
+    assert browser_invalid.status_code == 400
+    assert "valid index.yaml" in browser_invalid.text
+    assert "You've been boozled." not in browser_invalid.text
 
     monkeypatch.setattr(portal_main, "_fetch_public_url", real_fetch)
     def tls_failure(*_args, **_kwargs):
@@ -1789,9 +1885,9 @@ def test_reset_password_dialog_is_not_constrained_as_a_table_action():
 def test_excel_export_remains_valid():
     client = new_client(); ingest(client, cves=["CVE-2026-0001"])
     service_page = client.get("/services/payments-service").text
-    assert "Export to Excel" in service_page
+    assert "Export ▾" in service_page
     overview_page = client.get("/services/payments-service?overview=true").text
-    assert '>Export</a>' in overview_page
+    assert 'href="/services/payments-service/export.xlsx">All</a>' in overview_page
     assert 'class="secondary-button" href="/services/payments-service?architecture=true">Architecture</a>' not in overview_page
     assert 'class="secondary-button" href="/services/payments-service/helm-diagram.svg">Helm Diagram</a>' not in overview_page
     diagram = client.get("/services/payments-service/helm-diagram.svg")
@@ -2095,6 +2191,118 @@ def test_missing_evidence_source_file_is_preserved_in_service_overview():
     page = client.get("/services/provenance-service?overview=true")
     assert page.status_code == 200
     assert "charts/app/values.yaml" in page.text
+
+
+def test_remove_missing_evidence_matches_displayed_sources_and_rejects_stale_page():
+    client = new_client()
+    body = payload("evidence-1", datetime.now(timezone.utc), [], service_id="evidence-service", complete=False,
+                   skipped_images=["registry.example/missing:1 :: unavailable"])
+    body["service_overview"] = {
+        "images": [{"image": "registry.example/missing:1", "source_file": "charts/app/values.yaml"}],
+        "missing_evidence": [{"type": "Chart", "item": "worker", "reason": "unavailable"}],
+        "dependencies": [{"name": "library", "resolved": False, "reason": "unavailable"}],
+    }
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    page = client.get("/services/evidence-service?overview=true")
+    assert page.status_code == 200
+    assert 'name="execution_id"' in page.text
+    with SessionLocal() as db:
+        execution_id = db.scalar(select(Execution.id).where(Execution.execution_key == "evidence-1"))
+
+    def remove(kind, item, source="", run=execution_id):
+        return client.post("/services/evidence-service/missing-evidence/remove", data={
+            "csrf_token": csrf(client), "execution_id": run,
+            "evidence_type": kind, "item": item, "source_file": source,
+        }, follow_redirects=False)
+
+    assert remove("Image", "registry.example/missing:1", "charts/app/values.yaml").status_code == 303
+    assert remove("Dependency", "library").status_code == 303
+    assert remove("Chart", "worker").status_code == 303
+    with SessionLocal() as db:
+        execution = db.get(Execution, execution_id)
+        assert execution.raw_payload["skipped_images"] == []
+        assert execution.raw_payload["service_overview"]["dependencies"] == []
+        assert execution.raw_payload["service_overview"]["missing_evidence"] == []
+        assert db.scalars(select(AuditEvent).where(AuditEvent.action == "missing_evidence.removed")).all()
+    assert remove("Chart", "worker").headers["location"].endswith("evidence_notice=stale")
+    stale_page = client.get("/services/evidence-service?overview=true&evidence_notice=stale")
+    assert "no longer current" in stale_page.text
+    assert "You've been boozled." not in stale_page.text
+    stale_api = client.post("/services/evidence-service/missing-evidence/remove", data={
+        "csrf_token": csrf(client), "execution_id": execution_id,
+        "evidence_type": "Chart", "item": "worker",
+    }, headers={"accept": "application/json"})
+    assert stale_api.status_code == 409
+    assert "no longer current" in stale_api.json()["detail"]
+    newer = payload("evidence-2", datetime.now(timezone.utc) + timedelta(seconds=1), [],
+                    service_id="evidence-service")
+    newer["service_overview"] = {"missing_evidence": [{"type": "Chart", "item": "new-worker"}]}
+    assert client.post("/api/v1/pipeline-results", json=newer, headers=pipeline_headers).status_code == 201
+    assert remove("Chart", "new-worker").headers["location"].endswith("evidence_notice=stale")
+    current_page = client.get("/services/evidence-service?overview=true")
+    assert 'name="item" value="new-worker"' in current_page.text
+    assert 'name="item" value="worker"' not in current_page.text
+    with SessionLocal() as db:
+        current = db.scalar(select(Execution).where(Execution.execution_key == "evidence-2"))
+        assert current.raw_payload["service_overview"]["missing_evidence"]
+
+
+def test_browser_errors_are_pages_and_api_errors_remain_json(caplog):
+    from starlette.routing import Route
+
+    def crash(request):
+        raise RuntimeError("private failure detail")
+
+    browser_route = Route("/__test_browser_crash", crash)
+    api_route = Route("/api/__test_api_crash", crash)
+    app.router.routes.extend((browser_route, api_route))
+    try:
+        client = TestClient(app, raise_server_exceptions=False)
+        browser = client.get("/__test_browser_crash", headers={"accept": "text/html"})
+        assert browser.status_code == 500
+        assert "You've been boozled." in browser.text
+        assert "Something went wrong while processing your request." in browser.text
+        assert 'href="http://testserver/"' in browser.text
+        assert "private failure detail" not in browser.text
+        assert "private failure detail" in caplog.text
+        for internal in ("RuntimeError", "Traceback", "DATABASE_URL", "PIPELINE_API_TOKEN", "sqlite://", "C:\\Users\\"):
+            assert internal not in browser.text
+        api = client.get("/api/__test_api_crash", headers={"accept": "application/json"})
+        assert api.status_code == 500
+        assert api.json() == {"detail": "Something went wrong while processing your request."}
+        assert "private failure detail" not in api.text
+        missing = client.get("/not-a-page", headers={"accept": "text/html"})
+        assert missing.status_code == 404 and "Request could not be completed" in missing.text
+        assert "application/json" not in missing.headers["content-type"]
+        missing_api = client.get("/api/not-a-page", headers={"accept": "application/json"})
+        assert missing_api.status_code == 404 and missing_api.json()["detail"] == "Not Found"
+        login = client.post("/login", data={"username": "admin", "password": "test-password-long"}, follow_redirects=False)
+        assert login.status_code == 303
+        invalid = client.post("/services/example/missing-evidence/remove", data={}, headers={"accept": "text/html"})
+        assert invalid.status_code == 422 and "Request could not be completed" in invalid.text
+    finally:
+        app.router.routes.remove(browser_route)
+        app.router.routes.remove(api_route)
+
+
+def test_missing_evidence_remove_requires_permission_and_csrf():
+    admin = new_client()
+    body = payload("permission-evidence", datetime.now(timezone.utc), [], service_id="permission-service")
+    body["service_overview"] = {"missing_evidence": [{"type": "Chart", "item": "worker"}]}
+    assert admin.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    add_user("evidence-assessor", "Assessor")
+    assessor = new_client("evidence-assessor")
+    denied = assessor.post("/services/permission-service/missing-evidence/remove", data={
+        "csrf_token": csrf(assessor), "evidence_type": "Chart", "item": "worker",
+    }, headers={"accept": "text/html"})
+    assert denied.status_code == 403 and "Request could not be completed" in denied.text
+    bad_csrf = admin.post("/services/permission-service/missing-evidence/remove", data={
+        "csrf_token": "wrong", "evidence_type": "Chart", "item": "worker",
+    }, headers={"accept": "text/html"})
+    assert bad_csrf.status_code == 403
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution).where(Execution.execution_key == "permission-evidence"))
+        assert execution.raw_payload["service_overview"]["missing_evidence"]
 
 
 def test_all_sixty_missing_evidence_entries_reach_noncompliance():
