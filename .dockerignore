@@ -8,6 +8,7 @@
 CATS-*
 portal/.pytest_cache
 **/node_modules
+.pnpm-store
 .env
 .env.*
 !.env.example

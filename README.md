@@ -338,6 +338,8 @@ and synthetic report sets are intentionally excluded from Git. The scripts in
 
 ## Development and validation
 
+The portal UI is now built locally with React. See [React frontend development and local test checklist](docs/react-frontend.md) for the frontend build, security boundary, and manual acceptance tests. Build its assets before starting the Python portal; the Docker builds perform this step automatically.
+
 Create a Python environment and install the portal dependencies:
 
 ```text

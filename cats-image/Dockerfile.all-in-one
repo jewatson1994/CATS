@@ -63,19 +63,16 @@ COPY scanning-main/scripts /opt/cats/scanning/scripts
 COPY cats-scanner/catscan-validate-offline-release /usr/local/bin/catscan-validate-offline-release
 COPY scanning-main/scripts/cats /usr/local/bin/cats
 
-# Fail early if an image is accidentally built from an older portal checkout.
-# These markers represent the current shared navigation, landing page, Patch
-# source selector, unified Patch Results presentation, and same-tab auth flow.
+# Fail early if the native React UI bundle was not copied into the image.
+# Check the shell, emitted JavaScript and shared styles, not removed Jinja sources.
 RUN set -eux; \
-    grep -q 'Production Services' /app/app/templates/home.html; \
-    grep -q 'href="/remediations"' /app/app/templates/base.html; \
-    grep -q 'OCI Image' /app/app/templates/patch.html; \
-    grep -q 'Vulnerability results' /app/app/templates/patch_results.html; \
-    ! grep -Eq 'target[[:space:]]*=[[:space:]]*"_blank"' \
-      /app/app/templates/base.html /app/app/templates/home.html \
-      /app/app/templates/self_service.html /app/app/templates/login.html; \
-    ! grep -R -q 'window\.open(' /app/app/templates /app/app/static; \
-    echo 'CATS portal UI source validation: PASS'
+    test -s /app/app/static/frontend/index.html; \
+    grep -q 'id="root"' /app/app/static/frontend/index.html; \
+    grep -q '/static/frontend/assets/' /app/app/static/frontend/index.html; \
+    set -- /app/app/static/frontend/assets/*.js; test -s "$1"; \
+    test -s /app/app/static/app.css; \
+    test -s /app/app/static/cats-icon.png; \
+    echo 'CATS portal bundled UI validation: PASS'
 
 RUN chmod +x /opt/cats/scanning/scripts/*.sh 2>/dev/null || true
 RUN chmod 0755 /usr/local/bin/cats
