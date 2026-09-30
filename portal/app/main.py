@@ -5502,20 +5502,35 @@ def deployment_validation_result(
 
 @app.get("/api/v1/services/{service_key}/architecture-evidence")
 def architecture_evidence_result(
-    service_key: str, db: Session = Depends(get_db),
+    service_key: str, view_version: str = "", db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True)),
 ):
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
     if not service:
         raise HTTPException(404)
-    execution = latest_architecture_execution(service.executions)
+    executions = service.executions
+    if view_version:
+        from .exchange import selected_evidence
+        try:
+            _, executions = selected_evidence(db, service, view_version)
+        except ValueError as exc:
+            raise HTTPException(404, detail=str(exc)) from exc
+    execution = latest_architecture_execution(executions)
     payload = dict(execution.raw_payload) if execution and isinstance(execution.raw_payload, dict) else {}
     overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
     resources = overview.get("rendered_resources") or payload.get("rendered_resources") or []
-    working_revision = latest_architecture_working_revision(db, service.id)
-    runs = db.scalars(select(DeploymentValidationRun).where(
+    # A selected release is immutable evidence, including when its label is
+    # currently deployed. Never attach today's mutable working revision.
+    working_revision = None if view_version else latest_architecture_working_revision(db, service.id)
+    runs_query = select(DeploymentValidationRun).where(
         DeploymentValidationRun.service_id == service.id,
-    ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
+    )
+    if view_version:
+        runs_query = runs_query.where(
+            DeploymentValidationRun.execution_id.in_([item.id for item in executions]),
+            DeploymentValidationRun.artifact_revision_id.is_(None),
+        )
+    runs = db.scalars(runs_query.options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
     summary = architecture_verification(
         applicable=bool(payload.get("helm_source_files") or resources) and str(payload.get("artifact_type") or "helm").lower() == "helm",
         declared_count=len(resources), runs=runs,

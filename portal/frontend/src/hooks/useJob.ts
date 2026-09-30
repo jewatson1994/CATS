@@ -8,10 +8,13 @@ export interface JobState {
   [key: string]: unknown;
 }
 export const TERMINAL = new Set(['complete', 'incomplete', 'error', 'cancelled', 'failed',
-  'succeeded', 'could_not_validate', 'partially_verified', 'verified', 'timed_out']);
+  'succeeded', 'validated', 'could_not_validate', 'partially_verified', 'verified', 'timed_out']);
+
+const loadJson = <T,>(url: string, signal: AbortSignal) => requestJson<T>(url, {signal});
 
 /** Each service/version/job scope owns its requests and timers. Never retain old evidence. */
-export function useJob<T extends JobState>(url: string | null, scope: string) {
+export function useJob<T extends JobState>(url: string | null, scope: string,
+  load: (url: string, signal: AbortSignal) => Promise<T> = loadJson) {
   const [result, setResult] = useState<{scope: string; job: T | null; error: string | null}>({scope, job: null, error: null});
   const [attempt, setAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
@@ -23,7 +26,7 @@ export function useJob<T extends JobState>(url: string | null, scope: string) {
     if (!url) return () => controller.abort();
     const poll = async () => {
       try {
-        const job = await requestJson<T>(url, {signal: controller.signal});
+        const job = await load(url, controller.signal);
         if (controller.signal.aborted) return;
         setResult({scope, job, error: null});
         if (!TERMINAL.has(job.status.toLowerCase())) timer = setTimeout(poll, 1500);
@@ -36,7 +39,7 @@ export function useJob<T extends JobState>(url: string | null, scope: string) {
     };
     void poll();
     return () => {controller.abort(); if (timer) clearTimeout(timer);};
-  }, [url, scope, attempt]);
+  }, [url, scope, attempt, load]);
   const job = result.scope === scope ? result.job : null;
   useEffect(() => {
     if (!job?.started_at || job.finished_at || TERMINAL.has(job.status.toLowerCase())) return;

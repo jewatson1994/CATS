@@ -7,10 +7,24 @@ from datetime import date, datetime
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.templating import Jinja2Templates
 from .frontend_portfolio import cybersecurity_data
+from .frontend_results import public_results_data, patch_results_data
+from .frontend_governance import project_governance
+from .frontend_service_secondary import project_secondary
+from .frontend_service_operations import project_service_operations
+from .frontend_exchange import service_definitions_data, exchange_data, purpose_export_template_data
+from .frontend_remediations import project_remediations
+from .frontend_service_architecture import project_service_architecture
+from .frontend_admin import project_admin
+from .frontend_policies import policies_data
 
 PAGE_MEDIA_TYPE = "application/vnd.cats.page+json"
 MIGRATED_PAGES = frozenset({"home.html", "login.html", "dashboard.html", "password.html",
-                            "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html"})
+                            "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html", "public_results.html", "patch_results.html", "finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html",
+                            "service_overview.html", "service_activity.html", "service_history.html",
+                            "service_dependencies.html", "service_artifacts.html", "service_validation.html",
+                            "service_definitions.html", "exchange.html", "purpose_export_template.html",
+                            "remediations.html", "service_remediations.html", "remediation_report.html", "requests.html", "service_architecture.html",
+                            "admin.html", "staging.html", "configuration.html", "audit.html", "general_policy.html", "evidence_policy.html", "workflow_policy.html", "compliance.html", "compliance_frameworks.html", "dependency_watchlist.html"})
 
 
 def _field(value, name, default=None):
@@ -29,6 +43,10 @@ def _fields(value, names):
 def _formatted(value, formatter=None):
     if value is None:
         return None
+    # Portable history snapshots already contain serialized timestamps.
+    # Date formatters accept datetime objects, not imported ISO strings.
+    if isinstance(value, str):
+        return value
     if callable(formatter):
         return str(formatter(value))
     return value.isoformat() if isinstance(value, (date, datetime)) else _scalar(value)
@@ -111,7 +129,37 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "next_path": path + ("?" + request.url.query if request.url.query else ""),
     }
     data["can"] = {permission: {"*": allowed} for permission, allowed in data["permissions"].items()}
-    if name == "cybersecurity.html":
+    if name in {"admin.html", "staging.html", "configuration.html", "audit.html"}:
+        project_admin(data, name, context, can, formatters)
+    elif name in {"general_policy.html", "evidence_policy.html", "workflow_policy.html", "compliance.html", "compliance_frameworks.html", "dependency_watchlist.html"}:
+        data.update(policies_data(context, formatters.get("cats_datetime")))
+    elif name in {"remediations.html", "service_remediations.html", "remediation_report.html", "requests.html"}:
+        if name == "service_remediations.html":
+            _service_data(data, context, can, formatters or {})
+        project_remediations(data, name, context, can, formatters or {})
+    elif name == "service_architecture.html":
+        _service_data(data, context, can, formatters)
+        data.update(project_service_architecture(context))
+    elif name in {"service_dependencies.html", "service_artifacts.html", "service_validation.html"}:
+        _service_data(data, context, can, formatters or {})
+        data.update(project_service_operations(name, context))
+    elif name == "service_definitions.html":
+        data.update(service_definitions_data(context))
+    elif name == "exchange.html":
+        data.update(exchange_data(context))
+    elif name == "purpose_export_template.html":
+        data.update(purpose_export_template_data(context))
+    elif name in {"service_overview.html", "service_activity.html", "service_history.html"}:
+        if name != "service_history.html":
+            _service_data(data, context, can, formatters or {})
+        project_secondary(data, name, context, can, formatters or {})
+    elif name in {"finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html"}:
+        project_governance(data, name, context, can, formatters or {})
+    elif name == "public_results.html":
+        data.update(public_results_data(context))
+    elif name == "patch_results.html":
+        data.update(patch_results_data(context))
+    elif name == "cybersecurity.html":
         data.update(cybersecurity_data(context, format_date=(formatters or {}).get("cats_date")))
     elif name in {"service.html", "service_simplified.html"}:
         _service_data(data, context, can, formatters or {})
@@ -169,6 +217,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
                                            ("excepted_count", "excepted", "policy_excepted")):
                 row[target] = len(_field(view, first, []) or []) + len(_field(view, second, []) or [])
             data["views"].append(row)
+    if name.startswith("service") and request.query_params.get("saved") == "1":
+        data["saved"] = True
     return {"schemaVersion": 1, "page": name.removesuffix(".html"), "data": data}
 
 
@@ -191,7 +241,7 @@ def _wants_page_json(accept):
 
 
 class ReactTemplates(Jinja2Templates):
-    """Retain both Starlette TemplateResponse call conventions and legacy pages."""
+    """Serve native React pages using both Starlette response call conventions."""
 
     def __init__(self, *args, frontend_index=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -212,7 +262,7 @@ class ReactTemplates(Jinja2Templates):
             return super().TemplateResponse(*args, **kwargs)
         wants_json = _wants_page_json(request.headers.get("accept", ""))
         if not wants_json and not self.frontend_index.is_file():
-            response = super().TemplateResponse(*args, **kwargs)
+            response = HTMLResponse("CATS frontend assets are missing. Build portal/frontend before starting the portal.", status_code=503)
         else:
             options = dict(zip(("status_code", "headers", "media_type", "background"), remaining))
             options.update({key: kwargs[key] for key in ("status_code", "headers", "background") if key in kwargs})

@@ -8,9 +8,11 @@ export class ApiError extends Error {
 export async function requestJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const target = new URL(url, window.location.origin);
   if (target.origin !== window.location.origin) throw new ApiError('External API URLs are not allowed.', 0);
+  const headers = new Headers(options.headers);
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   const response = await fetch(target.href, {
     ...options, credentials: 'same-origin', cache: 'no-store',
-    headers: {Accept: 'application/json', ...Object.fromEntries(new Headers(options.headers).entries())},
+    headers,
   });
   if (response.redirected && new URL(response.url).pathname === '/login') {
     window.location.assign(response.url);
@@ -28,7 +30,7 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
 }
 
 export interface PageData {
-  current_user?: {id: number; display_name: string; username: string; theme: string} | null;
+  current_user?: {display_name: string; theme: string} | null;
   csrf_token?: string;
   themes?: Record<string, string>;
   can?: Record<string, Record<string, boolean>>;
