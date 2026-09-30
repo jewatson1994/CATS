@@ -113,22 +113,28 @@ def test_secret_dependency_runtime_evidence_contains_no_secret_values():
     assert "data" not in secret and "stringData" not in secret
 
 
-def test_architecture_badge_and_evidence_views_are_wired_for_live_updates():
-    root = Path(__file__).parents[1]
-    template = (root / "app/templates/service_architecture.html").read_text(encoding="utf-8")
-    script = (root / "app/static/architecture_graph.js").read_text(encoding="utf-8")
-    assert "data-architecture-verification" in template and "data-architecture-badge" in template
-    assert template.index("latest-evidence") < template.index("data-architecture-verification")
-    for view in ("declared", "runtime", "differences"):
-        assert f'value="{view}"' in template
-    assert "updateGraph(nextGraph)" in script
-    assert "window.location.reload" not in script
+def test_architecture_dto_preserves_evidence_views_and_badge_state():
+    from app.frontend_service_architecture import project_service_architecture
+    layouts = {name: {"node_ids": [], "edges": [], "positions": {}, "bounds": {"x": 0, "y": 0}} for name in ("declared", "runtime", "differences")}
+    data = project_service_architecture({
+        "architecture_state": "VERIFIED",
+        "architecture_graph": {"layouts": layouts, "credentials": "private"},
+        "architecture_verification": {"state": "VERIFIED"},
+    })
+    assert data["architecture_state"] == "VERIFIED"
+    assert set(data["architecture_graph"]["layouts"]) == set(layouts)
+    assert "credentials" not in data["architecture_graph"]
 
 
 def test_overview_keeps_static_validation_and_architecture_as_separate_dimensions():
-    root = Path(__file__).parents[1]
-    template = (root / "app/templates/service_overview.html").read_text(encoding="utf-8")
-    assert "data-architecture-summary" in template
-    assert "Deployment Validation" in template
-    assert "Static Scan:" in template
-    assert "architecture-evidence-live.js" in template
+    from app.frontend_service_secondary import project_secondary
+    data = project_secondary({}, "service_overview.html", {
+        "latest_execution": {"id": 1, "complete": True, "raw_payload": {"private": "secret"}},
+        "deployment_validation": {"status": "failed"},
+        "architecture_verification": {"state": "PARTIAL", "expected": 4, "observed": 2, "missing": 2},
+    })
+    assert data["deployment_validation"]["status"] == "failed"
+    assert data["deployment_validation"]["static_scan_complete"] is True
+    assert data["architecture_verification"]["state"] == "PARTIAL"
+    assert data["architecture_verification"]["missing"] == 2
+    assert "raw_payload" not in data["latest_execution"]

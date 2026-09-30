@@ -50,9 +50,9 @@ def test_html_bootstrap_escapes_script_and_preserves_post_error(templates):
     assert json.loads(serialized)["data"]["error"] == error
 
 
-def test_legacy_fallback_and_nonmigrated_pages(templates):
+def test_missing_build_is_explicit_and_non_ui_templates_remain_supported(templates):
     response = templates.TemplateResponse(request(), "login.html", {"error": "failure"})
-    assert response.body == b"legacy failure"
+    assert response.status_code == 503 and b"frontend assets are missing" in response.body
     response = templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "legacy.html", {"error": "unchanged"})
     assert response.body == b"legacy unchanged"
 
@@ -61,7 +61,7 @@ def test_old_signature_and_quality_zero(templates):
     response = templates.TemplateResponse("login.html", {"request": request(PAGE_MEDIA_TYPE), "error": "bad"}, 403)
     assert response.status_code == 403 and json.loads(response.body)["page"] == "login"
     response = templates.TemplateResponse(request(PAGE_MEDIA_TYPE + ";q=0, text/html"), "login.html", {"error": "bad"})
-    assert response.body == b"legacy bad"
+    assert response.status_code == 503 and b"frontend assets are missing" in response.body
 
 
 def test_keyword_signature_and_vary_preservation(templates):
@@ -128,7 +128,7 @@ def test_service_projection_scopes_permissions_and_formats_dates():
     assert ("exception.request", 9) in calls
     assert data["view"]["last_execution"] == "09/30/2026 12:00"
     assert "secret" not in json.dumps(payload)
-    assert "service.html" not in MIGRATED_PAGES and "service_simplified.html" not in MIGRATED_PAGES
+    assert "service.html" in MIGRATED_PAGES and "service_simplified.html" in MIGRATED_PAGES
 
 
 def test_service_policy_and_simplified_projection():

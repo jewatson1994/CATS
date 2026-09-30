@@ -1,5 +1,4 @@
 """Definition preview, retention, and per-component processing regressions."""
-import re
 from unittest.mock import patch
 
 from sqlalchemy import select
@@ -8,7 +7,7 @@ from app import main
 from app.definition_routes import process_definition
 from app.oci_diagnostics import OciPullFailure
 from app.models import Service, ServiceArtifact, ServiceArtifactRevision
-from test_portal import setup_function, new_client, csrf, SessionLocal
+from test_portal import setup_function, new_client, csrf, SessionLocal, page_data
 
 
 SOURCE = """services:
@@ -49,10 +48,10 @@ def test_preview_is_non_mutating_and_confirm_retains_all_components():
     response = _preview(client)
     assert response.status_code == 200, response.text
     assert "web" in response.text and "cache" in response.text and "unknown" in response.text
-    assert "Declared: 3" in response.text
+    assert page_data(response)["preview"]["counts"]["declared"] == 3
     with SessionLocal() as db:
         assert list(db.scalars(select(ServiceArtifact))) == []
-    token = re.search(r"/definitions/confirm/([a-f0-9]+)", response.text).group(1)
+    token = page_data(response)["preview_token"]
     with patch.object(main.PUBLIC_WORKERS, "submit") as submit:
         confirmed = client.post(f"/services/definition-test/definitions/confirm/{token}",
             data={"csrf_token": csrf(client)}, follow_redirects=False)
@@ -73,7 +72,7 @@ def test_definition_processing_isolates_failed_sibling_and_preserves_terminal_sc
     _service()
     client = new_client()
     response = _preview(client)
-    token = re.search(r"/definitions/confirm/([a-f0-9]+)", response.text).group(1)
+    token = page_data(response)["preview_token"]
     with patch.object(main.PUBLIC_WORKERS, "submit"):
         assert client.post(f"/services/definition-test/definitions/confirm/{token}",
             data={"csrf_token": csrf(client)}).status_code == 200
@@ -124,8 +123,8 @@ def test_latest_reprocess_keeps_each_resolved_version_and_chart_artifact():
     _service()
     client = new_client()
     response = _preview(client, SOURCE.replace("1.2.3", "latest"))
-    assert "latest" in response.text and "Requested Version" in response.text
-    token = re.search(r"/definitions/confirm/([a-f0-9]+)", response.text).group(1)
+    assert page_data(response)["preview"]["components"][0]["version"] == "latest"
+    token = page_data(response)["preview_token"]
     with patch.object(main.PUBLIC_WORKERS, "submit"):
         assert client.post(f"/services/definition-test/definitions/confirm/{token}",
                            data={"csrf_token": csrf(client)}).status_code == 200
@@ -186,7 +185,7 @@ def test_oci_failure_reaches_retained_evidence_and_ui_without_stopping_sibling()
     client = new_client()
     source = SOURCE.replace("services:\n", "services:\n  cache-two:\n    sourceType: oci\n    ociRepo: {url: 'oci://registry.example.invalid/charts', repoName: cache, tag: 2.0.0}\n")
     response = _preview(client, source)
-    token = re.search(r"/definitions/confirm/([a-f0-9]+)", response.text).group(1)
+    token = page_data(response)["preview_token"]
     with patch.object(main.PUBLIC_WORKERS, "submit"):
         client.post(f"/services/definition-test/definitions/confirm/{token}",
                     data={"csrf_token": csrf(client)})
@@ -219,5 +218,5 @@ def test_oci_failure_reaches_retained_evidence_and_ui_without_stopping_sibling()
     page = client.get("/services/definition-test/definitions")
     assert page.status_code == 200
     assert "OCI registry authentication required or denied" in page.text
-    assert "Chart appVersion: 9.8.7" in page.text
+    assert page_data(page)["definitions"][0]["source_metadata"]["components"][1]["chart_app_version"] == "9.8.7"
     assert "secret-value" not in page.text

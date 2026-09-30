@@ -15,10 +15,11 @@ def test_missing_runtime_version_is_omitted(monkeypatch):
 
 
 def test_global_header_uses_runtime_value_without_hardcoded_release():
-    root = Path(__file__).parents[1]
-    template = (root / "app" / "templates" / "base.html").read_text(encoding="utf-8")
-    assert "cats_deployed_version" in template
-    assert "v1.2." not in template
+    from app.frontend import page_data
+    from starlette.requests import Request
+    request = Request({"type": "http", "path": "/", "query_string": b"", "headers": []})
+    assert page_data(request, "home.html", {}, deployed_version="v9.8.7", formatters={})["data"]["cats_deployed_version"] == "v9.8.7"
+    assert page_data(request, "home.html", {}, formatters={})["data"]["cats_deployed_version"] is None
 
 
 def test_build_and_compose_propagate_one_requested_image_version():

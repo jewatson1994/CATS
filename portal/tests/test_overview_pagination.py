@@ -1,22 +1,13 @@
-from pathlib import Path
+from app.frontend_service_secondary import project_secondary
 
 
-def _files():
-    root = Path(__file__).parents[1]
-    return next(root.glob("app/**/_overview_panels.html")), next(root.glob("app/**/overview-pagination.js"))
-
-
-def test_overview_panels_have_synchronized_top_and_bottom_client_pagination():
-    template, script = _files()
-    html = template.read_text(encoding="utf-8")
-    js = script.read_text(encoding="utf-8")
-
-    assert html.count("overview-paginated") == 3
-    assert html.count('data-page-size="10"') == 3
-    assert html.count("data-overview-pagination") == 3
-    assert "let page = 1" in js
-    assert "rows.forEach" in js
-    assert "const mounts = [top, footer]" in js
-    assert "mounts.forEach" in js
-    assert "fetch(" not in js
-    assert "XMLHttpRequest" not in js
+def test_overview_panels_receive_complete_safe_collections_for_client_pagination():
+    collections = {
+        "ports": [{"port": str(index), "protocol": "TCP", "password": "private"} for index in range(23)],
+        "accounts": [{"name": str(index), "password": "private"} for index in range(23)],
+        "artifacts": [{"artifact": str(index), "password": "private"} for index in range(23)],
+    }
+    data = project_secondary({}, "service_overview.html", {"overview_data": collections})
+    for key, field in (("ports", "port"), ("accounts", "name"), ("artifacts", "artifact")):
+        assert [row[field] for row in data["overview_data"][key]] == [str(index) for index in range(23)]
+        assert all("password" not in row for row in data["overview_data"][key])
