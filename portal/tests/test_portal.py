@@ -79,6 +79,29 @@ def test_service_versions_reuse_identity_and_link_executions():
         assert [row.service_version.version for row in linked] == ["release-A", "release-A", "release-B"]
 
 
+def test_cybersecurity_chart_history_and_totals_respect_service_access():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    for identifier, version, cves, complete in (("chart-1", "1.0", ["CVE-ONE", "CVE-TWO"], True),
+                                               ("chart-2", "2.0", ["CVE-ONE"], False)):
+        body = payload(identifier, now + timedelta(minutes=1 if identifier == "chart-2" else 0), cves, complete=complete)
+        body["service"]["version"] = version
+        assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    assert ingest(client, execution="private-chart", service_id="private-service", cves=["CVE-PRIVATE"]).status_code == 201
+    with SessionLocal() as db:
+        service_id = db.scalar(select(Service.id).where(Service.service_key == "payments-service"))
+    add_user("chart-viewer", "Assessor", service_id=service_id)
+    viewer = new_client("chart-viewer")
+    data = page_data(viewer.get("/cybersecurity?component=not-present"))
+    assert not data["rows"]
+    assert data["metrics"]["services"] == 1
+    assert data["metrics"]["high"] == data["metrics"]["vulnerabilities"]
+    assert [item["service_key"] for item in data["history"]] == ["payments-service"]
+    latest, previous = data["history"][0]["versions"]
+    assert (latest["version"], latest["total"], latest["complete"]) == ("2.0", 1, False)
+    assert (previous["version"], previous["total"]) == ("1.0", 2)
+
+
 def test_incomplete_scan_does_not_promote_service_version():
     client = new_client()
     first = payload("current-release", datetime.now(timezone.utc), [])

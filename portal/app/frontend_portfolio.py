@@ -18,12 +18,25 @@ def cybersecurity_data(context, format_date=None):
     metrics = context.get("metrics", {})
     data["metrics"] = {key: _scalar(_value(metrics, key, 0)) for key in
         ("attention", "services", "scanned", "vulnerabilities", "critical_high", "kev",
-         "watchlist", "patchable", "poam", "poam_overdue", "sbom_coverage", "missing", "kind_failed")}
+         "watchlist", "patchable", "poam", "poam_overdue", "sbom_coverage", "missing", "kind_failed",
+         "critical", "high", "medium", "low", "unknown", "green", "yellow", "red")}
+    data["history"] = []
+    for service in context.get("history", []):
+        history = {key: _scalar(_value(service, key)) for key in ("service_key", "name")}
+        for key in ("trend", "versions"):
+            history[key] = []
+            for scan in _value(service, key, []):
+                snapshot = {field: _scalar(_value(scan, field)) for field in
+                            ("execution_id", "version", "scanned_at", "complete", "total")}
+                snapshot["counts"] = {level: _scalar(_value(_value(scan, "counts", {}), level, 0))
+                                      for level in ("Critical", "High", "Medium", "Low", "Unknown")}
+                history[key].append(snapshot)
+        data["history"].append(history)
     data["rows"] = []
     for source in context.get("rows", []):
         service = _value(source, "service")
         row = {key: _scalar(_value(source, key)) for key in
-            ("status", "critical", "high", "kev", "watchlist", "patchable", "poam",
+            ("status", "critical", "high", "medium", "low", "kev", "watchlist", "patchable", "poam",
              "poam_overdue", "missing", "sbom", "kind")}
         row["service"] = {key: _scalar(_value(service, key)) for key in ("service_key", "name")}
         scanned = _value(source, "last_scan")

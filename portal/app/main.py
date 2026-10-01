@@ -5550,6 +5550,7 @@ def architecture_evidence_result(
 def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
     severity: str = "all", component: str = "", since: str = "",
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from .security_dashboard import service_history
     allowed = auth.accessible_service_ids("service.view")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
@@ -5596,6 +5597,9 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
             view["warning_items"])
         posture = "RED" if not view["compliant"] else "YELLOW" if warning else "GREEN"
         rows.append({"service": service, "status": posture, "critical": critical, "high": high,
+            "medium": sum(item.severity.lower() == "medium" for item in active_findings),
+            "low": sum(item.severity.lower() == "low" for item in active_findings),
+            "unknown": sum(item.severity.lower() not in {"critical", "high", "medium", "low"} for item in active_findings),
             "vulnerabilities": len(active_findings), "kev": kev, "watchlist": len(watchlist),
             "patchable": patchable, "poam": len(active_poam), "poam_overdue": len(overdue_poam),
             "missing": missing, "sbom": bool(latest and (latest.raw_payload or {}).get("sbom_images")),
@@ -5611,6 +5615,9 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
         "poam": sum(row["poam"] for row in rows), "poam_overdue": sum(row["poam_overdue"] for row in rows),
         "sbom_coverage": sum(row["sbom"] for row in rows), "missing": sum(row["missing"] for row in rows),
         "kind_failed": sum(row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"} for row in rows)}
+    metrics.update({level: sum(row[level] for row in rows) for level in ("critical", "high", "medium", "low", "unknown")})
+    metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
+    history = [service_history(service) for service in services]
     try:
         since_date = datetime.fromisoformat(since).date() if since else None
     except ValueError as exc:
@@ -5624,7 +5631,7 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
                      or (attention == "poam" and row["poam"]) or (attention == "missing" and row["missing"])
                      or (attention == "kind" and row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}))]
     return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth,
-        rows=filtered, metrics=metrics, q=q, status=status, attention=attention,
+        rows=filtered, metrics=metrics, history=history, q=q, status=status, attention=attention,
         severity=severity, component=component, since=since))
 
 
