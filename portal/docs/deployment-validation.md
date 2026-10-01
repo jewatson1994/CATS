@@ -1,5 +1,13 @@
 # Deployment Validation
 
+The remote CATSchrödinger service has a stricter execution contract than the
+legacy local Helm lifecycle described below: it authorizes mTLS leaf identities,
+renders once, rejects unsafe/unsupported objects and hooks, and applies the
+exact inspected output. Remote success proves restricted deployability rather
+than full Helm release semantics or trust. See [operator setup](../../docs/schrodinger-setup.md)
+and [security audit](../../docs/schrodinger-security-audit.md) for the VM boundary,
+required configuration, live smoke tests and residual risks.
+
 Deployment Validation is CATS runtime evidence for Helm artifacts. It is a
 second, asynchronous pass after static ingestion: CATS renders the retained
 chart, creates a uniquely named disposable Kubernetes cluster with `kind`,

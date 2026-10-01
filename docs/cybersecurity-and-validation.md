@@ -1,5 +1,12 @@
 # Cybersecurity configuration and deployment validation
 
+For the remote CATSchrödinger security boundary, provisioning and executable
+transport/workload/cleanup checks, see [operator setup](schrodinger-setup.md)
+and [security audit](schrodinger-security-audit.md). Remote execution enforces
+strict policy and applies the exact inspected Helm rendering; it does not run
+Helm hooks or full release-install semantics. Local legacy validation behavior
+described elsewhere is not authorization to expose that engine remotely.
+
 All endpoints, registries, certificate authorities, and data sources are explicit
 configuration. CATS can use internal mirrors and private trust in disconnected
 deployments; no public network service is needed for these runtime features.

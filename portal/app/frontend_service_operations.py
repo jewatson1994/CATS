@@ -1,7 +1,46 @@
 """Explicit, JSON-only projections for service evidence operations."""
 from collections.abc import Mapping
 from datetime import date, datetime
+from pathlib import PurePosixPath
 from urllib.parse import urlsplit, urlunsplit
+
+import yaml
+
+
+def retained_scan_charts(files, execution):
+    """Read-only chart identities from retained evidence, not persisted artifacts."""
+    markers = {PurePosixPath(str(path).replace("\\", "/")): content
+               for path, content in files.items()
+               if PurePosixPath(str(path).replace("\\", "/")).name == "Chart.yaml"}
+    roots = sorted(marker for marker in markers if not any(
+        parent / "Chart.yaml" in markers for parent in marker.parent.parents))
+    rows = []
+    for marker in roots:
+        if not isinstance(markers[marker], str):
+            continue
+        try:
+            metadata = yaml.safe_load(markers[marker])
+        except (yaml.YAMLError, TypeError, ValueError):
+            continue
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("name"), str):
+            continue
+        name = metadata["name"]
+        if not name.strip():
+            continue
+        version = metadata.get("version")
+        root = marker.parent
+        count = sum(PurePosixPath(str(path).replace("\\", "/")).is_relative_to(root) for path in files)
+        rows.append({
+            "semantic_type": "helm_chart", "retained_scan": True,
+            "source_label": "Scan source", "file_count": count,
+            "artifact": {"id": f"scan:{field(execution, 'execution_key', '')}:{marker}",
+                         "artifact_type": "helm_chart", "artifact_name": name,
+                         "chart_name": name, "chart_version": str(version) if isinstance(version, (str, int, float)) else None,
+                         "source_type": "scan", "source_reference": str(root)},
+            "revision": None,
+            "validation": {"key": "not-validated", "label": "Not Validated"},
+        })
+    return rows
 
 
 def field(value, key, default=None):
@@ -112,6 +151,10 @@ def project_service_operations(template_name, context):
             item["revision"] = fields(revision, ("revision_label", "revision_number", "checksum", "created_at")) if revision else None
             item["file_count"] = len(field(row, "files", {}) or {})
             data["artifact_rows"].append(item)
+        scanned_charts = retained_scan_charts(context.get("original_files") or {}, original)
+        data["artifact_rows"].extend(scanned_charts)
+        data["scan_chart_count"] = len(scanned_charts)
+        data["chart_count"] = (data.get("chart_count") or 0) + len(scanned_charts)
         data["image_inventory"] = []
         for row in context.get("image_inventory", []):
             item = fields(row, ("count", "references"))

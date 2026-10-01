@@ -31,10 +31,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
           <a className="notification-all" href="/requests">View all requests</a></> : <span className="muted">No action required.</span>}
       </div></details>
       {(can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view')) &&
-        <details className="admin-menu"><summary aria-label="Administration">⚙</summary><div className="menu-popover">
-          <a href={can(data, 'user.manage') ? '/admin' : can(data, 'audit.view') ? '/admin/general-policy' : '/admin/configuration'}>Administration</a>
-          {can(data, 'config.manage') && <a href="/admin/configuration">Configuration</a>}
-        </div></details>}
+        <a className="admin-entry" aria-label="Administration" title="Administration" href={can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration' : '/admin/general-policy'}><span aria-hidden="true">⚙</span></a>}
       <details className="user-menu"><summary>{user.display_name}</summary><div className="menu-popover">
         <details className="appearance-menu"><summary>Appearance</summary><form method="post" action="/account/appearance">
           <input type="hidden" name="csrf_token" value={data.csrf_token}/><input type="hidden" name="next_path" value={window.location.pathname + window.location.search}/>
