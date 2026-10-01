@@ -7,6 +7,7 @@ set -uo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh"
+source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh"
 
 is_true() {
   case "${1,,}" in
@@ -159,11 +160,13 @@ prepare_chart_dependencies() {
       chart_dependencies_local "$chart_path"
       ;;
     online)
-      is_true "${HELM_ALLOW_NETWORK:-false}" && helm dependency build "$chart_path" >/dev/null 2>&1
+      if ! is_true "${HELM_ALLOW_NETWORK:-false}"; then echo "HELM_ALLOW_NETWORK=false" >&2; return 1; fi
+      helm dependency build "$chart_path"
       ;;
     auto)
       chart_dependencies_local "$chart_path" && return 0
-      is_true "${HELM_ALLOW_NETWORK:-false}" && helm dependency build "$chart_path" >/dev/null 2>&1
+      if ! is_true "${HELM_ALLOW_NETWORK:-false}"; then echo "HELM_ALLOW_NETWORK=false" >&2; return 1; fi
+      helm dependency build "$chart_path"
       ;;
     *)
       return 1
@@ -209,8 +212,8 @@ render_chart() {
     discover_components "$chart_path" "$identity/values.yaml"
   fi
   dependency_mode="$(jq -r --arg mode "$HELM_DEPENDENCY_MODE" '.dependency_mode // $mode' <<< "$entry_json" 2>/dev/null || printf '%s' "$HELM_DEPENDENCY_MODE")"
-  if ! prepare_chart_dependencies "$chart_path" "$dependency_mode"; then
-    record_skip "$chart_name" "Helm dependencies are unavailable for image extraction (mode: ${dependency_mode})"
+  if ! run_dependency_preparation "$chart_path" "$dependency_mode"; then
+    record_skip "$chart_name" "Helm dependency preparation failed for image extraction (mode ${dependency_mode}): ${HELM_DEPENDENCY_FAILURE}"
     return
   fi
   chart_name="${chart_name:-$(basename "$chart_path")}"

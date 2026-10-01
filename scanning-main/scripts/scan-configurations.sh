@@ -4,6 +4,7 @@ set -uo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh"
+source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh"
 
 TRIVY_CONFIG_SCAN_ENABLED="${TRIVY_CONFIG_SCAN_ENABLED:-false}"
 TRIVY_IMAGE_CONFIG_SCAN_ENABLED="${TRIVY_IMAGE_CONFIG_SCAN_ENABLED:-false}"
@@ -351,6 +352,7 @@ prepare_chart_dependencies() {
         return 0
       fi
       if ! is_true "$HELM_ALLOW_NETWORK"; then
+        echo "HELM_ALLOW_NETWORK=false" >&2
         return 1
       fi
       helm dependency build "$chart_dir" && verify_vendored_dependencies "$chart_dir"
@@ -589,10 +591,10 @@ process_chart_entry() {
   if ! jq -e '.graph_discovery == true' <<< "$entry_json" >/dev/null 2>&1; then
     discover_local_components "$path" "${normalized_identity}/values.yaml"
   fi
-  if ! prepare_chart_dependencies "$path" "$dependency_mode"; then
+  if ! run_dependency_preparation "$path" "$dependency_mode"; then
     update_chart_graph_dependencies "$chart_instance_id" "UNAVAILABLE"
-    update_chart_graph_status "$chart_instance_id" "$path" "Render Failed" "dependencies" "Helm dependencies are unavailable for mode ${dependency_mode}"
-    record_chart_failure "$name" "Helm dependencies are unavailable for mode ${dependency_mode}"
+    update_chart_graph_status "$chart_instance_id" "$path" "Render Failed" "dependencies" "Helm dependency preparation failed (mode ${dependency_mode}): ${HELM_DEPENDENCY_FAILURE}"
+    record_chart_failure "$name" "Helm dependency preparation failed (mode ${dependency_mode}): ${HELM_DEPENDENCY_FAILURE}"
     return
   fi
   update_chart_graph_dependencies "$chart_instance_id" "RESOLVED_WITH_PARENT"

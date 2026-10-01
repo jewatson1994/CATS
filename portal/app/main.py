@@ -2824,6 +2824,17 @@ def _fetch_public_stream(url: str, certificates: list[dict] | None = None):
         raise
     except TimeoutError as exc:
         raise HTTPException(status_code=408, detail="Helm source acquisition timed out") from exc
+    except urllib.error.HTTPError as exc:
+        explanations = {
+            401: "authentication required or denied",
+            403: "request rejected; check repository authorization and proxy/firewall policy",
+            404: "repository index or chart archive not found; check the source URL and exact version",
+            429: "repository rate limit reached; retry later",
+        }
+        explanation = explanations.get(exc.code, "repository or intermediary returned an HTTP error")
+        # Do not expose response bodies, headers, URL credentials or signed queries.
+        exc.close()
+        raise HTTPException(status_code=400, detail=f"Helm source request failed (HTTP {exc.code}): {explanation}") from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
         if isinstance(reason, (ssl.SSLError, ssl.SSLCertVerificationError)):
