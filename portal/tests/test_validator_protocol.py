@@ -7,6 +7,18 @@ from app.validator_protocol import SCHEMA_VERSION, validate_package
 from app import validator_api
 
 
+@pytest.fixture
+def authenticated_app(monkeypatch, tmp_path):
+    fingerprint = "a" * 64
+    monkeypatch.setenv("CATS_VALIDATOR_CLIENT_FINGERPRINTS", fingerprint)
+    monkeypatch.setattr(validator_api, "STATE_DIR", tmp_path)
+    async def wrapper(scope, receive, send):
+        if scope["type"] == "http":
+            scope["validator_peer_sha256"] = fingerprint
+        await validator_api.app(scope, receive, send)
+    return wrapper
+
+
 def package():
     return {"schema_version": SCHEMA_VERSION,
             "manifest": {"service_key": "test-service", "timeout_seconds": 600},
@@ -24,10 +36,10 @@ def test_versioned_package_rejects_unsafe_paths_and_schema():
     with pytest.raises(ValueError): validate_package(invalid)
 
 
-def test_validator_api_requires_tls_and_rejects_invalid_package():
+def test_validator_api_requires_tls_and_rejects_invalid_package(authenticated_app):
     with TestClient(validator_api.app, base_url="http://testserver") as client:
         assert client.get("/health").status_code == 403
-    with TestClient(validator_api.app, base_url="https://testserver") as client:
+    with TestClient(authenticated_app, base_url="https://testserver") as client:
         assert client.post("/api/v1/validations", json={"schema_version": "unknown"}).status_code == 422
         assert client.get("/health").json()["schema_version"] == SCHEMA_VERSION
 
@@ -42,7 +54,7 @@ def test_server_launcher_requires_certificate_key_and_client_ca(monkeypatch):
 @pytest.mark.parametrize(("engine_status", "api_status"), [
     ("VERIFIED", "VERIFIED"), ("PARTIALLY_VERIFIED", "FAILED"),
     ("COULD_NOT_VALIDATE", "ERROR")])
-def test_async_result_classification_and_secret_suppression(tmp_path, monkeypatch, engine_status, api_status):
+def test_async_result_classification_and_secret_suppression(tmp_path, monkeypatch, engine_status, api_status, authenticated_app):
     import time
     monkeypatch.setattr(validator_api, "STATE_DIR", tmp_path)
     validator_api.JOBS.clear()
@@ -55,7 +67,7 @@ def test_async_result_classification_and_secret_suppression(tmp_path, monkeypatc
                     "reason_category": "TEST", "diagnostics": {"secret": "private-key-value"},
                     "resource_summary": {"ready": 1}}
     monkeypatch.setattr(validator_api, "KindDeploymentValidator", FakeValidator)
-    with TestClient(validator_api.app, base_url="https://testserver") as client:
+    with TestClient(authenticated_app, base_url="https://testserver") as client:
         submitted = client.post("/api/v1/validations", json=package())
         assert submitted.status_code == 202
         job_id = submitted.json()["validation_id"]

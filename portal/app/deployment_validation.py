@@ -101,6 +101,9 @@ class CommandRunner(Protocol):
 
 @dataclass
 class ValidationConfig:
+    strict_sandbox_policy: bool = False
+    permissive_workloads: bool = False
+    workspace_root: str = ""
     kind_binary: str = "kind"
     helm_binary: str = "helm"
     kubectl_binary: str = "kubectl"
@@ -152,6 +155,8 @@ class ValidationConfig:
                 return default
 
         return cls(
+            strict_sandbox_policy=flag("CATS_DEPLOYMENT_STRICT_SANDBOX_POLICY", False),
+            workspace_root=os.getenv("CATS_VALIDATOR_WORKSPACE_DIR", ""),
             cluster_prefix=os.getenv("CATS_DEPLOYMENT_CLUSTER_PREFIX", "cats-validation"),
             namespace_prefix=os.getenv("CATS_DEPLOYMENT_NAMESPACE_PREFIX", "cats-validation"),
             kind_node_image=os.getenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", cls.kind_node_image),
@@ -277,6 +282,17 @@ def attempt_resource_isolation(config: ValidationConfig, container: str, runner:
             entry.update(reason=f"Docker limit inspection raised {type(exc).__name__}")
         expected_key = {"cpu": "NanoCpus", "memory": "Memory", "pids": "PidsLimit"}[name]
         verified = bool(host_config.get(expected_key)) if isinstance(host_config, Mapping) else False
+        if verified and config.strict_sandbox_policy:
+            try:
+                if name == "cpu": expected = int(float(config.node_cpus) * 1_000_000_000)
+                elif name == "pids": expected = int(config.node_pids)
+                else:
+                    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)([bkmg]?)", str(config.node_memory).lower())
+                    if not match: raise ValueError("invalid Docker memory quantity")
+                    expected = int(float(match.group(1)) * {"": 1, "b": 1, "k": 1024, "m": 1024**2, "g": 1024**3}[match.group(2)])
+                verified = expected > 0 and int(host_config[expected_key]) == expected
+            except (TypeError, ValueError, OverflowError):
+                verified = False
         if verified:
             entry["status"] = "ENFORCED"
         else:
@@ -298,6 +314,17 @@ def _sandbox_limit_event(value: Any) -> dict[str, Any] | None:
     return None
 
 
+def _isolated_network_verified(inspected: CommandResult) -> bool:
+    try:
+        networks = json.loads(inspected.stdout) if inspected.returncode == 0 else []
+        network = networks[0] if isinstance(networks, list) and len(networks) == 1 else {}
+        return (isinstance(network, Mapping) and network.get("Internal") is True
+                and network.get("EnableIPv6") is False and network.get("Driver") == "bridge"
+                and (network.get("Options") or {}).get("com.docker.network.bridge.gateway_mode_ipv4") == "isolated")
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def _safe_name(prefix: str, job_id: str, maximum: int) -> str:
     prefix = re.sub(r"[^a-z0-9-]", "-", prefix.lower()).strip("-") or "cats-validation"
     suffix = re.sub(r"[^a-z0-9-]", "-", str(job_id).lower()).strip("-")[-24:] or "job"
@@ -311,7 +338,7 @@ def validation_names(config: ValidationConfig, job_id: str) -> tuple[str, str]:
 
 def _safe_path(value: str) -> PurePosixPath:
     path = PurePosixPath(str(value).replace("\\", "/"))
-    if path.is_absolute() or ".." in path.parts or not path.parts:
+    if path.is_absolute() or ".." in path.parts or not path.parts or any(":" in part or part.endswith((".", " ")) for part in path.parts):
         raise ValueError(f"Unsafe artifact path: {value}")
     return path
 
@@ -1187,6 +1214,8 @@ def security_preflight(resources: Sequence[Mapping[str, Any]], config: Validatio
     checks protect the Docker host, kind node control plane, and host devices.
     """
     failures: list[dict[str, Any]] = []
+    if config.strict_sandbox_policy:
+        failures.extend(_strict_security_preflight(resources, namespace))
     if len(resources) > config.max_objects:
         failures.append({"resource": "Chart", "reason": f"object count {len(resources)} exceeds limit {config.max_objects}", "category": "RESOURCE_GOVERNANCE"})
     pod_count = 0
@@ -1205,6 +1234,64 @@ def security_preflight(resources: Sequence[Mapping[str, Any]], config: Validatio
     if pod_count > config.max_pods: failures.append({"resource": "Chart", "reason": f"requested pods {pod_count} exceeds limit {config.max_pods}", "category": "RESOURCE_GOVERNANCE"})
     failures.extend(dict(decision) for decision in sandbox_preflight(resources, config, namespace=namespace)
                     if decision["classification"] == "SANDBOX_BOUNDARY_VIOLATION")
+    return failures
+
+
+def _strict_security_preflight(resources: Sequence[Mapping[str, Any]], namespace: str | None) -> list[dict[str, Any]]:
+    """Remote execution accepts only a bounded namespace workload API surface."""
+    allowed = {"v1": {"Pod", "Service", "ConfigMap", "Secret", "PersistentVolumeClaim"},
+               "apps/v1": {"Deployment", "StatefulSet", "ReplicaSet", "DaemonSet"},
+               "batch/v1": {"Job"}, "networking.k8s.io/v1": {"Ingress"},
+               "policy/v1": {"PodDisruptionBudget"}}
+    failures = []
+    for resource in resources:
+        metadata = resource.get("metadata") or {}
+        name = f"{resource.get('kind')}/{metadata.get('name', 'unknown')}"
+        def reject(reason: str) -> None:
+            failures.append({"resource": name, "reason": reason, "category": "SECURITY_POLICY"})
+        if resource.get("kind") not in allowed.get(str(resource.get("apiVersion")), set()):
+            reject("resource API is outside the remote namespace workload allowlist")
+        if metadata.get("namespace") not in (None, "", namespace):
+            reject("explicit namespace bypass is prohibited")
+        if (metadata.get("annotations") or {}).get("helm.sh/hook"):
+            reject("Helm lifecycle hooks are unsupported in strict rendered-manifest execution")
+        if resource.get("kind") == "Ingress" and any(key != "kubernetes.io/ingress.class" for key in metadata.get("annotations") or {}):
+            reject("Ingress controller configuration annotations are prohibited")
+        if resource.get("kind") == "Service":
+            service = resource.get("spec") or {}
+            if service.get("externalIPs") or service.get("externalName") or service.get("type") in {"NodePort", "ExternalName"}:
+                reject("external service routing and node ports are prohibited")
+            if any(port.get("nodePort") for port in service.get("ports") or []):
+                reject("explicit service node ports are prohibited")
+        if metadata.get("name") in {"cats-validation-limits", "cats-validation-default-deny"}:
+            reject("validation guardrail resource name is reserved")
+        pod = _pod_spec(resource)
+        if not pod:
+            continue
+        for field in ("hostNetwork", "hostPID", "hostIPC"):
+            if pod.get(field): reject(f"{field} host namespace access is prohibited")
+        if pod.get("nodeName") or pod.get("runtimeClassName") or pod.get("serviceAccountName") or pod.get("serviceAccount"):
+            reject("node, runtime or service account overrides are prohibited")
+        if pod.get("automountServiceAccountToken") is not False:
+            reject("automountServiceAccountToken must be explicitly false")
+        context = pod.get("securityContext") or {}
+        if pod.get("ephemeralContainers"): reject("ephemeral containers are prohibited")
+        if context.get("sysctls"): reject("pod sysctls are prohibited")
+        for volume in pod.get("volumes") or []:
+            if "hostPath" in volume: reject("all hostPath mounts are prohibited")
+        for container in (pod.get("containers") or []) + (pod.get("initContainers") or []) + (pod.get("ephemeralContainers") or []):
+            security = container.get("securityContext") or {}
+            if security.get("privileged") or security.get("allowPrivilegeEscalation") is not False:
+                reject("privileged containers and privilege escalation are prohibited")
+            if security.get("runAsNonRoot", context.get("runAsNonRoot")) is not True or security.get("runAsUser", context.get("runAsUser")) == 0:
+                reject("containers must explicitly run as non-root")
+            caps = security.get("capabilities") or {}
+            if caps.get("add") or "ALL" not in (caps.get("drop") or []):
+                reject("containers must drop ALL capabilities and add none")
+            if security.get("procMount", "Default") != "Default": reject("non-default procMount is prohibited")
+            if any(port.get("hostPort") for port in container.get("ports") or []): reject("hostPort is prohibited")
+            seccomp = security.get("seccompProfile", context.get("seccompProfile")) or {}
+            if seccomp.get("type") != "RuntimeDefault": reject("RuntimeDefault seccomp is required")
     return failures
 
 
@@ -1805,7 +1892,8 @@ def _rewrite_kubeconfig(path: Path, api_host: str) -> None:
 def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, config: ValidationConfig | None = None, runner: CommandRunner | None = None, progress_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
     cfg = config or ValidationConfig.from_env(); run = runner or _default_runner
     if isinstance(artifact, Mapping): artifact = ValidationArtifact(**{key: artifact[key] for key in ValidationArtifact.__dataclass_fields__ if key in artifact})
-    cluster, namespace = validation_names(cfg, artifact.job_id); network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix="cats-deployment-")); kubeconfig = root / "kubeconfig.yaml"
+    workspace_prefix = f"cats-deployment-{artifact.job_id}-" if (cfg.strict_sandbox_policy or cfg.workspace_root) and re.fullmatch(r"[a-f0-9]{32}", artifact.job_id) else "cats-deployment-"
+    cluster, namespace = validation_names(cfg, artifact.job_id); network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=cfg.workspace_root or None)); kubeconfig = root / "kubeconfig.yaml"
     network_attempted = False; create_attempted = False; rendered_resources: list[dict[str, Any]] = []; diagnostics: dict[str, Any] = {}
     provider_lifecycle: dict[str, Any] = {}
     result: dict[str, Any] = {"engine": "kind", "status": ValidationStatus.NOT_ATTEMPTED.value, "classification": ValidationStatus.NOT_ATTEMPTED.value, "phase": "QUEUED", "reason_category": None, "reason": None, "classification_reasons": [], "classification_summary": {"expected_resources": 0, "observed_expected": 0, "expected_only": 0, "runtime_generated": 0, "observed_only": 0, "failed": 0}, "helm_result": {"template": "NOT_ATTEMPTED", "install": "NOT_ATTEMPTED", "release_status": "NOT_ATTEMPTED", "rendered_resource_count": 0}, "resource_summary": {}, "conditions": {}, "dependencies": {"missing_crds": [], "missing_storage_classes": [], "unavailable_images": []}, "capability_preflight": [], "capability_bootstrap": {"provisioned": [], "warnings": [], "duration_ms": 0}, "observed_topology": {"nodes": [], "edges": []}, "comparison": {"matched": [], "declared_only": [], "observed_only": [], "defaulted": [], "changed": [], "unresolved": []}, "events": [], "unhealthy_resources": [], "sandbox_sensitive_behaviors": [], "security_policy_violations": [], "policy_violations": [], "resource_isolation": {"overall": "NOT_ATTEMPTED"}, "warnings": [], "diagnostics": diagnostics, "cluster_name": cluster, "namespace": namespace, "cleanup_status": "NOT_ATTEMPTED", "duration_seconds": 0}
@@ -1882,6 +1970,8 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         diagnostics["classification"] = {"status": status.value, "reason_category": result["reason_category"], "reason_count": len(reasons), **summary}
         return result
     try:
+        if cfg.strict_sandbox_policy and (cfg.allow_network_egress or cfg.api_address != "127.0.0.1"):
+            return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Remote execution requires an internal Docker network and loopback API binding.")
         phase("PREFLIGHT"); artifact_root = root / "artifact"; materialize_sources(artifact.source_files, artifact_root, max_bytes=cfg.max_source_bytes); charts = _root_charts(artifact_root)
         if not charts: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_CHART_INVALID, "The selected artifact does not contain a concrete root Chart.yaml.")
         values_paths: list[Path] = []
@@ -1923,7 +2013,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             for decision in sandbox_decisions
         ]
         diagnostics["sandbox_preflight"] = result["sandbox_sensitive_behaviors"]
-        violations = security_preflight(rendered_resources, cfg, namespace=namespace)
+        violations = [] if cfg.permissive_workloads and not cfg.strict_sandbox_policy else security_preflight(rendered_resources, cfg, namespace=namespace)
         governance_violations = [item for item in violations if item.get("category") == "RESOURCE_GOVERNANCE"]
         for item in governance_violations:
             record_warning(f"{item.get('resource', 'Chart')}: {item.get('reason', 'optional resource governance check was not enforced before deployment')}; Kubernetes was allowed to evaluate the workload.")
@@ -1938,52 +2028,80 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         if cfg.kind_node_archive:
             if command([cfg.docker_binary, "load", "--input", cfg.kind_node_archive], cfg.create_timeout_seconds, "kind_node_archive").returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The configured kind node archive could not be loaded.")
         node_available = command([cfg.docker_binary, "image", "inspect", "--", cfg.kind_node_image], cfg.create_timeout_seconds, "kind_node_image").returncode == 0
-        if not node_available and (cfg.require_local_images or not cfg.allow_network_egress):
+        if not node_available and (cfg.strict_sandbox_policy or cfg.require_local_images or not cfg.allow_network_egress):
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The pinned kind node image is unavailable in the local validation environment.")
         local_images = [image for image in images if command([cfg.docker_binary, "image", "inspect", "--", image], cfg.collect_timeout_seconds).returncode == 0]
         unavailable = sorted(set(images) - set(local_images))
         if unavailable:
+            if cfg.strict_sandbox_policy:
+                result["dependencies"]["unavailable_images"] = unavailable
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Strict remote execution requires every workload image to be preloaded locally.")
             # A local Docker inspection is only a prediction.  Let Helm and
             # Kubernetes attempt the pull so ImagePullBackOff/ErrImagePull and
             # registry-auth failures become runtime evidence.
             result["dependencies"]["unavailable_images"] = unavailable
             record_warning(f"CATS could not confirm {len(unavailable)} workload image(s) locally; Helm/Kubernetes will determine image availability during deployment.")
-        network_command = [cfg.docker_binary, "network", "create", "--driver", "bridge", "--label", "cats.deployment-validation=true"]
+        if cfg.strict_sandbox_policy:
+            existing = command([cfg.kind_binary, "get", "clusters"], cfg.collect_timeout_seconds, "ownership_preflight", env)
+            network_exists = command([cfg.docker_binary, "network", "ls", "--format", "{{.Name}}"], cfg.collect_timeout_seconds, "network_ownership_preflight", env)
+            if existing.returncode or network_exists.returncode or cluster in existing.stdout.splitlines() or network_name in network_exists.stdout.splitlines():
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Unique validation resource ownership could not be confirmed.")
+        network_command = [cfg.docker_binary, "network", "create", "--driver", "bridge", "--label", "cats.deployment-validation=true", "--label", f"cats.deployment-validation.cluster={cluster}"]
         if not cfg.allow_network_egress:
             network_command.append("--internal")
+        if cfg.strict_sandbox_policy:
+            network_command.extend(["--opt", "com.docker.network.bridge.gateway_mode_ipv4=isolated"])
         network_command.append(network_name); network_attempted = True
         if command(network_command, cfg.create_timeout_seconds, "network_create", env).returncode:
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not create the isolated container network for Deployment Validation.")
+        if cfg.strict_sandbox_policy:
+            inspected_network = command([cfg.docker_binary, "network", "inspect", network_name], cfg.collect_timeout_seconds, "network_isolation", env)
+            if not _isolated_network_verified(inspected_network):
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Remote execution requires a verified internal IPv4 isolated Docker bridge with IPv6 disabled; Docker 28 or newer is required.")
         cert_sans = sorted({value for value in ("host.docker.internal", cfg.api_host, cfg.api_address) if value and value != "0.0.0.0"})
         kubeadm_patch = yaml.safe_dump({"kind": "ClusterConfiguration", "apiServer": {"certSANs": cert_sans}}, sort_keys=False)
         kind_config = root / "kind-config.yaml"; kind_config.write_text(yaml.safe_dump({"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4", "networking": {"apiServerAddress": cfg.api_address}, "kubeadmConfigPatches": [kubeadm_patch]}, sort_keys=False), encoding="utf-8")
         phase("CREATING_CLUSTER"); create_attempted = True
         made = command([cfg.kind_binary, "create", "cluster", "--name", cluster, "--image", cfg.kind_node_image, "--kubeconfig", str(kubeconfig), "--config", str(kind_config), "--wait", f"{int(cfg.create_timeout_seconds)}s"], cfg.create_timeout_seconds, "kind_create", env)
         if made.returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not create the ephemeral Kubernetes cluster.")
+        if cfg.strict_sandbox_policy:
+            attached = command([cfg.docker_binary, "inspect", "--format={{json .NetworkSettings.Networks}}", f"{cluster}-control-plane"], cfg.collect_timeout_seconds, "node_network_isolation", env)
+            try: attached_networks = json.loads(attached.stdout) if attached.returncode == 0 else {}
+            except (ValueError, TypeError): attached_networks = {}
+            if not isinstance(attached_networks, Mapping) or set(attached_networks) != {network_name}:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "The kind node must attach exclusively to the owned internal network.")
         resource_isolation = attempt_resource_isolation(cfg, f"{cluster}-control-plane", lambda argv, *, timeout, env=None: command(argv, timeout, None, env), timeout=remaining(cfg.create_timeout_seconds), env=env)
         result["resource_isolation"] = resource_isolation
         diagnostics["resource_isolation"] = {name: {key: value for key, value in item.items() if key != "configured_limit" or value is not None} for name, item in resource_isolation.items() if isinstance(item, Mapping)}
         for warning in resource_isolation.get("warnings", []):
             record_warning(f"Optional resource control unavailable: {warning}")
+        if cfg.strict_sandbox_policy and resource_isolation.get("overall") != "ENFORCED":
+            return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Remote execution requires verified CPU, memory and PID limits.")
         _rewrite_kubeconfig(kubeconfig, cfg.api_host)
         if local_images:
             loaded = command([cfg.kind_binary, "load", "docker-image", "--name", cluster, *local_images], cfg.install_timeout_seconds, "kind_load_images", env)
             if loaded.returncode:
+                if cfg.strict_sandbox_policy:
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Strict remote execution could not preload every approved image into the node.")
                 # Loading an image into kind is an optimization.  A failed
                 # load must not suppress the real Helm/Kubernetes attempt.
                 record_warning("One or more locally available workload images could not be loaded into kind; Helm/Kubernetes will attempt the deployment anyway.")
         if command([cfg.kubectl_binary, "create", "namespace", namespace, "--kubeconfig", str(kubeconfig)], cfg.install_timeout_seconds, "namespace_create", env).returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The isolated validation namespace could not be created.")
         namespace_label = command([cfg.kubectl_binary, "label", "namespace", namespace, "cats.clanhq.io/validation-infrastructure=true", f"cats.clanhq.io/validation-run={namespace}", "--overwrite", "--kubeconfig", str(kubeconfig)], cfg.install_timeout_seconds, "namespace_label", env)
+        if cfg.strict_sandbox_policy:
+            admission = command([cfg.kubectl_binary, "label", "namespace", namespace, "pod-security.kubernetes.io/enforce=restricted", "pod-security.kubernetes.io/enforce-version=latest", "--overwrite", "--kubeconfig", str(kubeconfig)], cfg.install_timeout_seconds, "restricted_admission", env)
+            if admission.returncode:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Remote execution requires restricted pod admission.")
         if namespace_label.returncode:
             record_warning("CATS could not label the validation namespace; raw evidence remains retained and reconciliation filters the run namespace.")
-        # Do not apply a blanket restricted Pod Security profile here. It would
-        # reject otherwise sandbox-safe Kubernetes behavior (for example
-        # hostNetwork inside the per-run internal Docker network) and conflate
-        # static hardening findings with the preflight boundary. The targeted
-        # checks in security_preflight remain the execution gate.
+        # Legacy local validation retains its targeted preflight behavior.
+        # Remote strict mode additionally requires restricted admission above;
+        # it must not inherit the local mode's permissive compatibility policy.
         policy = root / "validation-policy.yaml"; policy.write_text(_policy_documents(namespace, cfg), encoding="utf-8")
         policy_result = command([cfg.kubectl_binary, "apply", "--kubeconfig", str(kubeconfig), "-f", str(policy)], cfg.install_timeout_seconds, "resource_policy", env)
         if policy_result.returncode:
+            if cfg.strict_sandbox_policy:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Remote execution requires namespace resource guardrails.")
             # ResourceQuota, LimitRange, and the default-deny policy are
             # defense-in-depth controls.  Their absence is recorded, but the
             # chart still needs to reach Kubernetes for authoritative evidence.
@@ -2000,6 +2118,17 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         release_evidence: list[dict[str, str]] = []
         install_failures: list[dict[str, str]] = []
         for index, chart in enumerate(charts, 1):
+            if cfg.strict_sandbox_policy:
+                if index > 1: continue
+                manifest = root / "approved-workload.yaml"
+                manifest.write_text(yaml.safe_dump_all([{key: value for key, value in resource.items() if not key.startswith("_cats_")} for resource in rendered_resources]), encoding="utf-8")
+                result["helm_result"]["execution_mode"] = "PREFLIGHTED_MANIFEST_APPLY"
+                result["helm_result"]["helm_release_verified"] = False
+                record_warning("Strict remote validation applies the exact preflighted Helm render; Helm release lifecycle is not exercised.")
+                applied = command([cfg.kubectl_binary, "apply", "--namespace", namespace, "--kubeconfig", str(kubeconfig), "-f", str(manifest)], cfg.install_timeout_seconds, "approved_manifest_apply", env)
+                if applied.returncode:
+                    install_failures.append({"release": "preflighted-manifest", "category": FailureCategory.HELM_INSTALL_FAILURE.value})
+                continue
             release = f"cats-validation-{index}"; installed = command([cfg.helm_binary, "upgrade", "--install", release, str(chart), "--namespace", namespace, "--kubeconfig", str(kubeconfig), "--timeout", f"{int(cfg.install_timeout_seconds)}s", *values_args], cfg.install_timeout_seconds, f"helm_install_{index}", env)
             if installed.returncode:
                 result["helm_result"].update(install="FAIL", release_status="FAILED")
@@ -2386,6 +2515,10 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
                 }
         else: result["cleanup_status"] = "NOT_REQUIRED"
         result["duration_seconds"] = max(0, round(time.monotonic() - started)); result["phase"] = "COMPLETE"; shutil.rmtree(root, ignore_errors=True)
+        if (cfg.strict_sandbox_policy or cfg.workspace_root) and root.exists():
+            result["cleanup_status"] = "FAILED"
+            result["cleanup_error"] = "Owned validation workspace removal could not be confirmed; administrator cleanup is required."
+            diagnostics["workspace_cleanup_failure"] = {"workspace": str(root)}
         if progress_callback:
             try:
                 progress_callback("COMPLETE")
@@ -2400,6 +2533,12 @@ def cleanup_stale_clusters(cluster_names: Sequence[str], *, runner: CommandRunne
         except Exception as exc: return CommandResult(1, "", f"Cleanup command failed: {type(exc).__name__}")
     for name in sorted(set(cluster_names)):
         if not name.startswith(allowed_prefix) or not re.fullmatch(r"[a-z0-9-]{1,50}", name): failed.append(name); continue
+        if cfg.strict_sandbox_policy:
+            owner = safe([cfg.docker_binary, "network", "inspect", "--format={{json .Labels}}", f"{name}-network"])
+            try: labels = json.loads(owner.stdout) if owner.returncode == 0 else {}
+            except (ValueError, TypeError): labels = {}
+            if not isinstance(labels, Mapping) or labels.get("cats.deployment-validation") != "true" or labels.get("cats.deployment-validation.cluster") != name:
+                failed.append(name); continue
         completed = safe([cfg.kind_binary, "delete", "cluster", "--name", name]); listed = safe([cfg.kind_binary, "get", "clusters"]); cluster_clean = completed.returncode == 0 and listed.returncode == 0 and name not in {line.strip() for line in listed.stdout.splitlines()}
         network_name = f"{name}-network"; inspected = safe([cfg.docker_binary, "network", "inspect", network_name])
         network_removed = safe([cfg.docker_binary, "network", "rm", network_name]) if inspected.returncode == 0 else CommandResult()

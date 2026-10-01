@@ -1,0 +1,42 @@
+services:
+  validator:
+    build:
+      context: ..
+      dockerfile: portal/Dockerfile.validator
+      args:
+        DOCKER_SHA256: ${CATS_VALIDATOR_DOCKER_SHA256:?Verified Docker archive SHA256 is required}
+    image: cats-validator:local
+    network_mode: host
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      CATS_VALIDATOR_STATE_DIR: /var/lib/cats-validator
+      CATS_VALIDATOR_LISTEN: ${CATS_VALIDATOR_LISTEN:-0.0.0.0}
+      CATS_VALIDATOR_PORT: "8443"
+      CATS_VALIDATOR_ADMIN_LISTEN: ${CATS_VALIDATOR_ADMIN_LISTEN:-0.0.0.0}
+      CATS_VALIDATOR_ADMIN_PORT: "8444"
+      CATS_VALIDATOR_SERVER_CERT: /run/validator-tls/server.crt
+      CATS_VALIDATOR_SERVER_KEY: /run/validator-tls/server.key
+      CATS_VALIDATOR_CLIENT_CA: /run/validator-tls/client-ca.crt
+      CATS_VALIDATOR_CLIENT_FINGERPRINTS: ${CATS_VALIDATOR_CLIENT_FINGERPRINTS:?Trusted client fingerprints required}
+      CATS_VALIDATOR_ADMIN_USERNAME: ${CATS_VALIDATOR_ADMIN_USERNAME:?Local administrator username required}
+      CATS_VALIDATOR_ADMIN_PASSWORD: ${CATS_VALIDATOR_ADMIN_PASSWORD:?Local administrator password required}
+      CATS_VALIDATOR_EXECUTION_MODE: ${CATS_VALIDATOR_EXECUTION_MODE:-strict}
+      CATS_DEPLOYMENT_KIND_NODE_IMAGE: ${CATS_DEPLOYMENT_KIND_NODE_IMAGE:?Approved digest-pinned Kind node image required}
+      SSL_CERT_FILE: /run/validator-ca/ca-bundle.crt
+    volumes:
+      - validator-state:/var/lib/cats-validator
+      - type: bind
+        source: ${CATS_VALIDATOR_TLS_DIR:?TLS directory required}
+        target: /run/validator-tls
+        read_only: true
+      - type: bind
+        source: ${CATS_VALIDATOR_CA_BUNDLE:?CA bundle file required}
+        target: /run/validator-ca/ca-bundle.crt
+        read_only: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+volumes:
+  validator-state:
