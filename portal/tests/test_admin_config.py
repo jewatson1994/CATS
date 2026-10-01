@@ -62,32 +62,25 @@ def test_apt_package_exception_is_repository_scoped(tmp_path: Path):
 
 
 def test_admin_template_exposes_independent_verification_controls_and_warnings():
-    template = Path(__file__).parents[1] / "app" / "templates" / "configuration.html"
-    text = template.read_text(encoding="utf-8")
-    assert 'name="verify_tls"' in text and 'name="verify_packages"' in text
-    assert "TLS certificate verification is disabled" in text
-    assert "package signature verification is disabled" in text
+    from app.frontend_admin import project_admin
+    policy = {"mode": "custom", "url": "https://mirror.example.invalid", "verify_tls": False, "verify_packages": True, "password": "private"}
+    data = project_admin({}, "configuration.html", {"repository_policies": {"ubuntu": policy}})
+    assert data["repository_policies"]["ubuntu"] == {key: policy[key] for key in ("mode", "url", "verify_tls", "verify_packages")}
 
 
 def test_settings_console_preserves_sections_actions_and_search():
-    template = Path(__file__).parents[1] / "app" / "templates" / "configuration.html"
-    text = template.read_text(encoding="utf-8")
-    for category in ("general", "identity-access", "security", "integrations", "data"):
-        assert f'data-settings-tab="{category}"' in text
-    for section in ("Portal Preferences", "Authentication", "OIDC identity provider", "OIDC Claim Mapping",
-                    "Remediation", "Image signing", "Cybersecurity warning policy", "Deployment Validation Sandbox",
-                    "OCI registries", "Trusted CA certificates", "Operating-system repositories", "Security Data Sources"):
-        assert section in text
-    for source in ("CISA KEV", "EPSS", "Grype DB", "Trivy DB"):
-        assert source in text
-    for action in ("/admin/configuration/oidc", "/admin/configuration/oidc-mappings",
-                   "/admin/configuration/registries", "/admin/configuration/registry-test",
-                   "/admin/configuration/validator", "/admin/configuration/security-data/{{ key }}"):
-        assert action in text
-    assert 'id="settings-search"' in text
-    assert "addEventListener('input', show)" in text
-    assert "editor.elements.password.value = ''" in text
-    assert "Configure and upload offline data" in text
+    from app.frontend_admin import project_admin
+    data = project_admin({}, "configuration.html", {
+        "oidc": {"client_id": "portal", "client_secret_configured": True, "client_secret": "private"},
+        "registries": [{"id": "r", "endpoint": "https://registry.example", "secret_configured": True, "password": "private"}],
+        "validator": {"endpoint": "https://validator.example", "client_key": "private"},
+        "security_data_sources": {"kev": {"status": "ready", "installed_version": "2026"}},
+    })
+    assert data["oidc"]["client_id"] == "portal" and data["oidc"]["client_secret_configured"] is True
+    assert data["registries"][0]["secret_configured"] is True
+    assert data["validator"]["endpoint"] == "https://validator.example"
+    assert set(data["security_data_sources"]) == {"kev", "epss", "grype", "trivy"}
+    assert "private" not in __import__("json").dumps(data)
 
 
 @pytest.mark.parametrize(("manager", "filename", "needle"), [("apt", "cats.list", "deb https://mirror.example.invalid stable main"), ("dnf", "cats.repo", "baseurl=https://mirror.example.invalid"), ("apk", "repositories", "https://mirror.example.invalid")])
@@ -187,11 +180,11 @@ def test_trusted_ca_bundle_is_combined_without_dropping_system_trust():
 
 
 def test_oidc_form_submits_test_action_without_separate_blank_form():
-    template = Path(__file__).parents[1] / "app" / "templates" / "configuration.html"
-    text = template.read_text(encoding="utf-8")
-    assert 'action="/admin/configuration/oidc"' in text
-    assert 'name="action" value="test"' in text
-    assert 'action="/admin/configuration/oidc-test"' not in text
+    from app.frontend_admin import project_admin
+    data = project_admin({}, "configuration.html", {"oidc_result": "Connection successful", "oidc": {"issuer": "https://identity.example", "client_secret_configured": True}})
+    assert data["oidc_result"] == "Connection successful"
+    assert data["oidc"]["issuer"] == "https://identity.example"
+    assert data["oidc"]["client_secret_configured"] is True
 
 
 def test_oidc_authorization_uses_browser_issuer_for_docker_provider(monkeypatch):
@@ -264,11 +257,13 @@ def test_oidc_defaults_are_provider_neutral():
 
 
 def test_login_and_configuration_use_generic_oidc_presentation():
-    login = (Path(auth.__file__).parent / "templates" / "login.html").read_text(encoding="utf-8")
-    configuration = (Path(auth.__file__).parent / "templates" / "configuration.html").read_text(encoding="utf-8")
-    assert "Sign in with {{ oidc_provider_name or 'organizational account' }}" in login
-    assert "realm_access.roles" not in configuration
-    assert "Test Connection" in configuration
+    from app.frontend import page_data
+    from starlette.requests import Request
+    request = Request({"type": "http", "path": "/login", "query_string": b"", "headers": []})
+    data = page_data(request, "login.html", {"oidc_provider_name": "Company identity", "oidc_available": True, "client_secret": "private"}, formatters={})["data"]
+    assert data["oidc_provider_name"] == "Company identity"
+    assert data["oidc_available"] is True
+    assert "client_secret" not in data
 
 
 def test_registry_path_is_normalized_for_consumers():

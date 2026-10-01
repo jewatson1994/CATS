@@ -53,3 +53,8 @@ cats-scanner/tool-archives/**
 .codex_library/
 CONTEXT_SAVINGS.md
 AGENTS.md
+
+# React build dependencies and generated production assets
+portal/frontend/node_modules/
+portal/app/static/frontend/
+.pnpm-store/

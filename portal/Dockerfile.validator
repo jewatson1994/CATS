@@ -1,0 +1,38 @@
+# Dedicated Linux amd64 validator appliance, built from the repository root.
+FROM python:3.12-slim
+ARG TARGETARCH=amd64
+ARG DOCKER_VERSION=27.5.1
+# Required: independently verified SHA256 for the official Docker static archive.
+ARG DOCKER_SHA256
+ARG KIND_VERSION=0.27.0
+ARG KUBECTL_VERSION=1.32.2
+ARG HELM_VERSION=3.17.1
+RUN test "$TARGETARCH" = amd64 \
+    && test -n "$DOCKER_SHA256" \
+    && apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git \
+    && curl -fsSL --retry 3 "https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz" -o /tmp/docker.tgz \
+    && printf '%s  /tmp/docker.tgz\n' "$DOCKER_SHA256" | sha256sum -c - \
+    && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
+    && install -m 0755 /tmp/docker/docker /usr/local/bin/docker \
+    && curl -fsSL --retry 3 "https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64" -o /tmp/kind-linux-amd64 \
+    && curl -fsSL --retry 3 "https://github.com/kubernetes-sigs/kind/releases/download/v${KIND_VERSION}/kind-linux-amd64.sha256sum" -o /tmp/kind.sha256 \
+    && (cd /tmp && sha256sum -c kind.sha256) \
+    && install -m 0755 /tmp/kind-linux-amd64 /usr/local/bin/kind \
+    && curl -fsSL --retry 3 "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o /tmp/kubectl \
+    && curl -fsSL --retry 3 "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" -o /tmp/kubectl.sha256 \
+    && printf '%s  /tmp/kubectl\n' "$(cat /tmp/kubectl.sha256)" | sha256sum -c - \
+    && install -m 0755 /tmp/kubectl /usr/local/bin/kubectl \
+    && curl -fsSL --retry 3 "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" -o /tmp/helm.tar.gz \
+    && curl -fsSL --retry 3 "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz.sha256sum" -o /tmp/helm.sha256 \
+    && sed 's@helm-v[^ ]*tar.gz@/tmp/helm.tar.gz@' /tmp/helm.sha256 | sha256sum -c - \
+    && tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm \
+    && install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm \
+    && rm -rf /tmp/docker /tmp/linux-amd64 /tmp/docker.tgz /tmp/kind* /tmp/kubectl* /tmp/helm* /var/lib/apt/lists/*
+WORKDIR /app
+COPY portal/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY portal/app ./app
+COPY portal/validator_server.py portal/validator_admin_server.py portal/validator_appliance.py ./
+ENV PYTHONUNBUFFERED=1 CATS_VALIDATOR_STATE_DIR=/var/lib/cats-validator
+EXPOSE 8443 8444
+CMD ["python", "-m", "validator_appliance"]

@@ -1,6 +1,6 @@
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
-import re
+from app.frontend import PAGE_MEDIA_TYPE
 
 import pytest
 from openpyxl import load_workbook
@@ -45,13 +45,12 @@ def test_version_isolation_and_ui():
     seed(client)
     seed(client, "1.5", "CVE-NEW", 1)
     for page in ("/services/payments-service?overview=true", "/services/payments-service?findings_view=raw", "/services/payments-service?findings_view=simplified"):
-        header = client.get(page)
+        header = client.get(page, headers={"Accept": PAGE_MEDIA_TYPE})
         assert header.status_code == 200
-        assert "Version:" in header.text
-        assert 'class="actions-menu version-menu"' in header.text
-        assert "/services/payments-service/history?version=1.4" in header.text
-        assert "/services/payments-service/history?version=1.5" in header.text
-        assert "Historical versions</a>" not in header.text
+        data = header.json()["data"]
+        assert data["view"]["version"] == "1.5"
+        assert {"1.4", "1.5"} <= set(data["history_versions"])
+        assert data["view"]["service"]["service_key"] == "payments-service"
     with SessionLocal() as db:
         service = db.scalar(select(Service))
         _, rows = context_and_rows(db, service, "1.4", "poam", "admin")
@@ -60,8 +59,8 @@ def test_version_isolation_and_ui():
         assert rows[0]["network.port"] == "5432"
         _, rows = context_and_rows(db, service, "1.4", "assets", "admin")
         assert rows and rows[0]["asset.os_version"] == "1.4"
-    response = client.get("/services/payments-service/exchange?version=1.4")
-    assert response.status_code == 200 and "Selected version: 1.4" in response.text
+    response = client.get("/services/payments-service/exchange?version=1.4", headers={"Accept": PAGE_MEDIA_TYPE})
+    assert response.status_code == 200 and response.json()["data"]["version"] == "1.4"
     assert client.get("/exchange/templates").status_code == 200
     assert client.get("/services/payments-service/exchange?version=missing").status_code == 404
 
@@ -74,11 +73,14 @@ def test_version_isolation_and_ui():
 def test_preview_confirmation_and_replay(dataset, rows, model):
     client = new_client()
     seed(client)
-    response = client.post(f"/services/payments-service/exchange/{dataset}/preview", data={"csrf_token": csrf(client), "version": "1.4"}, files={"upload": ("input.xlsx", xlsx(dataset, rows))})
+    response = client.post(f"/services/payments-service/exchange/{dataset}/preview", data={"csrf_token": csrf(client), "version": "1.4"}, files={"upload": ("input.xlsx", xlsx(dataset, rows))}, headers={"Accept": PAGE_MEDIA_TYPE})
     assert response.status_code == 200
     with SessionLocal() as db:
         assert db.scalar(select(model)) is None
-    token = re.search(r'/exchange/confirm/([a-f0-9]+)', response.text).group(1)
+    preview = response.json()["data"]
+    assert preview["preview"]["recognized"] == len(rows)
+    token = preview["token"]
+    assert token
     response = client.post(f"/services/payments-service/exchange/confirm/{token}", data={"csrf_token": csrf(client), "conflict_action": "update"}, follow_redirects=False)
     assert response.status_code == 303
     with SessionLocal() as db:

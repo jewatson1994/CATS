@@ -79,6 +79,29 @@ def test_service_versions_reuse_identity_and_link_executions():
         assert [row.service_version.version for row in linked] == ["release-A", "release-A", "release-B"]
 
 
+def test_cybersecurity_chart_history_and_totals_respect_service_access():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    for identifier, version, cves, complete in (("chart-1", "1.0", ["CVE-ONE", "CVE-TWO"], True),
+                                               ("chart-2", "2.0", ["CVE-ONE"], False)):
+        body = payload(identifier, now + timedelta(minutes=1 if identifier == "chart-2" else 0), cves, complete=complete)
+        body["service"]["version"] = version
+        assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    assert ingest(client, execution="private-chart", service_id="private-service", cves=["CVE-PRIVATE"]).status_code == 201
+    with SessionLocal() as db:
+        service_id = db.scalar(select(Service.id).where(Service.service_key == "payments-service"))
+    add_user("chart-viewer", "Assessor", service_id=service_id)
+    viewer = new_client("chart-viewer")
+    data = page_data(viewer.get("/cybersecurity?component=not-present"))
+    assert not data["rows"]
+    assert data["metrics"]["services"] == 1
+    assert data["metrics"]["high"] == data["metrics"]["vulnerabilities"]
+    assert [item["service_key"] for item in data["history"]] == ["payments-service"]
+    latest, previous = data["history"][0]["versions"]
+    assert (latest["version"], latest["total"], latest["complete"]) == ("2.0", 1, False)
+    assert (previous["version"], previous["total"]) == ("1.0", 2)
+
+
 def test_incomplete_scan_does_not_promote_service_version():
     client = new_client()
     first = payload("current-release", datetime.now(timezone.utc), [])
@@ -156,15 +179,15 @@ def test_watchlist_warning_dashboard_and_authorization():
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
     dependencies = client.get("/services/payments-service?dependencies=true&dependency_filter=watchlisted")
     assert dependencies.status_code == 200, dependencies.text
-    assert "Software Supply Chain" in dependencies.text
-    assert "WATCHLIST MATCH" in dependencies.text
+    assert page_envelope(dependencies)["page"] == "service_dependencies"
+    assert page_data(dependencies)["dependency_rows"][0]["watchlisted"]
     assert "requests" in dependencies.text
     warnings = client.get("/services/payments-service?finding_state=warnings")
-    assert warnings.status_code == 200 and "Dependency Watchlist" in warnings.text
+    assert warnings.status_code == 200 and page_data(warnings)["warning_items"]
     dashboard = client.get("/cybersecurity")
-    assert dashboard.status_code == 200 and "Service Security Matrix" in dashboard.text
+    assert dashboard.status_code == 200 and page_envelope(dashboard)["page"] == "cybersecurity"
     assert "Payments Service" in client.get("/cybersecurity?attention=watchlist&component=requests").text
-    assert "No services match" in client.get("/cybersecurity?component=not-present").text
+    assert not page_data(client.get("/cybersecurity?component=not-present"))["rows"]
     with SessionLocal() as db:
         from app.models import DependencyWatchlistMatch
         matches = db.scalars(select(DependencyWatchlistMatch)).all()
@@ -219,20 +242,35 @@ def test_security_data_upload_is_authorized_and_audited(tmp_path, monkeypatch):
     assert denied.status_code == 403
 
 
+def page_envelope(response):
+    """Inspect the initial React page, including POST validation errors."""
+    match = re.search(r'<script\b[^>]*\bid="cats-bootstrap"[^>]*>(.*?)</script>', response.text, re.S)
+    assert match, "Expected the initial React page envelope"
+    envelope = json.loads(match.group(1))
+    assert envelope["schemaVersion"] == 1
+    return envelope
+
+
+def page_data(response):
+    return page_envelope(response)["data"]
+
+
 def test_login_and_http_cookie_mode():
     client = new_client()
     assert client.get("/").status_code == 200
     assert client.cookies.get("cats_session")
     public = TestClient(app).get("/", follow_redirects=False)
     assert public.status_code == 200
-    assert "Start Scan" in public.text and "Generate SBOM" in public.text and "Sign In" in public.text
+    assert page_envelope(public)["page"] == "home"
+    assert page_data(public)["current_user"] is None
 
 
 def test_public_home_scan_and_patch_workspaces():
     client = TestClient(app)
     home = client.get("/")
     assert home.status_code == 200
-    assert all(label in home.text for label in ("CATS", "Production Services", "Scan Images &amp; Charts", "Generate SBOM", "Patch Images", "Sign In"))
+    assert page_envelope(home)["page"] == "home"
+    assert page_data(home)["current_user"] is None
     assert "Understand what is deployed" not in home.text
     assert "SECURITY LIFECYCLE" not in home.text
     assert "Discover" not in home.text and "Monitor" not in home.text
@@ -240,7 +278,8 @@ def test_public_home_scan_and_patch_workspaces():
     assert client.get("/scan").status_code == 200
     patch = client.get("/patch")
     assert patch.status_code == 200
-    assert "OCI Registry" in patch.text and "Upload Image" in patch.text
+    assert page_envelope(patch)["page"] == "patch"
+    assert "configured_registries" in page_data(patch)
     invalid = client.post("/patch", data={"source_mode": "oci", "output_mode": "download"})
     assert invalid.status_code == 200
     assert "Image URI is required" in invalid.text
@@ -256,18 +295,16 @@ def test_scan_and_sbom_are_separate_workspaces_with_multi_format_generation(monk
 
     scan = client.get("/scan")
     assert scan.status_code == 200
-    assert "<h1>Scan</h1>" in scan.text
-    assert 'href="/scan">Scan</a>' in scan.text
-    assert 'href="/sbom">SBOM</a>' in scan.text
+    assert page_envelope(scan)["page"] == "self_service"
+    assert page_data(scan)["mode"] == "scan"
 
     sbom = client.get("/sbom")
     assert sbom.status_code == 200
-    assert "<h1>SBOM</h1>" in sbom.text and "SBOM generator" in sbom.text
-    assert sbom.text.index('href="/scan"') < sbom.text.index('href="/sbom"') < sbom.text.index('href="/patch"')
+    assert page_data(sbom)["mode"] == "sbom"
     for value in ("syft-json", "cyclonedx-json", "cyclonedx-xml", "spdx-json"):
-        assert f'value="{value}"' in sbom.text
-    assert 'name="sbom_formats"' in sbom.text
-    assert 'name="cyclonedx_spec_version"' in sbom.text
+        assert value in page_data(sbom)["sbom_output_formats"]
+    assert "selected_sbom_formats" in page_data(sbom)
+    assert "cyclonedx_spec_version" in page_data(sbom)
 
     response = client.post("/sbom", data={
         "image_list": "docker.io/library/alpine:3.19",
@@ -540,7 +577,8 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
         location = f"/services/payments-service/remediations/{job.job_key}"
     report = client.get(location)
     assert report.status_code == 200
-    assert "Before / After" in report.text and "Deployment validation" in report.text and "Review Required" in report.text
+    assert page_data(report)["job"]["status"] == "review_required"
+    assert all(key in page_data(report)["job"] for key in ("before_snapshot", "after_snapshot", "deployment_status"))
     retry = client.post(location + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
     assert retry.status_code == 303
     with SessionLocal() as db:
@@ -553,16 +591,16 @@ def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_hist
     with SessionLocal() as db:
         db.add(Service(service_key="payments-service", name="Payments Service"))
         db.commit()
-    assert "Enable Remediation" in client.get("/admin/configuration").text
+    assert page_data(client.get("/admin/configuration"))["configuration"]["remediation_enabled"] == "false"
     page = client.get("/services/payments-service?remediations=true&tab=pipeline")
-    assert page.status_code == 200 and "Remediate Service" not in page.text
+    assert page.status_code == 200 and not page_data(page)["remediation_enabled"]
     denied = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)})
     assert denied.status_code == 403
     with SessionLocal() as db:
         assert db.scalar(select(RemediationExecution)) is None
     enabled = client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False)
     assert enabled.status_code == 303
-    assert "Remediate Service" in client.get("/services/payments-service?remediations=true&tab=pipeline").text
+    assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["can_remediate"]
     add_user("remediation-viewer", "Assessor")
     viewer = new_client("remediation-viewer")
     assert viewer.post("/services/payments-service/remediate", data={"csrf_token": csrf(viewer)}).status_code == 403
@@ -710,9 +748,8 @@ def test_administrator_can_save_oci_registry():
 
 def test_internal_login_navigation_stays_in_current_tab():
     """Internal authentication links must not open a second browser tab."""
-    template_root = Path(__file__).parents[1] / "app" / "templates"
-    static_root = Path(__file__).parents[1] / "app" / "static"
-    template_paths = sorted(template_root.glob("*.html"))
+    source_root = Path(__file__).parents[1] / "frontend" / "src"
+    template_paths = sorted(source_root.rglob("*.tsx"))
     assert template_paths
 
     for path in template_paths:
@@ -727,7 +764,7 @@ def test_internal_login_navigation_stays_in_current_tab():
                     f"internal login link opens a new tab in {path.name}: {tag}"
                 )
 
-    for path in static_root.rglob("*.js"):
+    for path in [*source_root.rglob("*.ts"), *template_paths]:
         assert "window.open(" not in path.read_text(encoding="utf-8"), f"new-window behavior found in {path.name}"
 
 
@@ -735,13 +772,14 @@ def test_authenticated_primary_navigation_and_gear_cleanup():
     client = new_client()
     page = client.get("/")
     assert page.status_code == 200
-    assert page.text.index('href="/patch"') < page.text.index('href="/remediations"')
+    assert page_data(page)["current_user"]["display_name"]
+    assert page_data(page)["permissions"]["config.manage"]
     assert "Remediations workspace" not in page.text
     assert "Service staging" not in page.text.split("admin-menu", 1)[-1].split("user-menu", 1)[0]
     assert "Audit Policy" not in page.text.split("admin-menu", 1)[-1].split("user-menu", 1)[0]
     remediations = client.get("/remediations")
-    assert remediations.status_code == 200 and 'href="/remediations"' in remediations.text
-    assert "class=\"active\"" in remediations.text
+    assert remediations.status_code == 200 and page_data(remediations)["request_path"] == "/remediations"
+    assert page_envelope(remediations)["page"] == "remediations"
 
 
 def test_active_services_are_alphabetical_without_compliance_explainer():
@@ -782,13 +820,13 @@ def test_configuration_policy_findings_render_as_generic_active_findings():
     assert response.status_code == 201
     page = client.get("/services/payments-service?finding_state=active")
     assert page.status_code == 200
-    assert "Active Fixable Findings" in page.text
-    assert "KSV014" in page.text and "Configuration" in page.text
+    assert page_data(page)["finding_state"] == "active"
+    assert page_data(page)["policy_findings"][0]["finding"] == "KSV014"
     assert "CIS Kubernetes" in page.text and "Deployment/payments-api" in page.text
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Fixable</span><strong>1</strong>" in overview.text
+    assert page_data(overview)["finding_counts"]["active"] == 1
     dashboard = client.get("/")
-    assert "Active Findings" in dashboard.text and "Overdue Findings" in dashboard.text
+    assert page_data(dashboard)["views"][0]["active_count"] == 1
     assert "Active CVEs" not in dashboard.text and "Over 90d" not in dashboard.text
 
 
@@ -804,7 +842,7 @@ def test_overview_navigation_never_runs_digest_resolution(monkeypatch):
     monkeypatch.setattr("app.main._resolve_manifest_digest", fail_if_called)
     overview = client.get("/services/payments-service?overview=true")
     assert overview.status_code == 200
-    assert "Overview" in overview.text
+    assert page_envelope(overview)["page"] == "service_overview"
 
 
 def test_service_findings_can_be_filtered_by_type():
@@ -820,12 +858,13 @@ def test_service_findings_can_be_filtered_by_type():
     assert configuration_page.status_code == 200
     assert "KSV014" in configuration_page.text
     assert "CVE-2026-0001" not in configuration_page.text
-    assert "&ndash;" in configuration_page.text
+    assert not page_data(configuration_page)["findings"]
     vulnerability_page = client.get("/services/payments-service?finding_type=vulnerability")
     assert vulnerability_page.status_code == 200
     assert "CVE-2026-0001" in vulnerability_page.text
     assert "KSV014" not in vulnerability_page.text
-    assert ">Configuration</option>" in vulnerability_page.text
+    assert page_data(vulnerability_page)["finding_type"] == "vulnerability"
+    assert not page_data(vulnerability_page)["policy_findings"]
 
 
 def test_warning_filter_renders_warning_records_instead_of_active_findings():
@@ -843,7 +882,8 @@ def test_warning_filter_renders_warning_records_instead_of_active_findings():
         db.add(setting); db.commit()
     response = client.get("/services/payments-service?finding_state=warnings")
     assert response.status_code == 200
-    assert "Warnings" in response.text and "CVE-2026-WARN" in response.text
+    assert page_data(response)["finding_state"] == "warnings"
+    assert any(row["item"] == "CVE-2026-WARN" for row in page_data(response)["warning_items"])
     assert "No warnings for this service" not in response.text
 
 
@@ -852,7 +892,8 @@ def test_remediations_workspace_uses_existing_records_and_tabs():
     ingest(client, cves=["CVE-2026-REMEDIATE"])
     page = client.get("/remediations?tab=poams")
     assert page.status_code == 200
-    assert all(label in page.text for label in ("POA&amp;Ms", "Exceptions", "Mitigations"))
+    assert page_data(page)["tab"] == "poams"
+    assert all(key in page_data(page) for key in ("poams", "exceptions", "mitigations"))
     assert client.get("/remediations?tab=exceptions").status_code == 200
     assert client.get("/remediations?tab=mitigations").status_code == 200
 
@@ -862,13 +903,16 @@ def test_service_remediations_replaces_service_poam_tab_without_breaking_legacy_
     ingest(client, cves=["CVE-2026-SERVICE-REMEDIATION"])
     page = client.get("/services/payments-service?remediations=true&tab=poams")
     assert page.status_code == 200
-    assert "Payments Service Remediations" in page.text
-    assert all(label in page.text for label in ("POA&amp;Ms", "Exceptions", "Mitigations"))
-    assert 'href="/services/payments-service?remediations=true&amp;tab=poams"' in page.text
+    assert page_data(page)["service"]["name"] == "Payments Service"
+    assert page_data(page)["tab"] == "poams"
+    assert all(key in page_data(page) for key in ("poams", "exceptions", "mitigations"))
+    assert page_data(page)["return_to"] == "/services/payments-service?remediations=true&tab=poams"
     assert client.get("/services/payments-service?remediations=true&tab=exceptions").status_code == 200
     assert client.get("/services/payments-service?remediations=true&tab=mitigations").status_code == 200
     legacy = client.get("/services/payments-service?poam=true")
-    assert legacy.status_code == 200 and "Payments Service POA&amp;M" in legacy.text
+    assert legacy.status_code == 200
+    assert page_envelope(legacy)["page"] == "poam_service"
+    assert page_data(legacy)["service"]["name"] == "Payments Service"
 
 
 def test_account_last_login_delete_protection_and_audit_snapshot():
@@ -927,9 +971,10 @@ def test_configuration_finding_exception_and_poam_use_first_class_workflows():
     manager = new_client("policy-manager")
     page = manager.get("/services/payments-service?finding_type=configuration")
     assert page.status_code == 200
-    assert f'data-exception-url="/policy-findings/{policy_finding_id}/exceptions"' in page.text
-    assert f'data-poam-url="/policy-findings/{policy_finding_id}/poams"' in page.text
-    assert 'data-label="KSV014"' in page.text
+    assert page_data(page)["policy_findings"][0]["id"] == policy_finding_id
+    assert page_data(page)["policy_findings"][0]["finding"] == "KSV014"
+    assert page_data(page)["can"]["exception.request"][str(service_id)]
+    assert page_data(page)["can"]["poam.request"][str(service_id)]
     expiry = datetime.now(timezone.utc) + timedelta(days=30)
     assert manager.post(f"/policy-findings/{other_policy_finding_id}/exceptions", data={
         "csrf_token": csrf(manager), "justification": "Out of scope request",
@@ -980,12 +1025,12 @@ def test_configuration_finding_exception_and_poam_use_first_class_workflows():
     poam_export = load_workbook(BytesIO(cyber.get("/poam/services/payments-service/export.xlsx").content))["POA&M"]
     assert "KSV014" in [cell.value for cell in poam_export["F"]]
     poam_service_page = cyber.get("/poam/services/payments-service")
-    assert "<code>KSV014</code>" in poam_service_page.text
+    assert "KSV014" in json.dumps(page_data(poam_service_page))
     poam_detail_page = cyber.get(f"/poam/entries/{poam_id}")
-    assert "<dt>Finding</dt><dd>KSV014</dd>" in poam_detail_page.text
+    assert "KSV014" in json.dumps(page_data(poam_detail_page))
     exceptions_page = cyber.get("/services/payments-service?finding_state=exceptions&finding_type=configuration")
     assert "KSV014" in exceptions_page.text
-    assert f'action="/policy-exceptions/{policy_exception_id}/revoke"' in exceptions_page.text
+    assert page_data(exceptions_page)["policy_findings"][0]["exception"]["id"] == policy_exception_id
     assert cyber.post(f"/policy-exceptions/{policy_exception_id}/revoke", data={
         "csrf_token": csrf(cyber),
     }, follow_redirects=False).status_code == 303
@@ -1003,11 +1048,13 @@ def test_configuration_findings_age_resolve_and_recur_by_stable_identity():
     with SessionLocal() as db:
         overdue_policy_finding_id = db.scalar(select(PolicyFinding.id))
     overdue = client.get("/services/payments-service?finding_state=noncompliant&finding_type=configuration")
-    assert "AVD-KSV-0014" in overdue.text and "Configuration" in overdue.text
+    assert page_data(overdue)["noncompliance_items"][0]["item"] == "AVD-KSV-0014"
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Non-Compliance</span><strong>1</strong>" in overview.text
-    assert f'data-exception-url="/policy-findings/{overdue_policy_finding_id}/exceptions"' in overdue.text
-    assert f'data-poam-url="/policy-findings/{overdue_policy_finding_id}/poams"' in overdue.text
+    assert page_data(overview)["finding_counts"]["noncompliant"] == 1
+    assert page_data(overdue)["noncompliance_items"][0]["policy_finding_id"] == overdue_policy_finding_id
+    service_id = str(page_data(overdue)["view"]["service"]["id"])
+    assert page_data(overdue)["can"]["exception.request"][service_id]
+    assert page_data(overdue)["can"]["poam.request"][service_id]
     second = payload("policy-clear", datetime.now(timezone.utc) - timedelta(days=1), [])
     second["policy_findings"] = []
     assert client.post("/api/v1/pipeline-results", json=second, headers=pipeline_headers).status_code == 201
@@ -1082,10 +1129,9 @@ def test_group_scoped_access_is_not_global():
 def test_skipped_images_are_visible_on_service():
     client = new_client()
     ingest(client, skipped_images=["registry/legacy-centos:1.0", "registry/vendor:2.0"], complete=False)
-    page = client.get("/services/payments-service").text
-    assert "Skipped images (2)" in page
-    assert "registry/legacy-centos:1.0" in page
-    assert "Incomplete · 2 skipped" in client.get("/").text
+    page = page_data(client.get("/services/payments-service"))
+    assert page["view"]["skipped_images"] == ["registry/legacy-centos:1.0", "registry/vendor:2.0"]
+    assert page_data(client.get("/"))["views"][0]["evidence_state"] == "Incomplete · 2 skipped"
 
 
 def test_incomplete_execution_without_skipped_images_is_noncompliant():
@@ -1095,10 +1141,9 @@ def test_incomplete_execution_without_skipped_images_is_noncompliant():
     assert page.status_code == 200
     assert "Latest assessment did not provide complete evidence" in page.text
     assert "No image details reported" not in page.text
-    assert "<th>Details</th>" in page.text
+    assert page_data(page)["noncompliance_items"]
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Non-Compliance</span><strong>1</strong>" in overview.text
-    assert "overdue-card" in overview.text
+    assert page_data(overview)["finding_counts"]["noncompliant"] == 1
 
 
 def test_service_manager_can_add_incomplete_evidence_to_poam():
@@ -1111,10 +1156,9 @@ def test_service_manager_can_add_incomplete_evidence_to_poam():
     manager = new_client("evidence-manager")
     page = manager.get("/services/payments-service?finding_state=noncompliant")
     assert page.status_code == 200
-    assert "Add missing evidence to POA&amp;M" in page.text
+    assert page_data(page)["can"]["poam.request"][str(service_id)]
     assert "registry/unavailable:demo" in page.text
-    assert 'class="secondary-button evidence-poam-action"' in page.text
-    assert 'data-image="registry/unavailable:demo"' in page.text
+    assert any("registry/unavailable:demo" in json.dumps(row) for row in page_data(page)["noncompliance_items"])
     created = manager.post("/poam", data={
         "csrf_token": csrf(manager), "service_id": service_id, "item_type": "missing_evidence",
         "finding_id": "", "title": "Missing evidence for registry/unavailable:demo",
@@ -1142,11 +1186,11 @@ def test_service_findings_are_paginated_and_gzip_compressed():
     first = client.get("/services/payments-service?page_size=50")
     assert first.status_code == 200
     assert first.headers.get("content-encoding") == "gzip"
-    assert first.text.count("<strong>CVE-PAGE-") == 50
-    assert "Page 1 of 2" in first.text and "Showing 1" in first.text and "of 60" in first.text
+    assert len(page_data(first)["findings"]) == 50
+    assert (page_data(first)["page"], page_data(first)["total_pages"], page_data(first)["total_items"]) == (1, 2, 60)
     second = client.get("/services/payments-service?page=2&page_size=50")
-    assert second.text.count("<strong>CVE-PAGE-") == 10
-    assert "Page 2 of 2" in second.text
+    assert len(page_data(second)["findings"]) == 10
+    assert (page_data(second)["page"], page_data(second)["total_pages"]) == (2, 2)
 
 
 def test_service_finding_filters_combine_and_reset_pagination():
@@ -1166,14 +1210,13 @@ def test_service_finding_filters_combine_and_reset_pagination():
     assert response.status_code == 200
     assert "CVE-FILTER-CRITICAL" in response.text and "CVE-FILTER-HIGH" in response.text
     assert "CVE-FILTER-LOW" not in response.text
-    assert "Showing 1&ndash;2 of 2" in response.text
-    assert "Filters active" in response.text
-    assert response.text.count('aria-label="Finding pages"') == 0  # one page keeps the compact layout
+    assert (page_data(response)["page"], page_data(response)["total_items"], page_data(response)["total_pages"]) == (1, 2, 1)
+    assert page_data(response)["query"] == "FILTER"
+    assert page_data(response)["severity"] == ["Critical", "High"]
     response = client.get("/services/payments-service?page_size=50&severity=Critical")
     assert response.status_code == 200
-    assert response.text.count('aria-label="Finding pages"') == 2
-    assert 'class="pagination pagination-top"' in response.text and 'class="pagination pagination-bottom"' in response.text
-    assert 'href="/services/payments-service?overview=false&amp;finding_state=active&amp;finding_type=all&amp;page_size=50&amp;severity=Critical&amp;page=2"' in response.text
+    assert page_data(response)["total_pages"] == 2
+    assert page_data(response)["pagination_base"] == "/services/payments-service?overview=false&finding_state=active&finding_type=all&page_size=50&severity=Critical"
 
 
 def test_risk_overlay_filters_active_findings_before_age_drives_noncompliance():
@@ -1208,8 +1251,8 @@ def test_risk_overlay_filters_active_findings_before_age_drives_noncompliance():
     assert "CVE-EPSS-MATCH" in active.text
     assert "CVE-NO-MATCH" not in active.text
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Fixable</span><strong>2</strong>" in overview.text
-    assert "Active Non-Compliance</span><strong>0</strong>" in overview.text
+    assert page_data(overview)["finding_counts"]["active"] == 2
+    assert page_data(overview)["finding_counts"]["noncompliant"] == 0
 
     with SessionLocal() as db:
         for finding in db.scalars(select(Finding)).all():
@@ -1220,23 +1263,21 @@ def test_risk_overlay_filters_active_findings_before_age_drives_noncompliance():
     assert "CVE-EPSS-MATCH" in noncompliant.text
     assert "CVE-NO-MATCH" not in noncompliant.text
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Fixable</span><strong>0</strong>" in overview.text
-    assert "Active Non-Compliance</span><strong>2</strong>" in overview.text
-    dashboard = client.get("/").text
-    service_row = dashboard[dashboard.index("Payments Service"):dashboard.index("</tr>", dashboard.index("Payments Service"))]
-    assert ">2</td>" in service_row
-    assert ">3</td>" not in service_row
+    assert page_data(overview)["finding_counts"]["active"] == 0
+    assert page_data(overview)["finding_counts"]["noncompliant"] == 2
+    service_row = page_data(client.get("/"))["views"][0]
+    assert service_row["noncompliant_count"] == 2
 
 
 def test_administrator_can_edit_service_metadata():
     client = new_client(); ingest(client)
-    detail = client.get("/services/payments-service").text
-    assert "Edit service information" in detail
-    assert "Actions" in detail and ">Edit</button>" in detail and ">Archive</button>" in detail
-    overview = client.get("/services/payments-service?overview=true").text
-    assert "Edit service information" in overview
-    assert '<details class="actions-menu">' in overview
-    assert ">Edit</button>" in overview and ">Archive</button>" in overview
+    detail = page_data(client.get("/services/payments-service"))
+    service_id = str(detail["view"]["service"]["id"])
+    assert detail["can"]["service.edit"][service_id]
+    assert detail["can"]["archive.request"][service_id]
+    overview = page_data(client.get("/services/payments-service?overview=true"))
+    assert overview["can"]["service.edit"][service_id]
+    assert overview["can"]["archive.request"][service_id]
     response = client.post("/admin/services/payments-service", data={
         "csrf_token": csrf(client), "name": "Payments Platform", "owner": "Cyber Team",
         "description": "Payments service metadata", "poc": "owner@example.invalid", "manual_version": "3.0",
@@ -1275,7 +1316,7 @@ def test_edit_service_preserves_service_tab_query_rename_and_confirmation():
     page = client.get(response.headers["location"])
     assert page.status_code == 200
     assert "Payments Platform 6" in page.text
-    assert "Service information saved successfully." in page.text
+    assert page_data(page)["saved"]
 
 
 def test_findings_filter_controls_and_view_selector_keep_expected_contract():
@@ -1284,20 +1325,17 @@ def test_findings_filter_controls_and_view_selector_keep_expected_contract():
         "/services/payments-service?findings=true&findings_view=raw&q=CVE&severity=Critical&resource=registry&page=1&page_size=50"
     )
     assert raw.status_code == 200
-    assert 'class="finding-filter-field">Search findings' in raw.text
-    assert '<span>Severity</span><details class="multi-select-filter">' in raw.text
-    assert 'class="finding-filter-field">Resource' in raw.text
-    assert 'name="q" value="CVE"' in raw.text
-    assert "1 selected" in raw.text
-    assert 'name="resource" value="registry"' in raw.text
-    assert '<nav class="finding-view-selector"' in raw.text
-    assert ">Simplified</a>" in raw.text and ">Raw</a>" in raw.text
-    assert 'class="secondary-button active"' in raw.text
+    data = page_data(raw)
+    assert data["query"] == "CVE"
+    assert data["severity"] == ["Critical"]
+    assert data["resource"] == "registry"
+    assert data["selected_findings_view"] == "raw"
+    assert data["page_size"] == 50
 
     simplified = client.get("/services/payments-service?findings=true&findings_view=simplified&page_size=50")
     assert simplified.status_code == 200
-    assert "Simplified Findings" in simplified.text
-    assert 'class="finding-filter-field">Search findings' in simplified.text
+    assert page_envelope(simplified)["page"] == "service_simplified"
+    assert page_data(simplified)["selected_findings_view"] == "simplified"
 
     css = (Path(__file__).parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
     assert "--finding-filter-height:42px" in css
@@ -1310,16 +1348,15 @@ def test_simplified_findings_offer_per_cve_actions_without_view_raw():
     assert ingest(client, cves=["CVE-2099-0002", "CVE-2099-0001"]).status_code == 201
     page = client.get("/services/payments-service?findings_view=simplified")
     assert page.status_code == 200
-    assert "View raw" not in page.text
-    for label in ("Request Exception", "Add POA&amp;M Entry", "Add Mitigation"):
-        assert page.text.count(f">{label}</button>") == 2
+    data = page_data(page)
+    assert page_envelope(page)["page"] == "service_simplified"
+    service_id = str(data["view"]["service"]["id"])
+    assert data["can"]["exception.request"][service_id]
+    assert data["can"]["poam.request"][service_id]
     with SessionLocal() as db:
         findings = {finding.cve: finding.id for finding in db.scalars(select(Finding)).all()}
     for cve, finding_id in findings.items():
-        assert f'href="/services/payments-service/findings/{finding_id}">{cve}</a>' in page.text
-        assert f'data-finding-id="{finding_id}" data-cve="{cve}"' in page.text
-    for dialog_id in ("shared-exception-dialog", "shared-poam-dialog", "shared-mitigation-dialog"):
-        assert f'id="{dialog_id}"' in page.text
+        assert any(finding_id in row["finding_ids"] and cve in row["cves"] for row in data["simplified_findings"])
 
 
 def _helm_chart_archive(name: str, extra_name: str = "templates/deployment.yaml", extra_content: str = "apiVersion: apps/v1\nkind: Deployment\n") -> bytes:
@@ -1340,19 +1377,11 @@ def test_artifacts_page_exposes_first_class_helm_and_kubernetes_workflow():
     client = new_client(); ingest(client)
     page = client.get("/services/payments-service?artifacts=true")
     assert page.status_code == 200
-    assert 'data-open-artifact-dialog>+ Add Artifact</button>' in page.text
-    assert 'data-artifact-type="helm_repository">+ Add Repository</button>' in page.text
-    assert 'data-artifact-type="helm_chart">+ Add Helm Chart</button>' in page.text
-    assert 'id="add-artifact-dialog"' in page.text
-    assert 'value="helm_repository" checked>' in page.text and "Helm Repository" in page.text
-    assert 'value="helm_chart">' in page.text and "Helm Chart" in page.text
-    assert 'value="kubernetes">' in page.text and "Kubernetes Manifest" in page.text
-    assert 'value="repository"' in page.text
-    assert 'value="oci">' in page.text and "OCI Registry" in page.text
-    assert 'value="upload" checked>' in page.text and "Upload Chart" in page.text
-    assert "catalog is discovered without treating the repository as a deployable chart" in page.text
-    assert 'src="/static/artifacts.js"' in page.text and 'data-artifact-table="charts"' not in page.text
-    assert "No Kubernetes manifests added." in page.text
+    assert page_envelope(page)["page"] == "service_artifacts"
+    assert page_data(page)["can_edit"]
+    assert page_data(page)["csrf_token"] == csrf(client)
+    assert page_data(page)["manifest_count"] == 0
+    assert page_data(page)["artifact_rows"] == []
 
 
 def test_service_artifact_acquisition_reuses_multi_chart_repository_pipeline(monkeypatch):
@@ -1377,10 +1406,12 @@ def test_service_artifact_acquisition_reuses_multi_chart_repository_pipeline(mon
         assert all(not chart.revisions for chart in charts)
         alpha_id = charts[0].id
     page = client.get("/services/payments-service?artifacts=true")
-    assert "Helm Repositories" in page.text and "Helm Charts" in page.text
-    assert "alpha" in page.text and "beta" in page.text and ">2</strong> charts" in page.text
-    assert "Discovered" in page.text and "Not Validated" in page.text
-    assert "https://charts.example.invalid/helm-charts" in page.text
+    data = page_data(page)
+    assert data["repository_count"] == 1 and data["chart_count"] == 2
+    charts = [row for row in data["artifact_rows"] if row["artifact"]["artifact_type"] == "helm_chart"]
+    assert {row["artifact"]["chart_name"] for row in charts} == {"alpha", "beta"}
+    assert all(row["revision"] is None for row in charts)
+    assert any(row["artifact"]["source_reference"] == catalog["repository_url"] for row in data["artifact_rows"])
     monkeypatch.setattr(portal_main, "_download_public_chart", lambda reference, certificates: [(_helm_chart_archive("alpha"), "alpha-1.0.0.tgz")])
     materialized = client.post(f"/services/payments-service/artifacts/charts/{alpha_id}/materialize", data={"csrf_token": csrf(client), "version": "1.0.0"}, follow_redirects=False)
     assert materialized.status_code == 303
@@ -1519,14 +1550,17 @@ def test_artifact_validation_badge_is_exact_revision_safe(monkeypatch):
             status="VERIFIED", phase="COMPLETE", cleanup_status="COMPLETE"))
         db.commit(); artifact_id = artifact.id
     page = client.get("/services/revision-safe?artifacts=true")
-    assert "✓</span> Validated" in page.text and "Revalidate" in page.text
+    assert page_data(page)["artifact_rows"][0]["validation"]["label"] == "Validated"
+    assert page_data(page)["can_validate"]
     with SessionLocal() as db:
         db.add(ServiceArtifactRevision(artifact_id=artifact_id, revision_number=2, revision_label="WORKING",
             files={"application/Chart.yaml": "name: application\nversion: 1.2.0\n", "application/values.yaml": "replicas: 2\n"}, checksum="b" * 64))
         db.commit()
     page = client.get("/services/revision-safe?artifacts=true")
-    assert "Not Validated" in page.text and "✓</span> Validated" not in page.text
-    assert "WORKING · Revision 2" in page.text and "validated-original" not in page.text
+    row = page_data(page)["artifact_rows"][0]
+    assert row["validation"]["label"] == "Not Validated"
+    assert (row["revision"]["revision_label"], row["revision"]["revision_number"]) == ("WORKING", 2)
+    assert "validated-original" not in page.text
 
 
 def test_service_snapshot_separates_staged_services_from_active_and_archived():
@@ -1542,11 +1576,12 @@ def test_service_snapshot_separates_staged_services_from_active_and_archived():
     assert response.status_code == 303
     default = client.get("/")
     assert "helm-test" not in default.text
-    assert "View Staged (1)" in default.text
+    assert page_data(default)["lifecycle_counts"]["staged"] == 1
     staged = client.get("/?lifecycle=staged&q=helm-test&sort=name")
     assert staged.status_code == 200
     assert "helm-test" in staged.text
-    assert "View Staged (1)" in staged.text
+    assert page_data(staged)["lifecycle_counts"]["staged"] == 1
+    assert page_data(staged)["lifecycle"] == "staged"
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "helm-test"))
         assert service.lifecycle_status == "staged"
@@ -1720,7 +1755,7 @@ def test_service_manager_scope_and_exception_approval_separation():
     with SessionLocal() as db:
         exception_id = db.scalar(select(ExceptionRecord.id))
     assert cyber.post(f"/exceptions/{exception_id}/revoke", data={"csrf_token": csrf(cyber)}, follow_redirects=False).status_code == 303
-    assert "Revoked" in cyber.get("/requests").text
+    assert any(row["status"] == "revoked" for row in page_data(cyber.get("/requests"))["workflows"])
 
 
 def test_service_workspace_exposes_embedded_poam_and_activity_tabs():
@@ -1728,12 +1763,12 @@ def test_service_workspace_exposes_embedded_poam_and_activity_tabs():
     ingest(client, cves=["CVE-2026-0099"])
     poam = client.get("/services/payments-service?poam=true")
     assert poam.status_code == 200
-    assert "Payments Service POA&amp;M" in poam.text
-    assert 'href="/services/payments-service?activity=true"' in poam.text
+    assert page_data(poam)["service"]["name"] == "Payments Service"
+    assert page_data(poam)["embedded"]
     activity = client.get("/services/payments-service?activity=true")
     assert activity.status_code == 200
-    assert "Service activity" in activity.text
-    assert "Scan" in activity.text
+    assert page_envelope(activity)["page"] == "service_activity"
+    assert any(row["action"] == "scan.ingested" for row in page_data(activity)["events"])
 
 
 def test_poam_is_scoped_and_requires_cybersecurity_approval():
@@ -1750,16 +1785,15 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
     add_user("poam-manager", "Service Manager", service_id)
     manager = new_client("poam-manager")
     poam_index = manager.get("/poam").text
-    assert "Create POA&amp;M entry" in poam_index
+    assert page_data(manager.get("/poam/services/payments-service"))["can_create_poam"]
     assert "Payments Service" in poam_index and "Other Service" not in poam_index
     assert manager.get("/poam/services/other-service").status_code == 403
     service_poam = manager.get("/poam/services/payments-service")
     assert service_poam.status_code == 200
-    assert "Payments Service POA&amp;M" in service_poam.text
-    noncompliant_page = manager.get("/services/payments-service?finding_state=noncompliant").text
-    assert 'class="secondary-button poam-action"' in noncompliant_page
-    assert 'data-title="Remediate CVE-2026-0002"' in noncompliant_page
-    assert 'id="shared-poam-dialog"' in noncompliant_page
+    assert page_data(service_poam)["service"]["name"] == "Payments Service"
+    noncompliant_page = page_data(manager.get("/services/payments-service?finding_state=noncompliant"))
+    assert noncompliant_page["can"]["poam.request"][str(service_id)]
+    assert any(row["finding_id"] == finding_id for row in noncompliant_page["noncompliance_items"])
     created = manager.post("/poam", data={
         "csrf_token": csrf(manager), "service_id": service_id, "item_type": "missing_evidence",
         "title": "Missing authorization evidence", "description": "Authorization package is absent",
@@ -1790,8 +1824,8 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
     with SessionLocal() as db:
         entry = db.get(PoamEntry, entries[0].id)
         assert entry.status == "active" and entry.approved_by_id is not None
-    detail = cyber.get("/poam/services/payments-service").text
-    assert "Missing authorization evidence" in detail and "Active" in detail
+    detail = page_data(cyber.get("/poam/services/payments-service"))
+    assert any(row["title"] == "Missing authorization evidence" and row["status"] == "active" for row in detail["entries"])
     updated = manager.post(f"/poam/entries/{entries[0].id}/update", data={
         "csrf_token": csrf(manager), "title": "Updated authorization evidence",
         "description": "The authorization package remains incomplete",
@@ -1815,8 +1849,9 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
     assert cyber.post(f"/requests/{complete_workflow.id}/review", data={
         "csrf_token": csrf(cyber), "decision": "approved", "review_reason": "Evidence verified",
     }, follow_redirects=False).status_code == 303
-    completed_page = cyber.get(f"/poam/entries/{entries[0].id}").text
-    assert "Completed" in completed_page and "EVIDENCE-2026-42" in completed_page
+    completed_page = page_data(cyber.get(f"/poam/entries/{entries[0].id}"))
+    assert completed_page["entry"]["status"] == "completed"
+    assert "EVIDENCE-2026-42" in json.dumps(completed_page["history"])
     assert manager.post(f"/poam/entries/{entries[0].id}/reopen", data={
         "csrf_token": csrf(manager), "reason": "New evidence gap was identified",
     }, follow_redirects=False).status_code == 303
@@ -1835,7 +1870,7 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
     assessor = new_client("poam-assessor")
     assessor_index = assessor.get("/poam").text
     assert "Payments Service" in assessor_index and "Other Service" in assessor_index
-    assert "Create POA&amp;M entry" not in assessor_index
+    assert not page_data(assessor.get("/poam/services/payments-service"))["can_create_poam"]
 
 
 def test_audit_logs_default_to_ten_and_expand_within_retention():
@@ -1846,11 +1881,11 @@ def test_audit_logs_default_to_ten_and_expand_within_retention():
         db.commit()
     default_page = client.get("/admin/audit")
     assert default_page.status_code == 200
-    assert "Showing 10 of" in default_page.text
-    assert default_page.text.count("test.event.") == 10
+    assert page_data(default_page)["shown_count"] == 10
+    assert sum(row["action"].startswith("test.event.") for row in page_data(default_page)["events"]) == 10
     expanded = client.get("/admin/audit?show=60")
-    assert expanded.text.count("test.event.") == 15
-    assert "Collapse to latest 10" in expanded.text
+    assert sum(row["action"].startswith("test.event.") for row in page_data(expanded)["events"]) == 15
+    assert page_data(expanded)["shown_count"] > 10
 
 
 def test_archive_requires_request_and_separate_approval():
@@ -1884,20 +1919,18 @@ def test_reset_password_dialog_is_not_constrained_as_a_table_action():
 
 def test_excel_export_remains_valid():
     client = new_client(); ingest(client, cves=["CVE-2026-0001"])
-    service_page = client.get("/services/payments-service").text
-    assert "Export ▾" in service_page
-    overview_page = client.get("/services/payments-service?overview=true").text
-    assert 'href="/services/payments-service/export.xlsx">All</a>' in overview_page
-    assert 'class="secondary-button" href="/services/payments-service?architecture=true">Architecture</a>' not in overview_page
-    assert 'class="secondary-button" href="/services/payments-service/helm-diagram.svg">Helm Diagram</a>' not in overview_page
+    service_page = page_data(client.get("/services/payments-service"))
+    assert service_page["can"]["service.export"][str(service_page["view"]["service"]["id"])]
+    overview_page = page_data(client.get("/services/payments-service?overview=true"))
+    assert overview_page["can"]["service.export"][str(overview_page["view"]["service"]["id"])]
+    assert overview_page["view"]["service"]["service_key"] == "payments-service"
     diagram = client.get("/services/payments-service/helm-diagram.svg")
     assert diagram.status_code == 200
     assert diagram.headers["content-type"].startswith("image/svg+xml")
     assert "Helm rendering" in diagram.text
     assert "Ports / protocols" in diagram.text
-    assert "Latest Evidence:" in service_page and "None received" not in service_page
-    # Findings now prioritizes the table; service-level metric cards live on Overview.
-    assert "metric-card selected" not in service_page
+    assert service_page["view"]["last_execution"] is not None
+    assert service_page["findings"][0]["cve"] == "CVE-2026-0001"
     response = client.get("/services/payments-service/export.xlsx")
     assert response.status_code == 200
     assert load_workbook(BytesIO(response.content))["Findings"]["A2"].value == "CVE-2026-0001"
@@ -1945,8 +1978,8 @@ def test_architecture_and_overview_use_exact_persisted_validation_evidence():
     architecture = client.get("/services/payments-service?architecture=true")
     overview = client.get("/services/payments-service?overview=true")
     evidence = client.get("/api/v1/services/payments-service/architecture-evidence").json()
-    assert 'data-architecture-badge>✓ Verified<' in architecture.text
-    assert 'data-architecture-summary-badge>Verified<' in overview.text
+    assert page_data(architecture)["architecture_verification"]["state"] == "VERIFIED"
+    assert page_data(overview)["architecture_verification"]["state"] == "VERIFIED"
     assert evidence["architecture"]["state"] == "VERIFIED"
     assert evidence["graph"]["summary"]["runtime_verified"] == 1
 
@@ -2038,7 +2071,7 @@ def test_service_export_accepts_singleton_recursive_helm_evidence():
 def test_service_poc_is_displayed_and_exported():
     client = new_client(); ingest(client)
     page = client.get("/services/payments-service")
-    assert "POC: cats-test-poc@example.invalid" in page.text
+    assert page_data(page)["view"]["service"]["poc"] == "cats-test-poc@example.invalid"
     workbook = load_workbook(BytesIO(client.get("/exports/services.xlsx").content))
     assert "POC" in [cell.value for cell in workbook["Service Snapshot"][1]]
 
@@ -2059,7 +2092,9 @@ def test_administrator_can_save_configuration():
         "epss_rule_threshold": ["0.90", "0.80"], "epss_rule_noncompliant": ["true", "true"],
     }, follow_redirects=False)
     assert policy.status_code == 303
-    assert "Overdue Findings" in client.get("/").text
+    assert page_envelope(client.get("/"))["page"] == "dashboard"
+    with SessionLocal() as db:
+        assert db.scalar(select(PortalSetting.value).where(PortalSetting.key == "overdue_days")) == "120"
 
 
 def test_configuration_is_global_and_migrates_legacy_group_preference():
@@ -2082,9 +2117,9 @@ def test_configuration_is_global_and_migrates_legacy_group_preference():
 
     page = client.get("/admin/configuration")
     assert page.status_code == 200
-    assert "Global runtime preferences" in page.text
-    assert "Group Scope" not in page.text
-    assert "America/Los_Angeles" in page.text
+    assert page_envelope(page)["page"] == "configuration"
+    assert page_data(page)["configuration"]["display_timezone"] == "America/Los_Angeles"
+    assert "group_id" not in page_data(page)["configuration"]
     with SessionLocal() as db:
         global_setting = db.scalar(select(PortalSetting).where(
             PortalSetting.key == "display_timezone", PortalSetting.group_id.is_(None)
@@ -2116,10 +2151,8 @@ def test_configuration_lists_all_builtin_os_repositories_and_image_defined_defau
     assert page.status_code == 200
     for os_id in ("ubuntu", "debian", "rhel", "rocky", "almalinux", "centos", "fedora", "alpine"):
         assert os_id in page.text
-    assert "Operating system" in page.text
-    assert "OS ID" in page.text
-    assert "Package manager" in page.text
-    assert "Image-defined" in page.text
+    assert page_data(page)["os_definitions"]
+    assert all("package_manager" in row for row in page_data(page)["os_definitions"].values())
 
 
 def test_custom_os_repository_can_be_added_and_builtins_are_protected():
@@ -2159,8 +2192,8 @@ def test_account_can_save_personal_theme():
         "csrf_token": csrf(client), "theme": "blue",
     }, follow_redirects=False)
     assert response.status_code == 303
-    assert 'data-theme="blue"' in client.get("/").text
-    assert "Saved successfully." in client.get("/account/appearance?saved=1").text
+    assert page_data(client.get("/"))["current_user"]["theme"] == "blue"
+    assert page_data(client.get("/account/appearance?saved=1"))["saved"]
 
 
 def test_image_scoped_ingest_only_reconciles_the_scanned_image():
@@ -2205,9 +2238,9 @@ def test_remove_missing_evidence_matches_displayed_sources_and_rejects_stale_pag
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
     page = client.get("/services/evidence-service?overview=true")
     assert page.status_code == 200
-    assert 'name="execution_id"' in page.text
     with SessionLocal() as db:
         execution_id = db.scalar(select(Execution.id).where(Execution.execution_key == "evidence-1"))
+    assert page_data(page)["latest_execution"]["id"] == execution_id
 
     def remove(kind, item, source="", run=execution_id):
         return client.post("/services/evidence-service/missing-evidence/remove", data={
@@ -2226,8 +2259,8 @@ def test_remove_missing_evidence_matches_displayed_sources_and_rejects_stale_pag
         assert db.scalars(select(AuditEvent).where(AuditEvent.action == "missing_evidence.removed")).all()
     assert remove("Chart", "worker").headers["location"].endswith("evidence_notice=stale")
     stale_page = client.get("/services/evidence-service?overview=true&evidence_notice=stale")
-    assert "no longer current" in stale_page.text
-    assert "You've been boozled." not in stale_page.text
+    assert page_data(stale_page)["evidence_notice"] == "stale"
+    assert page_envelope(stale_page)["page"] == "service_overview"
     stale_api = client.post("/services/evidence-service/missing-evidence/remove", data={
         "csrf_token": csrf(client), "execution_id": execution_id,
         "evidence_type": "Chart", "item": "worker",
@@ -2240,8 +2273,7 @@ def test_remove_missing_evidence_matches_displayed_sources_and_rejects_stale_pag
     assert client.post("/api/v1/pipeline-results", json=newer, headers=pipeline_headers).status_code == 201
     assert remove("Chart", "new-worker").headers["location"].endswith("evidence_notice=stale")
     current_page = client.get("/services/evidence-service?overview=true")
-    assert 'name="item" value="new-worker"' in current_page.text
-    assert 'name="item" value="worker"' not in current_page.text
+    assert [row["item"] for row in page_data(current_page)["overview_data"]["missing_evidence"]] == ["new-worker"]
     with SessionLocal() as db:
         current = db.scalar(select(Execution).where(Execution.execution_key == "evidence-2"))
         assert current.raw_payload["service_overview"]["missing_evidence"]
@@ -2260,9 +2292,9 @@ def test_browser_errors_are_pages_and_api_errors_remain_json(caplog):
         client = TestClient(app, raise_server_exceptions=False)
         browser = client.get("/__test_browser_crash", headers={"accept": "text/html"})
         assert browser.status_code == 500
-        assert "You've been boozled." in browser.text
-        assert "Something went wrong while processing your request." in browser.text
-        assert 'href="http://testserver/"' in browser.text
+        assert page_envelope(browser)["page"] == "boozled"
+        assert page_data(browser)["detail"] is None  # Static safe copy belongs to the native error component.
+        assert page_data(browser)["home_url"] == "http://testserver/"
         assert "private failure detail" not in browser.text
         assert "private failure detail" in caplog.text
         for internal in ("RuntimeError", "Traceback", "DATABASE_URL", "PIPELINE_API_TOKEN", "sqlite://", "C:\\Users\\"):
@@ -2272,14 +2304,16 @@ def test_browser_errors_are_pages_and_api_errors_remain_json(caplog):
         assert api.json() == {"detail": "Something went wrong while processing your request."}
         assert "private failure detail" not in api.text
         missing = client.get("/not-a-page", headers={"accept": "text/html"})
-        assert missing.status_code == 404 and "Request could not be completed" in missing.text
+        assert missing.status_code == 404 and page_envelope(missing)["page"] == "request_error"
+        assert page_data(missing)["detail"] == "The requested page or item was not found."
         assert "application/json" not in missing.headers["content-type"]
         missing_api = client.get("/api/not-a-page", headers={"accept": "application/json"})
         assert missing_api.status_code == 404 and missing_api.json()["detail"] == "Not Found"
         login = client.post("/login", data={"username": "admin", "password": "test-password-long"}, follow_redirects=False)
         assert login.status_code == 303
         invalid = client.post("/services/example/missing-evidence/remove", data={}, headers={"accept": "text/html"})
-        assert invalid.status_code == 422 and "Request could not be completed" in invalid.text
+        assert invalid.status_code == 422 and page_envelope(invalid)["page"] == "request_error"
+        assert page_data(invalid)["detail"]
     finally:
         app.router.routes.remove(browser_route)
         app.router.routes.remove(api_route)
@@ -2295,7 +2329,8 @@ def test_missing_evidence_remove_requires_permission_and_csrf():
     denied = assessor.post("/services/permission-service/missing-evidence/remove", data={
         "csrf_token": csrf(assessor), "evidence_type": "Chart", "item": "worker",
     }, headers={"accept": "text/html"})
-    assert denied.status_code == 403 and "Request could not be completed" in denied.text
+    assert denied.status_code == 403 and page_envelope(denied)["page"] == "request_error"
+    assert page_data(denied)["detail"]
     bad_csrf = admin.post("/services/permission-service/missing-evidence/remove", data={
         "csrf_token": "wrong", "evidence_type": "Chart", "item": "worker",
     }, headers={"accept": "text/html"})
@@ -2317,16 +2352,19 @@ def test_all_sixty_missing_evidence_entries_reach_noncompliance():
     }
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
     overview = client.get("/services/payments-service?overview=true")
-    assert "Active Non-Compliance</span><strong>60</strong>" in overview.text
+    assert page_data(overview)["finding_counts"]["noncompliant"] == 60
     page = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&page_size=100")
     assert page.status_code == 200
     assert "missing-chart-49" in page.text and "unresolved-dependency" in page.text
     assert "charts/49/values.yaml" in page.text
-    assert "of 60" in page.text
+    assert page_data(page)["total_items"] == 60
+    assert len(page_data(page)["noncompliance_items"]) == 60
     filtered = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&q=missing-chart-49")
-    assert "of 1" in filtered.text and "charts/49/values.yaml" in filtered.text
+    assert page_data(filtered)["total_items"] == 1 and "charts/49/values.yaml" in filtered.text
     second_page = client.get("/services/payments-service?findings_view=raw&finding_state=noncompliant&page_size=50&page=2")
-    assert "51&ndash;60 of 60" in second_page.text
+    assert page_data(second_page)["page"] == 2
+    assert page_data(second_page)["total_items"] == 60
+    assert len(page_data(second_page)["noncompliance_items"]) == 10
 
 
 def test_raw_findings_do_not_hide_non_risk_eligible_cves():
@@ -2422,10 +2460,10 @@ def test_disabled_deployment_validation_is_not_attempted_and_static_scan_remains
     overview = client.get("/services/payments-service?overview=true")
     details = client.get("/services/payments-service?validation=true")
     assert overview.status_code == details.status_code == 200
-    assert "Deployment Validation" in overview.text and "Not Attempted" in overview.text
-    assert "Static Scan:" in overview.text
-    assert "authoritative static CATS scan" in details.text
-    assert "Validation history" in details.text and "Not Attempted" in details.text
+    assert page_data(overview)["deployment_validation"]["status"] == "NOT_ATTEMPTED"
+    assert page_data(overview)["deployment_validation"]["static_scan_complete"] is True
+    assert page_data(details)["validation"]["status"] == "NOT_ATTEMPTED"
+    assert page_data(details)["validation"]["static_scan_complete"] is True
 
 
 def test_helm_ingest_without_retained_sources_records_not_attempted(monkeypatch):
@@ -2457,7 +2495,7 @@ def test_validation_ui_preserves_helm_provenance_after_a_later_non_helm_scan(mon
         assert len(runs) == 2
         assert all(run.execution.execution_key == "helm-provenance" for run in runs)
     overview = client.get("/services/payments-service?overview=true")
-    assert "Helm evidence:" in overview.text and "helm-provenance" in overview.text
+    assert page_data(overview)["deployment_validation"]["execution_key"] == "helm-provenance"
 
 
 def test_validation_ui_reports_incomplete_linked_static_scan_and_hides_disabled_rerun(monkeypatch):
@@ -2467,9 +2505,9 @@ def test_validation_ui_reports_incomplete_linked_static_scan_and_hides_disabled_
     client = new_client()
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
     details = client.get("/services/payments-service?validation=true")
-    assert "Static Scan: Incomplete" in details.text
-    assert "Deployment Validation is disabled by configuration." in details.text
-    assert "Re-run Validation" not in details.text
+    assert page_data(details)["validation"]["static_scan_complete"] is False
+    assert page_data(details)["validation_unavailable_reason"] == "Deployment Validation is disabled by configuration."
+    assert not page_data(details)["can_validate"]
 
 
 def test_validation_history_links_open_the_selected_immutable_run(monkeypatch):
@@ -2484,9 +2522,11 @@ def test_validation_history_links_open_the_selected_immutable_run(monkeypatch):
         db.add(second); db.commit(); first_key = first.run_key
     latest = client.get("/services/payments-service?validation=true")
     selected = client.get(f"/services/payments-service?validation=true&validation_run={first_key}")
-    assert "Newer run explanation" in latest.text
-    assert "Older run explanation" in selected.text
-    assert f"validation_run={first_key}" in selected.text
+    assert page_data(latest)["validation"]["reason"] == "Newer run explanation"
+    assert page_data(latest)["validation"]["run_key"] == "DV-NEWER-HISTORY"
+    assert page_data(selected)["validation"]["reason"] == "Older run explanation"
+    assert page_data(selected)["validation"]["run_key"] == first_key
+    assert first_key in {run["run_key"] for run in page_data(selected)["validation_runs"]}
 
 
 def test_overview_collapses_worker_phase_to_in_progress(monkeypatch):
@@ -2496,8 +2536,7 @@ def test_overview_collapses_worker_phase_to_in_progress(monkeypatch):
     client = new_client()
     client.post("/api/v1/pipeline-results", json=helm_payload("queued-overview"), headers=pipeline_headers)
     overview = client.get("/services/payments-service?overview=true")
-    assert "In Progress" in overview.text
-    assert ">Queued<" not in overview.text
+    assert page_data(overview)["deployment_validation"]["status"] == "QUEUED"
 
 
 def test_stale_never_started_validation_recovers_as_not_attempted(monkeypatch):

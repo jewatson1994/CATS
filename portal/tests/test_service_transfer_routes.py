@@ -1,12 +1,11 @@
 """Confirmation-level portability, conflict, rollback and legacy regressions."""
 from datetime import timedelta
-import re
 
 from sqlalchemy import select, func
 
 from app.models import Service, Execution, Finding, ServiceMetadata, BundlePreview
 from app.service_bundle import export_bundle
-from test_portal import setup_function, new_client, csrf, SessionLocal
+from test_portal import setup_function, new_client, csrf, SessionLocal, page_data
 from test_exchange import seed
 
 
@@ -16,7 +15,7 @@ def preview(client, data, target, mode="create"):
 
 def confirm(client, response):
     assert response.status_code == 200, response.text
-    token = re.search(r'/bundles/confirm/([a-f0-9]+)', response.text).group(1)
+    token = page_data(response)["token"]
     return client.post("/exchange/bundles/confirm/" + token, data={"csrf_token": csrf(client), "confirm": "true"}, follow_redirects=False)
 
 
@@ -80,7 +79,10 @@ def test_legacy_v1_remains_importable_as_new_service_only():
         assert db.scalar(select(func.count()).select_from(Finding).where(Finding.service_id == target.id)) == 0
     history = client.get("/services/legacy-target/history?version=1.4")
     assert history.status_code == 200
-    assert "Imported historical evidence" in history.text and "CVE-OLD" in history.text
+    data = page_data(history)
+    assert data["version"] == "1.4"
+    assert data["snapshots"] == []
+    assert any(finding["cve"] == "CVE-OLD" for snapshot in data["imported_snapshots"] for finding in snapshot["data"]["findings"])
 
 
 def test_bundle_confirmation_replay_and_create_race():

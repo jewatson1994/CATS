@@ -1,0 +1,6 @@
+frontend/node_modules
+app/static/frontend
+**/__pycache__
+.venv
+.git
+.pnpm-store

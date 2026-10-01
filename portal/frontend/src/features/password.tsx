@@ -1,0 +1,3 @@
+export function Page({ data }: { data: any }) {
+  return <section className="auth-card"><h1>Change password</h1><p>Use at least 14 characters.</p>{data.error && <p className="error" role="alert">{data.error}</p>}<form method="post" action="/account/password"><input type="hidden" name="csrf_token" value={data.csrf_token || ''} /><label>Current password<input type="password" name="current_password" autoComplete="current-password" required /></label><label>New password<input type="password" name="new_password" autoComplete="new-password" minLength={14} required /></label><label>Confirm new password<input type="password" name="confirmation" autoComplete="new-password" minLength={14} required /></label><button>Update password</button></form></section>;
+}

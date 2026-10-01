@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app import main as portal_main
 from app.main import app
 from app.patching import initial_patch_stages
+from app.frontend import PAGE_MEDIA_TYPE
 
 
 ROOT = Path(__file__).parents[1]
@@ -19,16 +20,20 @@ def _clock(monkeypatch, *values):
     monkeypatch.setattr(portal_main, "utcnow", lambda: next(moments))
 
 
-def test_shared_elapsed_time_javascript_contract():
+def test_react_job_elapsed_time_contract():
     node = shutil.which("node")
     if not node:
-        pytest.skip("Node.js is unavailable for the dependency-free browser utility test")
+        pytest.skip("Node.js is unavailable for the React job lifecycle test")
+    frontend = ROOT / "frontend"
+    runner = frontend / "node_modules/vitest/vitest.mjs"
+    if not runner.exists():
+        pytest.skip("Install the pinned frontend dependencies to run React lifecycle tests")
     result = subprocess.run(
-        [node, str(ROOT / "tests" / "elapsed_time.test.js")],
-        capture_output=True, text=True, timeout=15, check=False,
+        [node, str(runner), "run", "src/hooks/useJob.test.tsx", "--configLoader", "runner"],
+        cwd=frontend, capture_output=True, text=True, timeout=45, check=False,
     )
     assert result.returncode == 0, result.stderr or result.stdout
-    assert "elapsed-time tests passed" in result.stdout
+    assert "passed" in result.stdout
 
 
 def test_scan_timestamps_continue_across_stages_and_freeze(monkeypatch):
@@ -47,7 +52,6 @@ def test_scan_timestamps_continue_across_stages_and_freeze(monkeypatch):
         assert portal_main.PUBLIC_JOBS[job_id]["finished_at"] == finished_at
     finally:
         portal_main.PUBLIC_JOBS.pop(job_id, None)
-
 
 def test_standalone_sbom_and_scan_cancellation_expose_terminal_timestamps(monkeypatch):
     start = datetime(2026, 9, 15, 13, 0, tzinfo=timezone.utc)
@@ -95,33 +99,19 @@ def test_patch_timestamps_survive_refresh_and_phase_changes(monkeypatch, tmp_pat
         portal_main.PATCH_JOBS.pop(job_id, None)
 
 
-def test_timer_ui_is_shared_and_polling_cadence_is_unchanged(monkeypatch):
+def test_timer_page_exposes_job_scope_and_timestamp_contract(monkeypatch):
     job_id = "timer-markup-test"
     portal_main.PUBLIC_JOBS[job_id] = {
         "job_id": job_id, "job_kind": "scan", "status": "running", "phase": "generate_sboms",
         "started_at": "2026-09-15T12:00:00+00:00",
     }
     try:
-        scan = TestClient(app).get(f"/scan?job_id={job_id}")
+        scan = TestClient(app).get(f"/scan?job_id={job_id}", headers={"Accept": PAGE_MEDIA_TYPE})
         assert scan.status_code == 200
-        assert scan.text.count("data-job-elapsed data-elapsed-time") == 1
-        assert "data-started-at=\"2026-09-15T12:00:00+00:00\"" in scan.text
-        assert "window.setTimeout(poll, 1500)" in scan.text
-        assert "window.setTimeout(poll, 3000)" in scan.text
+        data = scan.json()["data"]
+        assert data["job_id"] == job_id
+        assert data["job"]["started_at"] == "2026-09-15T12:00:00+00:00"
+        assert data["job"]["status"] == "running"
+        assert data["job"]["phase"] == "generate_sboms"
     finally:
         portal_main.PUBLIC_JOBS.pop(job_id, None)
-
-    patch_template = (ROOT / "app" / "templates" / "patch.html").read_text(encoding="utf-8")
-    sbom_template = (ROOT / "app" / "templates" / "self_service.html").read_text(encoding="utf-8")
-    public_results_template = (ROOT / "app" / "templates" / "public_results.html").read_text(encoding="utf-8")
-    patch_results_template = (ROOT / "app" / "templates" / "patch_results.html").read_text(encoding="utf-8")
-    remediation_template = (ROOT / "app" / "templates" / "remediation_report.html").read_text(encoding="utf-8")
-    remediation_list_template = (ROOT / "app" / "templates" / "service_remediations.html").read_text(encoding="utf-8")
-    assert patch_template.count("data-patch-elapsed") == 2  # selector plus the single element
-    assert "setTimeout(poll,1000)" in patch_template
-    assert "setTimeout(poll,2500)" in patch_template
-    assert sbom_template.count("data-job-elapsed data-elapsed-time") == 1
-    assert "CatsElapsedTime.attach" in patch_template and "CatsElapsedTime.attach" in sbom_template
-    assert all("data-elapsed-time" in template for template in (
-        public_results_template, patch_results_template, remediation_template, remediation_list_template,
-    ))

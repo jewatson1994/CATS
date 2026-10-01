@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from pathlib import Path
 import ssl
 import tempfile
@@ -11,7 +13,7 @@ import urllib.parse
 import urllib.request
 
 from .secrets import decrypt_secret
-from .validator_protocol import SCHEMA_VERSION, validate_package
+from .validator_protocol import SCHEMA_VERSION, validate_package, strict_json_loads
 
 
 TERMINAL = {"VERIFIED", "PARTIALLY_VERIFIED", "COULD_NOT_VALIDATE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT"}
@@ -24,12 +26,15 @@ def _client_context(configuration: dict, directory: Path) -> ssl.SSLContext:
     if not ca or not certificate or not encrypted_key:
         raise ValueError("Validator mTLS CA, client certificate, and key are required")
     key = decrypt_secret(encrypted_key)
-    context = ssl.create_default_context(cadata=ca)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_verify_locations(cadata=ca)
     cert_path = directory / "client-cert.pem"
     key_path = directory / "client-key.pem"
     cert_path.write_text(certificate, encoding="utf-8")
-    key_path.write_text(key, encoding="utf-8")
-    key_path.chmod(0o600)
+    descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(key)
     context.load_cert_chain(str(cert_path), str(key_path))
     return context
 
@@ -37,8 +42,12 @@ def _client_context(configuration: dict, directory: Path) -> ssl.SSLContext:
 def _endpoint(configuration: dict) -> str:
     endpoint = str(configuration.get("endpoint") or "").rstrip("/")
     parsed = urllib.parse.urlparse(endpoint)
-    if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if any(ord(c) < 33 or ord(c) == 127 for c in endpoint) or "\\" in endpoint or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or "%" in parsed.netloc:
         raise ValueError("Validator endpoint must be a credential-free HTTPS URL")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("Invalid validator endpoint port") from exc
     return endpoint
 
 
@@ -49,12 +58,15 @@ def _request(url: str, context: ssl.SSLContext, body: dict | None = None) -> dic
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, msg, headers, newurl):
             raise ValueError("Validator redirected; configure its final endpoint explicitly")
-    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context), NoRedirect)
     with opener.open(request, timeout=30) as response:
         result = response.read(8 * 1024 * 1024 + 1)
     if len(result) > 8 * 1024 * 1024:
         raise ValueError("Validator response exceeds size limit")
-    return json.loads(result)
+    parsed = strict_json_loads(result)
+    if not isinstance(parsed, dict):
+        raise ValueError("Validator response must be an object")
+    return parsed
 
 
 def health(configuration: dict) -> dict:
@@ -69,21 +81,31 @@ def validate(configuration: dict, package: dict, progress_callback=None) -> dict
     with tempfile.TemporaryDirectory(prefix="cats-validator-client-") as root:
         context = _client_context(configuration, Path(root))
         submitted = _request(endpoint + "/api/v1/validations", context, package)
-        if submitted.get("schema_version") != SCHEMA_VERSION or not submitted.get("validation_id"):
+        if submitted.get("schema_version") != SCHEMA_VERSION or not isinstance(submitted.get("validation_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", submitted["validation_id"]) or submitted.get("status") != "QUEUED":
             raise ValueError("Validator returned an incompatible response")
         job_id = str(submitted["validation_id"])
-        deadline = time.monotonic() + package["manifest"]["timeout_seconds"] + 120
+        deadline = time.monotonic() + package["manifest"].get("timeout_seconds", 600) + 120
         last_phase = None
         while time.monotonic() < deadline:
             state = _request(endpoint + "/api/v1/validations/" + urllib.parse.quote(job_id, safe=""), context)
+            if state.get("schema_version") != SCHEMA_VERSION or state.get("validation_id") != job_id or state.get("status") not in TERMINAL | {"QUEUED", "RUNNING"}:
+                raise ValueError("Validator returned an incompatible job state")
+            phase = state.get("phase")
+            if not isinstance(phase, str) or not re.fullmatch(r"[A-Z][A-Z_]{0,79}", phase):
+                raise ValueError("Validator returned an invalid phase")
             if state.get("phase") != last_phase:
                 last_phase = state.get("phase")
                 if progress_callback and last_phase:
                     progress_callback(last_phase)
             if state.get("status") in TERMINAL:
-                result = state.get("result") or {}
-                if result.get("status") != state.get("status"):
+                result = state.get("result")
+                if not isinstance(result, dict) or result.get("status") != state.get("status") or result.get("cleanup_status") not in {"COMPLETE", "FAILED", "NOT_REQUIRED"}:
                     raise ValueError("Validator terminal status and result disagree")
                 return result
             time.sleep(2)
-        raise TimeoutError("Validator did not return a terminal result before the deadline")
+        try:
+            _request(endpoint + "/api/v1/validations/" + job_id + "/cancel", context, {})
+        except Exception:
+            # Remote failure cannot weaken TLS or make cleanup completion certain.
+            pass
+        raise TimeoutError("Validator did not return a terminal result before the deadline; cleanup must be verified")

@@ -130,9 +130,10 @@ def test_public_scan_preserves_safe_oci_diagnostics_for_each_component(monkeypat
 
 
 def test_scan_page_exposes_skipped_chart_entries_safely():
-    template = (Path(__file__).parents[1] / "app" / "templates" / "self_service.html").read_text(encoding="utf-8")
-    assert 'data-skipped-chart-details' in template
-    assert 'item.textContent = entry' in template
+    component = (Path(__file__).parents[1] / "frontend" / "src" / "features" / "self_service.tsx").read_text(encoding="utf-8")
+    assert 'job.skipped_charts.map' in component
+    assert '<li key={index}>{entry}</li>' in component
+    assert 'dangerouslySetInnerHTML' not in component
 
 
 @pytest.mark.parametrize("filename,body,message", [
@@ -179,6 +180,6 @@ def test_public_scan_isolates_unresolved_definition_component(monkeypatch):
 
 
 def test_scan_form_keeps_definition_between_helm_and_ingest():
-    template = (Path(__file__).parents[1] / "app" / "templates" / "self_service.html").read_text(encoding="utf-8")
+    template = (Path(__file__).parents[1] / "frontend" / "src" / "features" / "self_service.tsx").read_text(encoding="utf-8")
     assert template.index('name="chart_archives"') < template.index('name="service_definition"') < template.index('name="ingest_service_id"')
     assert 'accept=".yaml,.yml"' in template

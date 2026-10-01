@@ -142,8 +142,10 @@ def test_admin_upload_keep_disable_remove_public_download_and_audit(keys):
     response = client.post("/admin/configuration/signing", data={"csrf_token": csrf(client), "enabled": "true", "key_password": "key-password"},
                            files={"private_key": ("cosign.key", PRIVATE), "public_key": ("cosign.pub", keys)}, follow_redirects=False)
     assert response.status_code == 303
-    page = client.get("/admin/configuration")
-    assert page.status_code == 200 and "Image signing" in page.text
+    page = client.get("/admin/configuration", headers={"Accept": "application/vnd.cats.page+json"})
+    assert page.status_code == 200
+    assert page.json()["data"]["signing"]["configured"] is True
+    assert page.json()["data"]["signing"]["enabled"] is True
     assert "TEST-PRIVATE" not in page.text and "key-password" not in page.text
     assert client.get("/admin/configuration/signing/public-key").content == keys
     with SessionLocal() as db:

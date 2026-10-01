@@ -33,7 +33,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi.templating import Jinja2Templates
+from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true
 from sqlalchemy.exc import IntegrityError
@@ -5502,20 +5502,35 @@ def deployment_validation_result(
 
 @app.get("/api/v1/services/{service_key}/architecture-evidence")
 def architecture_evidence_result(
-    service_key: str, db: Session = Depends(get_db),
+    service_key: str, view_version: str = "", db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True)),
 ):
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
     if not service:
         raise HTTPException(404)
-    execution = latest_architecture_execution(service.executions)
+    executions = service.executions
+    if view_version:
+        from .exchange import selected_evidence
+        try:
+            _, executions = selected_evidence(db, service, view_version)
+        except ValueError as exc:
+            raise HTTPException(404, detail=str(exc)) from exc
+    execution = latest_architecture_execution(executions)
     payload = dict(execution.raw_payload) if execution and isinstance(execution.raw_payload, dict) else {}
     overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
     resources = overview.get("rendered_resources") or payload.get("rendered_resources") or []
-    working_revision = latest_architecture_working_revision(db, service.id)
-    runs = db.scalars(select(DeploymentValidationRun).where(
+    # A selected release is immutable evidence, including when its label is
+    # currently deployed. Never attach today's mutable working revision.
+    working_revision = None if view_version else latest_architecture_working_revision(db, service.id)
+    runs_query = select(DeploymentValidationRun).where(
         DeploymentValidationRun.service_id == service.id,
-    ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
+    )
+    if view_version:
+        runs_query = runs_query.where(
+            DeploymentValidationRun.execution_id.in_([item.id for item in executions]),
+            DeploymentValidationRun.artifact_revision_id.is_(None),
+        )
+    runs = db.scalars(runs_query.options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
     summary = architecture_verification(
         applicable=bool(payload.get("helm_source_files") or resources) and str(payload.get("artifact_type") or "helm").lower() == "helm",
         declared_count=len(resources), runs=runs,
@@ -5535,6 +5550,7 @@ def architecture_evidence_result(
 def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
     severity: str = "all", component: str = "", since: str = "",
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from .security_dashboard import service_history
     allowed = auth.accessible_service_ids("service.view")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
@@ -5581,6 +5597,9 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
             view["warning_items"])
         posture = "RED" if not view["compliant"] else "YELLOW" if warning else "GREEN"
         rows.append({"service": service, "status": posture, "critical": critical, "high": high,
+            "medium": sum(item.severity.lower() == "medium" for item in active_findings),
+            "low": sum(item.severity.lower() == "low" for item in active_findings),
+            "unknown": sum(item.severity.lower() not in {"critical", "high", "medium", "low"} for item in active_findings),
             "vulnerabilities": len(active_findings), "kev": kev, "watchlist": len(watchlist),
             "patchable": patchable, "poam": len(active_poam), "poam_overdue": len(overdue_poam),
             "missing": missing, "sbom": bool(latest and (latest.raw_payload or {}).get("sbom_images")),
@@ -5596,6 +5615,9 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
         "poam": sum(row["poam"] for row in rows), "poam_overdue": sum(row["poam_overdue"] for row in rows),
         "sbom_coverage": sum(row["sbom"] for row in rows), "missing": sum(row["missing"] for row in rows),
         "kind_failed": sum(row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"} for row in rows)}
+    metrics.update({level: sum(row[level] for row in rows) for level in ("critical", "high", "medium", "low", "unknown")})
+    metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
+    history = [service_history(service) for service in services]
     try:
         since_date = datetime.fromisoformat(since).date() if since else None
     except ValueError as exc:
@@ -5609,7 +5631,7 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
                      or (attention == "poam" and row["poam"]) or (attention == "missing" and row["missing"])
                      or (attention == "kind" and row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}))]
     return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth,
-        rows=filtered, metrics=metrics, q=q, status=status, attention=attention,
+        rows=filtered, metrics=metrics, history=history, q=q, status=status, attention=attention,
         severity=severity, component=component, since=since))
 
 

@@ -1,3 +1,10 @@
+FROM node:24.19.0-alpine AS frontend
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN npm install --global pnpm@11.19.0 && pnpm install --frozen-lockfile
+COPY frontend/ ./
+RUN pnpm build
+
 FROM python:3.12-slim
 ARG COSIGN_VERSION=2.6.1
 ARG COSIGN_SHA256=064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a
@@ -10,4 +17,5 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

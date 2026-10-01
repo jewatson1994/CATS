@@ -3,7 +3,7 @@ import json
 import pytest
 from sqlalchemy import select
 
-from test_portal import setup_function, new_client, csrf, SessionLocal
+from test_portal import setup_function, new_client, csrf, SessionLocal, page_data, page_envelope
 from test_exchange import seed
 from app.exchange import builtins, validate_template
 from app.exchange_ui import export_preview, metadata_groups
@@ -15,9 +15,10 @@ def test_designer_and_metadata_forms_round_trip():
     seed(client)
     page = client.get("/exchange/templates")
     assert page.status_code == 200
-    assert 'id="template-designer"' in page.text
-    assert 'id="designer-dataset"' in page.text
-    assert 'textarea name="definition"' not in page.text
+    assert page_envelope(page)["page"] == "exchange"
+    assert page_data(page)["may_manage_templates"] is True
+    assert page_data(page)["field_catalog"]["datasets"]
+    assert page_data(page)["template_catalog"]["ppsm"]["columns"]
     definition = builtins()["ppsm"]
     definition.update(name="Custom registration", description="Team export", block_missing=True)
     definition["columns"][0]["label"] = "Sequence"
@@ -29,11 +30,11 @@ def test_designer_and_metadata_forms_round_trip():
         assert saved.definition["columns"][0]["label"] == "Sequence"
     response = client.post("/services/payments-service/exchange/metadata", data={"csrf_token": csrf(client), "values": json.dumps({"system.owner": "Operations", "classification": "Internal"})})
     assert response.status_code == 200
-    assert 'data-metadata-key="system.owner" value="Operations"' in response.text
-    assert 'data-metadata-key="system.name"' not in response.text
-    assert "Export field preview" in response.text
-    assert "Configured: 1" in response.text
-    assert "Missing optional:" in response.text
+    data = page_data(response)
+    assert data["metadata"]["system.owner"] == "Operations"
+    assert all(field["key"] != "system.name" for group in data["metadata_groups"].values() for field in group)
+    assert any(row["counts"].get("Configured") == 1 for row in data["export_preview"])
+    assert any(row["counts"].get("Missing optional", 0) > 0 for row in data["export_preview"])
 
 
 @pytest.mark.parametrize("key", ["system.name", "service.name", "service.version", "export.generated_by", "export.generated_at"])

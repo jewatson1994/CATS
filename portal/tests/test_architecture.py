@@ -97,32 +97,19 @@ def test_primary_communication_ranks_are_monotonic_and_images_are_secondary():
     assert all(not relationship["primary"] for relationship in graph["relationships"] if relationship["label"] == "runs")
 
 
-def test_architecture_view_defaults_to_all_resources_and_lists_views_alphabetically():
-    template = (Path(__file__).parents[1] / "app" / "templates" / "service_architecture.html").read_text(encoding="utf-8")
-    script = (Path(__file__).parents[1] / "app" / "static" / "architecture_graph.js").read_text(encoding="utf-8")
-    assert '<option value="all" selected>All Resources</option>' in template
-    assert template.index('value="all"') < template.index('value="configuration"') < template.index('value="containers"') < template.index('value="flow"') < template.index('value="network"') < template.index('value="storage"')
-    for label in ("All Resources", "Network", "Containers", "Configuration", "Storage"):
-        assert label in template
-    assert "data-architecture-close" in template
-    assert "is-dim" in script
-    assert "node.kind || node.type" in script
-    assert "No resources applicable" in script
-    assert 'viewBox="0 0 1200 620"' in template
-    assert "data-zoom-in" in template
-    assert "data-zoom-out" in template
-    assert "data-zoom-fit" in template
-    assert "architecture-arrow" in template
-    assert 'fill="context-stroke"' in template
-    assert 'refX="5"' in template
-    css = (Path(__file__).parents[1] / "app" / "static" / "app.css").read_text(encoding="utf-8")
-    assert "stroke:var(--green)!important" in css
-    assert "stroke-dasharray:8 5!important" in css
-    assert 'src="/static/architecture_graph.js"' in template
-    assert "Legacy SVG" not in template
-    assert 'edge.setAttribute("marker-end", "url(#architecture-arrow)")' in script
-    assert "currentLayout().bounds" in script
-    assert "setPointerCapture" in script
+def test_architecture_dto_preserves_layouts_and_excludes_private_node_fields():
+    from app.frontend_service_architecture import project_graph as project_page_graph
+    graph = build_architecture_graph(payload())
+    graph["layouts"] = {name: build_layout(graph, name) for name in ("all", "configuration", "containers", "flow", "network", "storage")}
+    graph["nodes"][0]["password"] = "private"
+    data = project_page_graph(graph)
+    assert set(data["layouts"]) == set(graph["layouts"])
+    assert data["summary"] == graph["summary"]
+    assert len(data["nodes"]) == len(graph["nodes"])
+    assert "private" not in json.dumps(data)
+    for name, layout in data["layouts"].items():
+        assert layout["node_ids"] == graph["layouts"][name]["node_ids"]
+        assert layout["bounds"] == graph["layouts"][name]["bounds"]
 
 
 def geometry_graph():

@@ -1,35 +1,30 @@
 from pathlib import Path
 
+from app.frontend_service_secondary import project_secondary
+from app.frontend import page_data
+from starlette.requests import Request
 
 ROOT = Path(__file__).parents[1]
 
 
-def test_service_navigation_is_shared_and_uses_remediations_label():
-    partial = (ROOT / "app" / "templates" / "_service_tabs.html").read_text(encoding="utf-8")
-    assert partial.count("Overview") == 1
-    assert "Remediations" in partial
-    assert "?poam=true" not in partial
+def test_service_header_preserves_scoped_archive_actions():
+    request = Request({"type": "http", "path": "/services/example", "query_string": b"", "headers": []})
+    data = page_data(request, "service.html", {
+        "view": {"service": {"id": 7, "service_key": "example", "password": "private"}},
+        "archive_pending": True,
+        "can": lambda permission, service_id=None: permission == "archive.request" and service_id == 7,
+    }, formatters={})["data"]
+    assert data["archive_pending"] is True
+    assert data["can"]["archive.request"] == {"7": True}
+    assert data["can"]["service.delete"] == {"7": False}
+    assert "password" not in data["view"]["service"]
 
 
-def test_deployment_validation_ui_contract_is_always_available():
-    tabs = (ROOT / "app" / "templates" / "_service_tabs.html").read_text(encoding="utf-8")
-    overview = (ROOT / "app" / "templates" / "service_overview.html").read_text(encoding="utf-8")
-    validation = (ROOT / "app" / "templates" / "service_validation.html").read_text(encoding="utf-8")
-    assert "Deployment Validation" in tabs
-    assert "deployment_validation is defined" not in tabs
-    assert "?validation=true" in tabs
-    assert "deployment_validation.status" in overview
-    assert "View Validation" in overview
-    assert "validation_runs" in validation
-    assert "Validation history" in validation
-
-
-def test_administration_tabs_consolidate_general_policy_and_hide_configuration():
-    tabs = (ROOT / "app" / "templates" / "_admin_tabs.html").read_text(encoding="utf-8")
-    assert "General Policy" in tabs
-    assert "Configuration</a>" not in tabs
-    assert "Evidence Policy" not in tabs
-    assert "Workflow Policy" not in tabs
+def test_deployment_validation_contract_is_available_without_a_run():
+    data = project_secondary({}, "service_overview.html", {})
+    assert data["deployment_validation"]["status"] is None
+    assert data["deployment_validation"]["has_observed_topology"] is False
+    assert set(data["deployment_validation"]["resource_summary"]) == {"pods", "deployments", "statefulsets"}
 
 
 def test_missing_evidence_removal_is_scoped_and_audited():
@@ -39,23 +34,14 @@ def test_missing_evidence_removal_is_scoped_and_audited():
     assert '"missing_evidence.removed"' in source
 
 
-def test_remediation_revoke_uses_dialog_and_safe_return_context():
-    source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
-    enterprise = (ROOT / "app" / "templates" / "remediations.html").read_text(encoding="utf-8")
-    service = (ROOT / "app" / "templates" / "service_remediations.html").read_text(encoding="utf-8")
-    assert "def _safe_remediation_return" in source
-    assert "remediation-revoke-dialog" in enterprise
-    assert "remediation-revoke-dialog" in service
-    assert "Yes, Revoke" in enterprise and "Cancel" in enterprise
-    assert "return_to" in enterprise and "return_to" in service
-    assert "window.confirm" not in enterprise + service
-
-
-def test_archival_is_a_service_header_action_not_raw_findings_panel():
-    template = (ROOT / "app" / "templates" / "service.html").read_text(encoding="utf-8")
-    assert "service-actions-dialog" in template
-    assert "ARCHIVAL PENDING" in template
-    assert template.count("Request service archival") == 1
+def test_remediation_return_rejects_external_or_unrelated_destinations():
+    from app.main import _safe_remediation_return
+    assert _safe_remediation_return("https://evil.example", "/remediations") == "/remediations"
+    assert _safe_remediation_return("//evil.example", "/remediations") == "/remediations"
+    assert _safe_remediation_return("/admin/configuration", "/remediations") == "/remediations"
+    assert _safe_remediation_return("/remediations?status=pending", "/remediations") == "/remediations?status=pending"
+    assert _safe_remediation_return("/services/example", "/remediations") == "/remediations"
+    assert _safe_remediation_return("/services/example?remediations=true", "/remediations") == "/services/example?remediations=true"
 
 
 def test_assessment_rollup_does_not_invent_image_details():

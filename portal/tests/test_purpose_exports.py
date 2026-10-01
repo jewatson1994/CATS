@@ -39,15 +39,13 @@ def test_default_downloads_are_separate_from_complete_workbook():
 
 def test_overview_offers_each_purpose_export():
     _service()
-    response = new_client().get("/services/export-test?overview=true")
+    response = new_client().get("/services/export-test?overview=true", headers={"Accept": "application/vnd.cats.page+json"})
     assert response.status_code == 200
-    assert "Export ▾" in response.text
-    assert 'href="/services/export-test/export.xlsx">All</a>' in response.text
-    for kind in CATALOG:
-        assert f"/services/export-test/exports/{kind}.xlsx" in response.text
-    assert "Version:" in response.text
-    assert 'class="version-unknown">Unknown</span>' in response.text
-    assert 'class="actions-menu version-menu"' not in response.text
+    data = response.json()["data"]
+    assert data["view"]["service"]["service_key"] == "export-test"
+    assert data["can"]["service.export"][str(data["view"]["service"]["id"]) ] is True
+    assert not data["view"]["version"]
+    assert data["history_versions"] == ["Unknown"]
 
 
 def test_asset_export_uses_full_inventory_and_omits_source_credentials():
