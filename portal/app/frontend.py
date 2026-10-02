@@ -161,6 +161,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         data.update(patch_results_data(context))
     elif name == "cybersecurity.html":
         data.update(cybersecurity_data(context, format_date=(formatters or {}).get("cats_date")))
+        data["dashboard_url"] = context.get("dashboard_url")
     elif name in {"service.html", "service_simplified.html"}:
         _service_data(data, context, can, formatters or {})
     elif name in {"home.html", "login.html"}:
@@ -202,6 +203,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         data["job"]["summary"] = _fields(summary, ("skipped_images", "skipped_charts", "reports", "results", "configuration_findings"))
         data["job"]["summary"]["formats"] = [_scalar(item) for item in _field(summary, "formats", [])]
     elif name == "dashboard.html":
+        data["dashboard_url"] = context.get("dashboard_url")
         data.update(_fields(context, (
             "now_display", "compliant_count", "noncompliant_count", "showing_archived", "lifecycle",
             "query", "sort", "page", "page_size", "total_count", "total_pages", "pagination_base",

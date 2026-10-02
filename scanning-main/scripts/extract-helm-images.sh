@@ -140,40 +140,6 @@ discover_components() {
   done < <(yq -o=json '(.services // .service // {}) | select(type == "object") | to_entries[] | select(.value | type == "object") | select((.value | has("enabled")) or (.value | has("path")) or (.value | has("chartPath")) or (.value | has("chart_path")) or (.value | has("localPath")) or (.value | has("local_path")) or (.value | has("helmRepo")) or (.value | has("helm_repo"))) | {name:.key, enabled:(.value.enabled // null), path:(.value.path // null), chartPath:(.value.chartPath // null), chart_path:(.value.chart_path // null), localPath:(.value.localPath // null), local_path:(.value.local_path // null), repo_url:(.value.helmRepo.repoUrl // .value.helm_repo.repo_url // ""), version:(.value.helmRepo.version // .value.helm_repo.version // ""), chart_ref:(.value.helmRepo.chart // .value.helm_repo.chart // .value.chart // "")}' "$values_file" 2>/dev/null | jq -r '. | @base64' 2>/dev/null)
 }
 
-chart_dependencies_local() {
-  local chart_path="$1" dependency name alias package
-  while IFS=$'\t' read -r name alias; do
-    [ -n "$name" ] || continue
-    if [ -d "${chart_path}/charts/${alias}" ] || [ -d "${chart_path}/charts/${name}" ]; then
-      continue
-    fi
-    package="$(find "${chart_path}/charts" -maxdepth 1 -type f \( -name "${name}-*.tgz" -o -name "${alias}-*.tgz" \) -print -quit 2>/dev/null || true)"
-    [ -n "$package" ] || return 1
-  done < <(yq -r '.dependencies[]? | [(.name // ""), (.alias // "")] | @tsv' "${chart_path}/Chart.yaml" 2>/dev/null)
-  return 0
-}
-
-prepare_chart_dependencies() {
-  local chart_path="$1" mode="${2:-$HELM_DEPENDENCY_MODE}"
-  case "$mode" in
-    vendored)
-      chart_dependencies_local "$chart_path"
-      ;;
-    online)
-      if ! is_true "${HELM_ALLOW_NETWORK:-false}"; then echo "HELM_ALLOW_NETWORK=false" >&2; return 1; fi
-      helm dependency build "$chart_path"
-      ;;
-    auto)
-      chart_dependencies_local "$chart_path" && return 0
-      if ! is_true "${HELM_ALLOW_NETWORK:-false}"; then echo "HELM_ALLOW_NETWORK=false" >&2; return 1; fi
-      helm dependency build "$chart_path"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-}
-
 if ! command -v helm >/dev/null 2>&1 || ! command -v yq >/dev/null 2>&1; then
   record_skip "tooling" "helm and yq are required to extract chart images"
   exit 0

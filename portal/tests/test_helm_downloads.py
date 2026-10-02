@@ -8,6 +8,24 @@ from fastapi import HTTPException
 from app import helm_downloads as downloads
 
 
+@pytest.mark.parametrize("code, expected", [(401, "authentication"), (403, "proxy/firewall"),
+                                            (404, "not found"), (429, "rate limit"), (502, "intermediary")])
+def test_http_failure_is_specific_and_does_not_expose_secrets(monkeypatch, code, expected):
+    from app import main
+    import urllib.error
+    body = io.BytesIO(b"private response")
+    def fail(*args, **kwargs):
+        raise urllib.error.HTTPError("https://user:password@example.test/index.yaml?token=secret",
+                                     code, "private reason", {}, body)
+    monkeypatch.setattr(main.urllib.request, "urlopen", fail)
+    with pytest.raises(HTTPException) as error:
+        main._fetch_public_stream("https://example.test/index.yaml")
+    assert f"HTTP {code}" in error.value.detail
+    assert expected in error.value.detail
+    assert not any(secret in error.value.detail for secret in ("password", "secret", "private"))
+    assert body.closed
+
+
 def test_bounded_copy_uses_small_reads_and_returns_seekable_disk_file():
     class Source(io.BytesIO):
         def read(self, size=-1):

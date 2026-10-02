@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import {useDashboard} from '../hooks/useDashboard';
 
 const lifecycleLabels: Record<string, { title: string; label: string; description: string }> = {
   active: { title: 'Service Snapshot', label: 'Active', description: 'Fixable CVE exposure tracked continuously across container images.' },
@@ -15,7 +16,13 @@ function Pagination({ data, position }: { data: any; position: string }) {
   return <nav className={`pagination pagination-${position}`} aria-label="Service pages"><span>Showing {total ? (page - 1) * pageSize + 1 : 0}–{Math.min(page * pageSize, total)} of {total} <span className="pagination-page" aria-current="page">· Page {page} of {data.total_pages}</span></span><span className="pagination-controls">{page > 1 ? <a className="secondary-button" href={pageHref(page - 1)}>Previous</a> : <button className="secondary-button" type="button" disabled>Previous</button>}{page < data.total_pages ? <a className="secondary-button" href={pageHref(page + 1)}>Next</a> : <button className="secondary-button" type="button" disabled>Next</button>}</span></nav>;
 }
 
-export function Page({ data }: { data: any }) {
+export function Page({data: pageData}: {data: any}) {
+  const {data, error, retry} = useDashboard(pageData);
+  if (!data) return <><section className="heading"><h1>Services</h1></section><section className="panel padded" aria-busy={!error}>{error ? <div role="alert"><p>{error}</p><button onClick={retry}>Retry dashboard</button></div> : <p role="status">Loading dashboard data…</p>}</section></>;
+  return <Dashboard data={data}/>;
+}
+
+function Dashboard({ data }: { data: any }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const lifecycle = data.lifecycle || 'active';
   const labels = lifecycleLabels[lifecycle] || lifecycleLabels.active;

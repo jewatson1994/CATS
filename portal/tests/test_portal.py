@@ -96,8 +96,10 @@ def test_cybersecurity_chart_history_and_totals_respect_service_access():
     assert not data["rows"]
     assert data["metrics"]["services"] == 1
     assert data["metrics"]["high"] == data["metrics"]["vulnerabilities"]
-    assert [item["service_key"] for item in data["history"]] == ["payments-service"]
-    latest, previous = data["history"][0]["versions"]
+    assert "history" not in data
+    assert [item["service_key"] for item in data["services"]] == ["payments-service"]
+    assert viewer.get("/api/dashboard/cybersecurity/services/private-service/history").status_code == 404
+    latest, previous = viewer.get("/api/dashboard/cybersecurity/services/payments-service/history").json()["versions"]
     assert (latest["version"], latest["total"], latest["complete"]) == ("2.0", 1, False)
     assert (previous["version"], previous["total"]) == ("1.0", 2)
 
@@ -186,7 +188,7 @@ def test_watchlist_warning_dashboard_and_authorization():
     assert warnings.status_code == 200 and page_data(warnings)["warning_items"]
     dashboard = client.get("/cybersecurity")
     assert dashboard.status_code == 200 and page_envelope(dashboard)["page"] == "cybersecurity"
-    assert "Payments Service" in client.get("/cybersecurity?attention=watchlist&component=requests").text
+    assert page_data(client.get("/cybersecurity?attention=watchlist&component=requests"))["rows"][0]["service"]["name"] == "Payments Service"
     assert not page_data(client.get("/cybersecurity?component=not-present"))["rows"]
     with SessionLocal() as db:
         from app.models import DependencyWatchlistMatch
@@ -252,7 +254,10 @@ def page_envelope(response):
 
 
 def page_data(response):
-    return page_envelope(response)["data"]
+    data = page_envelope(response)["data"]
+    if data.get("dashboard_url"):
+        return TestClient(app).get(data["dashboard_url"], headers={"cookie": response.request.headers.get("cookie", "")}).json()
+    return data
 
 
 def test_login_and_http_cookie_mode():
@@ -638,7 +643,9 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
         "Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
         "values.yaml": "image: registry.internal/payments:1\n",
         "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: {{ .Values.image }}\n",
+        "overrides/service.yaml": "replicas: 3\n",
     }
+    data["helm_values_files"] = ["values.yaml", "overrides/service.yaml"]
     data["service_overview"] = {"rendered_resources": [{
         "apiVersion": "apps/v1", "kind": "Deployment", "metadata": {"name": "payments"},
         "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
@@ -673,6 +680,7 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
     response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
     assert response.status_code == 303
     assert submitted[0]["manifest"]["referenced_images"] == [candidate]
+    assert submitted[0]["artifact"]["values_files"] == data["helm_values_files"]
     assert candidate in submitted[0]["artifact"]["source_files"]["values.yaml"]
     assert "1.0.0-cats." in submitted[0]["artifact"]["source_files"]["Chart.yaml"]
     monkeypatch.setattr(validator_client, "validate", lambda _config, _package: {"status": "FAILED", "cleanup_status": "COMPLETE"})
@@ -691,6 +699,7 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
     data = payload("remediation-bundle", datetime.now(timezone.utc), [])
     data["helm_source_files"] = {"Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
                                  "values.yaml": "image: registry.internal/payments:1\n"}
+    data["helm_values_files"] = ["values.yaml"]
     data["service_overview"] = {"rendered_resources": [{"apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": "payments"},
         "_cats_source_mappings": [{"field_path": "spec.template.spec.containers[0].image",
@@ -731,8 +740,9 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
             assert {"manifest.json", f"images/{patch_key}.tar", f"scans/{patch_key}-grype-after.json",
                     f"sbom/{patch_key}.json"} <= names
             manifest = json.loads(bundle.read("manifest.json"))
+            assert manifest["values_files"] == ["values.yaml"]
             assert manifest["images"][0]["remediated"] == candidate
-            assert "remediation-plan.yaml" not in names
+            assert "remediation-plan.yaml" in names
 
 
 def test_administrator_can_save_oci_registry():
@@ -788,7 +798,7 @@ def test_active_services_are_alphabetical_without_compliance_explainer():
     ingest(client, execution="alpha", service_id="alpha-service")
     page = client.get("/")
     assert page.status_code == 200
-    assert page.text.index("Alpha Service") < page.text.index("Zeta Service")
+    assert [row["service"]["name"] for row in page_data(page)["views"]] == ["Alpha Service", "Zeta Service"]
     assert "Non-compliant means at least one unexcepted fixable CVE is older than 90 days." not in page.text
 
 
@@ -1086,7 +1096,7 @@ def test_group_scoped_manager_can_act_when_service_has_multiple_groups():
         policy_finding_id = db.scalar(select(PolicyFinding.id).where(PolicyFinding.service_id == service.id))
         db.commit()
     manager = new_client("group-manager")
-    assert "Payments Service" in manager.get("/").text
+    assert "Payments Service" in [view["service"]["name"] for view in page_data(manager.get("/"))["views"]]
     response = manager.post(f"/policy-findings/{policy_finding_id}/poams", data={
         "csrf_token": csrf(manager), "title": "Group-scoped remediation",
         "remediation": "Apply hardened configuration",
@@ -1384,6 +1394,28 @@ def test_artifacts_page_exposes_first_class_helm_and_kubernetes_workflow():
     assert page_data(page)["artifact_rows"] == []
 
 
+def test_artifacts_page_lists_helm_charts_from_retained_scan_without_persisting_copies():
+    client = new_client()
+    body = helm_payload()
+    body.update({"artifact_type": "helm", "helm_source_files": {
+        "demo/Chart.yaml": "apiVersion: v2\nname: demo\nversion: 1.0.0\n",
+        "demo/values.yaml": "password: must-not-expose",
+    }})
+    response = client.post("/api/v1/pipeline-results", headers=pipeline_headers, json=body)
+    assert response.status_code == 201
+    page = client.get("/services/payments-service?artifacts=true")
+    assert page.status_code == 200
+    data = page_data(page)
+    assert data["chart_count"] == data["scan_chart_count"] == 1
+    row = data["artifact_rows"][0]
+    assert row["artifact"]["chart_name"] == "demo"
+    assert row["artifact"]["chart_version"] == "1.0.0"
+    assert row["retained_scan"] and row["file_count"] == 2
+    assert "must-not-expose" not in str(data)
+    with SessionLocal() as db:
+        assert db.scalar(select(ServiceArtifact)) is None
+
+
 def test_service_artifact_acquisition_reuses_multi_chart_repository_pipeline(monkeypatch):
     from app import main as portal_main
     client = new_client(); ingest(client)
@@ -1575,11 +1607,11 @@ def test_service_snapshot_separates_staged_services_from_active_and_archived():
     }, follow_redirects=False)
     assert response.status_code == 303
     default = client.get("/")
-    assert "helm-test" not in default.text
+    assert "helm-test" not in [view["service"]["service_key"] for view in page_data(default)["views"]]
     assert page_data(default)["lifecycle_counts"]["staged"] == 1
     staged = client.get("/?lifecycle=staged&q=helm-test&sort=name")
     assert staged.status_code == 200
-    assert "helm-test" in staged.text
+    assert "helm-test" in [view["service"]["service_key"] for view in page_data(staged)["views"]]
     assert page_data(staged)["lifecycle_counts"]["staged"] == 1
     assert page_data(staged)["lifecycle"] == "staged"
     with SessionLocal() as db:
@@ -1587,7 +1619,7 @@ def test_service_snapshot_separates_staged_services_from_active_and_archived():
         assert service.lifecycle_status == "staged"
     ingested = ingest(client, execution="helm-test-run", service_id="helm-test")
     assert ingested.status_code == 201
-    assert "helm-test" in client.get("/").text
+    assert "helm-test" in [view["service"]["service_key"] for view in page_data(client.get("/"))["views"]]
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "helm-test"))
         assert service.lifecycle_status == "active"
@@ -1738,8 +1770,8 @@ def test_service_manager_scope_and_exception_approval_separation():
         service_id, finding_id = service.id, finding.id
     add_user("manager", "Service Manager", service_id)
     manager = new_client("manager")
-    page = manager.get("/").text
-    assert "Payments Service" in page and "Other Service" not in page
+    names = [view["service"]["name"] for view in page_data(manager.get("/"))["views"]]
+    assert "Payments Service" in names and "Other Service" not in names
     expiry = datetime.now(timezone.utc) + timedelta(days=30)
     requested = manager.post(f"/findings/{finding_id}/exceptions", data={
         "csrf_token": csrf(manager), "justification": "Vendor remediation scheduled",
@@ -1898,7 +1930,7 @@ def test_archive_requires_request_and_separate_approval():
     add_user("cyber", "Cybersecurity")
     cyber = new_client("cyber")
     assert cyber.post(f"/requests/{workflow_id}/review", data={"csrf_token": csrf(cyber), "decision": "approved"}, follow_redirects=False).status_code == 303
-    assert "Payments Service" in cyber.get("/?archived=true").text
+    assert "Payments Service" in [view["service"]["name"] for view in page_data(cyber.get("/?archived=true"))["views"]]
 
 
 def test_admin_can_create_account_custom_role_and_assignment():

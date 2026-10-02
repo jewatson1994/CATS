@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Page } from './cybersecurity';
-afterEach(cleanup);
+afterEach(() => {cleanup(); vi.unstubAllGlobals();});
 describe('cybersecurity portfolio', () => {
   it('preserves submitted filters and server portfolio totals independent of filtered rows', () => {
     render(<Page data={{ q: 'payments', component: 'openssl', since: '2026-09-01', status: 'RED', severity: 'High', attention: 'kev', rows: [], metrics: { services: 20, scanned: 17 } }} />);
@@ -39,4 +39,47 @@ describe('cybersecurity portfolio', () => {
     expect(within(row).getByText('Yes')).toBeInTheDocument();
     expect(within(row).getByText('No')).toBeInTheDocument();
   });
+});
+const json = (value: unknown) => new Response(JSON.stringify(value), {headers:{'content-type':'application/json'}});
+it('loads portfolio before independent selected history and retains metrics when history fails', async () => {
+  let finishPortfolio: (response: Response) => void = () => {};
+  let finishHistory: (response: Response) => void = () => {};
+  const fetch = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => {finishPortfolio = resolve;}))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => {finishHistory = resolve;}))
+    .mockRejectedValueOnce(new Error('History unavailable'));
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{dashboard_url:'/api/dashboard/cybersecurity?q=api'}}/>);
+  expect(screen.getByRole('status')).toHaveTextContent('Loading dashboard data');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  await act(async () => {finishPortfolio(json({metrics:{services:20, scanned:17}, rows:[], services:[{service_key:'api', name:'API'}, {service_key:'db', name:'Database'}]}));});
+  expect(screen.getByText('20 / 17')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Loading service history');
+  expect(fetch.mock.calls[1][0]).toContain('/api/dashboard/cybersecurity/services/api/history');
+  fireEvent.change(screen.getByLabelText('Compare service'), {target:{value:'db'}});
+  await screen.findByText('History unavailable');
+  expect(fetch.mock.calls[2][0]).toContain('/api/dashboard/cybersecurity/services/db/history');
+  expect(fetch.mock.calls[1][1].signal.aborted).toBe(true);
+  await act(async () => {finishHistory(json({service_key:'api', name:'API', trend:[], versions:[]}));});
+  expect(screen.getByLabelText('Compare service')).toHaveValue('db');
+  expect(screen.getByText('History unavailable')).toBeInTheDocument();
+  expect(screen.getByText('20 / 17')).toBeInTheDocument();
+});
+it('renders an independent portfolio error with its page heading and retry', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Portfolio unavailable')));
+  render(<Page data={{dashboard_url:'/api/dashboard/cybersecurity'}}/>);
+  await screen.findByText('Portfolio unavailable');
+  expect(screen.getByRole('heading', {name:'Cybersecurity'})).toBeInTheDocument();
+  expect(screen.getByRole('button', {name:'Retry dashboard'})).toBeInTheDocument();
+});
+it('populates a selected history response independently and does not request history for an empty portfolio', async () => {
+  const fetch = vi.fn().mockResolvedValueOnce(json({metrics:{services:1}, rows:[], services:[{service_key:'api',name:'API'}]}))
+    .mockResolvedValueOnce(json({service_key:'api',name:'API',versions:[],trend:[{execution_id:1,version:'1.0',scanned_at:'2026-10-01T12:00:00Z',complete:true,counts:{High:3},total:3}]}));
+  vi.stubGlobal('fetch',fetch);
+  const {unmount} = render(<Page data={{dashboard_url:'/api/dashboard/cybersecurity'}}/>);
+  expect(await screen.findByRole('list', {name:'Recent service scans'})).toHaveTextContent('1.0');
+  unmount();
+  fetch.mockResolvedValueOnce(json({metrics:{services:0},rows:[],services:[]}));
+  render(<Page data={{dashboard_url:'/api/dashboard/cybersecurity'}}/>);
+  await screen.findByText('No service scan history is available yet.');
+  expect(fetch).toHaveBeenCalledTimes(3);
 });

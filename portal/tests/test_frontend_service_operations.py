@@ -26,6 +26,42 @@ def test_dependencies_projection_keeps_evidence_but_not_execution_payload():
     assert "secret" not in data["dependency_rows"][0]
 
 
+def test_retained_scan_charts_are_read_only_and_include_bundled_file_counts():
+    files = {
+        "nginx/Chart.yaml": "name: nginx\nversion: 1.2.3\n",
+        "nginx/values.yaml": "password: private-value",
+        "nginx/templates/deployment.yaml": "private-template",
+        "nginx/charts/common/Chart.yaml": "name: common\nversion: 2.0.0",
+        "redis/Chart.yaml": "name: redis\nversion: 3.4.5",
+        "redis/values.yaml": "secret: private-value",
+        "invalid/Chart.yaml": "not: [valid",
+    }
+    data = project_service_operations("service_artifacts.html", {
+        "original_files": files, "original_execution": SimpleNamespace(execution_key="scan-one"),
+        "artifact_rows": [], "chart_count": 0,
+    })
+    rows = data["artifact_rows"]
+    assert [(row["artifact"]["chart_name"], row["artifact"]["chart_version"], row["file_count"]) for row in rows] == [
+        ("nginx", "1.2.3", 4), ("redis", "3.4.5", 2),
+    ]
+    assert data["original_file_count"] == 7
+    assert data["scan_chart_count"] == data["chart_count"] == 2
+    assert all(row["retained_scan"] and row["revision"] is None for row in rows)
+    assert all(row["artifact"]["source_type"] == "scan" for row in rows)
+    assert "private-value" not in str(data) and "private-template" not in str(data)
+
+
+def test_retained_chart_roots_support_windows_paths_and_duplicate_names():
+    data = project_service_operations("service_artifacts.html", {
+        "original_files": {"first\\Chart.yaml": "name: app\nversion: 1.0.0", "second/Chart.yaml": "name: app\nversion: 2.0.0"},
+        "original_execution": SimpleNamespace(execution_key="selected-scan"),
+    })
+    rows = data["artifact_rows"]
+    assert len(rows) == 2
+    assert rows[0]["artifact"]["id"] != rows[1]["artifact"]["id"]
+    assert all("selected-scan" in row["artifact"]["id"] for row in rows)
+
+
 def test_validation_evidence_is_json_safe_and_unrelated_context_is_omitted():
     data = project_service_operations("service_validation.html", {"validation": {"status": "VERIFIED", "started_at": datetime(2026, 9, 30), "conditions": {"ready": True}}, "validation_runs": [], "auth": SimpleNamespace(token="private")})
     assert data["validation"]["conditions"] == {"ready": True}

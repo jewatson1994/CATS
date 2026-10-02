@@ -113,8 +113,11 @@ export function App({initial}: {initial: PageEnvelope | null}) {
   const current = page?.location === location ? page.envelope : null;
   const pageTitle = current ? `${current.page.replaceAll('_', ' ')} · CATS` : 'CATS';
   useEffect(() => {document.title = pageTitle;}, [pageTitle]);
-  if (!current) return <main aria-busy={!error}>{error ? <section role="alert"><h1>Unable to load page</h1>
-    <p>{error}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></section> : <p role="status">Loading CATS…</p>}</main>;
-  const Page = pages[current.page];
-  return <Shell data={current.data}><ErrorBoundary key={location}><Page data={current.data}/></ErrorBoundary></Shell>;
+  const Page = current ? pages[current.page] : null;
+  return <Shell data={current?.data || page?.envelope.data || {}}><ErrorBoundary key={location}>
+    {current && Page ? <Page data={current.data}/> : <section className="panel padded" aria-busy={!error}>
+      {error ? <div role="alert"><h1>Unable to load page</h1><p>{error}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></div>
+        : <p role="status">Loading page…</p>}
+    </section>}
+  </ErrorBoundary></Shell>;
 }

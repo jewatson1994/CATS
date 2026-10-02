@@ -298,7 +298,7 @@ def run_worker(
         elif command[:2] == ["docker", "push"] and push_digest:
             stdout = f"patched: digest: {push_digest} size: 1234\n"
         elif command[:3] == ["docker", "image", "inspect"]:
-            stdout = "amd64\n"
+            stdout = json.dumps({"Entrypoint": ["/application/start"], "Cmd": ["serve"]}) if "{{json .Config}}" in command else "amd64\n"
         elif command[:3] == ["docker", "run", "--rm"] and "cat" in command and "/etc/os-release" in command and any("alpine" in part for part in command):
             stdout = "ID=alpine\nVERSION_ID=3.20\n"
         elif command[:3] == ["docker", "run", "--rm"] and any("for tool" in part for part in command) and any("alpine" in part for part in command):

@@ -38,6 +38,18 @@ def test_activity_projects_actor_display_and_known_detail_only():
     assert "secret" not in json.dumps(result)
 
 
+def test_artifact_provenance_projects_independent_evidence_without_arbitrary_metadata():
+    context = {"artifact_provenance": [{"artifact_kind": "image", "digest": "sha256:" + "a" * 64,
+        "source_version": "1.5", "revision_number": 1, "post_remediation_scan": "PASS",
+        "runtime_verification": "not_verified", "signature": "failed", "password": "secret",
+        "release_lineage": True}]}
+    result = project_secondary({}, "service_overview.html", context)
+    assert result["artifact_provenance"][0]["runtime_verification"] == "not_verified"
+    assert result["artifact_provenance"][0]["signature"] == "failed"
+    assert "password" not in str(result)
+    assert "release_lineage" not in str(result)
+
+
 def test_history_projects_retained_evidence_fields_without_nested_secrets():
     raw = {"service": {"id": "app", "name": "App", "version": "1", "token": "secret"},
            "findings": [{"cve": "CVE-1", "image": "app:1", "evidence": {"password": "secret"}}],

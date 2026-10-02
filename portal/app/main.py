@@ -25,6 +25,7 @@ from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo, available_timezones
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
@@ -89,7 +90,11 @@ from . import signing
 from .admin_config import OS_DEFINITIONS, PACKAGE_MANAGERS, certificate_bundle_metadata, merge_certificate_metadata, normalize_policy, parse_json, policy_bool, test_repository, validate_os_definition, validate_policy
 from .trusted_ca import ephemeral_trust, write_additive_bundle
 from .runtime_version import deployed_version
-from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports
+from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
+from . import service_oci
+from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
+from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
+from .remediation_retention import cleanup_remediation_artifacts
 from .deployment_validation import (
     KindDeploymentValidator, ValidationArtifact, ValidationConfig,
     ValidationStatus, capability_assessment_groups, cleanup_stale_clusters, validation_names,
@@ -243,6 +248,20 @@ with migration_transaction(engine) as connection:
         connection.execute(text("ALTER TABLE remediation_executions ADD COLUMN stages JSON"))
     if "retry_of_id" not in remediation_columns:
         connection.execute(text("ALTER TABLE remediation_executions ADD COLUMN retry_of_id INTEGER"))
+    for column_name, definition in (
+        ("source_execution_id", "INTEGER"), ("source_version_id", "INTEGER"),
+        ("revision_number", "INTEGER"), ("artifact_digest", "VARCHAR(80)"),
+        ("workflow_inputs", "JSON"),
+        ("remediation_status", "VARCHAR(30) DEFAULT 'pending'"),
+        ("delivery_status", "VARCHAR(30) DEFAULT 'not_delivered'"),
+        ("verification_status", "VARCHAR(30) DEFAULT 'not_verified'"),
+        ("signing_status", "VARCHAR(30) DEFAULT 'not_requested'"),
+    ):
+        if column_name not in remediation_columns:
+            connection.execute(text(f"ALTER TABLE remediation_executions ADD COLUMN {column_name} {definition}"))
+            if column_name in {"remediation_status", "delivery_status", "verification_status", "signing_status"}:
+                # Historic combined statuses cannot prove any individual lifecycle.
+                connection.execute(text(f"UPDATE remediation_executions SET {column_name} = 'legacy_unknown'"))
     # Conservatively link legacy WORKING rows only when their strict historical
     # reference resolves to one exact revision owned by the same service.
     legacy_working = connection.execute(text(
@@ -287,6 +306,7 @@ async def app_lifespan(_app: FastAPI):
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
+app.include_router(service_oci.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .upload_limits import UploadLimitMiddleware
@@ -320,7 +340,7 @@ async def pipeline_request_size_middleware(request: Request, call_next):
 async def snapshot_timing_middleware(request: Request, call_next):
     started = time.perf_counter()
     response = await call_next(request)
-    if request.url.path == "/" and snapshot_logger.isEnabledFor(logging.DEBUG):
+    if request.url.path in {"/", "/cybersecurity", "/api/dashboard/services", "/api/dashboard/cybersecurity"} or request.url.path.startswith("/api/dashboard/cybersecurity/services/"):
         timings = getattr(request.state, "snapshot_timings", {})
         timings["http_total_ms"] = round((time.perf_counter() - started) * 1000, 2)
         snapshot_logger.debug("service_snapshot_timing", extra={"path": request.url.path, "status": response.status_code, "timings_ms": timings})
@@ -1090,7 +1110,7 @@ def scoped_setting_key(key: str, group_id: int | None = None) -> str:
 
 def get_configuration(db: Session, group_id: int | None = None) -> dict[str, str]:
     configuration = dict(CONFIG_DEFAULTS)
-    for setting in db.scalars(select(PortalSetting)):
+    for setting in db.scalars(select(PortalSetting).where(PortalSetting.group_id.is_(None) if group_id is None else PortalSetting.group_id == group_id)):
         if group_id is None and setting.group_id is None and not setting.key.startswith("group:"):
             configuration[setting.key] = setting.value
         elif group_id is not None and setting.group_id == group_id:
@@ -1105,16 +1125,19 @@ def get_global_configuration(db: Session) -> dict[str, str]:
     those rows for audit/history, but promote the first deterministic value to
     the global key so changing the UI scope cannot silently discard it.
     """
-    configuration = get_configuration(db, None)
+    settings = db.scalars(select(PortalSetting)).all()
+    configuration = dict(CONFIG_DEFAULTS)
+    configuration.update({setting.key: setting.value for setting in settings
+                          if setting.group_id is None and not setting.key.startswith("group:")})
     global_keys = {
-        setting.key for setting in db.scalars(select(PortalSetting).where(PortalSetting.group_id.is_(None)))
+        setting.key for setting in settings if setting.group_id is None
     }
     migrated = False
     for key in GLOBAL_CONFIGURATION_KEYS:
         if key in global_keys:
             continue
         legacy = sorted(
-            (setting for setting in db.scalars(select(PortalSetting)).all()
+            (setting for setting in settings
              if setting.group_id is not None and setting.key.split(":", 2)[-1] == key and setting.value not in (None, "")),
             key=lambda setting: (setting.group_id or 0, setting.id or 0),
         )
@@ -2690,6 +2713,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             detail={"service_id": service.id, "execution_id": execution.id, "reason": "ingested_evidence",
                     "previous_name": staged_name_before_ingest, "name": service.name},
         ))
+    record_reingestion_provenance(db, execution, payload.model_dump(mode="json"))
     should_record_validation = payload.artifact_type == "helm" and scan_scope == "service"
     service_id, execution_id = service.id, execution.id
     if not commit:
@@ -2801,12 +2825,43 @@ def _stage_public_chart(input_dir: Path, archive: bytes, filename: str, *, close
             archive.close()
 
 
+def _helm_request_detail(stage: str, requested: str, final: str | None = None) -> str:
+    """Never retain credentials, signed queries, headers or response bodies."""
+    def safe(value):
+        try:
+            parsed = urllib.parse.urlsplit(str(value))
+            host = parsed.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parsed.port:
+                host += f":{parsed.port}"
+            return urllib.parse.urlunsplit((parsed.scheme, host, parsed.path, "", ""))[:240].replace("\r", "").replace("\n", "")
+        except ValueError:
+            return "[invalid URL]"
+    detail = f"stage={stage}; requested={safe(requested)}"
+    if final:
+        detail += f"; final={safe(final)}; redirected={'yes' if requested != final else 'no'}"
+    return detail
+
+
+def _helm_index_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(422, detail="Helm repository URL must use http or https")
+    path = parsed.path
+    if not path.endswith("/index.yaml"):
+        path = path.rstrip("/") + "/index.yaml"
+    return urllib.parse.urlunsplit(parsed._replace(path=path, fragment=""))
+
+
 def _fetch_public_stream(url: str, certificates: list[dict] | None = None):
     """Fetch into a bounded temporary file, preserving urllib TLS and redirects."""
     parsed = urllib.parse.urlparse(url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(status_code=400, detail="Chart URL must use http or https")
     max_bytes = compressed_limit()
+    stage = "repository index retrieval" if parsed.path.endswith("/index.yaml") else "chart archive retrieval"
+    final_url = None
     try:
         request = urllib.request.Request(url.strip(), headers={"User-Agent": "CATS/standalone-scanner"})
         context = ssl.create_default_context()
@@ -2820,10 +2875,10 @@ def _fetch_public_stream(url: str, certificates: list[dict] | None = None):
                 raise HTTPException(status_code=413, detail="Helm chart archive is too large")
             final_url = response.geturl()
             data = copy_bounded(response, max_bytes)
-    except HTTPException:
-        raise
+    except HTTPException as exc:
+        raise HTTPException(exc.status_code, detail=f"{exc.detail} [{_helm_request_detail(stage, url, final_url)}]") from exc
     except TimeoutError as exc:
-        raise HTTPException(status_code=408, detail="Helm source acquisition timed out") from exc
+        raise HTTPException(status_code=408, detail=f"Helm source acquisition timed out [{_helm_request_detail(stage, url, final_url)}]") from exc
     except urllib.error.HTTPError as exc:
         explanations = {
             401: "authentication required or denied",
@@ -2834,19 +2889,22 @@ def _fetch_public_stream(url: str, certificates: list[dict] | None = None):
         explanation = explanations.get(exc.code, "repository or intermediary returned an HTTP error")
         # Do not expose response bodies, headers, URL credentials or signed queries.
         exc.close()
-        raise HTTPException(status_code=400, detail=f"Helm source request failed (HTTP {exc.code}): {explanation}") from exc
+        category = "redirect rejected by CATS policy" if 300 <= exc.code < 400 else explanation
+        raise HTTPException(status_code=400, detail=f"Helm source request failed (HTTP {exc.code}): {category} [{_helm_request_detail(stage, url, exc.geturl())}]") from exc
     except urllib.error.URLError as exc:
         reason = exc.reason
         if isinstance(reason, (ssl.SSLError, ssl.SSLCertVerificationError)):
             raise HTTPException(
                 status_code=400,
-                detail="Helm source TLS certificate verification failed. Configure the issuing CA in CATS Trusted CA settings if this source is authorized.",
+                detail=f"Helm source TLS certificate verification failed. Configure the issuing CA in CATS Trusted CA settings if this source is authorized. [{_helm_request_detail(stage, url)}]",
             ) from exc
         if isinstance(reason, (TimeoutError, socket.timeout)):
-            raise HTTPException(status_code=408, detail="Helm source acquisition timed out") from exc
-        raise HTTPException(status_code=400, detail="Helm source is unreachable") from exc
+            raise HTTPException(status_code=408, detail=f"Helm source acquisition timed out [{_helm_request_detail(stage, url)}]") from exc
+        raise HTTPException(status_code=400, detail=f"Helm source DNS/network failure: source is unreachable [{_helm_request_detail(stage, url)}]") from exc
+    except ssl.SSLError as exc:
+        raise HTTPException(400, detail=f"Helm source TLS certificate verification failed [{_helm_request_detail(stage, url)}]") from exc
     except (OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail="Chart URL could not be downloaded") from exc
+        raise HTTPException(status_code=400, detail=f"Chart URL could not be downloaded [{_helm_request_detail(stage, url, final_url)}]") from exc
     return data, final_url
 
 
@@ -2920,6 +2978,8 @@ def _download_public_chart(url: str, certificates: list[dict] | None = None) -> 
     parsed = urllib.parse.urlparse(raw_url)
     selector = parsed.fragment.strip()
     fetch_url = urllib.parse.urlunparse(parsed._replace(fragment=""))
+    if selector or not parsed.path or parsed.path.endswith("/"):
+        fetch_url = _helm_index_url(fetch_url)
     data, final_url = _fetch_public_stream(fetch_url, certificates)
     final_path = urllib.parse.urlparse(final_url).path.lower()
     signature = data.read(4)
@@ -2936,7 +2996,7 @@ def _download_public_chart(url: str, certificates: list[dict] | None = None) -> 
     except (UnicodeDecodeError, yaml.YAMLError):
         index = None
     if not isinstance(index, dict) or not isinstance(index.get("entries"), dict):
-        candidate_index_url = urllib.parse.urljoin(final_url, "index.yaml")
+        candidate_index_url = _helm_index_url(final_url)
         if candidate_index_url != final_url:
             try:
                 index_data, index_url = _fetch_public_url(candidate_index_url, certificates)
@@ -2944,23 +3004,24 @@ def _download_public_chart(url: str, certificates: list[dict] | None = None) -> 
             except (UnicodeDecodeError, yaml.YAMLError):
                 index = None
     if not isinstance(index, dict) or not isinstance(index.get("entries"), dict):
-        raise HTTPException(status_code=400, detail="Helm URL must point to a chart archive or Helm repository index.yaml")
+        raise HTTPException(status_code=400, detail=f"Malformed Helm index: Helm URL must point to a chart archive or Helm repository index.yaml [{_helm_request_detail('repository index retrieval', fetch_url, index_url)}]")
 
     entries = index["entries"]
     names = [selector] if selector else list(entries)
     if selector and selector not in entries:
-        raise HTTPException(status_code=400, detail=f"Helm repository does not contain chart: {selector}")
+        raise HTTPException(status_code=400, detail=f"Requested chart missing [stage=chart selection; {_helm_request_detail('chart selection', fetch_url, index_url)}]")
     archives: list[tuple[DownloadedChart, str]] = []
     with ExitStack() as cleanup:
         for chart_name in names:
             versions = entries.get(chart_name)
             if not isinstance(versions, list) or not versions:
                 continue
-            version = next((item for item in versions if isinstance(item, dict) and item.get("urls")), None)
+            version = next((item for item in versions if isinstance(item, dict)
+                            and isinstance(item.get("urls"), list) and item["urls"]
+                            and isinstance(item["urls"][0], str)), None)
             if not version:
                 continue
-            base_url = index_url if index_url.endswith("/") else index_url.rsplit("/", 1)[0] + "/"
-            archive_url = urllib.parse.urljoin(base_url, str((version.get("urls") or [])[0]))
+            archive_url = urllib.parse.urljoin(index_url, version["urls"][0])
             archive_data, archive_final_url = _fetch_public_stream(archive_url, certificates)
             cleanup.callback(archive_data.close)
             archive_name = Path(urllib.parse.urlparse(archive_final_url).path).name
@@ -2979,38 +3040,31 @@ def _discover_helm_repository(url: str, certificates: list[dict] | None = None) 
     parsed = urllib.parse.urlparse(raw_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(422, detail="Helm repository URL must use http or https")
-    data, final_url = _fetch_public_url(raw_url, certificates)
+    index_url = _helm_index_url(raw_url)
+    data, final_url = _fetch_public_url(index_url, certificates)
     try:
         index = yaml.safe_load(data.decode("utf-8-sig"))
     except (UnicodeDecodeError, yaml.YAMLError):
         index = None
     if not isinstance(index, dict) or not isinstance(index.get("entries"), dict):
-        index_url = urllib.parse.urljoin(final_url if final_url.endswith("/") else final_url + "/", "index.yaml")
-        data, final_url = _fetch_public_url(index_url, certificates)
-        try:
-            index = yaml.safe_load(data.decode("utf-8-sig"))
-        except (UnicodeDecodeError, yaml.YAMLError) as exc:
-            raise HTTPException(400, detail="Helm repository index.yaml is invalid") from exc
-    if not isinstance(index, dict) or not isinstance(index.get("entries"), dict):
-        raise HTTPException(400, detail="Helm repository does not provide a valid index.yaml")
-    base_url = final_url if final_url.endswith("/") else final_url.rsplit("/", 1)[0] + "/"
+        raise HTTPException(400, detail=f"Malformed Helm index: repository does not provide a valid index.yaml [{_helm_request_detail('repository index retrieval', index_url, final_url)}]")
     charts = []
-    for chart_name, raw_versions in sorted(index["entries"].items()):
+    for chart_name, raw_versions in sorted(index["entries"].items(), key=lambda item: str(item[0])):
         versions = []
         for item in raw_versions if isinstance(raw_versions, list) else []:
-            if not isinstance(item, dict) or not item.get("urls"):
+            if not isinstance(item, dict) or not isinstance(item.get("urls"), list) or not item["urls"] or not isinstance(item["urls"][0], str):
                 continue
             versions.append({
                 "version": str(item.get("version") or ""),
                 "app_version": str(item.get("appVersion") or ""),
                 "created": str(item.get("created") or ""),
                 "digest": str(item.get("digest") or ""),
-                "url": urllib.parse.urljoin(base_url, str(item["urls"][0])),
+                "url": urllib.parse.urljoin(final_url, item["urls"][0]),
             })
         if versions:
             charts.append({"name": str(chart_name), "versions": versions, "latest": versions[0]})
     if not charts:
-        raise HTTPException(400, detail="Helm repository index contains no chart versions")
+        raise HTTPException(400, detail=f"Helm repository index contains no chart versions [{_helm_request_detail('chart selection', index_url, final_url)}]")
     return {
         "repository_url": _safe_artifact_source_reference(raw_url, "repository"),
         "index_url": _safe_artifact_source_reference(final_url, "repository"),
@@ -3162,12 +3216,17 @@ def _public_chart_skip_entry(source: str, error: object) -> str:
     """
     from .oci_diagnostics import OciPullFailure
 
+    source = str(source).replace("\r", " ").replace("\n", " ")
+    if "://" in source:
+        source = _helm_request_detail("source", source).split("requested=", 1)[1]
     if isinstance(error, OciPullFailure):
         diagnostic = error.diagnostic
         exit_code = diagnostic["helm_exit_code"]
         exit_detail = f"; Helm exit {exit_code}" if exit_code is not None else ""
+        reference_detail = _helm_request_detail('oci_acquisition', diagnostic['attempted_reference']).replace(
+            '; requested=', '; reference=', 1)
         detail = (f"{error.detail} [category={diagnostic['failure_category']}"
-                  f"{exit_detail}; reference={diagnostic['attempted_reference']}]")
+                  f"{exit_detail}; {reference_detail}]")
         return f"{source} :: {detail}"
     detail = str(getattr(error, "detail", error)).strip().replace("\r", " ").replace("\n", " ")
     return f"{source} :: {detail[-500:] or 'chart could not be retrieved'}"
@@ -4706,15 +4765,18 @@ def download_patched_image(job_id: str):
 def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
     """Run available Level 1 tools and keep missing tools explicit."""
     checks = validation["checks"]
+    values_files = checked_values_files(payload.get("helm_values_files", []),
+        {path.relative_to(candidate_dir).as_posix() for path in candidate_dir.rglob("*") if path.is_file()})
+    overrides = [argument for value in values_files for argument in ("--values", str(candidate_dir / value))]
     chart_roots = sorted({path.parent for path in candidate_dir.rglob("Chart.yaml")})
     rendered_parts: list[str] = []
     helm = shutil.which("helm")
     if chart_roots and helm:
         lint_results, template_results = [], []
         for chart_root in chart_roots:
-            lint = subprocess.run([helm, "lint", str(chart_root)], capture_output=True, text=True, timeout=180, check=False)
+            lint = subprocess.run([helm, "lint", str(chart_root), *overrides], capture_output=True, text=True, timeout=180, check=False)
             lint_results.append(lint)
-            rendered = subprocess.run([helm, "template", "cats-remediation", str(chart_root), "--include-crds"],
+            rendered = subprocess.run([helm, "template", "cats-remediation", str(chart_root), "--include-crds", *overrides],
                                       capture_output=True, text=True, timeout=180, check=False)
             template_results.append(rendered)
             if rendered.returncode == 0:
@@ -4752,10 +4814,18 @@ def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: d
             checks["yaml_parsing"] = {"status": "FAIL", "detail": str(exc)}
     trivy = shutil.which("trivy")
     if trivy:
-        result = subprocess.run([trivy, "config", "--exit-code", "1", str(candidate_dir)], capture_output=True, text=True,
+        result = subprocess.run([trivy, "config", "--format", "json", "--exit-code", "0", str(candidate_dir)], capture_output=True, text=True,
                                 timeout=int(os.getenv("CATS_REMEDIATION_SCAN_TIMEOUT", "600")), check=False)
-        checks["trivy_config_rescan"] = {"status": "PASS" if result.returncode == 0 else "FAIL",
-                                         "detail": (result.stderr or result.stdout)[-1000:]}
+        checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "Configuration scanner did not produce valid completed JSON evidence."}
+        if result.returncode == 0:
+            try:
+                summary = summarize_configuration_report(json.loads(result.stdout))
+                plan["after"].update(summary)
+                checks["trivy_config_rescan"] = {"status": "PASS" if summary["configuration_findings"] == 0 else "FAIL",
+                    "detail": f"Completed configuration rescan: {summary['configuration_findings']} unresolved findings."}
+                (candidate_dir / ".cats-config-scan.json").write_text(result.stdout, encoding="utf-8")
+            except (ValueError, TypeError):
+                pass
     if not plan.get("images"):
         checks["vulnerability_rescan"] = {"status": "PASS", "detail": "No image references require vulnerability scanning."}
     elif all(item.get("candidate") and item.get("patch_status") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}
@@ -4770,7 +4840,7 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
     configuration = get_global_configuration(db)
     registries = [item for item in parse_json(configuration.get("oci_registries"), []) if isinstance(item, dict)]
     staging = [item for item in registries if item.get("use_for_remediation") is True]
-    if len(staging) != 1:
+    if len(staging) != 1 and record.output_mode != "bundle":
         reason = "Configure exactly one OCI registry as the remediation target or staging registry."
         for image in plan.get("images", []):
             if not image.get("candidate"):
@@ -4779,7 +4849,7 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
     requester = db.get(User, record.requested_by_id) if record.requested_by_id else None
     patch_mode = "push" if record.output_mode == "publish" else "download"
     signing_config, signing_credentials = _portal_signing_material(db, AuthContext(requester, None) if requester else None, patch_mode, service)
-    destination_registry = staging[0]
+    destination_registry = staging[0] if len(staging) == 1 else {"endpoint": "https://candidate.invalid", "namespace": "retained"}
     endpoint = str(destination_registry.get("endpoint") or "").strip().rstrip("/")
     destination_host = urllib.parse.urlparse(endpoint if "://" in endpoint else f"https://{endpoint}").netloc
     destination_prefix = str(destination_registry.get("namespace") or "").strip("/")
@@ -5016,6 +5086,7 @@ def _run_remediation_job(record_id: int) -> None:
         if not record:
             return
         record.status, record.started_at, record.updated_at = "running", utcnow(), utcnow()
+        record.remediation_status = "running"
         _remediation_stage(record, "snapshot", "running")
         record.logs = ["Captured immutable references to the original execution and service revision."]
         db.commit()
@@ -5025,32 +5096,48 @@ def _run_remediation_job(record_id: int) -> None:
             ))
             if not service or not service.executions:
                 raise ValueError("The service has no assessment execution to remediate")
-            execution = max(service.executions, key=lambda item: aware(item.scanned_at))
+            execution = next((item for item in service.executions if item.id == record.source_execution_id), None)
+            if record.source_execution_id is None:
+                # Legacy jobs retain their exact rollback execution when available.
+                execution = next((item for item in service.executions if item.execution_key == record.rollback_reference), None)
+            if execution is None:
+                raise ValueError("The retained source assessment is unavailable; refusing to switch to a newer scan")
             payload = dict(execution.raw_payload) if isinstance(execution.raw_payload, dict) else {}
+            retained_findings = []
+            identities = {item.identity_key: item.id for item in service.policy_findings}
+            for item in payload.get("policy_findings") or []:
+                values = policy_finding_values(item)
+                retained_findings.append(SimpleNamespace(
+                    id=identities.get(policy_finding_identity(values)), **values))
             if record.finding_type == "configuration":
-                findings = [item for item in service.policy_findings if item.id == record.finding_id]
+                findings = [item for item in retained_findings if item.id == record.finding_id]
+                if not findings:
+                    raise ValueError("The selected configuration finding is absent from the retained source scan")
             elif record.finding_type == "vulnerability":
                 findings = []
             else:
-                findings = [item for item in service.policy_findings if item.active]
+                findings = retained_findings
             plan = build_plan(payload, findings, record.job_key)
-            for change in plan.get("configuration_changes", []):
-                change.pop("original_value", None)
-                if isinstance(change.get("source_mapping"), dict):
-                    change["source_mapping"].pop("original_value", None)
+            inputs = record.workflow_inputs or {}
+            if inputs:
+                plan = resolve_decisions(plan, inputs.get("remediation_mode", "automated"), inputs.get("decisions", {}), record.requested_by_id)
+                _remediation_audit(db, record, "remediation.decisions_applied", mode=inputs.get("remediation_mode"), decisions=inputs.get("decisions", {}))
             plan["before"]["epss_max"] = max((score for finding in service.findings
-                for _, score in [risk_metadata(finding.cve)] if finding.active and score is not None), default=None)
+                for _, score in [risk_metadata(finding.cve)]
+                if any(item.execution_id == execution.id for item in finding.observations) and score is not None), default=None)
             _remediation_stage(record, "snapshot", "success")
             planned_references = {str(item.get("original")) for item in plan.get("images", [])}
-            for service_image in service.images:
-                if service_image.lifecycle_status != "active" or service_image.image_reference in planned_references:
+            source_images = {item.image: item.image_digest for finding in service.findings
+                             for item in finding.observations if item.execution_id == execution.id}
+            for image_reference, image_digest in source_images.items():
+                if image_reference in planned_references:
                     continue
-                plan["images"].append({"original": service_image.image_reference,
-                    "original_digest": service_image.image_digest,
+                plan["images"].append({"original": image_reference,
+                    "original_digest": image_digest,
                     "classification": "REVIEW REQUIRED", "candidate": None,
                     "source_mapping": {"ambiguous": True},
                     "reason": "Canonical service image has no exact Helm source mapping; patching can proceed, chart rewriting needs review."})
-                planned_references.add(service_image.image_reference)
+                planned_references.add(image_reference)
             plan["_source_files"] = payload.get("helm_source_files") or payload.get("source_files") or {}
             _assert_bundle_sources_safe(plan["_source_files"])
             _remediation_stage(record, "patch_images", "running")
@@ -5100,6 +5187,7 @@ def _run_remediation_job(record_id: int) -> None:
             files, chart_mappings = versioned_charts(candidate_files(payload, plan), record.job_key)
             plan["charts"] = chart_mappings
             _assert_bundle_sources_safe(files)
+            values_files = checked_values_files(payload.get("helm_values_files", []), files)
             _remediation_stage(record, "rewrite_artifacts", "success" if files else "skipped")
             job_root = REMEDIATION_JOB_ROOT / record.job_key
             job_root.mkdir(parents=True, exist_ok=True)
@@ -5115,16 +5203,15 @@ def _run_remediation_job(record_id: int) -> None:
                 target.write_text(content, encoding="utf-8")
             _remediation_stage(record, "static_validation", "running")
             validation = _validate_materialized_candidate(candidate_dir, payload, plan, static_validation(payload, plan))
-            if plan["images"]:
-                plan["after"]["policy_validation"] = "NOT EVALUATED"
             rendered_path = candidate_dir / ".cats-rendered.yaml"
             rendered = []
             if rendered_path.is_file() and plan["images"]:
                 rendered = [item for item in yaml.safe_load_all(rendered_path.read_text(encoding="utf-8")) if isinstance(item, dict)]
                 actual_images = _candidate_workload_images(rendered)
                 expected_images = {str(image["candidate"]) for image in plan["images"] if image.get("candidate")}
-                original_images = {str(image["original"]) for image in plan["images"]}
-                image_references_valid = bool(expected_images) and expected_images <= actual_images and not original_images & actual_images
+                replaced_images = {str(image["original"]) for image in plan["images"] if image.get("candidate")}
+                retained_images = {str(image["original"]) for image in plan["images"] if not image.get("candidate")}
+                image_references_valid = (expected_images | retained_images) <= actual_images and not (replaced_images - expected_images) & actual_images
                 validation["checks"]["image_references"] = {"status": "PASS" if image_references_valid else "FAIL",
                     "detail": "Candidate render uses the remediated image mappings." if image_references_valid else "Original or missing remediated image references remain in the candidate render."}
                 if not image_references_valid:
@@ -5185,7 +5272,7 @@ def _run_remediation_job(record_id: int) -> None:
                             "manifest": {"service_key": service.service_key, "timeout_seconds": 600,
                                          "referenced_images": sorted(rendered_images),
                                          "required_capabilities": ["kind", "helm", "kubectl", "docker"]},
-                            "artifact": {"source_files": files, "values_files": [], "declared_resources": rendered,
+                            "artifact": {"source_files": files, "values_files": values_files, "declared_resources": rendered,
                                          "artifact_type": "REMEDIATED", "reference": record.job_key}}
                         _remediation_stage(record, "deployment_validation", "running")
                         db.commit()
@@ -5200,6 +5287,9 @@ def _run_remediation_job(record_id: int) -> None:
             elif record.output_mode == "bundle":
                 validation["deployment"] = {"status": "NOT RUN", "detail": "Import bundled images into the configured target registry before deployment validation."}
             record.validation_results = validation
+            validation["charts"] = chart_mappings
+            for change in plan["configuration_changes"]:
+                change["post_scan_result"] = validation.get("checks", {}).get("trivy_config_rescan", {}).get("status", "UNAVAILABLE")
             record.after_snapshot = plan["after"]
             _remediation_stage(record, "output", "running")
             db.commit()
@@ -5215,6 +5305,10 @@ def _run_remediation_job(record_id: int) -> None:
                     "service_key": service.service_key, "output_mode": record.output_mode,
                     "created_at": record.created_at.isoformat() if record.created_at else None,
                     "original_revision": record.original_revision,
+                    "source_execution_id": record.source_execution_id,
+                    "source_version_id": record.source_version_id,
+                    "revision_number": record.revision_number,
+                    "values_files": values_files,
                     "images": [{"original": item.get("original"), "original_digest": item.get("original_digest"),
                                 "remediated": item.get("candidate"),
                                 "artifact_sha256": item.get("digest") if record.output_mode == "bundle" else None,
@@ -5227,8 +5321,26 @@ def _run_remediation_job(record_id: int) -> None:
                     "charts": chart_mappings,
                     "validation": validation.get("deployment"),
                 }, indent=2))
-                if record.output_mode != "bundle":
-                    bundle.writestr("remediation-plan.yaml", plan_yaml(plan))
+                bundle.writestr("remediation-plan.yaml", plan_yaml(plan))
+                bundle.writestr("README.txt", (
+                    "CATS retained remediation candidate\n\n"
+                    "This candidate is not an authoritative application release.\n"
+                    "Review remediation-plan.yaml and before-after.json for applied changes,\n"
+                    "unresolved findings, and unavailable evidence. Missing scan evidence is\n"
+                    "not a clean scan. manifest.json records source and candidate references.\n\n"
+                    "candidate/ contains editable Helm/Kubernetes source; helm/ contains\n"
+                    "packaged charts when packaging succeeded. scans/ and sbom/ contain\n"
+                    "available retained scanner evidence. Download-mode images/ archives\n"
+                    "can be loaded with docker load --input <archive>. Before deploying,\n"
+                    "retag and push loaded images to your approved registry and update chart\n"
+                    "references to those immutable image digests. Do not substitute unrelated\n"
+                    "images and treat previous validation as verification of that new render.\n\n"
+                    "Delivery, signing, and runtime verification are separate results.\n"
+                    "Intentionally re-ingest a reviewed release to promote it in CATS.\n"
+                ))
+                config_scan = candidate_dir / ".cats-config-scan.json"
+                if config_scan.is_file():
+                    bundle.write(config_scan, "scans/trivy-config-after.json")
                 bundle.writestr("before-after.json", json.dumps({"before": plan["before"], "after": plan["after"]}, indent=2))
                 for relative, content in sorted(files.items()):
                     safe = Path(relative.replace("\\", "/"))
@@ -5237,7 +5349,7 @@ def _run_remediation_job(record_id: int) -> None:
                     bundle.writestr(f"candidate/{safe.as_posix()}", content)
                 for archive, chart in packaged_charts:
                     bundle.write(archive, f"helm/{archive.name}")
-                if record.output_mode == "bundle":
+                if plan["images"]:
                     for image in plan["images"]:
                         patch_key = image.get("patch_job_id")
                         if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key):
@@ -5248,9 +5360,17 @@ def _run_remediation_job(record_id: int) -> None:
                                                    ("grype-after.json", f"scans/{patch_key}-grype-after.json"),
                                                    ("grype-full-after.json", f"scans/{patch_key}-grype-full-after.json"),
                                                    ("remediated-sbom.json", f"sbom/{patch_key}.json")):
+                            if name == "patched-image.tar" and record.output_mode != "bundle":
+                                continue
                             path = output / name
                             if path.is_file():
                                 bundle.write(path, archive_name)
+            # Retain the completed artifact before subsequent bookkeeping can fail.
+            record.artifact_path = str(artifact)
+            with artifact.open("rb") as artifact_stream:
+                record.artifact_digest = "sha256:" + hashlib.file_digest(artifact_stream, "sha256").hexdigest()
+            record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
+            db.commit()
             _remediation_stage(record, "output", "success" if artifact.is_file() else "failed")
             _remediation_audit(db, record, "remediation.bundle_created" if record.output_mode == "bundle" else "remediation.candidate_created",
                 output_mode=record.output_mode)
@@ -5292,7 +5412,7 @@ def _run_remediation_job(record_id: int) -> None:
                     record.status = "validation_failed"
                 else:
                     record.status = "validation_unavailable"
-                record.resulting_revision = f"{record.original_revision or service.manual_version or execution.execution_key}-cats-{record.job_key.lower()}"
+                record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
                 record.logs = [*record.logs, "Static validation passed; publication and deployment validation are reported separately."]
             elif not automatic:
                 record.status = "not_remediable"
@@ -5301,32 +5421,76 @@ def _run_remediation_job(record_id: int) -> None:
                 record.status = "failed"
                 record.failure_reason = "Required static validation failed"
             record.phase = "complete" if record.status != "failed" else "failed"
+            record.remediation_status = ("failed" if record.status in {"failed", "not_remediable"} else
+                                         "partial" if review or unresolved_images or not evidence_complete or validation["status"] != "PASS" else "complete")
+            publication_results = [chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings]
+            publication_results.extend(bool(image.get("candidate")) and bool(image.get("digest"))
+                                       for image in plan["images"])
+            record.delivery_status = ("not_delivered" if record.output_mode == "bundle" else
+                                      "published" if publication_results and all(publication_results) else
+                                      "partial" if any(publication_results) else "failed")
+            deployment_status = (validation.get("deployment") or {}).get("status")
+            record.verification_status = ("verified" if deployment_status == "VERIFIED" else
+                                          "failed" if deployment_status in {"FAILED", "PARTIALLY_VERIFIED"} else
+                                          "not_verified" if deployment_status in {None, "NOT RUN"} else "unavailable")
+            signatures = [image.get("signature_status") for image in plan["images"] if image.get("candidate")]
+            record.signing_status = ("failed" if "failed" in signatures else
+                                     "verified" if signatures and all(value == "verified" for value in signatures) else
+                                     "partial" if "verified" in signatures else "not_requested")
+            with artifact.open("rb") as artifact_stream:
+                record.artifact_digest = "sha256:" + hashlib.file_digest(artifact_stream, "sha256").hexdigest()
             record.completed_at = record.updated_at = utcnow()
             db.add(AuditEvent(actor_user_id=record.requested_by_id, action=f"remediation.{record.status}",
                               target_type="remediation_execution", target_id=str(record.id),
                               detail={"service_id": record.service_id, "job_key": record.job_key, "status": record.status}))
             db.commit()
+            if inputs.get("requested_delivery") == "oci" and record.remediation_status in {"complete", "partial"}:
+                try:
+                    _queue_delivery(db, record, record.requested_by_id, "oci", inputs.get("destination_id", ""), inputs.get("verify_runtime", False))
+                except Exception as delivery_error:
+                    db.rollback()
+                    record.delivery_status = "failed"
+                    _remediation_audit(db, record, "remediation.delivery_failed", error=type(delivery_error).__name__)
+                    db.commit()
         except Exception as exc:
             db.rollback()
-            (REMEDIATION_JOB_ROOT / record.job_key / "remediation-candidate.zip").unlink(missing_ok=True)
             record = db.get(RemediationExecution, record_id)
             if record:
                 failed_phase = record.phase
                 if failed_phase in REMEDIATION_STAGES:
                     _remediation_stage(record, failed_phase, "failed", type(exc).__name__)
                 record.status, record.phase = "failed", "failed"
+                record.remediation_status = "failed"
                 record.failure_reason = f"Remediation failed during {failed_phase}: {type(exc).__name__}"
                 record.logs = [*(record.logs or []), record.failure_reason]
                 record.completed_at = record.updated_at = utcnow()
                 _remediation_audit(db, record, "remediation.failed", reason=type(exc).__name__)
                 db.commit()
+        finally:
+            _cleanup_completed_remediations(db)
+
+
+def _cleanup_completed_remediations(db):
+    """Cleanup must never replace the outcome of completed work."""
+    try:
+        result = cleanup_remediation_artifacts(db, REMEDIATION_JOB_ROOT)
+        if result["removed"]:
+            db.add(AuditEvent(action="remediation.retention_cleanup", target_type="remediation_execution",
+                target_id="retention", detail={"job_keys": result["removed"], "removed_bytes": result["removed_bytes"]}))
+        db.commit()
+    except Exception:
+        db.rollback()
 
 
 def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding_type: str | None = None,
                        finding_id: int | None = None, output_mode: str = "publish",
-                       retry_of_id: int | None = None) -> RemediationExecution:
+                       retry_of_id: int | None = None, workflow_inputs: dict | None = None) -> RemediationExecution:
     if not remediation_enabled(db):
         raise HTTPException(403, detail="Remediation is disabled by the administrator")
+    retention = cleanup_remediation_artifacts(db, REMEDIATION_JOB_ROOT)
+    db.commit()
+    if retention["over_quota"]:
+        raise HTTPException(409, detail="Retained remediation storage is full; allow active jobs to finish before retrying")
     if output_mode not in {"publish", "bundle"}:
         raise HTTPException(422, detail="Choose OCI publish or downloadable bundle")
     db.execute(select(Service.id).where(Service.id == service.id).with_for_update()).scalar_one()
@@ -5335,15 +5499,32 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
         RemediationExecution.status.in_(["queued", "running"])))
     if existing:
         raise HTTPException(409, detail="A remediation is already running for this service")
-    latest = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
+    if retry_of_id is not None:
+        prior = db.get(RemediationExecution, retry_of_id)
+        if not prior or prior.service_id != service.id:
+            raise HTTPException(404, detail="Remediation retry source is unavailable")
+        latest = db.get(Execution, prior.source_execution_id) if prior.source_execution_id else db.scalar(
+            select(Execution).where(Execution.service_id == service.id, Execution.execution_key == prior.rollback_reference))
+        if not latest or latest.service_id != service.id:
+            raise HTTPException(422, detail="The retained remediation source is unavailable; retry cannot use a newer scan")
+    else:
+        latest = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
     if not latest:
         raise HTTPException(422, detail="The service has no assessment execution to remediate")
+    if workflow_inputs and latest.id != workflow_inputs.get("source_execution_id"):
+        raise HTTPException(409, detail="The source scan changed; rebuild the remediation plan")
     job_key = f"R-{uuid.uuid4().hex[:12].upper()}"
+    revision_number = (db.scalar(select(func.max(RemediationExecution.revision_number)).where(
+        RemediationExecution.service_id == service.id,
+        RemediationExecution.source_version_id == latest.service_version_id)) or 0) + 1
+    source_version = db.get(ServiceVersion, latest.service_version_id) if latest.service_version_id else None
     record = RemediationExecution(job_key=job_key, service_id=service.id, requested_by_id=auth.user.id,
                                   finding_type=finding_type, finding_id=finding_id, status="queued", phase="queued",
-                                  output_mode=output_mode, stages={},
+                                  output_mode=output_mode, stages={}, workflow_inputs=workflow_inputs or {},
                                   retry_of_id=retry_of_id,
-                                  original_revision=service.manual_version or latest.commit_sha or latest.execution_key,
+                                  source_execution_id=latest.id, source_version_id=latest.service_version_id,
+                                  revision_number=revision_number,
+                                  original_revision=source_version.version if source_version else latest.commit_sha or latest.execution_key,
                                   rollback_reference=latest.execution_key, logs=["Remediation request queued."])
     db.add(record); db.flush()
     record_audit(db, auth, "remediation.queued", "remediation_execution", record.id,
@@ -5352,6 +5533,166 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
     db.commit()
     REMEDIATION_WORKERS.submit(_run_remediation_job, record.id)
     return record
+
+
+def _remediation_destinations(db, service_id):
+    rows = [service_oci.public_destination(row) for row in db.scalars(select(service_oci.ServiceOCIDestination).where(
+        service_oci.ServiceOCIDestination.service_id == service_id))]
+    for row in parse_json(get_global_configuration(db).get("oci_registries"), []):
+        if isinstance(row, dict) and row.get("use_for_remediation") is True:
+            rows.append({"id": f"global:{row.get('id')}", "name": row.get("name", "CATS default"),
+                         "scope": "global", "endpoint": row.get("endpoint"), "namespace": row.get("namespace"),
+                         "is_default": not any(item.get("is_default") for item in rows)})
+    return rows
+
+
+def _source_remediation_plan(db, service):
+    execution = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
+    if not execution:
+        raise HTTPException(422, "No source assessment is available")
+    payload = execution.raw_payload or {}
+    identities = {item.identity_key: item.id for item in db.scalars(select(PolicyFinding).where(PolicyFinding.service_id == service.id))}
+    findings = []
+    for item in payload.get("policy_findings") or []:
+        values = policy_finding_values(item)
+        findings.append(SimpleNamespace(id=identities.get(policy_finding_identity(values)), **values))
+    try:
+        _assert_bundle_sources_safe(payload.get("helm_source_files") or payload.get("source_files") or {})
+    except ValueError:
+        raise HTTPException(422, "Retained source contains unsupported secret material") from None
+    return execution, build_plan(payload, findings, "PREVIEW")
+
+
+@app.get("/services/{service_key}/remediations/plan")
+def remediation_plan(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if not service:
+        raise HTTPException(404)
+    execution, plan = _source_remediation_plan(db, service)
+    return {"source_execution_id": execution.id, "plan_digest": plan_digest(plan),
+            "configuration_changes": plan["configuration_changes"], "images": plan["images"]}
+
+
+@app.post("/services/{service_key}/remediations/start")
+def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mode: str = Form(),
+    decisions: str = Form("{}"), plan_digest: str = Form(), source_execution_id: int = Form(),
+    output_mode: str = Form("bundle"), destination_id: str = Form(""), verify_runtime: str = Form("no"),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    check_csrf(auth, csrf_token)
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if not service:
+        raise HTTPException(404)
+    execution, plan = _source_remediation_plan(db, service)
+    if execution.id != source_execution_id or not secrets.compare_digest(plan_digest, globals()["plan_digest"](plan)):
+        raise HTTPException(409, "The source plan changed; rebuild it before executing")
+    try:
+        choices = json.loads(decisions)
+        resolve_decisions(plan, remediation_mode, choices, auth.user.id)
+    except (ValueError, TypeError):
+        raise HTTPException(422, "Invalid or incomplete remediation decisions") from None
+    if output_mode not in {"bundle", "oci"}:
+        raise HTTPException(422, "Invalid delivery mode")
+    if output_mode == "oci":
+        service_oci.resolve_destination(db, service.id, destination_id,
+            parse_json(get_global_configuration(db).get("oci_registries"), []))
+    inputs = {"remediation_mode": remediation_mode, "decisions": choices, "source_execution_id": source_execution_id,
+              "plan_digest": plan_digest, "requested_delivery": output_mode, "destination_id": destination_id,
+              "verify_runtime": verify_runtime == "yes"}
+    record = _queue_remediation(db, auth, service, output_mode="bundle", workflow_inputs=inputs)
+    return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
+
+
+def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify_runtime=False):
+    try:
+        retained_candidate(record, REMEDIATION_JOB_ROOT)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+    if record.status in {"queued", "running"}:
+        raise HTTPException(409, "Remediation is still running")
+    if record.remediation_status not in {"complete", "partial"}:
+        raise HTTPException(409, "No validated remediation candidate is available for delivery")
+    db.execute(select(RemediationExecution.id).where(RemediationExecution.id == record.id).with_for_update()).scalar_one()
+    if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id, DeliveryAttempt.status.in_(["queued", "running"]))):
+        raise HTTPException(409, "A delivery is already running")
+    if output_mode == "oci":
+        destination = service_oci.resolve_destination(db, record.service_id, destination_id,
+            parse_json(get_global_configuration(db).get("oci_registries"), []))
+        public = {key: destination.get(key) for key in ("id", "name", "endpoint", "namespace", "scope")}
+    elif output_mode == "bundle":
+        public = {"id": "download", "name": "Portable download", "scope": "download"}
+    else:
+        raise HTTPException(422, "Invalid delivery mode")
+    attempt = DeliveryAttempt(remediation_id=record.id, actor_id=actor_id, destination=public,
+        content_digest=record.artifact_digest, status="queued" if output_mode == "oci" else "download_ready",
+        result={"verification_requested": verify_runtime})
+    db.add(attempt); db.flush()
+    if output_mode == "oci":
+        record.delivery_status = "queued"
+    _remediation_audit(db, record, "remediation.delivery_requested", attempt_id=attempt.id, actor_id=actor_id, destination=public)
+    db.commit()
+    if output_mode == "oci":
+        REMEDIATION_WORKERS.submit(_run_delivery_attempt, attempt.id)
+    return attempt
+
+
+def _run_delivery_attempt(attempt_id):
+    with SessionLocal() as db:
+        attempt = db.get(DeliveryAttempt, attempt_id)
+        record = db.get(RemediationExecution, attempt.remediation_id) if attempt else None
+        if not record:
+            return
+        requested = bool((attempt.result or {}).get("verification_requested"))
+        attempt.status = "running"; record.delivery_status = "running"; db.commit()
+        try:
+            destination = service_oci.resolve_destination(db, record.service_id, attempt.destination["id"],
+                parse_json(get_global_configuration(db).get("oci_registries"), []))
+            attempt.destination = {key: destination.get(key) for key in ("id", "name", "endpoint", "namespace", "scope")}
+            settings = get_global_configuration(db)
+            signing_config, signing_credentials = signing.job_material(settings, "push")
+            delivery_options = {"signing_material": (signing_config, signing_credentials)} if signing_config else {}
+            result, attempt.artifact_path = deliver(record, destination, attempt.id, REMEDIATION_JOB_ROOT, **delivery_options)
+            record.signing_status = result.get("signing_status", "not_requested")
+            attempt.result = result
+            attempt.status = "published"; record.delivery_status = "published"
+            if requested:
+                from .remediation_verification import verify_delivery
+                try:
+                    verification = verify_delivery(record, {**result, "artifact_path": attempt.artifact_path, "service_key": record.service.service_key},
+                        parse_json(get_global_configuration(db).get("validator_configuration"), {}), REMEDIATION_JOB_ROOT)
+                except Exception:
+                    verification = {"status": "verification_unavailable", "detail": "Sandbox verification unavailable"}
+                attempt.result = {**result, "verification": verification}
+                record.verification_status = verification["status"]
+                _remediation_audit(db, record, "remediation.verification_completed", attempt_id=attempt.id,
+                    verification_status=verification["status"], artifact_digest=verification.get("artifact_digest"))
+            validation = dict(record.validation_results or {})
+            validation["artifact_identities"] = [*(validation.get("artifact_identities") or []),
+                *[{**identity, "signature_status": identity.get("signature_status", "not_requested"), "verification": attempt.result.get("verification") or {"status": "not_verified"}}
+                  for identity in result.get("artifact_identities", [])]]
+            record.validation_results = validation
+            _remediation_audit(db, record, "remediation.delivery_published", attempt_id=attempt.id, destination=attempt.destination,
+                content_digest=attempt.content_digest, materialized_digest=result.get("materialized_digest"))
+        except Exception as exc:
+            attempt.status = "failed"; record.delivery_status = "failed"
+            attempt.result = {"error": f"Delivery failed ({type(exc).__name__}); check destination access, credentials, trust, and retained artifacts."}
+            _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
+        attempt.completed_at = utcnow(); db.commit()
+        _cleanup_completed_remediations(db)
+
+
+@app.post("/services/{service_key}/remediations/{job_key}/delivery")
+def redeliver_remediation(service_key: str, job_key: str, csrf_token: str = Form(), output_mode: str = Form(),
+    destination_id: str = Form(""), verify_runtime: str = Form("no"), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    check_csrf(auth, csrf_token)
+    record = db.scalar(select(RemediationExecution).join(Service).where(RemediationExecution.job_key == job_key,
+        Service.service_key == service_key))
+    if not record:
+        raise HTTPException(404)
+    _queue_delivery(db, record, auth.user.id, output_mode, destination_id, verify_runtime == "yes")
+    target = "candidate.zip" if output_mode == "bundle" else ""
+    return RedirectResponse(f"/services/{service_key}/remediations/{job_key}" + (f"/{target}" if target else ""), status_code=303)
 
 
 @app.post("/services/{service_key}/remediate")
@@ -5393,8 +5734,10 @@ def remediation_report(service_key: str, job_key: str, request: Request, db: Ses
     record = db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == job_key).options(selectinload(RemediationExecution.service)))
     if not record or record.service.service_key != service_key:
         raise HTTPException(404)
+    record.delivery_attempts = db.scalars(select(DeliveryAttempt).where(
+        DeliveryAttempt.remediation_id == record.id).order_by(DeliveryAttempt.id.desc())).all()
     return templates.TemplateResponse(request, "remediation_report.html", page_context(auth, job=record, service=record.service,
-        remediation_enabled=remediation_enabled(db)))
+        remediation_enabled=remediation_enabled(db), oci_destinations=_remediation_destinations(db, record.service_id)))
 
 
 @app.post("/services/{service_key}/remediations/{job_key}/retry")
@@ -5417,9 +5760,12 @@ def remediation_candidate(service_key: str, job_key: str, db: Session = Depends(
                           auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     record = db.scalar(select(RemediationExecution).join(Service).where(
         RemediationExecution.job_key == job_key, Service.service_key == service_key))
-    path = Path(record.artifact_path) if record and record.artifact_path else None
-    if not path or not path.is_file() or path.parent != REMEDIATION_JOB_ROOT / job_key:
+    if not record or not record.artifact_path:
         raise HTTPException(404, detail="Remediation candidate is not available")
+    try:
+        path = retained_candidate(record, REMEDIATION_JOB_ROOT)
+    except ValueError:
+        raise HTTPException(409, detail="Retained candidate integrity check failed") from None
     return FileResponse(path, media_type="application/zip", filename=f"cats-{service_key}-{job_key}.zip")
 
 
@@ -5431,12 +5777,18 @@ def remediation_job_status(service_key: str, job_key: str, db: Session = Depends
     if not record:
         raise HTTPException(404)
     return {"job_key": record.job_key, "status": record.status, "phase": record.phase,
+            "revision_number": record.revision_number, "source_execution_id": record.source_execution_id,
+            "source_version_id": record.source_version_id, "artifact_digest": record.artifact_digest,
+            "remediation_status": record.remediation_status, "delivery_status": record.delivery_status,
+            "verification_status": record.verification_status, "signing_status": record.signing_status,
             "output_mode": record.output_mode, "retry_of_id": record.retry_of_id, "stages": record.stages or {},
             "started_at": record.started_at, "completed_at": record.completed_at,
             "images": [{"original": row.get("original"), "remediated": row.get("candidate"),
                         "patch_status": row.get("patch_status"), "signature_status": row.get("signature_status")}
                        for row in record.patched_images or []],
             "validation": record.validation_results or {},
+            "delivery_attempts": [attempt_dto(row) for row in db.scalars(select(DeliveryAttempt).where(
+                DeliveryAttempt.remediation_id == record.id).order_by(DeliveryAttempt.id))],
             "download_url": f"/services/{service_key}/remediations/{job_key}/candidate.zip" if record.artifact_path else None}
 
 
@@ -5561,89 +5913,23 @@ def architecture_evidence_result(
 def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
     severity: str = "all", component: str = "", since: str = "",
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
-    from .security_dashboard import service_history
-    allowed = auth.accessible_service_ids("service.view")
-    if allowed == set():
+    if auth.accessible_service_ids("service.view") == set():
         raise HTTPException(403, detail="Permission denied")
-    query = select(Service).where(Service.lifecycle_status == "active").options(
-        selectinload(Service.findings).selectinload(Finding.exceptions),
-        selectinload(Service.findings).selectinload(Finding.observations),
-        selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
-        selectinload(Service.executions), selectinload(Service.groups),
-        selectinload(Service.poam_entries), selectinload(Service.deployment_validation_runs),
-        selectinload(Service.images))
-    if allowed is not None:
-        query = query.where(Service.id.in_(allowed))
-    services = db.scalars(query.order_by(Service.name)).all()
-    rows = []
-    now = utcnow()
-    warning_policy = parse_json(get_global_configuration(db).get("cyber_warning_policy"), {})
-    for service in services:
-        view = service_view(service, now, configuration_for_service(db, service))
-        latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
-        watchlist = db.scalars(select(DependencyWatchlistMatch).where(
-            DependencyWatchlistMatch.execution_id == latest.id)).all() if latest else []
-        validation = max(service.deployment_validation_runs, key=lambda item: aware(item.created_at), default=None)
-        active_poam = [item for item in service.poam_entries if item.status == "active"]
-        overdue_poam = [item for item in active_poam if item.due_date and aware(item.due_date) < now]
-        active_findings = [item for item in service.findings if item.active]
-        search_components = {match.component_name.casefold() for match in watchlist}
-        search_components.update(str(observation.package or "").casefold()
-            for finding in active_findings for observation in finding.observations)
-        search_images = {str(image.image_reference or "").casefold() for image in service.images}
-        search_images.update(match.image.casefold() for match in watchlist)
-        critical = sum(item.severity.lower() == "critical" for item in active_findings)
-        high = sum(item.severity.lower() == "high" for item in active_findings)
-        kev = sum(bool(view["risk_metadata"].get(item.id, {}).get("kev")) for item in active_findings)
-        patchable = sum(bool(next((obs.fixed_version for obs in sorted(item.observations, key=lambda row: row.id, reverse=True)), "")) for item in active_findings)
-        missing = bool(view["incomplete"])
-        kind_failed = bool(validation and validation.status in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"})
-        warning = bool(
-            (warning_policy.get("critical_high", True) and (critical or high)) or
-            (warning_policy.get("kev", True) and kev) or
-            (warning_policy.get("watchlist", True) and watchlist) or
-            (warning_policy.get("poam", True) and active_poam) or
-            (warning_policy.get("kind", True) and kind_failed) or
-            (warning_policy.get("missing_evidence", True) and missing) or
-            view["warning_items"])
-        posture = "RED" if not view["compliant"] else "YELLOW" if warning else "GREEN"
-        rows.append({"service": service, "status": posture, "critical": critical, "high": high,
-            "medium": sum(item.severity.lower() == "medium" for item in active_findings),
-            "low": sum(item.severity.lower() == "low" for item in active_findings),
-            "unknown": sum(item.severity.lower() not in {"critical", "high", "medium", "low"} for item in active_findings),
-            "vulnerabilities": len(active_findings), "kev": kev, "watchlist": len(watchlist),
-            "patchable": patchable, "poam": len(active_poam), "poam_overdue": len(overdue_poam),
-            "missing": missing, "sbom": bool(latest and (latest.raw_payload or {}).get("sbom_images")),
-            "kind": validation.status if validation else "NOT_ATTEMPTED",
-            "severity_set": {item.severity.casefold() for item in active_findings},
-            "components": search_components, "images": search_images,
-            "last_scan": latest.scanned_at if latest else None,
-            "attention": critical + high + kev + len(watchlist) + len(active_poam) + int(missing) + int(kind_failed)})
-    metrics = {"services": len(rows), "scanned": sum(row["last_scan"] is not None for row in rows),
-        "attention": sum(row["attention"] for row in rows), "vulnerabilities": sum(row["vulnerabilities"] for row in rows),
-        "critical_high": sum(row["critical"] + row["high"] for row in rows), "kev": sum(row["kev"] for row in rows),
-        "watchlist": sum(row["watchlist"] for row in rows), "patchable": sum(row["patchable"] for row in rows),
-        "poam": sum(row["poam"] for row in rows), "poam_overdue": sum(row["poam_overdue"] for row in rows),
-        "sbom_coverage": sum(row["sbom"] for row in rows), "missing": sum(row["missing"] for row in rows),
-        "kind_failed": sum(row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"} for row in rows)}
-    metrics.update({level: sum(row[level] for row in rows) for level in ("critical", "high", "medium", "low", "unknown")})
-    metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
-    history = [service_history(service) for service in services]
-    try:
-        since_date = datetime.fromisoformat(since).date() if since else None
-    except ValueError as exc:
-        raise HTTPException(422, detail="Invalid since date") from exc
-    filtered = [row for row in rows if (not q or q.casefold() in row["service"].name.casefold() or q.casefold() in row["service"].service_key.casefold())
-                and (status == "all" or row["status"] == status)
-                and (severity == "all" or severity.casefold() in row["severity_set"])
-                and (not component or any(component.casefold() in value for value in row["components"] | row["images"]))
-                and (not since_date or row["last_scan"] and aware(row["last_scan"]).date() >= since_date)
-                and (attention == "all" or (attention == "kev" and row["kev"]) or (attention == "watchlist" and row["watchlist"])
-                     or (attention == "poam" and row["poam"]) or (attention == "missing" and row["missing"])
-                     or (attention == "kind" and row["kind"] in {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}))]
     return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth,
-        rows=filtered, metrics=metrics, history=history, q=q, status=status, attention=attention,
-        severity=severity, component=component, since=since))
+        dashboard_url="/api/dashboard/cybersecurity" + ("?" + str(request.query_params) if request.query_params else "")))
+
+
+@app.get("/api/dashboard/cybersecurity")
+def cybersecurity_portfolio_data(request: Request, q: str = "", status: str = "all", attention: str = "all",
+    severity: str = "all", component: str = "", since: str = "", page: int = 1,
+    page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from .dashboard_portfolio import portfolio
+    started = time.perf_counter()
+    data = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
+                     component=component, since=since, page=page, page_size=page_size)
+    data["timings"] = {"portfolio_ms": round((time.perf_counter() - started) * 1000, 2)}
+    request.state.snapshot_timings = data["timings"]
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -5654,6 +5940,13 @@ def dashboard(request: Request, archived: bool = False, lifecycle: str = "active
             "current_user": None, "csrf_token": "", "can": lambda _permission: False,
             "themes": THEMES, "pending_request_count": 0, "pending_poam_count": 0,
         })
+    return templates.TemplateResponse(request, "dashboard.html", page_context(auth,
+        dashboard_url="/api/dashboard/services" + ("?" + str(request.query_params) if request.query_params else "")))
+
+
+@app.get("/api/dashboard/services")
+def dashboard_services_data(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
+                            page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     request_started = time.perf_counter()
     stage_timings = {}
     now = utcnow()
@@ -5721,7 +6014,25 @@ def dashboard(request: Request, archived: bool = False, lifecycle: str = "active
     stage_timings["page_context_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_timings["route_ms"] = round((time.perf_counter() - request_started) * 1000, 2)
     request.state.snapshot_timings = stage_timings
-    return templates.TemplateResponse(request, "dashboard.html", context)
+    from .frontend import page_data
+    return JSONResponse(page_data(request, "dashboard.html", context)["data"], headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/dashboard/cybersecurity/services/{service_key}/history")
+def cybersecurity_service_history(service_key: str, request: Request, db: Session = Depends(get_db),
+                                  auth: AuthContext = Depends(require_user)):
+    started = time.perf_counter()
+    allowed = auth.accessible_service_ids("service.view")
+    query = select(Service).where(Service.service_key == service_key)
+    if allowed is not None:
+        query = query.where(Service.id.in_(allowed))
+    service = db.scalar(query)
+    if service is None:
+        raise HTTPException(404, detail="Service not found")
+    from .security_dashboard import bounded_service_history
+    result = bounded_service_history(db, service)
+    request.state.snapshot_timings = {"history_ms": round((time.perf_counter() - started) * 1000, 2)}
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/exports/services.xlsx")
@@ -6151,7 +6462,7 @@ def service_detail(
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
             remediation_enabled=remediation_enabled(db),
-            remediation_preview=remediation_preview,
+            remediation_preview=remediation_preview, oci_destinations=_remediation_destinations(db, service.id),
             can_create_poam=auth.has("poam.request", service.id), now=now,
         ))
     if poam:
@@ -6306,6 +6617,7 @@ def service_detail(
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
+            artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
             deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=service.images,
