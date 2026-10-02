@@ -1,5 +1,34 @@
 """Historical dashboard counts from immutable scan payloads, not live findings."""
 from datetime import timezone
+from sqlalchemy import select
+from .models import Execution
+
+HISTORY_CANDIDATE_LIMIT = 128
+HISTORY_TREND_LIMIT = 8
+
+
+def bounded_service_history(db, service):
+    """Inspect bounded metadata, then hydrate at most ten immutable payloads."""
+    candidates = db.execute(select(Execution.id, Execution.raw_payload["service"]["version"].as_string())
+        .where(Execution.service_id == service.id, Execution.scan_scope == "service")
+        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(HISTORY_CANDIDATE_LIMIT)).all()
+    trend_ids = [row.id for row in candidates[:HISTORY_TREND_LIMIT]]
+    version_ids, seen = [], set()
+    for row in candidates:
+        version = str(row[1] or "").strip()
+        if version and version.lower() not in {"unknown", "unversioned"} and version not in seen:
+            seen.add(version)
+            version_ids.append(row.id)
+            if len(version_ids) == 2:
+                break
+    ids = set(trend_ids + version_ids)
+    snapshots = {execution.id: scan_snapshot(execution) for execution in db.scalars(
+        select(Execution).where(Execution.service_id == service.id, Execution.id.in_(ids)))} if ids else {}
+    return {"service_key": service.service_key, "name": service.name,
+            "trend": [snapshots[key] for key in reversed(trend_ids)],
+            "versions": [snapshots[key] for key in version_ids],
+            "candidate_limit": HISTORY_CANDIDATE_LIMIT,
+            "comparison_limited": len(candidates) == HISTORY_CANDIDATE_LIMIT and len(version_ids) < 2}
 
 SEVERITIES = ("Critical", "High", "Medium", "Low", "Unknown")
 

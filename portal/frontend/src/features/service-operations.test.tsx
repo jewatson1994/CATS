@@ -16,6 +16,20 @@ const chart = {semantic_type:'helm_chart',artifact:{id:11,chart_name:'Test Chart
 const response = (data:any) => ({ok:true,status:200,redirected:false,headers:new Headers({'content-type':'application/json'}),json:async () => data});
 
 describe('native service operations', () => {
+  it('lists retained scanned charts without offering persisted artifact mutations', () => {
+    const retained = {...chart, retained_scan:true, file_count:48, artifact:{id:'scan:one:nginx/Chart.yaml',chart_name:'nginx',chart_version:'1.2.3',source_type:'scan',source_reference:'nginx'}, source_label:'Scan source'};
+    render(<Artifacts data={fixture({artifact_rows:[retained],scan_chart_count:1,original_file_count:48,original_execution:{execution_key:'one'}})} />);
+    expect(screen.getByText('nginx',{selector:'strong'})).toBeInTheDocument();
+    expect(screen.getByText('1.2.3')).toBeInTheDocument();
+    expect(screen.getByText('48 source files')).toBeInTheDocument();
+    expect(screen.getByText('Retained scan')).toBeInTheDocument();
+    expect(screen.getByText('Read-only scan evidence')).toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Validate'})).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'Materialize'})).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'scan'}});
+    fireEvent.change(screen.getByLabelText('State'),{target:{value:'retained'}});
+    expect(screen.getByText('nginx',{selector:'strong'})).toBeInTheDocument();
+  });
   it('acquires only the selected artifact source and retains multipart CSRF contract', () => {
     render(<Artifacts data={fixture()} />);
     fireEvent.click(screen.getByRole('button',{name:'+ Add Helm Chart'}));

@@ -196,11 +196,13 @@ def acquire_component(component, certificates):
     if component["source_type"] == "helm":
         catalog = main._discover_helm_repository(component["repository"], certificates)
         entry = next((item for item in catalog.get("charts", []) if item.get("name") == component["chart_name"]), None)
+        if entry is None:
+            raise ValueError(f"Requested chart missing [{main._helm_request_detail('chart selection', component['repository'])}]")
         requested = component["version"]
         version = ((entry or {}).get("latest") if requested == "latest" else
                    next((v for v in (entry or {}).get("versions", []) if str(v.get("version")) == requested), None))
         if not version or not version.get("url") or not version.get("version") or str(version["version"]) == "latest":
-            raise ValueError("Requested chart version is absent from repository catalog")
+            raise ValueError(f"Requested chart version missing from repository catalog [{main._helm_request_detail('chart selection', component['repository'])}]")
         source_url = version["url"]
         expected_version = str(version.get("version") or "")
     else:

@@ -19,6 +19,7 @@ def project_remediations(data, name, context, can, formatters):
     data["summary"] = _fields(context.get("summary", {}), ("poams", "poams_overdue", "exceptions", "exceptions_soon", "mitigations"))
     data["filters"] = _fields(context.get("filters", {}), ("service", "identifier", "title", "status_filter", "owner", "severity", "due_from", "due_to", "expiration_from", "expiration_to", "sort", "page_size"))
     data["remediation_preview"] = _fields(context.get("remediation_preview", {}), ("images", "charts", "configuration_changes", "manual_review"))
+    data["oci_destinations"] = [_fields(row, ("id", "name", "endpoint", "namespace", "is_default", "credentials_configured", "ca_configured", "scope")) for row in context.get("oci_destinations", [])]
     for key in ("poams", "mitigations"):
         data[key] = [entry(item, formatters) for item in context.get(key, [])]
         for item in data[key]:
@@ -32,10 +33,19 @@ def project_remediations(data, name, context, can, formatters):
         permission("exception.revoke", row["service"]["id"])
         data["exceptions"].append(row)
     def job(item, full=False):
-        result = _fields(item, ("job_key", "finding_type", "original_revision", "resulting_revision", "retry_of_id", "status", "output_mode", "failure_reason", "rollback_reference"))
+        result = _fields(item, ("job_key", "finding_type", "original_revision", "resulting_revision", "retry_of_id", "status", "output_mode", "failure_reason", "rollback_reference", "source_execution_id", "source_version_id", "revision_number", "remediation_status", "delivery_status", "verification_status", "signing_status", "artifact_digest"))
         result.update(started_at=_formatted(_field(item, "started_at")), finished_at=_formatted(_field(item, "completed_at")), started_label=timestamp(_field(item, "started_at")), finished_label=timestamp(_field(item, "completed_at")), has_artifact=bool(_field(item, "artifact_path")))
         if not full:
             return result
+        result["delivery_attempts"] = []
+        for row in _field(item, "delivery_attempts", []) or []:
+            destination = _field(row, "destination", {}) or {}
+            delivery_result = _field(row, "result", {}) or {}
+            result["delivery_attempts"].append({"id": _scalar(_field(row, "id")),
+                "destination": _scalar(_field(destination, "name")), "artifact_digest": _scalar(_field(row, "content_digest")),
+                "helm_digest": _scalar(_field(delivery_result, "materialized_digest")), "actor": _scalar(_field(row, "actor_id")),
+                "timestamp": timestamp(_field(row, "started_at")), "result": _scalar(_field(row, "status")),
+                "error": _scalar(_field(delivery_result, "error"))})
         for key in ("before_snapshot", "after_snapshot"):
             snapshot = _field(item, key, {}) or {}
             result[key] = _fields(snapshot, ("kev", "configuration_findings", "images", "helm_render", "policy_validation", "patchable_vulnerabilities", "epss_max"))
@@ -44,7 +54,7 @@ def project_remediations(data, name, context, can, formatters):
         result["patched_images"] = [_fields(row, ("original", "candidate", "classification")) for row in _field(item, "patched_images", []) or []]
         result["configuration_changes"] = []
         for row in _field(item, "configuration_changes", []) or []:
-            projected = _fields(row, ("rule_id", "classification", "field_path", "new_value", "reason"))
+            projected = _fields(row, ("rule_id", "classification", "category", "field_path", "new_value", "original_value", "reason", "proposed_value_source", "approval", "actor", "timestamp", "decision", "post_scan_result"))
             projected["source_mapping"] = _fields(_field(row, "source_mapping", {}), ("values_file", "template"))
             result["configuration_changes"].append(projected)
         result["stages"] = [{"name": str(key), **_fields(value, ("status", "duration_seconds", "detail"))} for key, value in (_field(item, "stages", {}) or {}).items()]

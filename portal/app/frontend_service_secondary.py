@@ -42,6 +42,10 @@ def project_secondary(data, name, context, can=None, formatters=None):
         data["finding_counts"] = counts
         data["overview_data"] = overview(context.get("overview_data", {}))
         data["latest_execution"] = _fields(context.get("latest_execution"), ("id", "complete"))
+        data["artifact_provenance"] = rows(context.get("artifact_provenance", []), (
+            "artifact_kind", "digest", "identity_type", "remediation_id", "source_version",
+            "revision_number", "job_key", "post_remediation_scan", "runtime_verification",
+            "signature", "verification_artifact_digest", "evidence_scope"))
         data["service_images"] = [_fields(image, ("id", "image_reference", "image_digest", "lifecycle_status", "replacement_of_id"))
                                   for image in context.get("service_images", [])]
         data["architecture_verification"] = _fields(context.get("architecture_verification", {}), ("state", "label", "expected", "observed", "missing"))

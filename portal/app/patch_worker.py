@@ -28,6 +28,17 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def runtime_commit_command(container: str, destination: str, configuration: dict) -> list[str]:
+    """Undo maintenance entrypoint overrides without executing image startup code."""
+    command = ["docker", "commit"]
+    for field in ("Entrypoint", "Cmd"):
+        value = configuration.get(field)
+        if value is not None and (not isinstance(value, list) or not all(isinstance(item, str) for item in value)):
+            raise ValueError("Invalid source image runtime configuration")
+        command.extend(["--change", f"{field.upper()} {json.dumps(value or [])}"])
+    return [*command, container, destination]
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         raise SystemExit("usage: python -m app.patch_worker CONFIG OUTPUT")
@@ -171,7 +182,7 @@ def main() -> int:
         package_probe_stdout = ""
         capability_reason = "unsupported operating system or package manager"
         try:
-            release = run(["docker", "run", "--rm", source_ref, "cat", "/etc/os-release"], timeout=60)
+            release = run(["docker", "run", "--rm", "--entrypoint", "cat", source_ref, "/etc/os-release"], timeout=60)
             for line in (release.stdout or "").splitlines():
                 if "=" in line:
                     key, value = line.split("=", 1)
@@ -179,7 +190,7 @@ def main() -> int:
             os_id = values.get("ID", "").lower()
             if os_id not in os_definitions:
                 os_id = next((candidate for candidate in values.get("ID_LIKE", "").lower().split() if candidate in os_definitions), "")
-            probe = run(["docker", "run", "--rm", source_ref, "sh", "-c", package_manager_probe_script()], timeout=60)
+            probe = run(["docker", "run", "--rm", "--entrypoint", "sh", source_ref, "-c", package_manager_probe_script()], timeout=60)
             package_probe_exit_code = "0"
             package_probe_stdout = " ".join(line.strip() for line in (probe.stdout or "").splitlines() if line.strip())
             package_manager = next((line.strip().lower() for line in package_probe_stdout.split() if line.strip()), "")
@@ -226,14 +237,18 @@ def main() -> int:
             f"system_ca_bundle_present=true custom_ca_count={len(configured_certificates)}"
         )
         if manager:
+            runtime_inspect = run(["docker", "image", "inspect", source_ref, "--format", "{{json .Config}}"])
+            runtime_configuration = json.loads(runtime_inspect.stdout)
+            if not isinstance(runtime_configuration, dict):
+                raise RuntimeError("Source image runtime configuration could not be retained")
             trusted_image_ref = f"cats-trust-{config['job_id']}:base"
             trust_container = f"cats-trust-{config['job_id']}"
-            run(["docker", "run", "-d", "--name", trust_container, source_ref, "sh", "-c", "while :; do sleep 60; done"])
+            run(["docker", "run", "-d", "--name", trust_container, "--entrypoint", "sh", source_ref, "-c", "while :; do sleep 60; done"])
             run(["docker", "cp", str(trusted_bundle), f"{trust_container}:/tmp/cats-patch-ca-bundle.pem"])
             if custom_ca:
                 run(["docker", "cp", str(custom_bundle), f"{trust_container}:/tmp/cats-custom-ca.pem"])
             run(["docker", "exec", trust_container, "sh", "-c", certificate_trust_script(manager, ca_marker)])
-            run(["docker", "commit", trust_container, trusted_image_ref])
+            run(runtime_commit_command(trust_container, trusted_image_ref, runtime_configuration))
             run(["docker", "rm", "--force", trust_container])
             created_images.append(trusted_image_ref)
             source_for_patch = trusted_image_ref
@@ -252,12 +267,12 @@ def main() -> int:
                 repository_manager = manager
                 policy_image_ref = f"cats-policy-{config['job_id']}:base"
                 container = f"cats-policy-{config['job_id']}"
-                run(["docker", "run", "-d", "--name", container, source_for_patch, "sh", "-c", "while :; do sleep 60; done"])
+                run(["docker", "run", "-d", "--name", container, "--entrypoint", "sh", source_for_patch, "-c", "while :; do sleep 60; done"])
                 run(["docker", "cp", str(repo_file), f"{container}:/tmp/cats-repository"])
                 run(["docker", "exec", container, "sh", "-c", repository_overlay_script(
                     manager, repository_policy["verify_tls"], repository_policy["verify_packages"], repository_marker
                 )])
-                run(["docker", "commit", container, policy_image_ref])
+                run(runtime_commit_command(container, policy_image_ref, runtime_configuration))
                 run(["docker", "rm", "--force", container])
                 created_images.append(policy_image_ref)
                 log(f"Applied {os_id} {manager} repository policy in an isolated patch image.")
@@ -299,14 +314,14 @@ def main() -> int:
                 copa_output = f"{policy_image_ref.rsplit(':', 1)[0]}:{patched_tag}"
                 clean_ref = f"cats-policy-{config['job_id']}:clean"
                 clean_container = f"cats-policy-clean-{config['job_id']}"
-                run(["docker", "run", "-d", "--name", clean_container, copa_output, "sh", "-c", "while :; do sleep 60; done"])
+                run(["docker", "run", "-d", "--name", clean_container, "--entrypoint", "sh", copa_output, "-c", "while :; do sleep 60; done"])
                 cleanup = repository_cleanup_script(
                     repository_manager, repository_policy["verify_tls"], repository_policy["verify_packages"], repository_marker
                 )
                 if trusted_image_ref:
                     cleanup += "; " + certificate_cleanup_script(manager, ca_marker)
                 run(["docker", "exec", clean_container, "sh", "-c", cleanup])
-                run(["docker", "commit", clean_container, clean_ref])
+                run(runtime_commit_command(clean_container, clean_ref, runtime_configuration))
                 run(["docker", "rm", "--force", clean_container])
                 run(["docker", "tag", clean_ref, patched_ref])
                 created_images.extend([copa_output, clean_ref])
@@ -314,9 +329,9 @@ def main() -> int:
                 clean_ref = f"cats-trust-{config['job_id']}:clean"
                 clean_container = f"cats-trust-clean-{config['job_id']}"
                 copa_output = f"{trusted_image_ref.rsplit(':', 1)[0]}:{patched_tag}"
-                run(["docker", "run", "-d", "--name", clean_container, copa_output, "sh", "-c", "while :; do sleep 60; done"])
+                run(["docker", "run", "-d", "--name", clean_container, "--entrypoint", "sh", copa_output, "-c", "while :; do sleep 60; done"])
                 run(["docker", "exec", clean_container, "sh", "-c", certificate_cleanup_script(manager, ca_marker)])
-                run(["docker", "commit", clean_container, clean_ref])
+                run(runtime_commit_command(clean_container, clean_ref, runtime_configuration))
                 run(["docker", "rm", "--force", clean_container])
                 run(["docker", "tag", clean_ref, patched_ref])
                 created_images.extend([copa_output, clean_ref])

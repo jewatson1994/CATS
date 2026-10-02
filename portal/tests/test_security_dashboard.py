@@ -47,3 +47,35 @@ def test_history_limits_comparison_to_two_versions_with_many_distinct_releases()
     history = service_history(service)
     assert [scan["version"] for scan in history["versions"]] == ["11", "10"]
     assert len(history["trend"]) == 8
+
+
+def test_database_history_hydrates_only_selected_payloads_and_caps_metadata():
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import Session
+    from app.database import Base
+    from app.models import Service, Execution
+    from app.security_dashboard import bounded_service_history
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = Service(service_key="bounded", name="Bounded")
+        db.add(service)
+        db.flush()
+        for i in range(140):
+            scan = execution(i, "old" if i < 12 else "new")
+            db.add(Execution(execution_key=str(i), service_id=service.id, scanned_at=scan.scanned_at,
+                             complete=True, scan_scope="service", raw_payload=scan.raw_payload))
+        db.commit()
+        loaded = []
+        def track_load(item, context):
+            loaded.append(item.id)
+        event.listen(Execution, "load", track_load)
+        try:
+            result = bounded_service_history(db, service)
+        finally:
+            event.remove(Execution, "load", track_load)
+        assert len(result["trend"]) == 8
+        assert len(result["versions"]) == 1
+        assert result["comparison_limited"] is True
+        assert len(loaded) == 8
+        assert "raw_payload" not in result["trend"][0]
