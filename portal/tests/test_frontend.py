@@ -21,6 +21,22 @@ def templates(tmp_path):
     return ReactTemplates(directory=tmp_path, frontend_index=tmp_path / "index.html")
 
 
+def test_date_configuration_binding_is_request_local(templates, monkeypatch):
+    import app.frontend as frontend
+    formatter = lambda value, configuration=None: (value, configuration)
+    templates.env.globals["cats_date"] = formatter
+    observed = []
+    def project(request_value, name, context, deployed_version, formatters):
+        observed.append(formatters["cats_date"]("date"))
+        return {"schemaVersion": 1, "page": "dashboard", "data": {}}
+    monkeypatch.setattr(frontend, "page_data", project)
+    config = {"timezone": "UTC"}
+    templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "dashboard.html", {"_date_configuration": config})
+    templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "dashboard.html", {})
+    assert observed == [("date", config), ("date", None)]
+    assert templates.env.globals["cats_date"] is formatter
+
+
 def test_vendor_dto_omits_secrets_and_counts_findings(templates):
     user = SimpleNamespace(display_name="Jane", theme="cats", role="admin", password_hash="secret", token="secret")
     service = SimpleNamespace(id=1, service_key="a", name="A", owner="Jane", poc="Jane", token="secret")

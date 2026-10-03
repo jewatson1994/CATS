@@ -1,6 +1,7 @@
 """Explicit page DTOs at the boundary between legacy routes and React."""
 from pathlib import Path
 from collections.abc import Mapping
+from functools import partial
 import json
 from datetime import date, datetime
 
@@ -272,7 +273,15 @@ class ReactTemplates(Jinja2Templates):
             merged = {"request": request, **(context or {})}
             for processor in self.context_processors:
                 merged.update(processor(request))
-            envelope = page_data(request, name, merged, self.env.globals.get("cats_deployed_version"), self.env.globals)
+            formatters = self.env.globals
+            if "_date_configuration" in merged:
+                # Request-local binding: never change shared Jinja globals or
+                # re-read settings for each row's due/last-seen timestamps.
+                formatters = dict(formatters)
+                for key in ("cats_date", "cats_datetime"):
+                    if callable(formatters.get(key)):
+                        formatters[key] = partial(formatters[key], configuration=merged["_date_configuration"])
+            envelope = page_data(request, name, merged, self.env.globals.get("cats_deployed_version"), formatters)
             if wants_json:
                 response = JSONResponse(envelope,
                                         media_type=PAGE_MEDIA_TYPE, **options)

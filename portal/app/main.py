@@ -287,6 +287,9 @@ with migration_transaction(engine) as connection:
         "CREATE INDEX IF NOT EXISTS ix_executions_service_scanned ON executions (service_id, scanned_at)",
         "CREATE INDEX IF NOT EXISTS ix_poam_service_status_due ON poam_entries (service_id, status, due_date)",
         "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_id_id ON finding_observations (finding_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_execution_id ON finding_observations (finding_id, execution_id, id)",
+        "CREATE INDEX IF NOT EXISTS ix_findings_service_active_order ON findings (service_id, active, episode_started, cve, id)",
+        "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active_order ON policy_findings (service_id, active, episode_started, finding, id)",
         "CREATE INDEX IF NOT EXISTS ix_deployment_validation_artifact_revision ON deployment_validation_runs (artifact_revision_id)",
         "CREATE INDEX IF NOT EXISTS ix_exceptions_finding_active ON exceptions (finding_id, revoked_at, starts_at, expires_at)",
         "CREATE INDEX IF NOT EXISTS ix_policy_exceptions_finding_active ON policy_exceptions (policy_finding_id, revoked_at, starts_at, expires_at)",
@@ -1357,8 +1360,8 @@ def configured_time(
         return aware(value).strftime("%d %b %Y, %H:%M UTC" if include_time else "%d %b %Y")
 
 
-templates.env.globals["cats_date"] = lambda value: configured_time(value)
-templates.env.globals["cats_datetime"] = lambda value: configured_time(value, include_time=True)
+templates.env.globals["cats_date"] = lambda value, configuration=None: configured_time(value, configuration=configuration)
+templates.env.globals["cats_datetime"] = lambda value, configuration=None: configured_time(value, include_time=True, configuration=configuration)
 
 
 def check_csrf(auth: AuthContext, supplied: str):
@@ -3600,7 +3603,13 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                                     definition_skipped=definition_skipped, definition_summary=definition_summary,
                                     ingest_service_version=ingest_service_version)
     except HTTPException as exc:
-        return self_service_context(request, "scan", image_list, chart_url, str(exc.detail), auth=auth)
+        scoped = auth.accessible_service_ids("scan.ingest") if auth else set()
+        services = list(db.scalars(select(Service).order_by(Service.name))) if scoped != set() else []
+        if scoped is not None:
+            services = [service for service in services if service.id in scoped]
+        return self_service_context(request, "scan", image_list, chart_url, str(exc.detail), auth=auth,
+                                    services=services, ingest_service_id=ingest_service_id,
+                                    ingest_service_version=ingest_service_version)
     finally:
         close_downloads(chart_archives)
     # Redirect after a successful submission so refreshing the browser only
@@ -6097,10 +6106,10 @@ def _filter_service_finding_groups(groups: dict[str, list], *, query: str = "", 
     resource_needle = resource.strip().casefold()
 
     def keep(item: Any) -> bool:
-        if isinstance(item, Finding):
+        if isinstance(item, Finding) or hasattr(item, "cve"):
             text_value = _finding_search_text(item)
             severity_value = str(item.severity or "").casefold()
-        elif isinstance(item, PolicyFinding):
+        elif isinstance(item, PolicyFinding) or hasattr(item, "finding"):
             text_value = _policy_finding_search_text(item)
             severity_value = str(item.severity or "").casefold()
         elif isinstance(item, dict):
@@ -6178,15 +6187,24 @@ def service_detail(
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True)),
 ):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(
-        selectinload(Service.findings).selectinload(Finding.exceptions),
-        selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
-        selectinload(Service.findings).selectinload(Finding.observations),
-        selectinload(Service.executions),
-        selectinload(Service.archive_events),
-        selectinload(Service.groups),
-        selectinload(Service.images),
-    ))
+    if findings and not findings_view:
+        findings_view = "simplified"
+    if findings_view in {"raw", "simplified"}:
+        simplified = findings_view == "simplified"
+        overview = False
+    narrow_findings = not any((overview, poam, remediations, activity, architecture, artifacts, dependencies, validation))
+    service_query = select(Service).where(Service.service_key == service_key)
+    if not narrow_findings:
+        service_query = service_query.options(
+            selectinload(Service.findings).selectinload(Finding.exceptions),
+            selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
+            selectinload(Service.findings).selectinload(Finding.observations),
+            selectinload(Service.executions),
+            selectinload(Service.archive_events),
+            selectinload(Service.groups),
+            selectinload(Service.images),
+        )
+    service = db.scalar(service_query)
     if not service:
         raise HTTPException(404)
     now = utcnow()
@@ -6203,7 +6221,11 @@ def service_detail(
         simplified = False
         overview = False
     configuration = configuration_for_service(db, service)
-    view = service_view(service, now, configuration)
+    if narrow_findings:
+        from .findings_query import prepare_findings_view
+        view, service, latest_scan = prepare_findings_view(db, service, now, configuration, service_view)
+    else:
+        view = service_view(service, now, configuration)
     latest_scan = max((item for item in service.executions if
                        service.current_version_id is None or item.service_version_id == service.current_version_id),
                       key=lambda item: (aware(item.scanned_at), item.id), default=None)
@@ -6222,7 +6244,7 @@ def service_detail(
     )))
     validation_records = db.scalars(select(DeploymentValidationRun).where(
         DeploymentValidationRun.service_id == service.id,
-    ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
+    ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100 if not narrow_findings else 1)).all()
     latest_validation = deployment_validation_view(validation_records[0]) if validation_records else None
     if validation_records and validation_records[0].status in {"FAILED", "ERROR", "COULD_NOT_VALIDATE", "PARTIALLY_VERIFIED"}:
         failed_run = validation_records[0]
@@ -6509,9 +6531,15 @@ def service_detail(
     severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
     all_policy_items = [*view["policy_findings"], *view["policy_excepted"], *view["policy_resolved"]]
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
-    severity_options = sorted({str(item.severity) for item in [*finding_groups["active"], *finding_groups["exceptions"], *finding_groups["resolved"], *all_policy_items] if isinstance(item, (Finding, PolicyFinding)) and item.severity}, key=lambda value: (severity_order.get(value.casefold(), 4), value.casefold()))
-    finding_groups = _filter_service_finding_groups(finding_groups, query=q, severities=severity, resource=resource)
-    policy_groups = _filter_service_finding_groups({
+    severity_options = sorted({str(item.severity) for item in [*finding_groups["active"], *finding_groups["exceptions"], *finding_groups["resolved"], *all_policy_items] if getattr(item, "severity", None)}, key=lambda value: (severity_order.get(value.casefold(), 4), value.casefold()))
+    requested_page = page
+    sql_page = narrow_findings and not simplified and finding_state in {"active", "exceptions", "resolved"}
+    if narrow_findings and simplified and (q.strip() or resource.strip()):
+        from .findings_query import load_filter_support
+        load_filter_support(db, service.id, finding_groups["active"])
+    if not sql_page:
+        finding_groups = _filter_service_finding_groups(finding_groups, query=q, severities=severity, resource=resource)
+    policy_groups = {} if sql_page else _filter_service_finding_groups({
         "active": [*view["policy_findings"], *view["policy_noncompliant"]] if findings_view == "raw" else view["policy_findings"], "exceptions": view["policy_excepted"], "resolved": view["policy_resolved"],
     }, query=q, severities=severity, resource=resource)
     selected_findings_view = "simplified" if simplified else "raw"
@@ -6543,6 +6571,7 @@ def service_detail(
         displayed_warning_items = all_items[page_start:page_start + page_size]
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service.html", page_context(auth,
+            _date_configuration=configuration,
             remediation_enabled=remediation_enabled(db),
             view=view, history_versions=history_version_choices(db, service), findings=[], affected_images={}, policy_findings=[], noncompliance_items=[],
             warning_items=displayed_warning_items, now=now, active_exception=active_exception,
@@ -6553,7 +6582,7 @@ def service_detail(
             query=q, resource=resource, severity=severity, severity_options=severity_options,
             pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view=selected_findings_view,
         ))
-    all_findings = sorted(finding_groups[finding_state], key=lambda finding: (aware(finding.episode_started), finding.cve))
+    all_findings = [] if sql_page else sorted(finding_groups[finding_state], key=lambda finding: (aware(finding.episode_started), finding.cve))
     policy_items = policy_groups.get(finding_state, [])
     mixed_state = finding_state in {"active", "exceptions", "resolved"}
     if mixed_state:
@@ -6568,7 +6597,7 @@ def service_detail(
         all_items = view["noncompliance_items"] if finding_state in {"noncompliant", "overdue"} else all_findings
         all_items = _filter_service_finding_groups({"items": all_items}, query=q, severities=severity, resource=resource)["items"]
         if finding_type != "all":
-            item_type = {"evidence": "Evidence", "configuration": "Configuration", "vulnerability": "CVE"}[finding_type]
+            item_type = {"evidence": "Evidence", "configuration": "Configuration", "vulnerability": "CVE", "watchlist": "Dependency Watchlist"}[finding_type]
             all_items = [item for item in all_items if (item.get("type") if isinstance(item, dict) else "CVE") == item_type]
         total_items = len(all_items)
     total_pages = max(1, (total_items + page_size - 1) // page_size)
@@ -6583,6 +6612,14 @@ def service_detail(
         displayed_items = all_items[page_start:page_start + page_size]
         findings = [] if finding_state in {"noncompliant", "overdue"} else displayed_items
         displayed_policy_findings = []
+    if sql_page:
+        from .findings_sql import get_raw_finding_page
+        result = get_raw_finding_page(db, service.id, view, now, state=finding_state,
+            finding_type=finding_type, severities=severity, query=q, resource=resource,
+            page=requested_page, page_size=page_size, raw_selector=findings_view == "raw")
+        findings, displayed_policy_findings = result["findings"], result["policy_findings"]
+        total_items, total_pages, page = result["total_items"], result["total_pages"], result["page"]
+        displayed_items = findings
     latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
     if overview:
         raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
@@ -6625,6 +6662,9 @@ def service_detail(
             groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
     if simplified:
+        if narrow_findings:
+            from .findings_query import load_simplified_support
+            load_simplified_support(db, service.id, finding_groups["active"], latest_execution)
         simplified_groups = {}
         for finding in finding_groups["active"]:
             observations = [o for o in finding.observations if latest_execution and o.execution_id == latest_execution.id]
@@ -6667,6 +6707,7 @@ def service_detail(
         groups = db.scalars(select(Group).order_by(Group.name)).all()
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_simplified.html", page_context(auth,
+            _date_configuration=configuration,
             view=view, history_versions=history_version_choices(db, service), simplified_findings=simplified_findings, now=now, finding_type=finding_type, archive_pending=archive_pending, groups=groups,
             query=q, resource=resource, severity=severity, severity_options=severity_options,
             pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view=selected_findings_view,
@@ -6676,8 +6717,12 @@ def service_detail(
     affected_images = {}
     image_finding_ids = {finding.id for finding in findings}
     image_finding_ids.update(item["finding_id"] for item in displayed_items if isinstance(item, dict) and item.get("finding_id"))
+    if narrow_findings:
+        from .findings_query import load_page_support
+        affected_images = load_page_support(db, service.id,
+            [item for item in service.findings if item.id in image_finding_ids], latest_execution)
     for finding in service.findings:
-        if finding.id not in image_finding_ids:
+        if narrow_findings or finding.id not in image_finding_ids:
             continue
         if finding.active and latest_execution:
             observations = [
@@ -6700,6 +6745,7 @@ def service_detail(
     remediation_classes = {item.id: classify_policy_finding(item, latest_payload) for item in displayed_policy_findings}
     from .exchange_routes import history_version_choices
     return templates.TemplateResponse(request, "service.html", page_context(auth,
+        _date_configuration=configuration,
         remediation_enabled=remediation_enabled(db),
         view=view, history_versions=history_version_choices(db, service), findings=findings, affected_images=affected_images,
         policy_findings=displayed_policy_findings,
