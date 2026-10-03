@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { requestJson, type PageData } from '../api';
+import { PAGE_MEDIA_TYPE, requestJson, type PageData, type PageEnvelope } from '../api';
 import { useJob, type JobState } from '../hooks/useJob';
 
 interface ScanJob extends JobState {
@@ -24,20 +24,45 @@ const ingestRequests = new Map<string, Promise<unknown>>();
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Please retry.';
 
 export function Page({ data: pageData }: { data: PageData }) {
-  const data = pageData as SelfServiceData;
-  const scope = JSON.stringify([data.mode, data.job_id, data.ingest_service_id, data.ingest_service_version]);
-  return <Workspace key={scope} data={data} scope={scope} />;
+  return <Workspace initial={pageData as SelfServiceData} />;
 }
-function Workspace({ data, scope }: { data: SelfServiceData; scope: string }) {
+function Workspace({ initial }: { initial: SelfServiceData }) {
+  const [data, setData] = useState(initial);
+  useEffect(() => { setData(initial); }, [initial]);
+  const scope = JSON.stringify([data.mode, data.job_id, data.ingest_service_id, data.ingest_service_version]);
   const sbom = data.mode === 'sbom';
   const [service, setService] = useState(data.ingest_service_id || '');
   const [version, setVersion] = useState(data.ingest_service_version || '');
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const submission = useRef<AbortController | null>(null);
+  useEffect(() => () => submission.current?.abort(), []);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    submission.current?.abort();
+    const controller = new AbortController();
+    submission.current = controller;
+    setSubmitting(true); setSubmitError('');
+    try {
+      const response = await requestJson<PageEnvelope>(`/${data.mode}`, {
+        method: 'POST', body: new FormData(event.currentTarget), signal: controller.signal,
+        headers: { Accept: PAGE_MEDIA_TYPE },
+      });
+      if (controller.signal.aborted) return;
+      if (response.page !== 'self_service') throw new Error('Unable to start scan. Please retry.');
+      setData(response.data as SelfServiceData);
+    } catch (reason) {
+      if (!controller.signal.aborted) setSubmitError(errorMessage(reason));
+    } finally {
+      if (!controller.signal.aborted) setSubmitting(false);
+    }
+  }
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState('');
   const [ingestState, setIngestState] = useState<'idle' | 'pending' | 'complete' | 'error'>('idle');
   const [ingestError, setIngestError] = useState('');
   const [ingestRetry, setIngestRetry] = useState(0);
+  useEffect(() => { setIngestState('idle'); setIngestError(''); setCancelError(''); }, [scope]);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const base = data.job_id ? `/api/public/jobs/${encodeURIComponent(data.job_id)}` : null;
@@ -48,6 +73,20 @@ function Workspace({ data, scope }: { data: SelfServiceData; scope: string }) {
   const terminal = ['complete', 'incomplete', 'error', 'cancelled'].includes(status);
   const resultsReady = ['complete', 'incomplete'].includes(status);
   const ingestTarget = data.ingest_service_id;
+  useEffect(() => {
+    if (sbom || !base || !terminal || submitting) return;
+    const controller = new AbortController();
+    requestJson<PageEnvelope>('/scan', {signal: controller.signal, headers: {Accept: PAGE_MEDIA_TYPE}})
+      .then(response => {
+        if (controller.signal.aborted || response.page !== 'self_service') return;
+        setData(previous => ({...previous,
+          authenticated_ingest: response.data.authenticated_ingest,
+          authenticated_services: response.data.authenticated_services,
+          service_version_options: response.data.service_version_options,
+        }));
+      }).catch(() => { /* Retain the last known targets if refresh is unavailable. */ });
+    return () => controller.abort();
+  }, [sbom, base, terminal, submitting]);
   useEffect(() => {
     if (sbom || !base || !resultsReady || !ingestTarget) return;
     let active = true;
@@ -83,7 +122,7 @@ function Workspace({ data, scope }: { data: SelfServiceData; scope: string }) {
     <section className="self-service-panel panel">
       <h2>{sbom ? 'SBOM generator' : 'Public scan inputs'}</h2>
       <p className="muted">{sbom ? 'Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.' : 'Provide public images, a Helm chart archive, or both. Results are temporary and are not attached to a portal service.'}</p>
-      <form className="self-service-form" method="post" action={`/${data.mode}`} encType="multipart/form-data" onSubmit={() => setSubmitting(true)}>
+      <form className="self-service-form" method="post" action={`/${data.mode}`} encType="multipart/form-data" onSubmit={submit}>
         {data.csrf_token && <input type="hidden" name="csrf_token" value={data.csrf_token} />}
         <label htmlFor="image-list">Images</label><textarea id="image-list" name="image_list" rows={10} defaultValue={data.image_list || ''} placeholder={'docker.io/library/nginx:1.27\nghcr.io/example/app:latest'} />
         <label htmlFor="image-archive">Local Docker image archive <span className="muted">(optional .tar/.tar.gz/.tgz; may contain multiple tagged images)</span></label><input id="image-archive" name="image_archive" type="file" accept=".tar,.tar.gz,.tgz" />
@@ -100,6 +139,7 @@ function Workspace({ data, scope }: { data: SelfServiceData; scope: string }) {
         {sbom && <fieldset className="sbom-options"><legend>Output formats</legend><p className="muted">Select one or more. CATS inventories each image once, then serializes that inventory into every selected format.</p><div className="sbom-format-grid">{Object.entries(data.sbom_output_formats || {}).map(([value, label]) => <label key={value}><input type="checkbox" name="sbom_formats" value={value} defaultChecked={data.selected_sbom_formats?.includes(value)} /> <span>{label}</span></label>)}</div><label htmlFor="cyclonedx-spec-version">CycloneDX specification version<select id="cyclonedx-spec-version" name="cyclonedx_spec_version" defaultValue={data.cyclonedx_spec_version}>{data.cyclonedx_spec_versions?.map(value => <option key={value} value={value}>{value}</option>)}</select></label></fieldset>}
         <div className="self-service-actions"><button type="submit" disabled={submitting} aria-busy={submitting}>{submitting ? sbom ? 'Generating…' : 'Starting scan…' : sbom ? 'Generate SBOM' : 'Start scan'}</button>{data.current_user ? <span className="muted">Signed in as {data.current_user.display_name}</span> : !sbom && <a className="secondary-button" href="/login?next=/scan">Use authenticated mode</a>}</div>
       </form>
+      {submitError && <p role="alert">{submitError}</p>}
       {base ? <div className="scan-progress">
         <div className="scan-pipeline" aria-label={`${sbom ? 'SBOM generation' : 'Scan'} pipeline`}>{data.progress_phases.map(([step, label]) => {
           const index = data.progress_order.indexOf(step);

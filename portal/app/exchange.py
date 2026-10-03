@@ -103,8 +103,11 @@ def version_of(execution):
 
 
 def versions(db, service):
-    executions = db.scalars(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
-    return list(dict.fromkeys(version_of(item) for item in executions)) or [service.manual_version or "Unknown"]
+    # Version menus need only the version scalar, not every retained scan payload.
+    values = db.scalars(select(Execution.raw_payload["service"]["version"]).where(
+        Execution.service_id == service.id
+    ).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
+    return list(dict.fromkeys(str(value or "Unknown") for value in values)) or [service.manual_version or "Unknown"]
 
 
 def selected_evidence(db, service, version):
