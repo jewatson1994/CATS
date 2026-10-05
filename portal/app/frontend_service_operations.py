@@ -115,7 +115,7 @@ def public_reference(value):
 def project_service_operations(template_name, context):
     data = {}
     if template_name == "service_dependencies.html":
-        keys = ("dependency_rows", "dependency_total", "dependency_all_total", "dependency_page", "dependency_pages", "dependency_page_url", "dependency_types", "dependency_images", "dependency_query", "dependency_artifacts", "vulnerable_components", "critical_components", "kev_components", "fixed_components", "license_unknown_components", "watchlisted_components", "history_versions")
+        keys = ("dependency_projection_status", "dependency_projection_error", "dependency_rows", "dependency_total", "dependency_all_total", "dependency_page", "dependency_pages", "dependency_page_url", "dependency_types", "dependency_images", "dependency_query", "dependency_artifacts", "vulnerable_components", "critical_components", "kev_components", "fixed_components", "license_unknown_components", "watchlisted_components", "history_versions")
         data.update(fields(context, keys))
         row_names = ("name", "version", "type", "license_expression", "license_declared", "license_detected", "image", "vulnerabilities", "severity", "kev", "epss", "fixed_versions", "watchlisted", "purl", "cpe", "supplier", "author", "architecture", "hashes", "copyright", "license_source", "image_digest", "sbom", "location", "origin", "severity_counts", "risk", "dependency_parents", "dependency_children")
         data["dependency_query"] = fields(context.get("dependency_query", {}), ("q", "type", "image", "license", "filter", "epss"))

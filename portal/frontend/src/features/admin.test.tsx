@@ -63,10 +63,10 @@ describe('native administration workflows', () => {
   });
   it('renders audit scope, formatted dates and older/collapse links', () => {
     render(<Audit data={{...permissions, configuration: {audit_retention_days: 30, log_level: 'WARNING'}, groups: [{id: 4, name: 'Team'}], selected_group_id: 4,
-      shown_count: 20, retained_count: 70, next_show: 70, events: [{id: 1, created_at: 'Display date', actor: 'jane', action: 'user.created', target_type: 'user', target_id: 2, detail: {username: 'pat'}}]}}/>);
+      shown_count: 20, retained_count: 70, page: 2, page_count: 4, pagination_base: '/admin/audit?group_id=4&page_size=20', events: [{id: 1, created_at: 'Display date', actor: 'jane', action: 'user.created', target_type: 'user', target_id: 2, detail: {username: 'pat'}}]}}/>);
     expect(screen.getByRole('button', {name: 'Save audit policy'}).closest('form')).toHaveAttribute('action', '/admin/audit-policy?group_id=4');
-    expect(screen.getByRole('link', {name: 'Show older events'})).toHaveAttribute('href', '/admin/audit?show=70&group_id=4');
-    expect(screen.getByRole('link', {name: 'Collapse to latest 10'})).toHaveAttribute('href', '/admin/audit?group_id=4');
+    expect(screen.getByRole('link', {name: 'Show older events'})).toHaveAttribute('href', '/admin/audit?group_id=4&page_size=20&page=3');
+    expect(screen.getByRole('link', {name: 'Newer events'})).toHaveAttribute('href', '/admin/audit?group_id=4&page_size=20&page=1');
     expect(screen.getByText('Display date')).toBeInTheDocument();
   });
   it('keeps editor credentials blank and preserves forms and unsaved inputs through search', () => {

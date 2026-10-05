@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, JSON, String, Text, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .recursive_json import JSONDict
 
 
 def utcnow():
@@ -126,10 +127,40 @@ class Execution(Base):
     pipeline_url: Mapped[str | None] = mapped_column(Text)
     commit_sha: Mapped[str | None] = mapped_column(String(80))
     scanner_db_built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    raw_payload: Mapped[dict] = mapped_column(JSON)
+    raw_payload: Mapped[dict] = mapped_column(JSONDict.as_mutable(JSON))
+    payload_digest: Mapped[str | None] = mapped_column(String(64))
     service: Mapped["Service"] = relationship(back_populates="executions")
     service_version: Mapped["ServiceVersion | None"] = relationship(back_populates="executions")
     deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="execution")
+
+
+class DependencyProjection(Base):
+    """Disposable derived evidence, keyed by every input to dependency_rows."""
+    __tablename__ = "dependency_projections"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="ready", server_default="ready")
+    build_token: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class DependencyProjectionRow(Base):
+    __tablename__ = "dependency_projection_rows"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    search_text: Mapped[str] = mapped_column(Text)
+    license_text: Mapped[str] = mapped_column(Text)
+    component_type: Mapped[str] = mapped_column(Text)
+    image: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(Text)
+    epss: Mapped[float | None] = mapped_column(Float)
+    vulnerable: Mapped[bool] = mapped_column(Boolean)
+    kev: Mapped[bool] = mapped_column(Boolean)
+    fixed: Mapped[bool] = mapped_column(Boolean)
+    watchlisted: Mapped[bool] = mapped_column(Boolean)
+    license_unknown: Mapped[bool] = mapped_column(Boolean)
 
 
 class DeploymentValidationRun(Base):
@@ -332,6 +363,9 @@ class Finding(Base):
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
     cve: Mapped[str] = mapped_column(String(80), index=True)
     severity: Mapped[str] = mapped_column(String(30))
+    severity_folded: Mapped[str | None] = mapped_column(String(80))
+    cve_normalized: Mapped[str | None] = mapped_column(String(160))
+    search_folded: Mapped[str | None] = mapped_column(Text)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     episode_started: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -345,6 +379,7 @@ class Finding(Base):
 
 class FindingObservation(Base):
     __tablename__ = "finding_observations"
+    __table_args__ = (Index('ix_obs_finding_execution_id', 'finding_id', 'execution_id', 'id'),)
     id: Mapped[int] = mapped_column(primary_key=True)
     finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
     execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id"), index=True)
@@ -353,7 +388,14 @@ class FindingObservation(Base):
     package: Mapped[str | None] = mapped_column(String(300))
     installed_version: Mapped[str | None] = mapped_column(String(200))
     fixed_version: Mapped[str | None] = mapped_column(String(200))
-    evidence: Mapped[dict] = mapped_column(JSON)
+    evidence: Mapped[dict] = mapped_column(JSONDict.as_mutable(JSON))
+    simplified_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    simplified_package: Mapped[str | None] = mapped_column(Text)
+    simplified_remediation: Mapped[str | None] = mapped_column(Text)
+    simplified_fixed: Mapped[str | None] = mapped_column(Text)
+    simplified_package_sort: Mapped[str | None] = mapped_column(Text)
+    simplified_fixed_sort: Mapped[str | None] = mapped_column(Text)
+    search_folded: Mapped[str | None] = mapped_column(Text)
     finding: Mapped["Finding"] = relationship(back_populates="observations")
 
 
@@ -379,6 +421,8 @@ class PolicyFinding(Base):
     identity_key: Mapped[str] = mapped_column(String(64), index=True)
     finding: Mapped[str] = mapped_column(String(120), index=True)
     severity: Mapped[str] = mapped_column(String(30), default="Unknown")
+    severity_folded: Mapped[str | None] = mapped_column(String(80))
+    search_folded: Mapped[str | None] = mapped_column(Text)
     scanner: Mapped[str | None] = mapped_column(String(120))
     framework: Mapped[str | None] = mapped_column(String(240))
     target: Mapped[str | None] = mapped_column(Text)
@@ -678,3 +722,13 @@ class ServiceTransferProvenance(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
     detail: Mapped[dict] = mapped_column(JSON)
+
+
+class ExecutionSummary(Base):
+    """Derived scan counts; immutable evidence remains authoritative."""
+    __tablename__ = "execution_summaries"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    summary_version: Mapped[int] = mapped_column(Integer)
+    source_complete: Mapped[bool] = mapped_column(Boolean)
+    data: Mapped[dict] = mapped_column(JSON)

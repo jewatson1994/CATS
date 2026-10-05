@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 import re
 import logging
 import secrets
@@ -46,6 +47,12 @@ from openpyxl.utils import get_column_letter
 import yaml
 
 from .database import Base, engine, get_db, SessionLocal
+from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
+from .execution_summaries import install_execution_summary_hooks
+install_sqlalchemy_diagnostics(engine, SessionLocal.class_)
+install_execution_summary_hooks(SessionLocal.class_)
+from .simplified_queries import upgrade_projection
+from . import dependency_queries
 from .helm_sources import normalize_chart_reference, oci_pull_arguments
 from .helm_archives import extract_chart, compressed_limit
 from .helm_downloads import DownloadedChart, copy_bounded, close_downloads, check_space
@@ -109,6 +116,10 @@ from .preview_cleanup import preview_cleanup_lifespan
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection)
     upgrade_connection(connection)
+    upgrade_projection(connection)
+    dependency_queries.upgrade_dependency_schema(connection)
+    if "payload_digest" not in {column["name"] for column in inspect(connection).get_columns("executions")}:
+        connection.execute(text("ALTER TABLE executions ADD COLUMN payload_digest VARCHAR(64)"))
     if "current_version_id" not in {column["name"] for column in inspect(connection).get_columns("services")}:
         connection.execute(text("ALTER TABLE services ADD COLUMN current_version_id INTEGER REFERENCES service_versions(id)"))
     if "service_version_id" not in {column["name"] for column in inspect(connection).get_columns("executions")}:
@@ -307,6 +318,7 @@ async def app_lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
+app.add_middleware(PerformanceMiddleware)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
 app.include_router(service_oci.router)
@@ -898,16 +910,18 @@ def sync_policy_findings(db: Session, service: Service, items, scanned_at: datet
 def backfill_policy_findings() -> None:
     """Materialize the latest legacy JSON policy findings without changing evidence."""
     with SessionLocal() as db:
-        services = db.scalars(select(Service).options(selectinload(Service.executions))).all()
+        latest_id = select(Execution.id).where(Execution.service_id == Service.id).order_by(
+            Execution.scanned_at.desc(), Execution.id.desc()).limit(1).correlate(Service).scalar_subquery()
+        services = db.execute(select(Service.id, latest_id.label("execution_id"))).all()
         changed = False
-        for service in services:
-            latest = max(service.executions, key=lambda value: aware(value.scanned_at), default=None)
-            if not latest:
-                continue
-            items = latest.raw_payload.get("policy_findings", []) if isinstance(latest.raw_payload, dict) else []
-            if items:
-                sync_policy_findings(db, service, items, latest.scanned_at, complete=False)
-                changed = True
+        for offset in range(0, len(services), 32):
+            ids = [row.execution_id for row in services[offset:offset + 32] if row.execution_id]
+            for latest in db.scalars(select(Execution).where(Execution.id.in_(ids))):
+                items = latest.raw_payload.get("policy_findings", []) if isinstance(latest.raw_payload, dict) else []
+                if items:
+                    sync_policy_findings(db, SimpleNamespace(id=latest.service_id), items, latest.scanned_at, complete=False)
+                    changed = True
+            db.flush()
         if changed:
             db.commit()
 
@@ -1427,6 +1441,7 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     warning_days = max(1, int(configuration.get("warning_days", "14")))
     active_all = [f for f in service.findings if f.active]
     resolved = [f for f in service.findings if not f.active]
+    vulnerability_exceptions = {f.id: active_exception(f, now) for f in active_all}
     try:
         raw_due_rules = json.loads(configuration.get("raw_due_rules", "[]"))
     except (TypeError, ValueError):
@@ -1435,11 +1450,11 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     def due_days_for(finding):
         return raw_due_by_severity.get(finding.severity.lower(), overdue_days) if configuration.get("compliance_mode") == "raw" else overdue_days
     due_dates = {f.id: aware(f.episode_started) + timedelta(days=due_days_for(f)) for f in active_all}
-    overdue = [f for f in active_all if now >= due_dates[f.id] and not active_exception(f, now)]
+    overdue = [f for f in active_all if now >= due_dates[f.id] and not vulnerability_exceptions[f.id]]
     warning_items = []
     warning_cutoff = now + timedelta(days=warning_days)
     for finding in active_all:
-        exception = active_exception(finding, now)
+        exception = vulnerability_exceptions[finding.id]
         due_date = due_dates[finding.id]
         if not exception and now < due_date <= warning_cutoff:
             warning_items.append({"type": "CVE", "item": finding.cve, "reason": "Due date approaching", "due": due_date,
@@ -1463,14 +1478,16 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     }
 
 
-    policy_excepted = [finding for finding in policy_active_all if active_exception(finding, now)]
+    policy_exceptions = {finding.id: active_exception(finding, now) for finding in policy_active_all}
+    policy_excepted = [finding for finding in policy_active_all if policy_exceptions[finding.id]]
     policy_noncompliant = [
         finding for finding in policy_active_all
-        if hardening_noncompliant and not active_exception(finding, now) and now >= policy_due_dates[finding.id]
+        if hardening_noncompliant and not policy_exceptions[finding.id] and now >= policy_due_dates[finding.id]
     ]
+    policy_noncompliant_ids = {finding.id for finding in policy_noncompliant}
     policy_findings = [
         finding for finding in policy_active_all
-        if not active_exception(finding, now) and finding not in policy_noncompliant
+        if not policy_exceptions[finding.id] and finding.id not in policy_noncompliant_ids
     ]
     policy_resolved = [finding for finding in service.policy_findings if not finding.active]
     poam_active = [entry for entry in service.poam_entries if entry.status == "active"]
@@ -1506,7 +1523,7 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         risk_findings.update(
             finding.id for finding in active_all
             if finding.id in severity_matches and now >= due_dates[finding.id]
-            and not active_exception(finding, now)
+            and not vulnerability_exceptions[finding.id]
         )
     for finding in active_all:
         observation = max(finding.observations, key=lambda item: item.id, default=None)
@@ -1520,9 +1537,9 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         risk_metadata_by_finding[finding.id] = {"kev": kev, "epss": epss}
         if compliance_mode != "raw" and configuration.get("kev_enabled") == "true" and kev:
             risk_eligible.add(finding.id)
-            if configuration.get("kev_noncompliant") == "true" and now >= due_dates[finding.id] and not active_exception(finding, now):
+            if configuration.get("kev_noncompliant") == "true" and now >= due_dates[finding.id] and not vulnerability_exceptions[finding.id]:
                 risk_findings.add(finding.id)
-        if compliance_mode != "raw" and configuration.get("epss_enabled") == "true" and epss is not None and now >= due_dates[finding.id] and not active_exception(finding, now):
+        if compliance_mode != "raw" and configuration.get("epss_enabled") == "true" and epss is not None and now >= due_dates[finding.id] and not vulnerability_exceptions[finding.id]:
             for rule in epss_rules:
                 severity = str(rule.get("severity", "Any")).lower()
                 threshold = float(rule.get("threshold", 1))
@@ -1538,11 +1555,11 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
                 if severity in {"any", finding.severity.lower()} and epss >= threshold:
                     risk_eligible.add(finding.id)
                     break
-    excepted = [f for f in active_all if f.id in risk_eligible and active_exception(f, now)]
+    excepted = [f for f in active_all if f.id in risk_eligible and vulnerability_exceptions[f.id]]
     active = [
         finding for finding in active_all
         if finding.id in risk_eligible and finding.id not in risk_findings
-        and not active_exception(finding, now)
+        and not vulnerability_exceptions[finding.id]
     ]
     eligible_cves = {finding.cve for finding in active_all if finding.id in risk_eligible}
     warning_items = [
@@ -1563,7 +1580,7 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         warning_items.append({"type": "Evidence", "item": "Incomplete evidence", "reason": "Latest assessment is incomplete", "due": None,
                               "href": f"/services/{service.service_key}?overview=true"})
     evidence_noncompliant = bool(incomplete and configuration.get("incomplete_noncompliant") == "true")
-    noncompliant = [finding for finding in active_all if finding.id in risk_findings and not active_exception(finding, now)]
+    noncompliant = [finding for finding in active_all if finding.id in risk_findings and not vulnerability_exceptions[finding.id]]
     noncompliance_items = [
         {
             "type": "CVE",
@@ -1878,14 +1895,18 @@ def service_overview_rows_detailed(
     return rows, poam_counts
 
 
-def _overview_services_and_configurations(db: Session, auth: AuthContext, configuration: dict[str, str]):
+def _overview_services_and_configurations(db: Session, auth: AuthContext, configuration: dict[str, str], *, projected: bool = False):
     allowed = auth.accessible_service_ids("service.view")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
-    query = select(Service).order_by(Service.name, Service.service_key)
+    columns = (Service.id, Service.name, Service.service_key, Service.owner, Service.poc,
+               Service.manual_version, Service.lifecycle_status)
+    query = select(*columns) if projected else select(Service)
+    query = query.order_by(Service.name, Service.service_key)
     if allowed is not None:
         query = query.where(Service.id.in_(allowed))
-    services = list(db.scalars(query))
+    services = ([SimpleNamespace(**row._mapping) for row in db.execute(query)]
+                if projected else list(db.scalars(query)))
     service_ids = [service.id for service in services]
     groups_by_service: dict[int, list[int]] = {}
     group_ids: set[int] = set()
@@ -1927,17 +1948,30 @@ def _raw_due_groups(configurations: dict[int, dict[str, str]], now: datetime):
 
 def _raw_overdue_expression(model, configurations: dict[int, dict[str, str]], now: datetime):
     parts = []
-    for (default_days, due_by_severity), service_ids in _raw_due_groups(configurations, now).items():
+    grouped = {}
+    for service_id, cfg in configurations.items():
+        default_days = max(1, int(cfg.get("overdue_days", "90")))
+        due_by_severity = {}
+        if cfg.get("compliance_mode") == "raw":
+            try:
+                rules = json.loads(cfg.get("raw_due_rules", "[]"))
+            except (TypeError, ValueError):
+                rules = []
+            for rule in rules:
+                due_by_severity[str(rule.get("severity", "")).lower()] = max(1, int(rule.get("days", default_days)))
+        grouped.setdefault((default_days, tuple(sorted(due_by_severity.items()))), []).append(service_id)
+    severity_value = func.lower(model.severity)
+    for (default_days, due_by_severity), service_ids in grouped.items():
         known = []
         for severity, days in due_by_severity:
             known.append(severity)
             parts.append(and_(
-                model.service_id.in_(service_ids), model.severity == severity,
+                model.service_id.in_(service_ids), severity_value == severity,
                 model.episode_started <= now - timedelta(days=days),
             ))
         parts.append(and_(
             model.service_id.in_(service_ids),
-            (~model.severity.in_(known) if known else true()),
+            (or_(~severity_value.in_(known), model.severity.is_(None)) if known else true()),
             model.episode_started <= now - timedelta(days=default_days),
         ))
     return or_(*parts) if parts else false()
@@ -1968,14 +2002,19 @@ def _risk_finding_expressions(
     predicates; observation evidence remains JSON-native in PostgreSQL and
     SQLite.
     """
+    from .risk_sql import evidence_score, evidence_truth, key_present
     eligible_parts = []
     noncompliant_parts = []
     needs_observations = False
     catalog_kev = kev_cves()
     catalog_epss = epss_scores()
     severity_rank = {"unknown": 0, "negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
+    severity_value = func.lower(Finding.severity)
+    severity_order = case(*((severity_value == name, rank) for name, rank in severity_rank.items()), else_=0)
+    cve_key = func.upper(func.trim(Finding.cve))
+    evidence = FindingObservation.evidence
     for service_id, cfg in configurations.items():
-        if cfg.get("compliance_mode", "raw") == "raw":
+        if cfg.get("compliance_mode", "risk_based") == "raw":
             eligible_parts.append(Finding.service_id == service_id)
             noncompliant_parts.append(and_(Finding.service_id == service_id, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
             continue
@@ -1984,20 +2023,15 @@ def _risk_finding_expressions(
         noncompliant = []
         minimum = str(cfg.get("minimum_severity", "None")).lower()
         if minimum in severity_rank:
-            severity_values = [name for name, rank in severity_rank.items() if rank >= severity_rank[minimum]]
-            if severity_values:
-                match = Finding.severity.in_(severity_values)
-                eligible.append(match)
-                noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
+            match = severity_order >= severity_rank[minimum]
+            eligible.append(match)
+            noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
         if cfg.get("kev_enabled") == "true":
             needs_observations = True
             kev_match = []
             if catalog_kev:
-                kev_match.append(Finding.cve.in_(catalog_kev))
-            kev_match.extend((
-                FindingObservation.evidence["kev"].as_boolean().is_(True),
-                FindingObservation.evidence["known_exploited"].as_boolean().is_(True),
-            ))
+                kev_match.append(cve_key.in_(catalog_kev))
+            kev_match.append(evidence_truth(evidence))
             if kev_match:
                 match = or_(*kev_match)
                 eligible.append(match)
@@ -2018,19 +2052,20 @@ def _risk_finding_expressions(
                 except (TypeError, ValueError):
                     threshold = 1.0
                 severity = str(rule.get("severity", "Any")).lower()
-                severity_match = severity in {"any", ""} or Finding.severity == severity
+                severity_match = true() if severity == "any" else severity_value == severity
                 catalog_match = {cve for cve, score in catalog_epss.items() if score >= threshold}
-                score_match = [
-                    FindingObservation.evidence["epss"].as_float() >= threshold,
-                    FindingObservation.evidence["epss_score"].as_float() >= threshold,
-                ]
-                if catalog_match:
-                    score_match.append(Finding.cve.in_(catalog_match))
-                match = and_(severity_match, or_(*score_match), ~prior_match)
+                has_score = or_(key_present(evidence, "epss"), key_present(evidence, "epss_score"))
+                explicit_match = func.coalesce(evidence_score(evidence) >= threshold, false())
+                catalog_matches = (cve_key.in_(catalog_match) if catalog_match else false())
+                if threshold <= 0:
+                    nonzero_catalog = {cve for cve, score in catalog_epss.items() if score < threshold}
+                    catalog_matches = ~cve_key.in_(nonzero_catalog) if nonzero_catalog else true()
+                score_match = or_(and_(has_score, explicit_match), and_(~func.coalesce(has_score, false()), catalog_matches))
+                match = and_(severity_match, score_match, ~prior_match)
                 eligible.append(match)
                 if bool(rule.get("noncompliant", True)):
                     noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
-                prior_match = or_(prior_match, and_(severity_match, or_(*score_match)))
+                prior_match = or_(prior_match, and_(severity_match, score_match))
         if eligible:
             eligible_parts.append(and_(service_scope, or_(*eligible)))
         if noncompliant:
@@ -2052,23 +2087,23 @@ def service_overview_rows_aggregated(
     risk-overlay comparisons, and oldest-finding calculation.  This keeps
     page cost tied to the number of services rather than finding history.
     """
+    from .execution_summaries import CountOnly, load_execution_summaries
     if services is None or configurations is None:
         services, configurations = _overview_services_and_configurations(db, auth, configuration)
     if not services:
         return [], {}
     service_ids = [service.id for service in services]
-    latest_execution_time = (
-        select(Execution.service_id, func.max(Execution.scanned_at).label("latest_scanned_at"))
-        .where(Execution.service_id.in_(service_ids)).group_by(Execution.service_id).subquery()
-    )
+    latest_execution_time = select(Execution.id, func.row_number().over(
+        partition_by=Execution.service_id,
+        order_by=(Execution.scanned_at.desc(), Execution.id.desc()),
+    ).label("position")).where(Execution.service_id.in_(service_ids)).subquery()
     latest_by_service = {
         row.service_id: row for row in db.execute(select(
-            Execution.service_id, Execution.scanned_at, Execution.complete, Execution.raw_payload,
-        ).join(latest_execution_time, and_(
-            Execution.service_id == latest_execution_time.c.service_id,
-            Execution.scanned_at == latest_execution_time.c.latest_scanned_at,
-        )))
+            Execution.id, Execution.service_id, Execution.scanned_at, Execution.complete,
+        ).join(latest_execution_time, Execution.id == latest_execution_time.c.id)
+        .where(latest_execution_time.c.position == 1))
     }
+    execution_summaries = load_execution_summaries(db, [row.id for row in latest_by_service.values()])
     finding_exception = select(ExceptionRecord.id).where(
         ExceptionRecord.finding_id == Finding.id,
         ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
@@ -2109,10 +2144,13 @@ def service_overview_rows_aggregated(
         ).where(PolicyFinding.service_id.in_(service_ids), PolicyFinding.active.is_(True)).group_by(PolicyFinding.service_id))
     }
     archive_by_service: dict[int, str] = {}
-    for row in db.execute(select(
-        ServiceArchiveEvent.service_id, ServiceArchiveEvent.action,
-    ).where(ServiceArchiveEvent.service_id.in_(service_ids)).order_by(ServiceArchiveEvent.created_at.desc())):
-        archive_by_service.setdefault(row.service_id, row.action)
+    latest_archive = select(ServiceArchiveEvent.service_id, ServiceArchiveEvent.action,
+        func.row_number().over(partition_by=ServiceArchiveEvent.service_id,
+            order_by=(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc())).label("position")
+    ).where(ServiceArchiveEvent.service_id.in_(service_ids)).subquery()
+    for row in db.execute(select(latest_archive.c.service_id, latest_archive.c.action)
+            .where(latest_archive.c.position == 1)):
+        archive_by_service[row.service_id] = row.action
     poam_counts: dict[int, dict[str, int]] = {}
     for row in db.execute(select(
         PoamEntry.service_id, PoamEntry.status, func.count(PoamEntry.id),
@@ -2122,11 +2160,11 @@ def service_overview_rows_aggregated(
             counts["active"] += int(row[2] or 0)
         elif row.status == "pending_approval":
             counts["pending"] += int(row[2] or 0)
-    for row in db.execute(select(PoamEntry.service_id).where(
+    for row in db.execute(select(PoamEntry.service_id, func.count(PoamEntry.id)).where(
         PoamEntry.service_id.in_(service_ids), PoamEntry.status == "active",
         PoamEntry.due_date.is_not(None), PoamEntry.due_date < now,
-    )):
-        poam_counts.setdefault(row.service_id, {"active": 0, "pending": 0, "overdue": 0})["overdue"] += 1
+    ).group_by(PoamEntry.service_id)):
+        poam_counts.setdefault(row.service_id, {"active": 0, "pending": 0, "overdue": 0})["overdue"] = int(row[1])
     rows = []
     for service in services:
         cfg = configurations[service.id]
@@ -2139,35 +2177,33 @@ def service_overview_rows_aggregated(
         policy_excepted = int(policies.excepted or 0) if policies else 0
         policy_noncompliant = int(policies.noncompliant or 0) if policies else 0
         latest = latest_by_service.get(service.id)
-        raw_payload = latest.raw_payload if latest and isinstance(latest.raw_payload, dict) else {}
-        skipped_images = raw_payload.get("skipped_images", []) or []
-        skipped_charts = raw_payload.get("skipped_charts", []) or []
-        missing = normalize_overview(raw_payload.get("service_overview") or {}, skipped_images=skipped_images,
-                                     skipped_charts=skipped_charts, incomplete=bool(latest and not latest.complete))["missing_evidence"]
-        incomplete = bool(latest and (not latest.complete or missing))
+        summary = execution_summaries.get(latest.id, {}) if latest else {}
+        skipped_images = summary.get("skipped_image_count", 0)
+        skipped_charts = summary.get("skipped_chart_count", 0)
+        incomplete = bool(latest and (not latest.complete or summary.get("missing_evidence_count", 0)))
         evidence_state = "No evidence" if not latest else ("Incomplete" if incomplete else "Complete")
         if skipped_images and evidence_state == "Incomplete":
-            evidence_state = f"Incomplete · {len(skipped_images)} skipped"
+            evidence_state = f"Incomplete · {skipped_images} skipped"
         if skipped_charts and evidence_state == "Incomplete":
-            evidence_state = f"Incomplete · {len(skipped_images)} skipped images, {len(skipped_charts)} skipped charts" if skipped_images else f"Incomplete · {len(skipped_charts)} skipped charts"
+            evidence_state = f"Incomplete · {skipped_images} skipped images, {skipped_charts} skipped charts" if skipped_images else f"Incomplete · {skipped_charts} skipped charts"
         evidence_noncompliant = bool(incomplete and cfg.get("incomplete_noncompliant") == "true")
         oldest_values = [value for value in ((findings.oldest if findings else None), (policies.oldest if policies else None)) if value is not None]
         oldest_age = max(((now - aware(value)).days for value in oldest_values), default=None)
         rows.append({
             "service": service,
             "compliant": not finding_noncompliant and not policy_noncompliant and not evidence_noncompliant,
-            "version": service.manual_version or (raw_payload.get("service", {}).get("version") if isinstance(raw_payload.get("service"), dict) else None),
+            "version": service.manual_version or summary.get("raw_version"),
             "evidence_state": evidence_state,
-            "active": [None] * (finding_total - finding_excepted - finding_noncompliant + policy_total - policy_excepted - policy_noncompliant),
+            "active": CountOnly(finding_total - finding_excepted - finding_noncompliant + policy_total - policy_excepted - policy_noncompliant),
             "policy_findings": [],
-            "noncompliant": [None] * finding_noncompliant,
-            "policy_noncompliant": [None] * policy_noncompliant,
-            "excepted": [None] * finding_excepted,
-            "policy_excepted": [None] * policy_excepted,
+            "noncompliant": CountOnly(finding_noncompliant),
+            "policy_noncompliant": CountOnly(policy_noncompliant),
+            "excepted": CountOnly(finding_excepted),
+            "policy_excepted": CountOnly(policy_excepted),
             "oldest_age": oldest_age,
             "archive": archive_by_service.get(service.id) == "archive",
             "poam": poam_counts.get(service.id, {"active": 0, "pending": 0, "overdue": 0}),
-            "overdue": [None] * finding_noncompliant,
+            "overdue": CountOnly(finding_noncompliant),
         })
     return rows, poam_counts
 
@@ -2476,26 +2512,19 @@ def _reconcile_image_scope(db: Session, service: Service, target_image: str, obs
     target = target_image.strip()
     if not target:
         return
-    active_images = {
-        image.image_reference for image in service.images
-        if image.lifecycle_status == "active"
-    }
-    observations = list(db.scalars(
-        select(FindingObservation).join(Finding).where(Finding.service_id == service.id)
-    ))
-    observations_by_finding: dict[int, list[FindingObservation]] = {}
-    for observation in observations:
-        observations_by_finding.setdefault(observation.finding_id, []).append(observation)
-    for finding in db.scalars(select(Finding).where(Finding.service_id == service.id, Finding.active.is_(True))):
+    other_active_image = select(FindingObservation.id).join(ServiceImage, and_(
+        ServiceImage.service_id == service.id,
+        ServiceImage.image_reference == FindingObservation.image,
+        ServiceImage.lifecycle_status == "active",
+    )).where(FindingObservation.finding_id == Finding.id,
+             FindingObservation.image != target).exists()
+    for finding in db.scalars(select(Finding).where(
+        Finding.service_id == service.id, Finding.active.is_(True), ~other_active_image,
+    )):
         if finding.cve in observed_cves:
             continue
-        has_other_active_image = any(
-            observation.image != target and observation.image in active_images
-            for observation in observations_by_finding.get(finding.id, [])
-        )
-        if not has_other_active_image:
-            finding.active = False
-            finding.resolved_at = scanned_at
+        finding.active = False
+        finding.resolved_at = scanned_at
 
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
@@ -5964,40 +5993,19 @@ def dashboard_services_data(request: Request, archived: bool = False, lifecycle:
     stage_timings["configuration_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     now_display = configured_time(now, include_time=True, configuration=configuration)
     stage_started = time.perf_counter()
-    views, poam_counts = service_overview_rows(db, auth, now, configuration)
+    services, configurations = _overview_services_and_configurations(db, auth, configuration, projected=True)
+    views, poam_counts = service_overview_rows_aggregated(db, auth, now, configuration, services, configurations)
     stage_timings["overview_aggregation_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_started = time.perf_counter()
     if archived:
         lifecycle = "archived"
     if lifecycle not in {"active", "staged", "archived"}:
         raise HTTPException(422, detail="Unknown service lifecycle")
-    def view_lifecycle(view: dict) -> str:
-        if view.get("archive"):
-            return "archived"
-        status = str(getattr(view["service"], "lifecycle_status", "active") or "active").lower()
-        return status if status in {"active", "staged"} else "active"
-    lifecycle_counts = {state: sum(view_lifecycle(view) == state for view in views) for state in ("active", "staged", "archived")}
-    selected = [view for view in views if view_lifecycle(view) == lifecycle]
-    search = q.strip().casefold()
-    if search:
-        selected = [view for view in selected if search in " ".join(str(value or "") for value in (
-            view["service"].name, view["service"].service_key, view["service"].owner, view["service"].poc)).casefold()]
-    sort_keys = {
-        "name": lambda item: (item["service"].name.casefold(), item["service"].service_key.casefold()),
-        "version": lambda item: str(item.get("version") or "").casefold(),
-        "owner": lambda item: str(item["service"].owner or "").casefold(),
-        "findings": lambda item: len(item["active"]) + len(item["policy_findings"]),
-        "overdue": lambda item: len(item["noncompliant"]) + len(item["policy_noncompliant"]),
-        "oldest": lambda item: item.get("oldest_age") if item.get("oldest_age") is not None else -1,
-    }
-    sort = sort if sort in sort_keys else "name"
-    selected.sort(key=sort_keys[sort], reverse=request.query_params.get("direction") == "desc")
-    total_count = len(selected)
-    page_size = max(10, min(page_size, 200))
-    total_pages = max(1, (total_count + page_size - 1) // page_size)
-    page = max(1, min(page, total_pages))
-    visible_all = selected
-    views = selected[(page - 1) * page_size:page * page_size]
+    from .dashboard_paging import dashboard_page
+    views, visible_all, lifecycle_counts, sort, page, page_size, total_pages = dashboard_page(
+        db, views, lifecycle=lifecycle, query=q, sort=sort,
+        descending=request.query_params.get("direction") == "desc", page=page, page_size=page_size)
+    total_count = len(visible_all)
     dashboard_params = [("lifecycle", lifecycle), ("q", q), ("sort", sort), ("page_size", page_size)]
     pagination_base = "/?" + urllib.parse.urlencode([(key, value) for key, value in dashboard_params if value not in (None, "")])
     visible_ids = [view["service"].id for view in visible_all]
@@ -6048,17 +6056,14 @@ def cybersecurity_service_history(service_key: str, request: Request, db: Sessio
 def export_services(db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     now = utcnow()
     configuration = get_configuration(db)
-    services = db.scalars(select(Service).options(
-        selectinload(Service.findings).selectinload(Finding.exceptions),
-        selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
-        selectinload(Service.executions), selectinload(Service.archive_events), selectinload(Service.groups),
-    )).all()
     allowed = auth.accessible_service_ids("service.export")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
+    # Keep the exact Python name ordering without retaining every service graph.
+    service_query = select(Service.id, Service.name)
     if allowed is not None:
-        services = [service for service in services if service.id in allowed]
-    views = [service_view(service, now, configuration_for_service(db, service)) for service in services]
+        service_query = service_query.where(Service.id.in_(allowed))
+    service_ids = [row.id for row in sorted(db.execute(service_query), key=lambda row: row.name.lower())]
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Service Snapshot"
@@ -6067,17 +6072,34 @@ def export_services(db: Session = Depends(get_db), auth: AuthContext = Depends(r
         "Evidence", "Active Findings", "Overdue Findings", "Active Exceptions",
         "Resolved", "Oldest Active (Days)", "Last Execution",
     ])
-    for view in sorted(views, key=lambda item: item["service"].name.lower()):
-        sheet.append([
-            view["service"].service_key, view["service"].name, view["version"],
-            view["service"].owner, view["service"].poc, ", ".join(group.name for group in view["service"].groups), "Archived" if view["archive"] else "Active",
-            "Compliant" if view["compliant"] else "Non-Compliant",
-            view["evidence_state"], len(view["active"]) + len(view["policy_findings"]),
-            len(view["noncompliant"]) + len(view["policy_noncompliant"]),
-            len(view["excepted"]) + len(view["policy_excepted"]),
-            len(view["resolved"]) + len(view["policy_resolved"]), view["oldest_age"],
-            excel_datetime(view["last_execution"]),
-        ])
+    # Each batch owns a separate identity map, so completed evidence graphs
+    # cannot accumulate in the request session while the workbook grows.
+    for offset in range(0, len(service_ids), 50):
+        batch_ids = service_ids[offset:offset + 50]
+        with Session(bind=db.connection()) as export_db:
+            services = export_db.scalars(select(Service).where(Service.id.in_(batch_ids)).options(
+                selectinload(Service.findings).selectinload(Finding.exceptions),
+                selectinload(Service.findings).selectinload(Finding.observations),
+                selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
+                selectinload(Service.executions).defer(Execution.raw_payload), selectinload(Service.archive_events),
+                selectinload(Service.groups), selectinload(Service.current_version),
+                selectinload(Service.poam_entries),
+            )).all()
+            configurations = configurations_for_services(export_db, services, configuration)
+            services_by_id = {service.id: service for service in services}
+            for service_id in batch_ids:
+                view = service_view(services_by_id[service_id], now, configurations[service_id])
+                sheet.append([
+                    view["service"].service_key, view["service"].name, view["version"],
+                    view["service"].owner, view["service"].poc, ", ".join(group.name for group in view["service"].groups), "Archived" if view["archive"] else "Active",
+                    "Compliant" if view["compliant"] else "Non-Compliant",
+                    view["evidence_state"], len(view["active"]) + len(view["policy_findings"]),
+                    len(view["noncompliant"]) + len(view["policy_noncompliant"]),
+                    len(view["excepted"]) + len(view["policy_excepted"]),
+                    len(view["resolved"]) + len(view["policy_resolved"]), view["oldest_age"],
+                    excel_datetime(view["last_execution"]),
+                ])
+        del services, services_by_id, view
     for cell in sheet["M"][1:]:
         cell.number_format = "yyyy-mm-dd hh:mm"
     format_sheet(sheet)
@@ -6150,6 +6172,30 @@ def _artifact_revision(files: dict[str, str], *, artifact_id: int, number: int, 
                                    source_metadata=source_metadata or {})
 
 
+@app.get('/api/v1/services/{service_key}/findings/simplified/{group_id}/members')
+def simplified_members(service_key: str, group_id: str, page: int = 1, page_size: int = 50,
+        finding_state: str = 'active', finding_type: str = 'all', q: str = '', resource: str = '',
+        severity: list[str] = Query(default=[]), db: Session = Depends(get_db),
+        auth: AuthContext = Depends(require_permission('service.view', scoped=True))):
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if not service:
+        raise HTTPException(404)
+    if not auth.has('service.view', service.id):
+        raise HTTPException(403)
+    if page_size not in {50, 100, 250}:
+        raise HTTPException(422, detail='Page size must be 50, 100, or 250')
+    latest = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    from .simplified_queries import member_page
+    try:
+        return member_page(db, service, SimpleNamespace(id=latest) if latest else None, utcnow(),
+            configuration_for_service(db, service), group_id, page=page, page_size=page_size,
+            state=finding_state, finding_type=finding_type, query=q, resource=resource,
+            severities=[part.strip() for value in severity for part in value.split(',') if part.strip()])
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
 @app.get("/services/{service_key}", response_class=HTMLResponse)
 def service_detail(
     service_key: str,
@@ -6193,8 +6239,17 @@ def service_detail(
         simplified = findings_view == "simplified"
         overview = False
     narrow_findings = not any((overview, poam, remediations, activity, architecture, artifacts, dependencies, validation))
+    # Activity rows have their own scoped query and never need evidence history.
+    activity_only = activity and not any((poam, remediations, architecture, artifacts, dependencies, validation))
+    dependencies_only = dependencies and not any((poam, remediations, activity, architecture, artifacts, validation))
+    artifacts_only = artifacts and not any((poam, remediations, activity, architecture, dependencies, validation))
+    remediations_only = remediations and not any((poam, activity, architecture, artifacts, dependencies, validation))
+    poam_only = poam and not any((remediations, activity, architecture, artifacts, dependencies, validation))
+    architecture_only = architecture and not any((poam, remediations, activity, artifacts, dependencies, validation))
+    validation_only = validation and not any((poam, remediations, activity, architecture, artifacts, dependencies))
+    overview_only = overview and finding_state != "warnings" and not any((poam, remediations, activity, architecture, artifacts, dependencies, validation))
     service_query = select(Service).where(Service.service_key == service_key)
-    if not narrow_findings:
+    if not narrow_findings and not activity_only and not dependencies_only and not artifacts_only and not remediations_only and not poam_only and not overview_only and not architecture_only and not validation_only:
         service_query = service_query.options(
             selectinload(Service.findings).selectinload(Finding.exceptions),
             selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
@@ -6221,7 +6276,104 @@ def service_detail(
         simplified = False
         overview = False
     configuration = configuration_for_service(db, service)
-    if narrow_findings:
+    if narrow_findings and simplified:
+        if page_size not in {50, 100, 250}:
+            raise HTTPException(422, detail="Page size must be 50, 100, or 250")
+        from .service_tab_queries import prepare_service_tab_view
+        from .simplified_queries import group_page
+        from .exchange_routes import history_version_choices
+        view, service, _ = prepare_service_tab_view(db, service, now, configuration, service_view,
+                                                   header_only=True)
+        latest_execution = max(service.executions,
+            key=lambda item: (aware(item.scanned_at), item.id), default=None)
+        severity = [part.strip() for value in severity for part in value.split(',') if part.strip()]
+        try:
+            simplified_findings, pagination, severity_options = group_page(
+                db, service, latest_execution, now, configuration, page=page, page_size=page_size,
+                state=finding_state, finding_type=finding_type, severities=severity, query=q, resource=resource)
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+        archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
+            WorkflowRequest.request_type == "archive", WorkflowRequest.service_id == service.id,
+            WorkflowRequest.status == "pending")))
+        params = [("overview", "false"), ("finding_state", finding_state),
+                  ("finding_type", finding_type), ("page_size", page_size)]
+        if findings or findings_view:
+            params.insert(1, ("findings_view", "simplified"))
+        params.append(("simplified", "true"))
+        if q.strip(): params.append(('q', q.strip()))
+        if resource.strip(): params.append(('resource', resource.strip()))
+        params.extend(('severity', value) for value in severity)
+        pagination_base = f"/services/{urllib.parse.quote(service_key, safe='')}?{urllib.parse.urlencode(params)}"
+        selector = 'findings_view=simplified&' if findings or findings_view else ''
+        clear_filters_url = f"/services/{urllib.parse.quote(service_key, safe='')}?overview=false&{selector}finding_state={urllib.parse.quote(finding_state)}&finding_type={urllib.parse.quote(finding_type)}&page_size={page_size}"
+        return templates.TemplateResponse(request, "service_simplified.html", page_context(auth,
+            _date_configuration=configuration, view=view,
+            finding_state=finding_state,
+            history_versions=history_version_choices(db, service), simplified_findings=simplified_findings,
+            now=now, finding_type=finding_type, archive_pending=archive_pending,
+            groups=db.scalars(select(Group).order_by(Group.name)).all(), query=q, resource=resource,
+            severity=severity, severity_options=severity_options, pagination_base=pagination_base,
+            clear_filters_url=clear_filters_url, selected_findings_view="simplified",
+            page_size=page_size, **pagination))
+    if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved"}:
+        if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
+            raise HTTPException(422, detail="Unknown finding type")
+        if page_size not in {50, 100, 250}:
+            raise HTTPException(422, detail="Page size must be 50, 100, or 250")
+        from .service_read_model import prepare_raw_page
+        from .exchange_routes import history_version_choices
+        severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
+        def raw_summary(session, item, instant, settings):
+            return service_overview_rows_aggregated(session, auth, instant, settings,
+                services=[item], configurations={item.id: settings})[0][0]
+        current_exception = select(ExceptionRecord.id).where(
+            ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),
+            ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
+        eligible, _, needs_observations = _risk_finding_expressions({service.id: configuration}, now, current_exception)
+        severity_query = select(Finding.severity).where(Finding.service_id == service.id,
+            or_(Finding.active.is_(False), ~current_exception, eligible))
+        if needs_observations:
+            latest_observation = select(FindingObservation.finding_id,
+                func.max(FindingObservation.id).label("latest_id")).group_by(FindingObservation.finding_id).subquery()
+            severity_query = severity_query.outerjoin(latest_observation,
+                latest_observation.c.finding_id == Finding.id).outerjoin(FindingObservation,
+                FindingObservation.id == latest_observation.c.latest_id)
+        view, service, latest_execution, result, affected_images, severity_options = prepare_raw_page(
+            db, service, now, configuration, service_view, raw_summary,
+            state=finding_state, finding_type=finding_type, severities=severity,
+            query=q, resource=resource, page=page, page_size=page_size, severity_query=severity_query)
+        archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
+            WorkflowRequest.request_type == "archive", WorkflowRequest.service_id == service.id,
+            WorkflowRequest.status == "pending")))
+        pagination_params = [("overview", "false"), ("findings_view", "raw"),
+            ("finding_state", finding_state), ("finding_type", finding_type), ("page_size", page_size)]
+        if q.strip(): pagination_params.append(("q", q.strip()))
+        if resource.strip(): pagination_params.append(("resource", resource.strip()))
+        pagination_params.extend(("severity", value) for value in severity)
+        pagination_base = f"/services/{urllib.parse.quote(service_key, safe='')}?{urllib.parse.urlencode(pagination_params, doseq=True)}"
+        clear_filters_url = f"/services/{urllib.parse.quote(service_key, safe='')}?overview=false&findings_view=raw&finding_state={urllib.parse.quote(finding_state)}&finding_type={urllib.parse.quote(finding_type)}&page_size={page_size}"
+        latest_payload = latest_execution.raw_payload if result["policy_findings"] and latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
+        return templates.TemplateResponse(request, "service.html", page_context(auth,
+            _date_configuration=configuration, remediation_enabled=remediation_enabled(db),
+            view=view, history_versions=history_version_choices(db, service),
+            findings=result["findings"], policy_findings=result["policy_findings"],
+            affected_images=affected_images, noncompliance_items=[], now=now,
+            active_exception=active_exception, finding_state=finding_state,
+            groups=db.scalars(select(Group).order_by(Group.name)).all(),
+            overdue_days=view["overdue_days"], saved=request.query_params.get("saved") == "1",
+            archive_pending=archive_pending, page=result["page"], page_size=page_size,
+            total_items=result["total_items"], total_pages=result["total_pages"],
+            finding_type=finding_type,
+            remediation_classes={item.id: classify_policy_finding(item, latest_payload) for item in result["policy_findings"]},
+            query=q, resource=resource, severity=severity, severity_options=severity_options,
+            pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view="raw"))
+    if activity_only or dependencies_only or artifacts_only or remediations_only or poam_only or overview_only or architecture_only or validation_only:
+        from .service_tab_queries import prepare_service_tab_view
+        view, service, latest_scan = prepare_service_tab_view(db, service, now, configuration, service_view,
+                                                           include_global_latest=not (dependencies_only or artifacts_only),
+                                                           header_only=architecture_only or validation_only or activity_only or poam_only or dependencies_only or artifacts_only or remediations_only)
+    elif narrow_findings:
         from .findings_query import prepare_findings_view
         view, service, latest_scan = prepare_findings_view(db, service, now, configuration, service_view)
     else:
@@ -6229,7 +6381,7 @@ def service_detail(
     latest_scan = max((item for item in service.executions if
                        service.current_version_id is None or item.service_version_id == service.current_version_id),
                       key=lambda item: (aware(item.scanned_at), item.id), default=None)
-    if latest_scan:
+    if latest_scan and not (dependencies_only or artifacts_only or remediations_only or activity_only or architecture_only or validation_only or poam_only):
         matches = db.scalars(select(DependencyWatchlistMatch).where(
             DependencyWatchlistMatch.execution_id == latest_scan.id).order_by(DependencyWatchlistMatch.id)).all()
         view["warning_items"].extend({
@@ -6242,20 +6394,75 @@ def service_detail(
         WorkflowRequest.service_id == service.id,
         WorkflowRequest.status == "pending",
     )))
-    validation_records = db.scalars(select(DeploymentValidationRun).where(
+    if artifacts_only:
+        from .artifact_tab_queries import latest_validation_warning
+    validation_records = latest_validation_warning(db, service.id) if artifacts_only else db.scalars(select(DeploymentValidationRun).where(
         DeploymentValidationRun.service_id == service.id,
-    ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100 if not narrow_findings else 1)).all()
-    latest_validation = deployment_validation_view(validation_records[0]) if validation_records else None
+    ).options(selectinload(DeploymentValidationRun.execution).defer(Execution.raw_payload) if (overview_only or architecture_only or validation_only)
+              else selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100 if not narrow_findings else 1)).all()
+    latest_validation = deployment_validation_view(validation_records[0]) if validation_records and not artifacts_only else None
     if validation_records and validation_records[0].status in {"FAILED", "ERROR", "COULD_NOT_VALIDATE", "PARTIALLY_VERIFIED"}:
         failed_run = validation_records[0]
         view["warning_items"].append({"type": "Kind Validation", "item": failed_run.status,
             "reason": failed_run.reason or failed_run.reason_category or "Deployment validation needs review",
             "due": None, "href": f"/services/{service.service_key}?validation=true&validation_run={failed_run.run_key}"})
+    if overview_only:
+        if finding_state not in {"active", "noncompliant", "overdue", "exceptions", "resolved"}:
+            raise HTTPException(400, detail="Unknown finding state")
+        if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
+            raise HTTPException(422, detail="Unknown finding type")
+        if page_size not in {50, 100, 250}:
+            raise HTTPException(422, detail="Page size must be 50, 100, or 250")
+        latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
+        raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
+        raw_overview = raw_overview if isinstance(raw_overview, dict) else {}
+        latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
+        raw_overview.setdefault("source", "Helm rendered manifests" if latest_payload.get("policy_findings") else "Image metadata")
+        overview_data = normalize_overview(
+            raw_overview,
+            skipped_images=latest_payload.get("skipped_images", []) or [],
+            skipped_charts=latest_payload.get("skipped_charts", []) or [],
+            findings_images=[{"image": item.get("image"), "digest": item.get("image_digest"), "discovered_from": item.get("discovered_from") or "Submitted"} for item in latest_payload.get("findings", []) if isinstance(item, dict) and item.get("image")],
+            incomplete=bool(latest_execution and not latest_execution.complete),
+            # The persisted scan overview is the source of truth for this
+            # page.  Do not run docker manifest inspect while navigating.
+            digest_resolver=None,
+        )
+        removable_keys = _current_removable_evidence_keys(latest_payload, latest_execution.complete) if latest_execution else set()
+        for row in overview_data["missing_evidence"]:
+            row["removable"] = _missing_evidence_key(row) in removable_keys
+        from .overview_queries import overview_architecture_execution
+        architecture_execution = overview_architecture_execution(db, service.id)
+        architecture_payload = dict(architecture_execution.raw_payload) if architecture_execution and isinstance(architecture_execution.raw_payload, dict) else {}
+        architecture_overview = architecture_payload.get("service_overview") if isinstance(architecture_payload.get("service_overview"), dict) else {}
+        declared_resources = architecture_overview.get("rendered_resources") or architecture_payload.get("rendered_resources") or []
+        architecture_revision = latest_architecture_working_revision(db, service.id)
+        architecture_verification_state = architecture_verification(
+            applicable=bool(architecture_payload.get("helm_source_files") or declared_resources) and str(architecture_payload.get("artifact_type") or "helm").lower() == "helm",
+            declared_count=len(declared_resources), runs=validation_records,
+            execution_id=architecture_execution.id if architecture_execution and not architecture_revision else None,
+            artifact_revision_id=architecture_revision.id if architecture_revision else None,
+        )
+        architecture_graph = build_architecture_graph(architecture_payload, runtime_evidence=deployment_validation_view(architecture_verification_state.get("run")))
+        from .exchange_routes import history_version_choices
+        return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
+            view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
+            artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
+            deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
+            architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
+            service_images=db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all(),
+            now=now, finding_type=finding_type, archive_pending=archive_pending,
+            groups=db.scalars(select(Group).order_by(Group.name)).all(),
+        ))
     if validation:
         selected_record = next((item for item in validation_records if item.run_key == validation_run), None) if validation_run else (validation_records[0] if validation_records else None)
         if validation_run and not selected_record:
             raise HTTPException(404, detail="Deployment Validation run not found")
-        eligible_execution = latest_eligible_helm_execution(service.executions)
+        if validation_only:
+            from .artifact_tab_queries import latest_original_helm
+            eligible_execution = latest_original_helm(db, service.id)
+        else:
+            eligible_execution = latest_eligible_helm_execution(service.executions)
         validation_unavailable_reason = None
         if not deployment_validation_enabled():
             validation_unavailable_reason = "Deployment Validation is disabled by configuration."
@@ -6269,37 +6476,25 @@ def service_detail(
             archive_pending=archive_pending, now=now,
         ))
     if dependencies:
-        from .dependency_view import dependency_rows
+        from .dependency_queries import request_current_projection, pending_dependency_page, schedule_projection, dependency_page, dependency_version
         from .exchange_routes import history_version_choices
-        latest = (next((item for item in service.executions if item.id == dependency_execution), None)
-                  if dependency_execution is not None else latest_scan)
+        if dependencies_only:
+            from .service_tab_queries import prepare_dependency_evidence
+            latest, dependency_executions = prepare_dependency_evidence(db, service, dependency_execution, latest_scan)
+        else:
+            dependency_executions = service.executions
+            latest = (next((item for item in service.executions if item.id == dependency_execution), None)
+                      if dependency_execution is not None else latest_scan)
         if dependency_execution is not None and latest is None:
             raise HTTPException(404, detail="Dependency evidence not found for this service")
-        matches = db.scalars(select(DependencyWatchlistMatch).where(
-            DependencyWatchlistMatch.execution_id == latest.id)).all() if latest else []
-        all_rows = dependency_rows(latest, matches, service.findings, risk_metadata)
-        search = q.casefold().strip()
-        rows = [row for row in all_rows if
-                (not search or search in " ".join(str(row.get(key) or "") for key in
-                 ("name", "version", "purl", "cpe", "image", "license_declared", "license_expression")).casefold())
-                and (not dependency_type or row["type"] == dependency_type)
-                and (not dependency_image or row["image"] == dependency_image)
-                and (not dependency_license or dependency_license.casefold() in " ".join(
-                    str(row.get(key) or "") for key in ("license_declared", "license_detected", "license_expression")
-                ).casefold())
-                and (dependency_filter == "all" or
-                     (dependency_filter == "vulnerable" and row["vulnerabilities"]) or
-                     (dependency_filter == "kev" and row["kev"]) or
-                     (dependency_filter == "fixed" and row["fixed_versions"]) or
-                     (dependency_filter == "watchlisted" and row["watchlisted"]) or
-                     (dependency_filter == "license_unknown" and not (row.get("license_declared") or row.get("license_detected") or row.get("license_expression"))) or
-                     (dependency_filter.lower() == row["severity"].lower()))
-                and (dependency_epss is None or row["epss"] is not None and row["epss"] >= dependency_epss)]
+        projection_state = request_current_projection(db, latest, risk_metadata,
+            retry=request.query_params.get("dependency_retry") == "true") if latest else None
+        dependency_result = (pending_dependency_page(projection_state)
+            if projection_state and projection_state["status"] != "ready" else
+            dependency_page(db, latest.id if latest else -1,
+                q=q, component_type=dependency_type, image=dependency_image, license=dependency_license,
+                filter=dependency_filter, epss=dependency_epss, page=page, page_size=page_size))
         size = max(10, min(page_size, 100))
-        current_page = max(1, page)
-        total_pages = max(1, (len(rows) + size - 1) // size)
-        current_page = min(current_page, total_pages)
-        page_rows = rows[(current_page - 1) * size:current_page * size]
         query_args = {"dependencies": "true", "q": q, "dependency_type": dependency_type,
                       "dependency_image": dependency_image, "dependency_license": dependency_license,
                       "dependency_filter": dependency_filter,
@@ -6309,30 +6504,28 @@ def service_detail(
         if dependency_epss is not None:
             query_args["dependency_epss"] = dependency_epss
         page_url = f"/services/{service.service_key}?{urllib.parse.urlencode(query_args)}&page="
-        return templates.TemplateResponse(request, "service_dependencies.html", page_context(auth,
-            view={**view, "version": ((latest.raw_payload or {}).get("service") or {}).get("version") or "Unknown"} if latest else view,
-            service=service, dependency_rows=page_rows, dependency_total=len(rows),
-            dependency_all_total=len(all_rows), dependency_page=current_page,
-            dependency_pages=total_pages, dependency_page_url=page_url,
-            dependency_types=sorted({row["type"] for row in all_rows if row["type"]}),
-            dependency_images=sorted({row["image"] for row in all_rows if row["image"]}),
+        response = templates.TemplateResponse(request, "service_dependencies.html", page_context(auth,
+            view={**view, "version": dependency_version(db, latest)} if latest else view,
+            service=service, **dependency_result, dependency_page_url=page_url,
             dependency_query={"q": q, "type": dependency_type, "image": dependency_image,
                               "license": dependency_license,
                               "filter": dependency_filter, "epss": dependency_epss},
-            dependency_executions=sorted(service.executions, key=lambda item: (aware(item.scanned_at), item.id), reverse=True),
+            dependency_executions=sorted(dependency_executions, key=lambda item: (aware(item.scanned_at), item.id), reverse=True),
             dependency_selected_execution=latest,
-            dependency_artifacts=len({row["image"] for row in all_rows}),
-            vulnerable_components=sum(bool(row["vulnerabilities"]) for row in all_rows),
-            critical_components=sum(row["severity"].lower() == "critical" for row in all_rows),
-            kev_components=sum(bool(row["kev"]) for row in all_rows),
-            fixed_components=sum(bool(row["fixed_versions"]) for row in all_rows),
-            license_unknown_components=sum(not (row.get("license_declared") or row.get("license_detected") or row.get("license_expression")) for row in all_rows),
-            watchlisted_components=sum(bool(row["watchlisted"]) for row in all_rows),
             history_versions=history_version_choices(db, service),
             archive_pending=archive_pending, now=now,
         ))
+        if projection_state and projection_state["status"] == "pending":
+            from starlette.background import BackgroundTask
+            response.background = BackgroundTask(schedule_projection, db.get_bind(), latest.id,
+                projection_state["build_token"], risk_metadata)
+        return response
     if architecture:
-        latest_execution = latest_architecture_execution(service.executions)
+        if architecture_only:
+            from .overview_queries import overview_architecture_execution
+            latest_execution = overview_architecture_execution(db, service.id)
+        else:
+            latest_execution = latest_architecture_execution(service.executions)
         payload = dict(latest_execution.raw_payload) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         if latest_execution:
             payload["complete"] = latest_execution.complete
@@ -6362,21 +6555,13 @@ def service_detail(
             now=now, archive_pending=archive_pending,
         ))
     if artifacts:
-        latest_execution = latest_eligible_helm_execution(service.executions)
+        from .artifact_tab_queries import latest_original_helm, load_artifact_workspace
+        latest_execution = latest_original_helm(db, service.id)
         original_files = dict((latest_execution.raw_payload or {}).get("helm_source_files") or {}) if latest_execution else {}
         artifact_rows = []
-        persisted = db.scalars(select(ServiceArtifact).where(ServiceArtifact.service_id == service.id).options(selectinload(ServiceArtifact.revisions)).order_by(ServiceArtifact.created_at.desc())).all()
-        revision_ids = [revision.id for artifact in persisted for revision in artifact.revisions]
-        latest_validation_by_revision: dict[int, DeploymentValidationRun] = {}
-        if revision_ids:
-            revision_runs = db.scalars(select(DeploymentValidationRun).where(
-                DeploymentValidationRun.service_id == service.id,
-                DeploymentValidationRun.artifact_revision_id.in_(revision_ids),
-            ).order_by(DeploymentValidationRun.created_at.desc(), DeploymentValidationRun.id.desc())).all()
-            for run in revision_runs:
-                latest_validation_by_revision.setdefault(run.artifact_revision_id, run)
+        persisted, latest_revisions, latest_validation_by_revision, service_images = load_artifact_workspace(db, service.id)
         for artifact in persisted:
-            revision = max(artifact.revisions, key=lambda item: item.revision_number, default=None)
+            revision = latest_revisions.get(artifact.id)
             revision_files = revision.files if revision else {}
             chart_markers = [name for name in revision_files if str(name).endswith("Chart.yaml")]
             semantic_type = artifact.artifact_type
@@ -6402,7 +6587,7 @@ def service_detail(
         )
         image_inventory = []
         by_identity: dict[str, dict[str, Any]] = {}
-        for image in service.images:
+        for image in service_images:
             identity = (image.image_digest or image.image_reference).casefold()
             row = by_identity.setdefault(identity, {"image": image, "references": [], "count": 0})
             row["references"].append(image.image_reference)
@@ -6418,7 +6603,7 @@ def service_detail(
         return templates.TemplateResponse(request, "service_artifacts.html", page_context(auth,
             service=service, view=view, now=now, archive_pending=archive_pending,
             original_execution=latest_execution, original_files=original_files,
-            artifact_rows=artifact_rows, helm_file_count=helm_file_count, service_images=service.images,
+            artifact_rows=artifact_rows, helm_file_count=helm_file_count, service_images=service_images,
             image_inventory=image_inventory,
             repository_count=repository_count, chart_count=chart_count, manifest_count=manifest_count,
             can_edit=auth.has("service.edit", service.id),
@@ -6468,13 +6653,13 @@ def service_detail(
                                "approved_by": "Pending review", "created_at": workflow.created_at,
                                "justification": workflow.justification, "record_id": workflow.id,
                                "href": f"/services/{service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{service.service_key}?finding_state=exceptions&finding_type=configuration"})
-        remediation_jobs = db.scalars(select(RemediationExecution).where(
-            RemediationExecution.service_id == service.id).order_by(RemediationExecution.created_at.desc()).limit(100)).all()
+        from .remediation_list_queries import remediation_history, active_image_references
+        remediation_jobs = remediation_history(db, service.id)
         preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
         preview_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
         preview_plan = build_plan(preview_payload, [item for item in service.policy_findings if item.active], "PREVIEW")
         preview_images = {str(item.get("original")) for item in preview_plan.get("images", [])}
-        preview_images.update(image.image_reference for image in service.images if image.lifecycle_status == "active")
+        preview_images.update(active_image_references(db, service.id))
         preview_files = preview_payload.get("helm_source_files") or preview_payload.get("source_files") or {}
         remediation_preview = {"images": len(preview_images),
             "charts": sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in preview_files) if isinstance(preview_files, dict) else 0,
@@ -6488,32 +6673,20 @@ def service_detail(
             can_create_poam=auth.has("poam.request", service.id), now=now,
         ))
     if poam:
-        if status_filter not in {"all", "active", "pending_approval", "overdue", "completed", "rejected"}:
-            raise HTTPException(422, detail="Unknown POA&M filter")
-        entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).options(
-            selectinload(PoamEntry.finding), selectinload(PoamEntry.policy_finding), selectinload(PoamEntry.created_by), selectinload(PoamEntry.approved_by),
-        ).order_by(PoamEntry.created_at.desc())).all()
-        if status_filter == "overdue":
-            entries = [entry for entry in entries if entry.status == "active" and entry.due_date and aware(entry.due_date) < now]
-        elif status_filter != "all":
-            entries = [entry for entry in entries if entry.status == status_filter]
-        if sort_by == "due":
-            entries.sort(key=lambda entry: (aware(entry.due_date) if entry.due_date else datetime.max.replace(tzinfo=timezone.utc), entry.title.lower()))
-        elif sort_by == "severity":
-            severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Negligible": 4}
-            entries.sort(key=lambda entry: (severity_rank.get(entry.finding.severity if entry.finding else (entry.policy_finding.severity if entry.policy_finding else ""), 5), entry.title.lower()))
-        elif sort_by != "newest":
-            raise HTTPException(422, detail="Unknown POA&M sort")
+        from .poam_query import service_poam_page as load_poam_page, pagination_base as poam_pagination_base
+        entries, pagination = load_poam_page(db, service.id, now, status_filter, sort_by, page, page_size)
         return templates.TemplateResponse(request, "poam_service.html", page_context(auth,
             service=service, view=view, embedded=True, entries=entries, can_create_poam=auth.has("poam.request", service.id),
-            status_filter=status_filter, sort_by=sort_by, now=now,
+            status_filter=status_filter, sort_by=sort_by, now=now, **pagination,
+            pagination_base=poam_pagination_base(service.service_key, status_filter, sort_by, page_size),
             overdue_entry_ids={entry.id for entry in entries if entry.status == "active" and entry.due_date and aware(entry.due_date) < now},
         ))
     if activity:
-        events = db.scalars(select(AuditEvent).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at.desc()).limit(500)).all()
-        service_events = [event for event in events if isinstance(event.detail, dict) and str(event.detail.get("service_id")) == str(service.id)]
+        from .activity_queries import service_activity_page
+        activity_result = service_activity_page(db, service.id, page=page, page_size=page_size)
         return templates.TemplateResponse(request, "service_activity.html", page_context(auth,
-            service=service, view=view, events=service_events, embedded=True, now=now,
+            service=service, view=view, **activity_result, embedded=True, now=now,
+            pagination_base=f'/services/{service.service_key}?activity=true&page_size={page_size}',
         ))
     finding_groups = {
         "active": view["active"],
@@ -6662,48 +6835,12 @@ def service_detail(
             groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
     if simplified:
-        if narrow_findings:
-            from .findings_query import load_simplified_support
-            load_simplified_support(db, service.id, finding_groups["active"], latest_execution)
-        simplified_groups = {}
-        for finding in finding_groups["active"]:
-            observations = [o for o in finding.observations if latest_execution and o.execution_id == latest_execution.id]
-            observation = max(observations or finding.observations, key=lambda item: item.id, default=None)
-            evidence = observation.evidence if observation else {}
-            package = (observation.package if observation else None) or "Package update"
-            fixed = (observation.fixed_version if observation else None) or "Latest fixed version"
-            remediation = evidence.get("remediation") or evidence.get("recommendation") or "Update the affected package to the fixed version."
-            key = (package, str(remediation))
-            group = simplified_groups.setdefault(key, {
-                "package": package, "fixed_versions": set(), "remediation": str(remediation),
-                "cves": [], "images": set(), "severities": [], "finding_ids": [],
-                "due": view["due_dates"].get(finding.id),
-            })
-            cve = str(finding.cve or "").strip().upper()
-            if cve and cve not in group["cves"]:
-                group["cves"].append(cve)
-                group["finding_ids"].append(finding.id)
-            group["fixed_versions"].add(str(fixed))
-            group["severities"].append(finding.severity)
-            group["due"] = min(group["due"], view["due_dates"].get(finding.id)) if group["due"] and view["due_dates"].get(finding.id) else group["due"]
-            group["images"].update(o.image for o in observations if o.image)
-        severity_rank = {"unknown": 0, "negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
-        simplified_findings = []
-        for group in simplified_groups.values():
-            ordered_findings = sorted(zip(group["cves"], group["finding_ids"]))
-            group["cves"] = [cve for cve, _ in ordered_findings]
-            group["finding_ids"] = [finding_id for _, finding_id in ordered_findings]
-            group["images"] = sorted(group["images"])
-            group["fixed_versions"] = sorted(group["fixed_versions"])
-            group["fixed_version"] = ", ".join(group["fixed_versions"])
-            group["severity"] = max(group["severities"], key=lambda value: severity_rank.get(str(value).lower(), 0), default="Unknown")
-            simplified_findings.append(group)
-        simplified_findings.sort(key=lambda item: (str(item["package"]).casefold(), str(item["fixed_version"]).casefold()))
-        total_items = len(simplified_findings)
-        total_pages = max(1, (total_items + page_size - 1) // page_size)
-        page = max(1, min(page, total_pages))
-        start = (page - 1) * page_size
-        simplified_findings = simplified_findings[start:start + page_size]
+        from .findings_query import page_simplified_findings
+        simplified_findings, simplified_pagination = page_simplified_findings(
+            db, service.id, finding_groups["active"], latest_execution, view["due_dates"], requested_page, page_size)
+        total_items = simplified_pagination["total_items"]
+        total_pages = simplified_pagination["total_pages"]
+        page = simplified_pagination["page"]
         groups = db.scalars(select(Group).order_by(Group.name)).all()
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_simplified.html", page_context(auth,
@@ -7204,17 +7341,6 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
     return {"images": rows}
 
 
-@app.get("/services/{service_key}/exports/{kind}.xlsx")
-def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(get_db),
-                            auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
-    if kind not in PURPOSE_CATALOG:
-        raise HTTPException(404)
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    columns, _, _ = purpose_template_for_service(db, kind, service)
-    return workbook_response(purpose_workbook_for(db, service, kind, columns),
-                             f"{service.service_key}-{kind}.xlsx")
 
 
 def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:
@@ -7223,10 +7349,10 @@ def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:
     sheet = book.active
     sheet.title = "CATS Export"
     sheet.append(headers)
-    for row in rows:
+    for row_number, row in enumerate(rows, 2):
         sheet.append([None] * len(headers))
         for index, value in enumerate(row, 1):
-            literal(sheet.cell(sheet.max_row, index), value)
+            literal(sheet.cell(row_number, index), value)
     format_sheet(sheet)
     return book
 
@@ -7237,10 +7363,12 @@ def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).order_by(PoamEntry.id)).all()
-    rows = [[item.id, item.service_version, item.item_type, item.title, item.remediation,
-             item.status, item.due_date.isoformat() if item.due_date else "", item.ticket or ""]
-            for item in entries if item.remediation]
+    entries = db.execute(select(PoamEntry.id, PoamEntry.service_version, PoamEntry.item_type,
+        PoamEntry.title, PoamEntry.remediation, PoamEntry.status, PoamEntry.due_date, PoamEntry.ticket)
+        .where(PoamEntry.service_id == service.id, PoamEntry.remediation.is_not(None), PoamEntry.remediation != "")
+        .order_by(PoamEntry.id).execution_options(yield_per=500))
+    rows = ([item.id, item.service_version, item.item_type, item.title, item.remediation,
+             item.status, item.due_date.isoformat() if item.due_date else "", item.ticket or ""] for item in entries)
     return workbook_response(_focused_export_book(
         ["Entry ID", "Service Version", "Type", "Title", "Mitigation", "Status", "Due Date", "Ticket"], rows),
         f"{service_key}-mitigations.xlsx")
@@ -7249,22 +7377,28 @@ def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
 @app.get("/services/{service_key}/exports/findings.xlsx")
 def export_service_findings(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(
-        selectinload(Service.executions), selectinload(Service.findings).selectinload(Finding.observations),
-        selectinload(Service.policy_findings)))
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
-    rows = []
-    for finding in service.findings:
-        for observation in finding.observations:
-            if latest and observation.execution_id == latest.id:
-                rows.append(["Vulnerability", finding.cve, finding.severity, finding.active,
-                    observation.image, observation.package, observation.installed_version,
-                    observation.fixed_version, finding.first_seen.isoformat(), finding.last_seen.isoformat()])
-    for finding in service.policy_findings:
-        rows.append(["Configuration", finding.finding, finding.severity, finding.active,
-            finding.target or "", "", "", "", finding.first_seen.isoformat(), finding.last_seen.isoformat()])
+    latest_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    def export_rows():
+        observations = db.execute(select(Finding.cve, Finding.severity, Finding.active,
+            FindingObservation.image, FindingObservation.package, FindingObservation.installed_version,
+            FindingObservation.fixed_version, Finding.first_seen, Finding.last_seen)
+            .join(FindingObservation, FindingObservation.finding_id == Finding.id)
+            .where(Finding.service_id == service.id, FindingObservation.execution_id == latest_id)
+            .order_by(Finding.id, FindingObservation.id).execution_options(yield_per=500))
+        for item in observations:
+            yield ["Vulnerability", *item[:7], item.first_seen.isoformat(), item.last_seen.isoformat()]
+        policies = db.execute(select(PolicyFinding.finding, PolicyFinding.severity, PolicyFinding.active,
+            PolicyFinding.target, PolicyFinding.first_seen, PolicyFinding.last_seen)
+            .where(PolicyFinding.service_id == service.id).order_by(PolicyFinding.id)
+            .execution_options(yield_per=500))
+        for item in policies:
+            yield ["Configuration", item.finding, item.severity, item.active, item.target or "",
+                   "", "", "", item.first_seen.isoformat(), item.last_seen.isoformat()]
+    rows = export_rows()
     return workbook_response(_focused_export_book(
         ["Type", "Finding", "Severity", "Active", "Image or Target", "Package", "Installed Version",
          "Fixed Version", "First Seen", "Last Seen"], rows), f"{service_key}-findings.xlsx")
@@ -7273,10 +7407,11 @@ def export_service_findings(service_key: str, db: Session = Depends(get_db),
 @app.get("/services/{service_key}/exports/diagrams.zip")
 def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest = latest_architecture_execution(service.executions)
+    from .activity_queries import latest_evidence_execution
+    latest = latest_evidence_execution(db, service.id, architecture=True)
     if latest is None:
         raise HTTPException(422, detail="No architecture evidence is available to diagram")
     graph = build_architecture_graph(latest.raw_payload or {})
@@ -7293,15 +7428,29 @@ def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
 @app.get("/services/{service_key}/exports/sbom.json")
 def export_service_sbom_components(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+    from .activity_queries import latest_evidence_execution
+    latest = latest_evidence_execution(db, service.id)
     if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
         raise HTTPException(422, detail="No retained SBOM component evidence is available")
     return JSONResponse({"format": "cats-retained-sbom-components-v1", "service": service_key,
         "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]},
         headers={"Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
+
+
+@app.get("/services/{service_key}/exports/{kind}.xlsx")
+def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(get_db),
+                            auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    if kind not in PURPOSE_CATALOG:
+        raise HTTPException(404)
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    columns, _, _ = purpose_template_for_service(db, kind, service)
+    return workbook_response(purpose_workbook_for(db, service, kind, columns),
+                             f"{service.service_key}-{kind}.xlsx")
 
 
 @app.get("/services/{service_key}/export.xlsx")
@@ -7313,7 +7462,7 @@ def export_service(service_key: str, include_diagrams: bool = False, version: st
         selectinload(Service.findings).selectinload(Finding.exceptions),
         selectinload(Service.policy_findings).selectinload(PolicyFinding.exceptions),
         selectinload(Service.findings).selectinload(Finding.observations),
-        selectinload(Service.executions), selectinload(Service.archive_events), selectinload(Service.groups),
+        selectinload(Service.executions).defer(Execution.raw_payload), selectinload(Service.archive_events), selectinload(Service.groups),
         selectinload(Service.images),
         selectinload(Service.poam_entries).selectinload(PoamEntry.finding),
         selectinload(Service.poam_entries).selectinload(PoamEntry.policy_finding),
@@ -7325,7 +7474,21 @@ def export_service(service_key: str, include_diagrams: bool = False, version: st
     configuration = configuration_for_service(db, service)
     view = service_view(service, now, configuration)
     latest_execution = max(service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
-    audit_events = db.scalars(select(AuditEvent).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at)).all()
+    from sqlalchemy import String, cast
+    # Keep the Python predicate below for its service_id-or-service_key fallback
+    # semantics while preventing unrelated audit rows and actors from loading.
+    if db.get_bind().dialect.name == "postgresql":
+        unusual_detail = or_(*(func.json_typeof(AuditEvent.detail[key]).in_(("boolean", "array", "object"))
+                              for key in ("service_id", "service_key")))
+    else:
+        unusual_detail = or_(*(func.json_type(AuditEvent.detail, f"$.{key}").in_(("true", "false", "array", "object"))
+                              for key in ("service_id", "service_key")))
+    audit_events = db.scalars(select(AuditEvent).where(or_(
+        and_(AuditEvent.target_type == "service", AuditEvent.target_id == str(service.id)),
+        cast(AuditEvent.detail["service_id"].as_string(), String).in_((str(service.id), service.service_key)),
+        cast(AuditEvent.detail["service_key"].as_string(), String).in_((str(service.id), service.service_key)),
+        unusual_detail,
+    )).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at)).all()
     service_audit = []
     for event in audit_events:
         detail = event.detail if isinstance(event.detail, dict) else {}
@@ -7361,10 +7524,11 @@ def export_service(service_key: str, include_diagrams: bool = False, version: st
 
 @app.get("/services/{service_key}/helm-diagram.svg")
 def export_service_helm_diagram(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    latest_execution = max(service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
+    from .activity_queries import latest_evidence_execution
+    latest_execution = latest_evidence_execution(db, service.id)
     return Response(build_helm_diagram(service, latest_execution), media_type="image/svg+xml")
 
 
@@ -7626,15 +7790,16 @@ def poam_page(request: Request, db: Session = Depends(get_db), auth: AuthContext
         for service_id in visible_ids
     }
     if visible_ids:
-        for entry in db.scalars(select(PoamEntry).where(PoamEntry.service_id.in_(visible_ids))):
-            summary = counts[entry.service_id]
-            summary["total"] += 1
-            if entry.status == "active":
-                summary["active"] += 1
-                if entry.due_date and aware(entry.due_date) < utcnow():
-                    summary["overdue"] += 1
-            elif entry.status == "pending_approval":
-                summary["pending"] += 1
+        instant = utcnow()
+        summaries = db.execute(select(PoamEntry.service_id, func.count().label("total"),
+            func.sum(case((PoamEntry.status == "active", 1), else_=0)).label("active"),
+            func.sum(case((PoamEntry.status == "pending_approval", 1), else_=0)).label("pending"),
+            func.sum(case((and_(PoamEntry.status == "active", PoamEntry.due_date < instant), 1),
+                          else_=0)).label("overdue"))
+            .where(PoamEntry.service_id.in_(visible_ids)).group_by(PoamEntry.service_id)).mappings()
+        for summary in summaries:
+            counts[summary["service_id"]] = {key: int(summary[key] or 0)
+                for key in ("total", "active", "pending", "overdue")}
     service_summaries = [{"service": service, **counts[service.id]} for service in visible_services]
     services = [service for service in visible_services if auth.has("poam.request", service.id)]
     return templates.TemplateResponse(request, "poam.html", page_context(
@@ -7746,29 +7911,52 @@ def remediations_page(
             vul_query = vul_query.where(ExceptionRecord.expires_at >= parsed_exp_from); cfg_query = cfg_query.where(PolicyExceptionRecord.expires_at >= parsed_exp_from)
         if parsed_exp_to:
             vul_query = vul_query.where(ExceptionRecord.expires_at <= parsed_exp_to); cfg_query = cfg_query.where(PolicyExceptionRecord.expires_at <= parsed_exp_to)
-        vul_total = db.scalar(select(func.count()).select_from(vul_query.order_by(None).subquery())) or 0
-        cfg_total = db.scalar(select(func.count()).select_from(cfg_query.order_by(None).subquery())) or 0
-        total_items = vul_total + cfg_total
-        # Fetch only the current page from each underlying record type; both are
-        # authorized before filtering and are merged into one operational view.
-        for record in db.scalars(vul_query.offset((page - 1) * page_size).limit(page_size)).all():
+        from sqlalchemy import literal, union_all
+        pending_query = select(WorkflowRequest).where(
+            WorkflowRequest.service_id.in_(service_filter_ids or {-1}),
+            WorkflowRequest.request_type == "exception", WorkflowRequest.status == "pending",
+            or_(WorkflowRequest.finding_id.in_(select(Finding.id)),
+                WorkflowRequest.policy_finding_id.in_(select(PolicyFinding.id))),
+        ).options(selectinload(WorkflowRequest.service), selectinload(WorkflowRequest.finding),
+                  selectinload(WorkflowRequest.policy_finding))
+        if status_filter not in {"all", "pending_approval"}:
+            pending_query = pending_query.where(false())
+        if identifier_term:
+            pending_query = pending_query.where(or_(WorkflowRequest.finding_id.in_(select(Finding.id).where(Finding.cve.ilike(f"%{identifier_term}%"))), WorkflowRequest.policy_finding_id.in_(select(PolicyFinding.id).where(PolicyFinding.finding.ilike(f"%{identifier_term}%")))))
+        # Select one mixed page before hydrating any exception evidence graphs.
+        def exception_ids(query, model, kind):
+            return query.order_by(None).with_only_columns(
+                model.id.label("record_id"), literal(kind).label("record_type"),
+                model.created_at.label("created_at"), maintain_column_froms=True,
+            )
+        combined = union_all(exception_ids(vul_query, ExceptionRecord, "vulnerability"),
+                             exception_ids(cfg_query, PolicyExceptionRecord, "configuration"),
+                             exception_ids(pending_query, WorkflowRequest, "pending")).subquery()
+        total_items = db.scalar(select(func.count()).select_from(combined)) or 0
+        page = min(page, max(1, (total_items + page_size - 1) // page_size))
+        selected = db.execute(select(combined.c.record_id, combined.c.record_type).order_by(
+            combined.c.created_at.desc(), combined.c.record_type, combined.c.record_id,
+        ).offset((page - 1) * page_size).limit(page_size)).all()
+        ids_by_type = {kind: [row.record_id for row in selected if row.record_type == kind]
+                       for kind in ("vulnerability", "configuration", "pending")}
+        for record in db.scalars(vul_query.where(ExceptionRecord.id.in_(ids_by_type["vulnerability"]))).all():
             finding = record.finding; state = "Revoked" if record.revoked_at else ("Expired" if aware(record.expires_at) < now else "Active")
             exceptions.append({"kind":"Vulnerability", "item":finding.cve, "service":finding.service, "severity":finding.severity, "status":state, "expires_at":record.expires_at, "days_remaining":max(0,(aware(record.expires_at)-now).days) if state == "Active" else 0, "approved_by":record.approved_by, "created_at":record.created_at, "justification":record.justification, "record_id":record.id, "revoke_href":f"/exceptions/{record.id}/revoke", "href":f"/services/{finding.service.service_key}/findings/{finding.id}"})
-        for record in db.scalars(cfg_query.offset((page - 1) * page_size).limit(page_size)).all():
+        for record in db.scalars(cfg_query.where(PolicyExceptionRecord.id.in_(ids_by_type["configuration"]))).all():
             finding = record.policy_finding; state = "Revoked" if record.revoked_at else ("Expired" if aware(record.expires_at) < now else "Active")
             exceptions.append({"kind":"Configuration", "item":finding.finding, "service":finding.service, "severity":finding.severity, "status":state, "expires_at":record.expires_at, "days_remaining":max(0,(aware(record.expires_at)-now).days) if state == "Active" else 0, "approved_by":record.approved_by, "created_at":record.created_at, "justification":record.justification, "record_id":record.id, "revoke_href":f"/policy-exceptions/{record.id}/revoke", "href":f"/services/{finding.service.service_key}?finding_state=exceptions&finding_type=configuration"})
-        if status_filter in {"all", "pending_approval"}:
-            pending_query = select(WorkflowRequest).where(WorkflowRequest.service_id.in_(service_filter_ids or {-1}), WorkflowRequest.request_type == "exception", WorkflowRequest.status == "pending").options(selectinload(WorkflowRequest.service), selectinload(WorkflowRequest.finding), selectinload(WorkflowRequest.policy_finding)).order_by(WorkflowRequest.created_at.desc())
-            if identifier_term:
-                pending_query = pending_query.where(or_(WorkflowRequest.finding_id.in_(select(Finding.id).where(Finding.cve.ilike(f"%{identifier_term}%"))), WorkflowRequest.policy_finding_id.in_(select(PolicyFinding.id).where(PolicyFinding.finding.ilike(f"%{identifier_term}%")))))
-            pending_total = db.scalar(select(func.count()).select_from(pending_query.order_by(None).subquery())) or 0
-            total_items += pending_total
-            for workflow in db.scalars(pending_query.offset((page - 1) * page_size).limit(page_size)).all():
-                target = workflow.finding or workflow.policy_finding
-                if not target:
-                    continue
-                is_vulnerability = bool(workflow.finding)
-                exceptions.append({"kind": "Vulnerability" if is_vulnerability else "Configuration", "item": target.cve if is_vulnerability else target.finding, "service": workflow.service, "severity": target.severity, "status": "Pending", "expires_at": workflow.requested_expires_at, "days_remaining": 0, "approved_by": "Pending review", "created_at": workflow.created_at, "justification": workflow.justification, "record_id": workflow.id, "href": f"/services/{workflow.service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{workflow.service.service_key}?finding_state=exceptions&finding_type=configuration"})
+        for workflow in db.scalars(pending_query.where(WorkflowRequest.id.in_(ids_by_type["pending"]))).all():
+            target = workflow.finding or workflow.policy_finding
+            if not target:
+                continue
+            is_vulnerability = bool(workflow.finding)
+            exceptions.append({"kind": "Vulnerability" if is_vulnerability else "Configuration", "item": target.cve if is_vulnerability else target.finding, "service": workflow.service, "severity": target.severity, "status": "Pending", "expires_at": workflow.requested_expires_at, "days_remaining": 0, "approved_by": "Pending review", "created_at": workflow.created_at, "justification": workflow.justification, "record_id": workflow.id, "href": f"/services/{workflow.service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{workflow.service.service_key}?finding_state=exceptions&finding_type=configuration"})
+        positions = {(row.record_type, row.record_id): index for index, row in enumerate(selected)}
+        exceptions.sort(key=lambda item: positions[(
+            "pending" if item["status"] == "Pending" else
+            "vulnerability" if item["kind"] == "Vulnerability" else "configuration",
+            item["record_id"],
+        )])
     active_poams = db.scalar(select(func.count(PoamEntry.id)).where(PoamEntry.service_id.in_(service_filter_ids or {-1}), PoamEntry.item_type != "mitigation", PoamEntry.status == "active")) or 0
     overdue_poams = db.scalar(select(func.count(PoamEntry.id)).where(PoamEntry.service_id.in_(service_filter_ids or {-1}), PoamEntry.item_type != "mitigation", PoamEntry.status == "active", PoamEntry.due_date < now)) or 0
     active_exceptions = db.scalar(select(func.count(ExceptionRecord.id)).join(Finding).where(Finding.service_id.in_(service_filter_ids or {-1}), ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now)) or 0
@@ -7793,7 +7981,7 @@ def remediations_page(
 @app.get("/poam/services/{service_key}", response_class=HTMLResponse)
 def service_poam_page(
     service_key: str, request: Request, status_filter: str = "all", sort_by: str = "newest", db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_user),
+    auth: AuthContext = Depends(require_user), page: int = 1, page_size: int = 50,
 ):
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.groups)))
     if not service:
@@ -7802,32 +7990,9 @@ def service_poam_page(
         raise HTTPException(403, detail="Permission denied for this service")
     # Keep the legacy URL as a compatibility alias; the canonical experience
     # is the POA&M tab embedded in the service workspace.
-    return RedirectResponse(f"/services/{service.service_key}?poam=true&status_filter={status_filter}&sort_by={sort_by}", status_code=303)
-    entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).options(
-        selectinload(PoamEntry.finding), selectinload(PoamEntry.policy_finding), selectinload(PoamEntry.created_by),
-        selectinload(PoamEntry.approved_by),
-    ).order_by(PoamEntry.created_at.desc())).all()
-    if status_filter not in {"all", "active", "pending_approval", "overdue", "completed", "rejected"}:
-        raise HTTPException(422, detail="Unknown POA&M filter")
-    now = utcnow()
-    if status_filter == "overdue":
-        entries = [entry for entry in entries if entry.status == "active" and entry.due_date and aware(entry.due_date) < now]
-    elif status_filter != "all":
-        entries = [entry for entry in entries if entry.status == status_filter]
-    if sort_by == "due":
-        entries.sort(key=lambda entry: (aware(entry.due_date) if entry.due_date else datetime.max.replace(tzinfo=timezone.utc), entry.title.lower()))
-    elif sort_by == "severity":
-        severity_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3, "Negligible": 4}
-        entries.sort(key=lambda entry: (severity_rank.get(
-            entry.finding.severity if entry.finding else (entry.policy_finding.severity if entry.policy_finding else ""), 5
-        ), entry.title.lower()))
-    elif sort_by != "newest":
-        raise HTTPException(422, detail="Unknown POA&M sort")
-    return templates.TemplateResponse(request, "poam_service.html", page_context(
-        auth, service=service, entries=entries, can_create_poam=auth.has("poam.request", service.id),
-        status_filter=status_filter, sort_by=sort_by, now=now,
-        overdue_entry_ids={entry.id for entry in entries if entry.status == "active" and entry.due_date and aware(entry.due_date) < now},
-    ))
+    from .poam_query import pagination_base as poam_pagination_base
+    return RedirectResponse(poam_pagination_base(service.service_key, status_filter, sort_by, page_size)
+                            + "&page=" + str(page), status_code=303)
 
 
 def poam_workbook(entries: list[PoamEntry]) -> Workbook:
@@ -8423,6 +8588,12 @@ def delete_service(
     if artifact_ids:
         db.execute(delete(ServiceArtifactRevision).where(ServiceArtifactRevision.artifact_id.in_(artifact_ids)))
         db.execute(delete(ServiceArtifact).where(ServiceArtifact.id.in_(artifact_ids)))
+    from .models import DependencyProjection, DependencyProjectionRow, ExecutionSummary
+    deleted_execution_ids = select(Execution.id).where(Execution.service_id == service.id)
+    # SQLite deployments may disable foreign-key cascades; derived evidence
+    # must still be removed alongside its authoritative executions.
+    for derived_model in (DependencyProjectionRow, DependencyProjection, ExecutionSummary):
+        db.execute(delete(derived_model).where(derived_model.execution_id.in_(deleted_execution_ids)))
     db.execute(delete(Execution).where(Execution.service_id == service.id))
     service.current_version_id = None
     db.flush()
@@ -8616,7 +8787,7 @@ def audit_legacy_page(auth: AuthContext = Depends(require_permission("audit.view
 
 
 @app.get("/admin/audit", response_class=HTMLResponse)
-def audit_page(request: Request, group_id: str = "", show: int = 10, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("audit.view"))):
+def audit_page(request: Request, group_id: str = "", show: int = 10, page: int = 1, page_size: int = 10, action: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("audit.view"))):
     groups = manageable_groups(db, auth) if auth.has("config.manage") else []
     selected_group_id = requested_group_scope(group_id or (str(groups[0].id) if groups else None), db, auth) if groups else None
     configuration = get_configuration(db, selected_group_id)
@@ -8627,16 +8798,15 @@ def audit_page(request: Request, group_id: str = "", show: int = 10, db: Session
         retention_days = int(configuration.get("audit_retention_days", "365") or "365")
     except ValueError:
         retention_days = 365
-    query = select(AuditEvent).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at.desc())
-    if retention_days > 0:
-        query = query.where(AuditEvent.created_at >= utcnow() - timedelta(days=retention_days))
-    retained_count = int(db.scalar(select(func.count()).select_from(query.order_by(None).subquery())) or 0)
-    show = max(10, min(show, retained_count or 10))
-    events = db.scalars(query.limit(show)).all()
+    from .activity_queries import global_activity_page
+    cutoff = utcnow() - timedelta(days=retention_days) if retention_days > 0 else None
+    values = global_activity_page(db, cutoff=cutoff, action=action, page=page, page_size=(200 if request.query_params.get("full") == "true" else (show if "show" in request.query_params else page_size)))
+    from urllib.parse import urlencode
+    pagination_base = '/admin/audit?' + urlencode({'group_id': group_id, 'page_size': values['page_size'], 'action': action})
     return templates.TemplateResponse(request, "audit.html", page_context(
-        auth, events=events, groups=groups, selected_group_id=selected_group_id,
+        auth, **values, groups=groups, selected_group_id=selected_group_id,
         configuration=configuration, saved=request.query_params.get("saved") == "1",
-        retained_count=retained_count, shown_count=len(events), next_show=min(show + 50, retained_count),
+        pagination_base=pagination_base,
     ))
 
 
@@ -8652,7 +8822,7 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
         retention_days = int(configuration.get("audit_retention_days", "365") or "365")
     except ValueError:
         retention_days = 365
-    query = select(AuditEvent).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at.desc())
+    query = select(AuditEvent).options(selectinload(AuditEvent.actor)).order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
     if retention_days > 0:
         query = query.where(AuditEvent.created_at >= utcnow() - timedelta(days=retention_days))
     retained_count = int(db.scalar(select(func.count()).select_from(query.order_by(None).subquery())) or 0)
@@ -9089,8 +9259,19 @@ def dependency_watchlist_page(request: Request, db: Session = Depends(get_db), a
 def _refresh_watchlist_matches(db: Session) -> None:
     # Re-evaluate persisted SBOM evidence when configuration changes. Old scan
     # payloads without a component inventory simply produce no matches.
-    for execution in db.scalars(select(Execution).where(Execution.raw_payload.is_not(None))).all():
-        reconcile_watchlist_matches(db, execution)
+    entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
+    cursor = 0
+    while True:
+        executions = db.scalars(select(Execution).where(
+            Execution.id > cursor, Execution.raw_payload.is_not(None),
+        ).order_by(Execution.id).limit(32)).all()
+        if not executions:
+            break
+        for execution in executions:
+            reconcile_watchlist_matches(db, execution, entries=entries)
+        cursor = executions[-1].id
+        # Keep rebuilt matches bounded while preserving the caller's transaction.
+        db.flush()
 
 
 @app.post("/admin/dependency-watchlist")

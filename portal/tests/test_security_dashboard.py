@@ -77,5 +77,6 @@ def test_database_history_hydrates_only_selected_payloads_and_caps_metadata():
         assert len(result["trend"]) == 8
         assert len(result["versions"]) == 1
         assert result["comparison_limited"] is True
-        assert len(loaded) == 8
+        # Compact summaries and the legacy scalar fallback avoid ORM payload hydration.
+        assert len(loaded) == 0
         assert "raw_payload" not in result["trend"][0]

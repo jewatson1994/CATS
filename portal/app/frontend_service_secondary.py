@@ -64,6 +64,7 @@ def project_secondary(data, name, context, can=None, formatters=None):
         payload = _field(context.get("latest_execution"), "raw_payload", {}) or {}
         data["chart_graph"] = chart_graph(_field(_field(payload, "service_overview", {}), "helm_chart_graph", {}))
     elif name == "service_activity.html":
+        data.update(_fields(context, ("page", "page_size", "page_count", "total_items", "pagination_base")))
         data["events"] = []
         # Only documented workflow metadata is displayed; audit detail is never copied wholesale.
         detail_fields = ("service_key", "name", "version", "finding_id", "policy_finding_id", "cve", "status", "reason",
@@ -77,12 +78,14 @@ def project_secondary(data, name, context, can=None, formatters=None):
             if isinstance(detail.get("changed"), (list, tuple)):
                 projected_detail["changed"] = [key for key in detail["changed"] if key in
                     ("name", "description", "owner", "poc", "manual_version", "group_ids")]
-            data["events"].append({"action": _scalar(_field(event, "action")),
+            data["events"].append({"id": _scalar(_field(event, "id")), "action": _scalar(_field(event, "action")),
                 "created_at": _formatted(at), "created_at_display": _formatted(at, formatters.get("cats_datetime")),
                 "actor_name": _scalar(_field(_field(event, "actor"), "display_name", "System")),
                 "detail": projected_detail})
     elif name == "service_history.html":
         data["service"] = _fields(context.get("service"), ("id", "service_key", "name"))
+        data.update(_fields(context, ("page", "page_size", "total_pages", "total_items",
+                                     "imported_page", "imported_total_pages", "imported_total_items")))
         data["version"] = _scalar(context.get("version"))
         data["versions"] = strings(context.get("versions", []))
         for key in ("snapshots", "imported_snapshots"):

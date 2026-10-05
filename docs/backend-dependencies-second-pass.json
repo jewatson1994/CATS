@@ -1,0 +1,91 @@
+{
+  "method": "Actual dependencies route body including DTO/JSON serialization, SQLite, 100k shared fixture findings and 100k components; tracemalloc enabled; no middleware/network/authentication. Cold request and background rebuild measured separately from fresh-session warm requests.",
+  "source_sha256": {
+    "portal\\app\\main.py": "65c2ced21fa8e5fb0ec076f5bf2aef362cd3b0e7c4ca8e85b7d65b9ee339896a",
+    "portal\\app\\service_tab_queries.py": "b85a59808f557f0beb83ecf445d6cdfc4b2d54a69621bfc7550175b55cfa14bb",
+    "portal\\app\\dependency_queries.py": "a232d61cf1bf0e9fe550cc71ba042a83b6661b5c5a19528497891a811a580acf",
+    "portal\\app\\execution_summaries.py": "9695a9694acde7502f40f516ce66db1cc46104652b3f514fe7015a0ac0f06159",
+    "portal\\app\\recursive_json.py": "815c16bceb6a8ca5c1408126e2ec6fb06c4b9a81369974b2c18838e6a87dc328",
+    "portal\\app\\policy_data.py": "f53a2acb9a897c637c5ac3e4799b6e93a0a4bafe72419fd0460369b6f4814bd3"
+  },
+  "results": [
+    {
+      "phase": "cold",
+      "fixture_findings": 100000,
+      "fixture_components": 100000,
+      "query_count": 18,
+      "dbapi_rows_fetched": 11,
+      "orm_objects_loaded": 2,
+      "evidence_queries": 1,
+      "evidence_sql": [
+        "SELECT JSON_QUOTE(JSON_EXTRACT(JSON_QUOTE(JSON_EXTRACT(executions.raw_payload, ?)), ?)) AS anon_1 \nFROM executions \nWHERE executions.service_id = ? ORDER BY executions.scanned_at DESC, executions.id DESC"
+      ],
+      "duration_ms": 101.39459998754319,
+      "response_bytes": 2702,
+      "status_code": 200,
+      "dependency_page_rows": 0,
+      "dependency_total": null,
+      "projection_status": "pending",
+      "python_peak_traced_bytes": 1277021
+    },
+    {
+      "phase": "background-build",
+      "fixture_findings": 100000,
+      "fixture_components": 100000,
+      "query_count": 416,
+      "dbapi_rows_fetched": 100008,
+      "orm_objects_loaded": 4,
+      "evidence_queries": 2,
+      "evidence_sql": [
+        "SELECT executions.id AS executions_id, executions.execution_key AS executions_execution_key, executions.service_id AS executions_service_id, executions.service_version_id AS executions_service_version_id, executions.scanned_at AS executions_scanned_at, executions.complete AS executions_complete, executions.scan_scope AS executions_scan_scope, executions.scope_image AS executions_scope_image, executions.pipeline_url AS executions_pipeline_url, executions.commit_sha AS executions_commit_sha, executions.scanner_db_built_at AS executions_scanner_db_built_at, executions.raw_payload AS executions_raw_payload, executions.payload_digest AS executions_payload_digest \nFROM executions \nWHERE executions.id = ?",
+        "SELECT finding_observations.finding_id, finding_observations.execution_id, finding_observations.package, finding_observations.installed_version, finding_observations.image, finding_observations.fixed_version, finding_observations.evidence \nFROM finding_observations \nWHERE finding_observations.execution_id = ? ORDER BY finding_observations.id"
+      ],
+      "build_succeeded": true,
+      "duration_ms": 19779.595700005302,
+      "response_bytes": 2,
+      "status_code": 200,
+      "dependency_page_rows": 0,
+      "dependency_total": null,
+      "projection_status": null,
+      "python_peak_traced_bytes": 281236454
+    },
+    {
+      "phase": "warm",
+      "fixture_findings": 100000,
+      "fixture_components": 100000,
+      "query_count": 28,
+      "dbapi_rows_fetched": 91,
+      "orm_objects_loaded": 3,
+      "evidence_queries": 1,
+      "evidence_sql": [
+        "SELECT JSON_QUOTE(JSON_EXTRACT(JSON_QUOTE(JSON_EXTRACT(executions.raw_payload, ?)), ?)) AS anon_1 \nFROM executions \nWHERE executions.service_id = ? ORDER BY executions.scanned_at DESC, executions.id DESC"
+      ],
+      "duration_ms": 304.491600007168,
+      "response_bytes": 31878,
+      "status_code": 200,
+      "dependency_page_rows": 50,
+      "dependency_total": 100000,
+      "projection_status": "ready",
+      "python_peak_traced_bytes": 405837
+    },
+    {
+      "phase": "warm-second-page",
+      "fixture_findings": 100000,
+      "fixture_components": 100000,
+      "query_count": 28,
+      "dbapi_rows_fetched": 91,
+      "orm_objects_loaded": 3,
+      "evidence_queries": 1,
+      "evidence_sql": [
+        "SELECT JSON_QUOTE(JSON_EXTRACT(JSON_QUOTE(JSON_EXTRACT(executions.raw_payload, ?)), ?)) AS anon_1 \nFROM executions \nWHERE executions.service_id = ? ORDER BY executions.scanned_at DESC, executions.id DESC"
+      ],
+      "duration_ms": 297.43900000175927,
+      "response_bytes": 31891,
+      "status_code": 200,
+      "dependency_page_rows": 50,
+      "dependency_total": 100000,
+      "projection_status": "ready",
+      "python_peak_traced_bytes": 313352
+    }
+  ]
+}

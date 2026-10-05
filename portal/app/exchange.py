@@ -111,12 +111,22 @@ def versions(db, service):
 
 
 def selected_evidence(db, service, version):
-    available = versions(db, service)
+    # Retain Python's legacy version coercion, but inspect only scalar metadata.
+    # Other versions' large scan payloads must never be hydrated for this request.
+    metadata = db.execute(select(Execution.id, Execution.raw_payload["service"]["version"]).where(
+        Execution.service_id == service.id,
+    ).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
+    available = list(dict.fromkeys(str(value or "Unknown") for _, value in metadata)) or [service.manual_version or "Unknown"]
     version = version or available[0]
     if version not in available:
         raise ValueError("Service version not found")
-    executions = db.scalars(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
-    return version, [e for e in executions if version_of(e) == version]
+    selected_ids = [identifier for identifier, value in metadata if str(value or "Unknown") == version]
+    executions = []
+    for offset in range(0, len(selected_ids), 400):
+        executions.extend(db.scalars(select(Execution).where(
+            Execution.service_id == service.id, Execution.id.in_(selected_ids[offset:offset + 400]),
+        ).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all())
+    return version, executions
 
 
 def record_key(dataset, values):

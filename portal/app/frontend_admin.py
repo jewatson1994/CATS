@@ -33,6 +33,7 @@ def project_admin(data, name, context, can=None, formatters=None):
                 "assignments": [_fields(item, ("id", "role", "group", "service")) for item in _field(row, "assignments", [])],
                 "permissions": [key for key in _field(row, "permissions", []) if key in catalog]})
     elif name == "audit.html":
+        data.update(_fields(context, ("page", "page_size", "page_count", "pagination_base")))
         data["configuration"] = _fields(context.get("configuration", {}), ("audit_retention_days", "log_level"))
         detail_keys = ("actor_username", "username", "display_name", "service_key", "service_id", "group_id", "user_id",
             "role_id", "name", "previous_name", "parent_id", "version", "reason", "review_reason", "image", "replacement",

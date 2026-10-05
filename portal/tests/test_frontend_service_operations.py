@@ -75,3 +75,18 @@ def test_validation_nested_credentials_and_signed_artifact_urls_are_excluded():
     assert "private" not in str(data) and "secret" not in str(data)
     assert data["validation"]["artifact_reference"] == "https://example.test/chart"
     assert data["validation"]["capability_preflight"][0]["evidence"]["provider"]["status"] == "READY"
+
+
+def test_dependencies_projection_preserves_background_status_and_unavailable_counts():
+    from app.dependency_queries import pending_dependency_page
+    for status in ("pending", "building", "failed"):
+        context = pending_dependency_page({"status": status, "error": "Build failed" if status == "failed" else None})
+        context["private_worker_state"] = {"token": "hidden"}
+        data = project_service_operations("service_dependencies.html", context)
+        assert data["dependency_projection_status"] == status
+        assert data["dependency_projection_error"] == context["dependency_projection_error"]
+        assert data["dependency_rows"] == []
+        assert data["dependency_total"] is None
+        assert data["dependency_all_total"] is None
+        assert data["vulnerable_components"] is None
+        assert "private_worker_state" not in data

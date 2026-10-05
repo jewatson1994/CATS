@@ -6,6 +6,7 @@ import json
 from datetime import date, datetime
 
 from starlette.responses import HTMLResponse, JSONResponse
+from .performance import performance_scope
 from starlette.templating import Jinja2Templates
 from .frontend_portfolio import cybersecurity_data
 from .frontend_results import public_results_data, patch_results_data
@@ -100,7 +101,7 @@ def _service_data(data, context, can, formatters):
                 row["remediation_classification"] = _scalar(_field(remediation, "classification", "NOT REMEDIABLE"))
                 row["remediation_reason"] = _scalar(_field(remediation, "reason", ""))
             data[key].append(row)
-    for key in ("noncompliance_items", "warning_items", "simplified_findings"):
+    for key in ("noncompliance_items", "warning_items"):
         data[key] = []
         for item in context.get(key, []):
             row = _fields(item, ("type", "item", "reason", "source_file", "finding_id", "policy_finding_id", "href",
@@ -109,6 +110,13 @@ def _service_data(data, context, can, formatters):
             for list_key in ("images", "cves", "finding_ids"):
                 row[list_key] = [_scalar(value) for value in _field(item, list_key, [])]
             data[key].append(row)
+
+    data["simplified_findings"] = []
+    for item in context.get("simplified_findings", []):
+        row = _fields(item, ("group_id", "member_count", "representative_cve", "representative_finding_id",
+                             "image_count", "package", "fixed_version", "severity", "remediation"))
+        row["due"] = _formatted(_field(item, "due"), formatters.get("cats_date"))
+        data["simplified_findings"].append(row)
 
 
 def page_data(request, name, context, deployed_version=None, formatters=None):
@@ -281,12 +289,15 @@ class ReactTemplates(Jinja2Templates):
                 for key in ("cats_date", "cats_datetime"):
                     if callable(formatters.get(key)):
                         formatters[key] = partial(formatters[key], configuration=merged["_date_configuration"])
-            envelope = page_data(request, name, merged, self.env.globals.get("cats_deployed_version"), formatters)
+            with performance_scope("transformation"):
+                envelope = page_data(request, name, merged, self.env.globals.get("cats_deployed_version"), formatters)
             if wants_json:
-                response = JSONResponse(envelope,
-                                        media_type=PAGE_MEDIA_TYPE, **options)
+                with performance_scope("serialization"):
+                    response = JSONResponse(envelope,
+                                            media_type=PAGE_MEDIA_TYPE, **options)
             else:
-                serialized = json.dumps(envelope, ensure_ascii=False)
+                with performance_scope("serialization"):
+                    serialized = json.dumps(envelope, ensure_ascii=False)
                 for char, escaped in (("<", "\\u003c"), (">", "\\u003e"), ("&", "\\u0026"),
                                       ("\u2028", "\\u2028"), ("\u2029", "\\u2029")):
                     serialized = serialized.replace(char, escaped)

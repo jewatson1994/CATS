@@ -108,13 +108,14 @@ def syft_components(sbom: dict, image: str) -> list[dict]:
     return result
 
 
-def reconcile_matches(db, execution) -> int:
+def reconcile_matches(db, execution, *, entries=None) -> int:
     """Rebuild warning evidence for one immutable scan; never create findings."""
     from sqlalchemy import delete, select
     from .models import DependencyWatchlistEntry, DependencyWatchlistMatch
 
     db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.execution_id == execution.id))
-    entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
+    if entries is None:
+        entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
     components = (execution.raw_payload or {}).get("sbom_components") or []
     seen = set()
     count = 0

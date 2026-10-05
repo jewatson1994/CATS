@@ -14,6 +14,29 @@ from portal.app.models import Finding, FindingObservation, ExceptionRecord, Poli
 NOW = datetime(2026, 10, 2, tzinfo=timezone.utc)
 
 
+def test_actual_raw_page_statements_compile_for_sqlite_and_postgresql():
+    from sqlalchemy.dialects import sqlite
+    with database() as db:
+        finding(db, 1, active=True)
+        db.commit()
+        statements = []
+        def capture(_connection, _cursor, _sql, _parameters, context, _many):
+            if context.compiled is not None:
+                statements.append(context.compiled.statement)
+        event.listen(db.get_bind(), "before_cursor_execute", capture)
+        get_raw_finding_page(db, 1, {}, NOW, page=1)
+        event.remove(db.get_bind(), "before_cursor_execute", capture)
+        assert len(statements) >= 4
+        for dialect in (sqlite.dialect(), postgresql.dialect()):
+            sql = [str(statement.compile(dialect=dialect)) for statement in statements]
+            assert "UNION ALL" in sql[0]
+            assert "EXISTS" in sql[0]
+            assert "revoked_at IS NULL" in sql[0]
+            assert "service_id" in sql[0]
+            assert "ORDER BY" in sql[1] and "LIMIT" in sql[1] and "OFFSET" in sql[1]
+            assert "finding_observations" not in " ".join(sql)
+
+
 def database():
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
@@ -99,7 +122,7 @@ def test_postgresql_search_statements_compile():
             return EmptyRows()
 
     assert get_raw_finding_page(CompileSession(), 1, {}, NOW, query="package")["total_items"] == 0
-    assert len(statements) == 4
+    assert len(statements) == 2
     assert "string_agg" in statements[0] and "ORDER BY finding_observations.id DESC" in statements[0]
     assert "finding_observations.finding_id = findings.id" in statements[0]
 
