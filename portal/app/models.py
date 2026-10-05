@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Float, JSON, String, Text, UniqueConstraint, Index, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .recursive_json import JSONDict
 
 
 def utcnow():
@@ -126,10 +127,36 @@ class Execution(Base):
     pipeline_url: Mapped[str | None] = mapped_column(Text)
     commit_sha: Mapped[str | None] = mapped_column(String(80))
     scanner_db_built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    raw_payload: Mapped[dict] = mapped_column(JSON)
+    raw_payload: Mapped[dict] = mapped_column(JSONDict.as_mutable(JSON))
+    payload_digest: Mapped[str | None] = mapped_column(String(64))
     service: Mapped["Service"] = relationship(back_populates="executions")
     service_version: Mapped["ServiceVersion | None"] = relationship(back_populates="executions")
     deployment_validation_runs: Mapped[list["DeploymentValidationRun"]] = relationship(back_populates="execution")
+
+
+class DependencyProjection(Base):
+    """Disposable derived evidence, keyed by every input to dependency_rows."""
+    __tablename__ = "dependency_projections"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64))
+
+
+class DependencyProjectionRow(Base):
+    __tablename__ = "dependency_projection_rows"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    data: Mapped[dict] = mapped_column(JSON)
+    search_text: Mapped[str] = mapped_column(Text)
+    license_text: Mapped[str] = mapped_column(Text)
+    component_type: Mapped[str] = mapped_column(Text)
+    image: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(Text)
+    epss: Mapped[float | None] = mapped_column(Float)
+    vulnerable: Mapped[bool] = mapped_column(Boolean)
+    kev: Mapped[bool] = mapped_column(Boolean)
+    fixed: Mapped[bool] = mapped_column(Boolean)
+    watchlisted: Mapped[bool] = mapped_column(Boolean)
+    license_unknown: Mapped[bool] = mapped_column(Boolean)
 
 
 class DeploymentValidationRun(Base):
@@ -332,6 +359,9 @@ class Finding(Base):
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
     cve: Mapped[str] = mapped_column(String(80), index=True)
     severity: Mapped[str] = mapped_column(String(30))
+    severity_folded: Mapped[str | None] = mapped_column(String(80))
+    cve_normalized: Mapped[str | None] = mapped_column(String(160))
+    search_folded: Mapped[str | None] = mapped_column(Text)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     episode_started: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -345,6 +375,7 @@ class Finding(Base):
 
 class FindingObservation(Base):
     __tablename__ = "finding_observations"
+    __table_args__ = (Index('ix_obs_finding_execution_id', 'finding_id', 'execution_id', 'id'),)
     id: Mapped[int] = mapped_column(primary_key=True)
     finding_id: Mapped[int] = mapped_column(ForeignKey("findings.id"), index=True)
     execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id"), index=True)
@@ -353,7 +384,14 @@ class FindingObservation(Base):
     package: Mapped[str | None] = mapped_column(String(300))
     installed_version: Mapped[str | None] = mapped_column(String(200))
     fixed_version: Mapped[str | None] = mapped_column(String(200))
-    evidence: Mapped[dict] = mapped_column(JSON)
+    evidence: Mapped[dict] = mapped_column(JSONDict.as_mutable(JSON))
+    simplified_key: Mapped[str | None] = mapped_column(String(64), index=True)
+    simplified_package: Mapped[str | None] = mapped_column(Text)
+    simplified_remediation: Mapped[str | None] = mapped_column(Text)
+    simplified_fixed: Mapped[str | None] = mapped_column(Text)
+    simplified_package_sort: Mapped[str | None] = mapped_column(Text)
+    simplified_fixed_sort: Mapped[str | None] = mapped_column(Text)
+    search_folded: Mapped[str | None] = mapped_column(Text)
     finding: Mapped["Finding"] = relationship(back_populates="observations")
 
 
@@ -379,6 +417,8 @@ class PolicyFinding(Base):
     identity_key: Mapped[str] = mapped_column(String(64), index=True)
     finding: Mapped[str] = mapped_column(String(120), index=True)
     severity: Mapped[str] = mapped_column(String(30), default="Unknown")
+    severity_folded: Mapped[str | None] = mapped_column(String(80))
+    search_folded: Mapped[str | None] = mapped_column(Text)
     scanner: Mapped[str | None] = mapped_column(String(120))
     framework: Mapped[str | None] = mapped_column(String(240))
     target: Mapped[str | None] = mapped_column(Text)
@@ -619,6 +659,112 @@ class PortalSetting(Base):
     updated_by: Mapped[User | None] = relationship()
 
 
+class ManagedValidator(Base):
+    """Managed identities extend the existing mTLS configuration contract."""
+    __tablename__ = "managed_validators"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    host: Mapped[str] = mapped_column(String(253))
+    ssh_port: Mapped[int] = mapped_column(Integer, default=22)
+    username: Mapped[str] = mapped_column(String(64), default="ubuntu")
+    api_port: Mapped[int] = mapped_column(Integer, default=8443)
+    labels: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(40), default="DRAFT", index=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    ssh_fingerprint: Mapped[str | None] = mapped_column(String(100))
+    discovered_fingerprint: Mapped[str | None] = mapped_column(String(100))
+    preflight: Mapped[dict] = mapped_column(JSON, default=dict)
+    health: Mapped[dict] = mapped_column(JSON, default=dict)
+    configuration: Mapped[dict] = mapped_column(JSON, default=dict)
+    certificate: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_self_test: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    ssh_username: Mapped[str] = mapped_column(String(64), default="ubuntu")
+    fingerprint: Mapped[str | None] = mapped_column(String(120))
+    fingerprint_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
+    identity: Mapped[dict] = mapped_column(JSON, default=dict)
+    last_health: Mapped[dict] = mapped_column(JSON, default=dict)
+    image: Mapped[dict] = mapped_column(JSON, default=dict)
+    active_operation_id: Mapped[str | None] = mapped_column(String(64))
+    active_validation_id: Mapped[str | None] = mapped_column(String(64))
+    last_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ManagedValidatorOperation(Base):
+    __tablename__ = "managed_validator_operations"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    validator_id: Mapped[str] = mapped_column(ForeignKey("managed_validators.id"), index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="RUNNING")
+    phase: Mapped[str] = mapped_column(String(64), default="QUEUED")
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ValidatorProvisioningAttempt(Base):
+    __tablename__ = "validator_provisioning_attempts"
+    __table_args__ = (Index('uq_validator_active_attempt', 'validator_id', unique=True,
+        sqlite_where=text("status IN ('QUEUED', 'RUNNING')"),
+        postgresql_where=text("status IN ('QUEUED', 'RUNNING')")),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    validator_id: Mapped[str] = mapped_column(ForeignKey("managed_validators.id"), index=True)
+    operator_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    action: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(32), default="QUEUED", index=True)
+    stage: Mapped[str] = mapped_column(String(80), default="QUEUED")
+    stages: Mapped[list] = mapped_column(JSON, default=list)
+    failure: Mapped[str | None] = mapped_column(Text)
+    encrypted_credentials: Mapped[str | None] = mapped_column(Text)
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    payload_digest: Mapped[str | None] = mapped_column(String(80))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    host_fingerprint: Mapped[str | None] = mapped_column(String(100))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ValidatorPayloadBuild(Base):
+    __tablename__ = "validator_payload_builds"
+    __table_args__ = (
+        Index('uq_payload_build_running', 'build_slot', unique=True,
+              sqlite_where=text("status IN ('QUEUED', 'RUNNING')"),
+              postgresql_where=text("status IN ('QUEUED', 'RUNNING')")),
+        Index('uq_payload_platform_active', 'platform', unique=True,
+              sqlite_where=text("active = 1"), postgresql_where=text("active = true")),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    build_slot: Mapped[str] = mapped_column(String(32), default='managed')
+    platform: Mapped[str] = mapped_column(String(80), index=True)
+    operator_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
+    status: Mapped[str] = mapped_column(String(32), default='QUEUED', index=True)
+    stage: Mapped[str] = mapped_column(String(80), default='Preparing payload')
+    stages: Mapped[list] = mapped_column(JSON, default=list)
+    failure: Mapped[str | None] = mapped_column(Text)
+    manifest_sha256: Mapped[str | None] = mapped_column(String(64), index=True)
+    artifact: Mapped[dict] = mapped_column(JSON, default=dict)
+    active: Mapped[bool] = mapped_column(Boolean, default=False)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ValidatorTrustDomain(Base):
+    __tablename__ = "validator_trust_domains"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    certificate: Mapped[str] = mapped_column(Text)
+    encrypted_key: Mapped[str] = mapped_column(Text)
+    client_certificate: Mapped[str] = mapped_column(Text)
+    encrypted_client_key: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ExportTemplate(Base):
     __tablename__ = "export_templates"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -678,3 +824,13 @@ class ServiceTransferProvenance(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
     detail: Mapped[dict] = mapped_column(JSON)
+
+
+class ExecutionSummary(Base):
+    """Derived scan counts; immutable evidence remains authoritative."""
+    __tablename__ = "execution_summaries"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    summary_version: Mapped[int] = mapped_column(Integer)
+    source_complete: Mapped[bool] = mapped_column(Boolean)
+    data: Mapped[dict] = mapped_column(JSON)

@@ -1,0 +1,53 @@
+{
+  "format": 1,
+  "ubuntu_image": {
+    "reference": "ubuntu:22.04@sha256:08ea48a03a3e78ebc7cd526e6a275053223aadd88bfc09cc49b06d5281525fde",
+    "platform": "linux/amd64",
+    "source": "https://registry-1.docker.io/v2/library/ubuntu/manifests/22.04"
+  },
+  "docker": {
+    "engine_version": "29.8.2",
+    "repository": "https://download.docker.com/linux/ubuntu",
+    "suite": "jammy",
+    "component": "stable",
+    "key_url": "https://download.docker.com/linux/ubuntu/gpg",
+    "key_sha256": "1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570",
+    "key_fingerprint": "9DC858229FC7DD38854AE2D88D81803C0EBFCD88",
+    "packages": {
+      "docker-ce": "5:29.8.2-1~ubuntu.22.04~jammy",
+      "docker-ce-cli": "5:29.8.2-1~ubuntu.22.04~jammy",
+      "containerd.io": "2.3.6-1~ubuntu.22.04~jammy",
+      "docker-buildx-plugin": "0.37.1-1~ubuntu.22.04~jammy",
+      "docker-compose-plugin": "5.6.0-1~ubuntu.22.04~jammy"
+    }
+  },
+  "kind": {
+    "version": "v0.31.0",
+    "url": "https://kind.sigs.k8s.io/dl/v0.31.0/kind-linux-amd64",
+    "sha256": "eb244cbafcc157dff60cf68693c14c9a75c4e6e6fedaf9cd71c58117cb93e3fa",
+    "platform": "linux/amd64",
+    "source": "https://github.com/kubernetes-sigs/kind/releases/tag/v0.31.0"
+  },
+  "kubectl": {
+    "version": "v1.35.0",
+    "url": "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl",
+    "sha256": "a2e984a18a0c063279d692533031c1eff93a262afcc0afdc517375432d060989",
+    "platform": "linux/amd64",
+    "source": "https://dl.k8s.io/release/v1.35.0/bin/linux/amd64/kubectl.sha256"
+  },
+  "helm": {
+    "version": "v3.21.3",
+    "url": "https://get.helm.sh/helm-v3.21.3-linux-amd64.tar.gz",
+    "sha256": "15e041a93a590dce8100f39385cd98c84a765c9e36aeeb9e2dc6ff9e4769e2e0",
+    "platform": "linux/amd64",
+    "source": "https://get.helm.sh/helm-v3.21.3-linux-amd64.tar.gz.sha256sum"
+  },
+  "node_image": {
+    "reference": "kindest/node:v1.35.0@sha256:b7f5e1f621afb1156eb0f27f26c804e5265c07d8e9c55516d25d66400043629b",
+    "kubernetes_version": "v1.35.0",
+    "kind_version": "v0.31.0",
+    "platform": "linux/amd64",
+    "upstream_index_digest": "sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f",
+    "source": "https://github.com/kubernetes-sigs/kind/releases/tag/v0.31.0"
+  }
+}

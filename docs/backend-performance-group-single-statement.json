@@ -1,0 +1,223 @@
+{
+  "method": "Direct actual route invocation including DTO/JSON response. SQL execution excludes cursor fetch; DBAPI fetched row counts include scalar/aggregate rows. Database rows examined internally and Python rows considered are not measured. cProfile and tracemalloc enabled: instrumentation overhead included. No HTTP middleware/authentication/transport. Fresh ORM Session per request; SQLite OS page cache may be warm. Fixed ten-service dataset, half findings in target service, three scans each, one observation per finding. Not PostgreSQL/production latency.",
+  "source_sha256": {
+    "portal\\app\\main.py": "d244a7f67e5ca28d66d4f6724c9addce314a53274fe9232fb7b1fcf60ae0158d",
+    "portal\\app\\findings_query.py": "605730a73089b649baeeecf6bd5ed4cd8d8e171ebb64cabbd7e2f1bacb16f4b1",
+    "portal\\app\\findings_sql.py": "33e7b3ae8350a1f76ed7ccae7aea67791fecdc8333ecc07ee4f5c4328c893212",
+    "portal\\app\\dashboard_portfolio.py": "be552c2001131cdb82a4431c1891b90991bb662e607ac91eeaaadb3a07b9cfb0"
+  },
+  "results": [
+    {
+      "endpoint": "/services/bench-1?findings_view=raw",
+      "fixture_findings": 100000,
+      "query_count": 29,
+      "database_execute_ms": 98.22459997667465,
+      "dbapi_rows_fetched": 267,
+      "orm_objects_loaded": 52,
+      "duration_ms": 310.38209999678656,
+      "response_bytes": 12179,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 50,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 45025,
+        "total_pages": 901
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 2548501,
+      "orm_by_class": {
+        "Service": 1,
+        "Finding": 50,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.11180000000000001,
+          "inclusive_ms": 15.425600000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 3.1326,
+          "inclusive_ms": 6.1612
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1451,
+          "inclusive_ms": 16.7195
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.007000000000000001,
+          "inclusive_ms": 0.9778
+        }
+      ]
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 15,
+      "database_execute_ms": 256.6740000038408,
+      "dbapi_rows_fetched": 33,
+      "orm_objects_loaded": 2,
+      "duration_ms": 375.2037999947788,
+      "response_bytes": 9128,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 21
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 21,
+        "total_pages": 1
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 1141666,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09860000000000001,
+          "inclusive_ms": 1.9204
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.4109,
+          "inclusive_ms": 0.8375
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10900000000000001,
+          "inclusive_ms": 2.5454000000000003
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0037,
+          "inclusive_ms": 0.3724
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/dashboard/services",
+      "fixture_findings": 100000,
+      "query_count": 16,
+      "database_execute_ms": 71.27460001356667,
+      "dbapi_rows_fetched": 81,
+      "orm_objects_loaded": 10,
+      "duration_ms": 232.52660000434844,
+      "response_bytes": 3346,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "stage_groups": 0,
+        "views": 10
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_pages": 1
+      },
+      "route_timings": {
+        "configuration_ms": 1.52,
+        "overview_aggregation_ms": 215.48,
+        "filter_sort_ms": 10.73,
+        "authorization_groups_ms": 0.93,
+        "page_context_ms": 1.54,
+        "route_ms": 230.31
+      },
+      "python_peak_traced_bytes": 1205615,
+      "orm_by_class": {
+        "Service": 10
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.8581000000000001,
+          "inclusive_ms": 1.7015
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0034000000000000002,
+          "inclusive_ms": 0.2267
+        }
+      ]
+    },
+    {
+      "endpoint": "/api/dashboard/cybersecurity",
+      "fixture_findings": 100000,
+      "query_count": 10,
+      "database_execute_ms": 218.54049999819836,
+      "dbapi_rows_fetched": 40,
+      "orm_objects_loaded": 10,
+      "duration_ms": 614.48240000027,
+      "response_bytes": 4161,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "rows": 10,
+        "services": 10
+      },
+      "pagination": {
+        "page": 1,
+        "page_size": 50,
+        "total": 10,
+        "pages": 1,
+        "has_previous": false,
+        "has_next": false
+      },
+      "page_metadata": {},
+      "route_timings": {
+        "portfolio_ms": 612.73
+      },
+      "python_peak_traced_bytes": 886507,
+      "orm_by_class": {
+        "Service": 10
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0076,
+          "inclusive_ms": 0.328
+        }
+      ]
+    }
+  ]
+}

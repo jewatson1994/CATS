@@ -658,6 +658,24 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
         db.commit()
 
     candidate = "registry.internal/remediated/payments@sha256:" + "a" * 64
+    from subprocess import CompletedProcess
+    original_which, original_run = portal_main.shutil.which, portal_main.subprocess.run
+    helm_lookups = []
+    def fake_which(binary):
+        if binary != "helm":
+            return original_which(binary)
+        helm_lookups.append(binary)
+        # Each execution renders its baseline before optional chart packaging.
+        return "fixture-baseline-helm" if len(helm_lookups) % 2 else None
+    def fake_baseline_run(command, **kwargs):
+        if command[0] != "fixture-baseline-helm":
+            return original_run(command, **kwargs)
+        assert command[1] in {"lint", "template"}
+        assert any(Path(argument).name == "baseline" for argument in command)
+        baseline = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: registry.internal/payments:1\n"
+        return CompletedProcess(command, 0, baseline if command[1] == "template" else "Lint passed", "")
+    monkeypatch.setattr(portal_main.shutil, "which", fake_which)
+    monkeypatch.setattr(portal_main.subprocess, "run", fake_baseline_run)
     def fake_patch(_db, _record, _service, plan):
         for image in plan["images"]:
             image.update(candidate=candidate, patch_status="PATCHED", classification="AUTO-REMEDIABLE",
@@ -698,7 +716,8 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
     client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
     data = payload("remediation-bundle", datetime.now(timezone.utc), [])
     data["helm_source_files"] = {"Chart.yaml": "apiVersion: v2\nname: payments\nversion: 1.0.0\n",
-                                 "values.yaml": "image: registry.internal/payments:1\n"}
+                                 "values.yaml": "image: registry.internal/payments:1\n",
+                                 "templates/deployment.yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: {{ .Values.image }}\n"}
     data["helm_values_files"] = ["values.yaml"]
     data["service_overview"] = {"rendered_resources": [{"apiVersion": "apps/v1", "kind": "Deployment",
         "metadata": {"name": "payments"},
@@ -708,6 +727,23 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
     assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
     patch_key = "a" * 32
     candidate = "registry.internal/remediated/payments:1"
+    from subprocess import CompletedProcess
+    original_which, original_run = portal_main.shutil.which, portal_main.subprocess.run
+    helm_lookups = []
+    def fake_which(binary):
+        if binary != "helm":
+            return original_which(binary)
+        helm_lookups.append(binary)
+        return "fixture-baseline-helm" if len(helm_lookups) % 2 else None
+    def fake_baseline_run(command, **kwargs):
+        if command[0] != "fixture-baseline-helm":
+            return original_run(command, **kwargs)
+        assert command[1] in {"lint", "template"}
+        assert any(Path(argument).name == "baseline" for argument in command)
+        baseline = "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: payments\nspec:\n  template:\n    spec:\n      containers:\n      - name: payments\n        image: registry.internal/payments:1\n"
+        return CompletedProcess(command, 0, baseline if command[1] == "template" else "Lint passed", "")
+    monkeypatch.setattr(portal_main.shutil, "which", fake_which)
+    monkeypatch.setattr(portal_main.subprocess, "run", fake_baseline_run)
     output = portal_main.PATCH_JOB_ROOT / patch_key / "output"
     output.mkdir(parents=True, exist_ok=True)
     (output / "patched-image.tar").write_bytes(b"archive")
@@ -1366,7 +1402,13 @@ def test_simplified_findings_offer_per_cve_actions_without_view_raw():
     with SessionLocal() as db:
         findings = {finding.cve: finding.id for finding in db.scalars(select(Finding)).all()}
     for cve, finding_id in findings.items():
-        assert any(finding_id in row["finding_ids"] and cve in row["cves"] for row in data["simplified_findings"])
+        members = []
+        for row in data["simplified_findings"]:
+            assert 'finding_ids' not in row and 'cves' not in row
+            response = client.get(f"/api/v1/services/payments-service/findings/simplified/{row['group_id']}/members")
+            assert response.status_code == 200
+            members.extend(response.json()['items'])
+        assert any(item['id'] == finding_id and item['cve'] == cve for item in members)
 
 
 def _helm_chart_archive(name: str, extra_name: str = "templates/deployment.yaml", extra_content: str = "apiVersion: apps/v1\nkind: Deployment\n") -> bytes:
@@ -1908,7 +1950,7 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
 def test_audit_logs_default_to_ten_and_expand_within_retention():
     client = new_client()
     with SessionLocal() as db:
-        for number in range(15):
+        for number in range(250):
             db.add(AuditEvent(action=f"test.event.{number}", target_type="test", target_id=str(number)))
         db.commit()
     default_page = client.get("/admin/audit")
@@ -1916,9 +1958,16 @@ def test_audit_logs_default_to_ten_and_expand_within_retention():
     assert page_data(default_page)["shown_count"] == 10
     assert sum(row["action"].startswith("test.event.") for row in page_data(default_page)["events"]) == 10
     expanded = client.get("/admin/audit?show=60")
-    assert sum(row["action"].startswith("test.event.") for row in page_data(expanded)["events"]) == 15
+    assert sum(row["action"].startswith("test.event.") for row in page_data(expanded)["events"]) == 60
     assert page_data(expanded)["shown_count"] > 10
 
+
+    full = page_data(client.get("/admin/audit?full=true"))
+    assert full["shown_count"] == 200
+    assert full["page_size"] == 200
+    assert full["page_count"] == 2
+    older = page_data(client.get("/admin/audit?page=2&page_size=200"))
+    assert not ({row["id"] for row in full["events"]} & {row["id"] for row in older["events"]})
 
 def test_archive_requires_request_and_separate_approval():
     admin = new_client(); ingest(admin)
@@ -2587,6 +2636,75 @@ def test_stale_never_started_validation_recovers_as_not_attempted(monkeypatch):
         assert recovered.cleanup_status == "NOT_REQUIRED"
 
 
+def test_validation_setup_exception_finishes_queued_run(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda _: None)
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("setup-error"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        run_id = db.scalar(select(DeploymentValidationRun)).id
+    def fail_setup(_):
+        raise ValueError("setup failed")
+    monkeypatch.setattr(portal_main, "_execute_deployment_validation", fail_setup)
+    portal_main._run_deployment_validation(run_id)
+    with SessionLocal() as db:
+        run = db.get(DeploymentValidationRun, run_id)
+        assert run.status == "NOT_ATTEMPTED"
+        assert run.phase == "COMPLETE"
+        assert run.cleanup_status == "NOT_REQUIRED"
+        assert run.reason_category == "INTERNAL_VALIDATION_ERROR"
+        assert "ValueError" in run.reason
+        assert run.completed_at is not None
+
+
+def test_validation_without_available_remote_validator_finishes_without_execution(monkeypatch):
+    from app import main as portal_main
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda _: None)
+    monkeypatch.setattr(portal_main.validator_management, "select_configuration", lambda *args: {})
+    def unexpected_execution(*args, **kwargs):
+        raise AssertionError("No validation should execute without an available validator")
+    monkeypatch.setattr(portal_main, "validate_remote_artifact", unexpected_execution)
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("no-validator"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        run_id = db.scalar(select(DeploymentValidationRun)).id
+    portal_main._run_deployment_validation(run_id)
+    with SessionLocal() as db:
+        run = db.get(DeploymentValidationRun, run_id)
+        assert run.status == "NOT_ATTEMPTED"
+        assert run.phase == "COMPLETE"
+        assert run.reason_category == "VALIDATOR_UNAVAILABLE"
+        assert run.started_at is None
+        assert run.cluster_name is None
+        assert run.completed_at is not None
+
+
+def test_validation_worker_sends_valid_v2_request(monkeypatch):
+    from app import main as portal_main, deployment_bundle
+    from app.validator_protocol import validate_request
+    monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "true")
+    monkeypatch.setattr(portal_main, "_submit_validation_run", lambda _: None)
+    monkeypatch.setattr(portal_main.validator_management, "select_configuration", lambda *args: {"endpoint": "https://validator:8443"})
+    monkeypatch.setattr(deployment_bundle, "build_helm_archive", lambda path, *args, **kwargs: path.write_bytes(b"prepared chart"))
+    requests = []
+    def remote(configuration, declaration, **kwargs):
+        validate_request(declaration)
+        assert kwargs["artifact_path"].read_bytes() == b"prepared chart"
+        requests.append(declaration)
+        return {"status": "VERIFIED", "phase": "COMPLETE", "cleanup": {"status": "COMPLETE"}}
+    monkeypatch.setattr(portal_main, "validate_remote_artifact", remote)
+    client = new_client()
+    client.post("/api/v1/pipeline-results", json=helm_payload("valid-request"), headers=pipeline_headers)
+    with SessionLocal() as db:
+        run_id = db.scalar(select(DeploymentValidationRun)).id
+    portal_main._run_deployment_validation(run_id)
+    assert len(requests) == 1
+    with SessionLocal() as db:
+        assert db.get(DeploymentValidationRun, run_id).status == "VERIFIED"
+
+
 def test_failed_terminal_cleanup_is_retried_by_stale_recovery(monkeypatch):
     from app import main as portal_main
     monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
@@ -2676,11 +2794,20 @@ def test_deployment_validation_requires_permission_and_csrf(monkeypatch):
 
 
 def test_service_deletion_removes_deployment_validation_rows(monkeypatch):
+    from types import SimpleNamespace
+    from app.dependency_queries import ensure_projection
+    from app.models import DependencyProjection, DependencyProjectionRow, ExecutionSummary
     monkeypatch.setenv("CATS_DEPLOYMENT_VALIDATION_ENABLED", "false")
     client = new_client()
     client.post("/api/v1/pipeline-results", json=helm_payload("delete-validation"), headers=pipeline_headers)
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        execution = db.scalar(select(Execution).where(Execution.service_id == service.id))
+        ensure_projection(db, SimpleNamespace(id=execution.id, payload_digest=None,
+            raw_payload={"sbom_components": [{"name": "cached-package"}]}), [], [],
+            lambda cve: (False, None))
+        assert db.scalar(select(DependencyProjectionRow)) is not None
+        assert db.scalar(select(ExecutionSummary)) is not None
         db.add(ServiceArchiveEvent(service_id=service.id, action="archive", reason="test", performed_by="admin"))
         db.commit()
     monkeypatch.setenv("ALLOW_SERVICE_DELETE", "true")
@@ -2688,3 +2815,26 @@ def test_service_deletion_removes_deployment_validation_rows(monkeypatch):
     assert response.status_code == 303
     with SessionLocal() as db:
         assert db.scalar(select(DeploymentValidationRun)) is None
+        assert db.scalar(select(DependencyProjection)) is None
+        assert db.scalar(select(DependencyProjectionRow)) is None
+        assert db.scalar(select(ExecutionSummary)) is None
+
+
+def test_focused_findings_export_projects_current_observations_without_evidence():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    assert ingest(client, execution='older', cves=['CVE-OLDER'], when=now-timedelta(days=1)).status_code == 201
+    assert ingest(client, execution='latest', cves=['CVE-LATEST'], when=now).status_code == 201
+    statements = []
+    def capture(conn, cursor, sql, params, context, many):
+        statements.append(sql)
+    event.listen(engine, 'before_cursor_execute', capture)
+    try:
+        response = client.get('/services/payments-service/exports/findings.xlsx')
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture)
+    assert response.status_code == 200
+    sheet = load_workbook(BytesIO(response.content)).active
+    assert sheet.max_row == 2
+    assert sheet.cell(2, 2).value == 'CVE-LATEST'
+    assert not any('raw_payload' in sql or 'finding_observations.evidence' in sql for sql in statements)

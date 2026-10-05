@@ -1,0 +1,7 @@
+ARG UBUNTU_IMAGE
+FROM ${UBUNTU_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+# Bare interpreter bootstrap only; Docker, venv and every application dependency
+# are installed from the verified release while the container has --network none.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /src

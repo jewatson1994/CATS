@@ -27,7 +27,11 @@ def test_build_and_compose_propagate_one_requested_image_version():
     build = (root / "build.ps1").read_text(encoding="utf-8")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     dockerfile = (root / "cats-image" / "Dockerfile.all-in-one").read_text(encoding="utf-8")
-    assert "--build-arg CATS_VERSION=$version" in build
+    assert "scripts/build-cats-release.py" in build
+    assert "--cats-version $version" in build
+    assert "--profile release" in build
+    assert "--scanner-base catscan-base:local" in build
+    assert "--tag $expectedImage" in build
     assert '$env:CATS_IMAGE = $expectedImage' in build
     assert compose.count("${CATS_IMAGE:-cats:local}") == 2
     assert "cats:1.2.1" not in compose

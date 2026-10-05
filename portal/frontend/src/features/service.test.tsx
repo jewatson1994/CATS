@@ -7,7 +7,7 @@ beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function (this: HTMLDialogElement) { this.setAttribute('open', ''); });
   HTMLDialogElement.prototype.close = vi.fn(function (this: HTMLDialogElement) { this.removeAttribute('open'); });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const fixture = (extra: Partial<PageData> = {}): PageData => ({
   csrf_token: 'csrf-proof', next_path: '/services/sample?findings=true',
@@ -53,13 +53,30 @@ describe('native service finding pages', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
   });
 
-  it('maps each grouped simplified CVE to its own finding and action', () => {
-    render(<Page data={fixture({ selected_findings_view: 'simplified', simplified_findings: [{ package: 'openssl', remediation: 'Update package', fixed_version: '3.0.2', severity: 'HIGH', images: ['image:1'], cves: ['CVE-A', 'CVE-B'], finding_ids: [12, 13] }] })} />);
-    expect(screen.getByRole('link', { name: 'CVE-B' })).toHaveAttribute('href', '/services/sample/findings/13');
-    fireEvent.click(screen.getAllByRole('button', { name: 'Add POA&M Entry' })[1]);
-    const form = screen.getByRole('dialog').querySelector('form')!;
-    expect(form).toHaveAttribute('action', '/findings/13/poams');
-    expect(within(form).getByLabelText('Title')).toHaveValue('Remediate CVE-B');
+  it('loads simplified members only on expansion and paginates without losing finding actions', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: 12, cve: 'CVE-A', active: true, severity: 'HIGH' }], page: 1, total_pages: 2, total_items: 51 }), { headers: { 'Content-Type': 'application/json' } })).mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: 13, cve: 'CVE-B', active: true, severity: 'HIGH' }], page: 2, total_pages: 2, total_items: 51 }), { headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    render(<Page data={fixture({ selected_findings_view: 'simplified', query: 'openssl', severity: ['HIGH'], simplified_findings: [{ group_id: 'group-1', package: 'openssl', remediation: 'Update package', fixed_version: '3.0.2', severity: 'HIGH', image_count: 1, member_count: 51, representative_cve: 'CVE-A' }] })} />);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'View findings' }));
+    expect(await screen.findByRole('link', { name: 'CVE-A' })).toHaveAttribute('href', '/services/sample/findings/12');
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/services/sample/findings/simplified/group-1/members?page=1&page_size=50');
+    expect(fetchMock.mock.calls[0][0]).toContain('q=openssl');
+    expect(fetchMock.mock.calls[0][0]).toContain('severity=HIGH');
+    fireEvent.click(screen.getByRole('button', { name: 'Next findings' }));
+    expect(await screen.findByRole('link', { name: 'CVE-B' })).toHaveAttribute('href', '/services/sample/findings/13');
+    expect(screen.queryByRole('link', { name: 'CVE-A' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Add POA&M Entry' }));
+    expect(screen.getByRole('dialog').querySelector('form')).toHaveAttribute('action', '/findings/13/poams');
+  });
+
+  it('allows retry after a simplified member request fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('Temporary failure')).mockResolvedValueOnce(new Response(JSON.stringify({ items: [], page: 1, total_pages: 1, total_items: 0 }), { headers: { 'Content-Type': 'application/json' } })));
+    render(<Page data={fixture({ selected_findings_view: 'simplified', simplified_findings: [{ group_id: 'g', package: 'openssl', member_count: 1 }] })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'View findings' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Temporary failure');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('navigation', { name: 'Member pages for openssl' })).toBeInTheDocument();
   });
 
   it('retains missing evidence POAM scope and prefilled details', () => {

@@ -56,6 +56,7 @@ services:
 
   patch-worker:
     image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
 
     command:
       [
@@ -147,6 +148,8 @@ services:
       # -------------------------------------------------------
 
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
+
+      CATS_MANAGED_VALIDATOR_RELEASE_DIR: /opt/cats/managed-validator-release
 
       PIPELINE_API_TOKEN: ${PIPELINE_API_TOKEN:?Set PIPELINE_API_TOKEN in .env}
 
@@ -385,11 +388,16 @@ services:
 
     volumes:
       # Required by current CATS Docker/kind/scanning operations.
-      - /var/run/docker.sock:/var/run/docker.sock
+      - type: bind
+        source: ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-./.release-cache/managed-validator/unconfigured}
+        target: /opt/cats/managed-validator-release
+        read_only: true
 
       - patch_jobs:/tmp/cats-patch-jobs
 
       - public_jobs:/tmp/cats-public-jobs
+      - validator_payloads:/app/data/validator-payloads
+      - remediation_jobs:/tmp/cats-remediation-jobs
       - security_policy_data:/app/policy
       - security_grype_db:/opt/catscan/grype-db
       - security_trivy_db:/opt/catscan/trivy-cache
@@ -456,8 +464,12 @@ volumes:
 
   public_jobs:
 
+  remediation_jobs:
+
   security_policy_data:
 
   security_grype_db:
 
   security_trivy_db:
+
+  validator_payloads:

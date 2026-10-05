@@ -1,0 +1,4 @@
+# Linux runtime scripts must remain executable in Windows-origin build contexts.
+*.sh text eol=lf
+scanning-main/scripts/cats text eol=lf
+cats-scanner/catscan-* text eol=lf

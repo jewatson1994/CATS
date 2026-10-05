@@ -15,6 +15,41 @@ def package():
             "artifact": {"source_files": {"Chart.yaml": "name: test"}}}
 
 
+@pytest.mark.parametrize("field", [None, "service", "artifact_digest", "validation_type"])
+def test_modern_client_binds_terminal_evidence(tmp_path, monkeypatch, field):
+    request = {"schema_version": "cats.validation/v2", "request_id": "1" * 32, "validation_type": "helm-chart",
+               "service": {"id": "test-service", "version": "1"},
+               "artifact": {"reference": "chart.zip", "digest": "sha256:" + "a" * 64},
+               "deployment": {"type": "helm"}}
+    job = "a" * 32
+    identity = {"schema_version": request["schema_version"], "request_id": request["request_id"],
+                "validation_type": request["validation_type"], "service": request["service"],
+                "artifact": request["artifact"], "artifact_reference": request["artifact"]["reference"],
+                "artifact_digest": request["artifact"]["digest"]}
+    result = {**identity, "validation_id": job, "status": "VERIFIED", "cleanup_status": "COMPLETE",
+              "helm_result": {"install": "PASS", "release_status": "DEPLOYED",
+                              "execution_mode": "HELM", "helm_release_verified": True}}
+    if field:
+        result[field] = "wrong"
+    calls = []
+    def transport(url, context, *args, **kwargs):
+        calls.append((url, kwargs))
+        if url.endswith("/api/v2/validations"):
+            return {**identity, "validation_id": job, "status": "QUEUED"}
+        return {**identity, "validation_id": job,
+                "status": "VERIFIED", "phase": "COMPLETE", "result": result}
+    monkeypatch.setattr(validator_client, "_client_context", lambda *args: None)
+    monkeypatch.setattr(validator_client, "_request", transport)
+    path = tmp_path / "chart.zip"
+    path.write_bytes(b"chart")
+    if field:
+        with pytest.raises(ValueError, match="different artifact or service version"):
+            validator_client.validate({"endpoint": "https://validator"}, request, artifact_path=path)
+    else:
+        assert validator_client.validate({"endpoint": "https://validator"}, request, artifact_path=path) == result
+    assert calls[0][1]["artifact_path"] == path
+
+
 @pytest.mark.parametrize("path", ["", ".", "./Chart.yaml", "foo//bar", "foo/", "foo/../bar", "foo\\bar", "a\x00b", "a\nb", "a:b"])
 def test_rejects_noncanonical_paths(path):
     value = package()

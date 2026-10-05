@@ -6,6 +6,8 @@ COPY frontend/ ./
 RUN pnpm build
 
 FROM python:3.12-slim
+ARG CATS_VERSION=""
+ENV CATS_VERSION="${CATS_VERSION}"
 ARG COSIGN_VERSION=2.6.1
 ARG COSIGN_SHA256=064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -17,5 +19,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY validator_server.py ./validator_server.py
 COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

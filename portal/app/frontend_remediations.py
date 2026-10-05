@@ -1,5 +1,6 @@
 """Explicit governance and remediation DTOs; never serialize ORM internals."""
 from .frontend_governance import entry, service
+from .remediation_summary import _redact
 
 
 def project_remediations(data, name, context, can, formatters):
@@ -32,6 +33,11 @@ def project_remediations(data, name, context, can, formatters):
         row["expires_at"] = date(_field(item, "expires_at"))
         permission("exception.revoke", row["service"]["id"])
         data["exceptions"].append(row)
+    def validation_evidence(value):
+        # Only declared public evidence fields cross the page boundary.
+        projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest"))
+        projected["network"] = _fields(_field(value, "network", {}) or {}, ("isolated", "external_chart_fetches", "external_image_pulls"))
+        return projected
     def job(item, full=False):
         result = _fields(item, ("job_key", "finding_type", "original_revision", "resulting_revision", "retry_of_id", "status", "output_mode", "failure_reason", "rollback_reference", "source_execution_id", "source_version_id", "revision_number", "remediation_status", "delivery_status", "verification_status", "signing_status", "artifact_digest"))
         result.update(started_at=_formatted(_field(item, "started_at")), finished_at=_formatted(_field(item, "completed_at")), started_label=timestamp(_field(item, "started_at")), finished_label=timestamp(_field(item, "completed_at")), has_artifact=bool(_field(item, "artifact_path")))
@@ -45,22 +51,43 @@ def project_remediations(data, name, context, can, formatters):
                 "destination": _scalar(_field(destination, "name")), "artifact_digest": _scalar(_field(row, "content_digest")),
                 "helm_digest": _scalar(_field(delivery_result, "materialized_digest")), "actor": _scalar(_field(row, "actor_id")),
                 "timestamp": timestamp(_field(row, "started_at")), "result": _scalar(_field(row, "status")),
-                "error": _scalar(_field(delivery_result, "error"))})
+                "error": _scalar(_field(delivery_result, "error")),
+                "validation_type": _scalar(_field(delivery_result, "validation_type")),
+                "service": _fields(_field(delivery_result, "service", {}) or {}, ("id", "version")),
+                "verification": validation_evidence(_field(delivery_result, "verification", {}) or {})})
         for key in ("before_snapshot", "after_snapshot"):
             snapshot = _field(item, key, {}) or {}
             result[key] = _fields(snapshot, ("kev", "configuration_findings", "images", "helm_render", "policy_validation", "patchable_vulnerabilities", "epss_max"))
             result[key]["vulnerabilities"] = _fields(_field(snapshot, "vulnerabilities", {}), ("Critical", "High", "Medium", "Low"))
         result["changed_artifacts"] = [{"path": _scalar(_field(row, "path")), "changes": [_scalar(change) for change in _field(row, "changes", [])]} for row in _field(item, "changed_artifacts", []) or []]
-        result["patched_images"] = [_fields(row, ("original", "candidate", "classification")) for row in _field(item, "patched_images", []) or []]
+        result["patched_images"] = [_fields(row, ("original", "candidate", "classification", "reason", "patch_status", "patch_job_id")) for row in _field(item, "patched_images", []) or []]
         result["configuration_changes"] = []
+        def target_fields(row, projected):
+            projected.update(_fields(row, ("target_id", "target_resolution", "source_resolution", "actionability", "container_name", "container_type")))
+            projected["resource_identity"] = _fields(_field(row, "resource_identity", {}) or {}, ("api_version", "kind", "namespace", "name", "container_type", "container_name"))
+            projected["source_mapping"] = _fields(_field(row, "source_mapping", {}) or {}, ("values_file", "values_key", "template", "source_file", "field_path", "mutation_path"))
         for row in _field(item, "configuration_changes", []) or []:
-            projected = _fields(row, ("rule_id", "classification", "category", "field_path", "new_value", "original_value", "reason", "proposed_value_source", "approval", "actor", "timestamp", "decision", "post_scan_result"))
-            projected["source_mapping"] = _fields(_field(row, "source_mapping", {}), ("values_file", "template"))
+            projected = _fields(row, ("rule_id", "classification", "category", "field_path", "new_value", "original_value", "reason", "resource", "proposed_value_source", "approval", "actor", "timestamp", "decision", "post_scan_result"))
+            target_fields(row, projected)
             result["configuration_changes"].append(projected)
         result["stages"] = [{"name": str(key), **_fields(value, ("status", "duration_seconds", "detail"))} for key, value in (_field(item, "stages", {}) or {}).items()]
         validation = _field(item, "validation_results", {}) or {}
+        summary = _field(validation, "summary_of_changes", {}) or {}
+        result["summary_of_changes"] = _fields(summary, ("schema_version", "final_configuration_scan_complete"))
+        result["summary_of_changes"]["configuration_changes"] = []
+        for row in _field(summary, "configuration_changes", []) or []:
+            projected = _fields(row, ("rule_id", "resource", "field_path", "original_value", "proposed_value", "actual_value", "actual_value_available", "accepted", "source_modified", "verified", "status", "reason", "actor", "approval", "proposed_value_source"))
+            for key in ("original_value", "proposed_value", "actual_value"):
+                value = _field(row, key)
+                projected[key] = _redact(value) if isinstance(value, (dict, list, str, int, float, bool)) or value is None else None
+            target_fields(row, projected)
+            result["summary_of_changes"]["configuration_changes"].append(projected)
+        result["summary_of_changes"]["source_files"] = [_fields(row, ("path", "before_sha256", "after_sha256", "modified")) for row in _field(summary, "source_files", []) or []]
+        result["summary_of_changes"]["charts"] = [_fields(row, ("path", "original_version", "remediated_version", "package_status", "publish_status", "reason")) for row in _field(summary, "charts", []) or []]
         result["validation"] = [{"name": str(key), **_fields(value, ("status", "detail"))} for key, value in (_field(validation, "checks", {}) or {}).items()]
         result["deployment_status"] = _scalar(_field(_field(validation, "deployment", {}), "status"))
+        result["original_validation"] = validation_evidence(_field(validation, "original", {}) or {})
+        result["candidate_validation"] = validation_evidence(_field(validation, "deployment", {}) or {})
         result["logs"] = [_scalar(row) for row in _field(item, "logs", []) or []]
         return result
     data["remediation_jobs"] = [job(item) for item in context.get("remediation_jobs", [])]

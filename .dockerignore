@@ -5,6 +5,7 @@
 *.pyc
 *.zip
 .release-build
+.release-cache
 CATS-*
 portal/.pytest_cache
 **/node_modules

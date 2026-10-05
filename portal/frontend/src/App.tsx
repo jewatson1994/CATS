@@ -29,6 +29,7 @@ import {Page as ServiceArchitecture} from './features/service-architecture';
 import {Page as Admin} from './features/admin';
 import {Page as Staging} from './features/staging';
 import {Page as Configuration} from './features/configuration';
+import {Page as Validators} from './features/validators';
 import {Page as Audit} from './features/audit';
 import {Page as GeneralPolicy} from './features/general_policy';
 import {Page as EvidencePolicy} from './features/evidence_policy';
@@ -39,7 +40,7 @@ import {Page as DependencyWatchlist} from './features/dependency_watchlist';
 
 const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
   '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
-  '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
+  '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
 export const isPageRoute = (path: string) => routes.has(path) || [
@@ -60,7 +61,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   service_definitions: ServiceDefinitions, exchange: Exchange, purpose_export_template: PurposeExportTemplate,
   remediations: Remediations, service_remediations: ServiceRemediations, remediation_report: RemediationReport, requests: Requests,
   service_architecture: ServiceArchitecture,
-  admin: Admin, staging: Staging, configuration: Configuration, audit: Audit,
+  admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,
   compliance: Compliance, compliance_frameworks: ComplianceFrameworks, dependency_watchlist: DependencyWatchlist,
   request_error: ({data}) => <section className="panel padded" role="alert"><h1>Request could not be completed</h1>

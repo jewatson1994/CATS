@@ -57,11 +57,17 @@ RUN sed -i 's/^psycopg\[binary\]==/psycopg==/' /tmp/cats-portal-requirements.txt
     && rm -f /tmp/cats-portal-requirements.txt
 
 COPY portal/app ./app
+COPY portal/requirements.txt ./requirements.txt
+COPY portal/validator_server.py ./validator_server.py
+COPY cats-image/cats-entrypoint.py /usr/local/bin/cats-entrypoint.py
 COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 COPY cats-image/policy /app/policy
 COPY scanning-main/scripts /opt/cats/scanning/scripts
 COPY cats-scanner/catscan-validate-offline-release /usr/local/bin/catscan-validate-offline-release
 COPY scanning-main/scripts/cats /usr/local/bin/cats
+
+# COPY preserves checkout bytes. Reject invalid Linux scripts before shipping.
+RUN bash -c 'for f in /opt/cats/scanning/scripts/*.sh /usr/local/bin/cats /usr/local/bin/catscan-validate-offline-release; do if LC_ALL=C od -An -t x1 "$f" | grep -w 0d >/dev/null; then echo "CR byte in runtime script: $f" >&2; exit 1; fi; bash -n "$f" || exit; done'
 
 # Fail early if the native React UI bundle was not copied into the image.
 # Check the shell, emitted JavaScript and shared styles, not removed Jinja sources.
@@ -118,5 +124,7 @@ RUN if ! command -v copa >/dev/null 2>&1; then \
     && chmod 0755 /usr/local/bin/catscan-validate-offline-release \
     && /usr/local/bin/catscan-validate-offline-release
 
-EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN command -v kind && command -v kubectl && command -v helm && command -v docker \
+    && command -v bash && command -v tar
+EXPOSE 8000 8443
+ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]

@@ -44,7 +44,10 @@ def fingerprints():
 
 
 def execution_settings():
-    saved = read_settings()
+    # Managed execution is configured by CATS provisioning. The persistent
+    # appliance store may contain settings from an older release. Keep those
+    # overrides only for independently administered appliances.
+    saved = {} if os.getenv("CATS_MANAGED_VALIDATOR_ID", "").strip() else read_settings()
     mode = saved.get("execution_mode", os.getenv("CATS_VALIDATOR_EXECUTION_MODE", "strict"))
     if mode not in ("strict", "permissive"):
         raise RuntimeError("Execution mode must be strict or permissive")

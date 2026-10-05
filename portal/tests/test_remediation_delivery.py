@@ -75,6 +75,13 @@ def test_recursive_yaml_rejected():
         delivery.materialize({"values.yaml": "loop: &loop [*loop]"}, {})
 
 
+def test_vendored_binary_dependency_is_preserved_during_image_materialization():
+    package = b"\x1f\x8b\x08\xff\x00binary dependency"
+    assert delivery.materialize({"api/charts/common-1.0.0.tgz": package},
+        {"old/app:1": "registry/app@sha256:" + "a" * 64}) == {
+            "api/charts/common-1.0.0.tgz": package}
+
+
 @pytest.mark.parametrize("values", [["../override.yaml"], ["/override.yaml"], ["C:/override.yaml"],
     ["a\\override.yaml"], ["a//override.yaml"], ["a/./override.yaml"], ["missing.yaml"],
     ["override.yaml", "override.yaml"], "override.yaml", [None]])
@@ -88,8 +95,9 @@ def test_delivery_preserves_ordered_custom_values(tmp_path, monkeypatch):
     overrides = ["overrides/base.yaml", "overrides/service.yaml"]
     record = retained(tmp_path, {"manifest.json": json.dumps({"values_files": overrides}),
         "candidate/api/Chart.yaml": "apiVersion: v2\nname: api\nversion: 1.0.0\n",
-        "candidate/overrides/base.yaml": "replicas: 2\n",
-        "candidate/overrides/service.yaml": "replicas: 3\n"})
+        "candidate/api/values.yaml": "replicas: 1\nnested: {keep: yes, replace: old}\nitems: [old]\n",
+        "candidate/overrides/base.yaml": "replicas: 2\nnested: {replace: base}\nitems: [base]\n",
+        "candidate/overrides/service.yaml": "replicas: 3\nnested: {replace: final}\nitems: [final]\n"})
     monkeypatch.setattr(delivery.shutil, "which", lambda name: name)
     monkeypatch.setattr(delivery, "decrypt_secret", lambda value: "")
     @contextmanager
@@ -99,19 +107,22 @@ def test_delivery_preserves_ordered_custom_values(tmp_path, monkeypatch):
     calls = []
     def run(args, **kwargs):
         calls.append(args)
-        if args[1] in {"lint", "template"}:
-            paths = [args[index + 1] for index, value in enumerate(args) if value == "--values"]
-            assert [Path(path).relative_to(Path(path).parents[1]).as_posix() for path in paths] == overrides
-            assert [yaml.safe_load(Path(path).read_text())["replicas"] for path in paths] == [2, 3]
+        if args[1] in {"lint", "template", "package"}:
+            assert "--values" not in args
+            chart = Path(args[3] if args[1] == "template" else args[2])
+            embedded = yaml.safe_load((chart / "values.yaml").read_text())
+            assert embedded == {"replicas": 3, "nested": {"keep": True, "replace": "final"}, "items": ["final"]}
         if args[1] == "package":
             (Path(args[args.index("--destination") + 1]) / "api-1.0.0.tgz").write_bytes(b"package")
         return SimpleNamespace(returncode=0, stdout="", stderr="Digest: sha256:" + "a" * 64 if args[1] == "push" else "")
     monkeypatch.setattr(delivery.subprocess, "run", run)
     result, path = delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"}, 1, tmp_path)
     assert result["values_files"] == overrides
+    assert result["values_embedded"] is True
     assert [args[1] for args in calls] == ["lint", "template", "package", "push"]
     with ZipFile(path) as output:
         assert json.loads(output.read("lineage.json"))["values_files"] == overrides
+        assert yaml.safe_load(output.read("candidate/api/values.yaml"))["replicas"] == 3
 
 
 @pytest.mark.parametrize('image,source',[

@@ -55,6 +55,7 @@ def generic_findings_report(source: Path) -> dict:
             "unique_id_from_tool": item.get("fingerprint") or f"cats:{finding_id}",
             "fix_available": bool(item.get("remediation")),
             "tags": [str(value) for value in (item.get("scanner"), item.get("framework")) if value],
+            "evidence": item.get("evidence") or {},
         })
     return {"name": source.stem, "type": "CATS Configuration", "findings": findings}
 
@@ -66,6 +67,8 @@ def main() -> int:
     parser.add_argument("--archive", default="")
     args = parser.parse_args()
     root = Path(args.root).resolve()
+    if (root / "scan-failure.json").exists():
+        raise SystemExit("Cannot assemble importable results: a required scanner phase failed; diagnostic artifacts are retained.")
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=True)
 

@@ -2,6 +2,7 @@
 from sqlalchemy import case, exists, func, literal, select, union_all
 from sqlalchemy.orm import selectinload
 
+from . import simplified_queries  # Install persisted Unicode search metadata write hooks.
 from .models import Finding, FindingObservation, ExceptionRecord, PolicyFinding, PolicyExceptionRecord
 
 
@@ -31,8 +32,8 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
     """Return mixed vulnerability/configuration pagination with bounded hydration.
 
     ``view`` carries the existing policy evaluator's scalar finding groups. Raw
-    active findings ignore risk visibility; exception and resolved groups retain
-    the evaluator's established semantics.
+    active findings ignore risk visibility; resolved rows use their inactive
+    lifecycle flag. Exception and legacy active groups retain evaluator semantics.
     """
     if state not in {"active", "exceptions", "resolved"}:
         raise ValueError("SQL findings pagination requires a lifecycle state")
@@ -55,6 +56,8 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
         current = exists(select(exception.id).where(*_current(exception, fk, model.id, now)))
         if state == "active" and raw_selector:
             clauses.extend((model.active.is_(True), ~current))
+        elif state == "resolved" and raw_selector:
+            clauses.append(model.active.is_(False))
         else:
             key = ({"active": "active", "exceptions": "excepted", "resolved": "resolved"}
                    if kind == 0 else {"active": "policy_findings", "exceptions": "policy_excepted", "resolved": "policy_resolved"})[state]
@@ -62,50 +65,22 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
         if finding_type != "all" and finding_type != ("vulnerability" if kind == 0 else "configuration"):
             clauses.append(literal(False))
         if severity_values:
-            if dialect == "sqlite":
-                clauses.append(func.cats_casefold(model.severity).in_(severity_values))
-            else:
-                # Severity values are normally ASCII, but preserve Python's
-                # casefold contract for custom scanner severity strings too.
-                severity_ids = [row.id for row in db.execute(select(model.id, model.severity).where(*clauses))
-                                if str(row.severity or "").casefold() in severity_values]
-                clauses.append(model.id.in_(severity_ids))
+            clauses.append(model.severity_folded.in_(severity_values))
         if needle or resource_needle:
             if kind == 0:
-                observation_text = _joined((FindingObservation.image, FindingObservation.package,
-                                           FindingObservation.installed_version, FindingObservation.fixed_version), 500)
-                recent = select(observation_text.label("text_value")).where(
+                recent = select(FindingObservation.search_folded.label('text_value')).where(
                     FindingObservation.finding_id == Finding.id
                 ).order_by(FindingObservation.id.desc()).limit(20).correlate(Finding).subquery()
-                aggregate = (func.group_concat(recent.c.text_value, " ") if dialect == "sqlite"
-                             else func.string_agg(recent.c.text_value, " "))
-                history = select(aggregate).select_from(recent).where(recent.c.text_value != "").scalar_subquery()
-                search_text = _joined((_joined((Finding.cve, Finding.severity), 500), history))
+                aggregate = (func.group_concat(recent.c.text_value, ' ') if dialect == 'sqlite'
+                             else func.string_agg(recent.c.text_value, ' '))
+                history = select(aggregate).select_from(recent).where(recent.c.text_value != '').scalar_subquery()
+                folded = model.search_folded + case((func.coalesce(history, '') != '', literal(' ') + history), else_='')
             else:
-                # Policy truncation occurs after casefold (which can expand
-                # characters), so apply it to the folded expression below.
-                search_text = func.substr(_joined((model.finding, model.severity, model.scanner,
-                    model.framework, model.target, model.namespace, model.title, model.description)), 1, 5000)
-            if dialect == "sqlite":
-                folded = func.cats_casefold(search_text)
-                if kind == 1:
-                    folded = func.substr(folded, 1, 5000)
-                if needle:
-                    clauses.append(folded.contains(needle, autoescape=True))
-                if resource_needle:
-                    clauses.append(folded.contains(resource_needle, autoescape=True))
-            else:
-                # PostgreSQL lower() cannot implement Unicode casefold. Scan
-                # scalar bounded search surfaces, never full ORM histories;
-                # matching IDs still go through SQL count/order/limit below.
-                matches = []
-                for row in db.execute(select(model.id, search_text.label("search_text")).where(*clauses)):
-                    folded = str(row.search_text or "").casefold()
-                    if kind == 1:
-                        folded = folded[:5000]
-                    if (not needle or needle in folded) and (not resource_needle or resource_needle in folded):
-                        matches.append(row.id)
-                clauses.append(model.id.in_(matches))
+                folded = model.search_folded
+            if needle:
+                clauses.append(folded.contains(needle, autoescape=True))
+            if resource_needle:
+                clauses.append(folded.contains(resource_needle, autoescape=True))
         queries.append(select(literal(kind).label("kind"), model.id.label("id"),
                               model.episode_started.label("episode"),
                               (model.cve if kind == 0 else model.finding).label("name")).where(*clauses))

@@ -1,0 +1,2050 @@
+{
+  "method": "Actual route bodies plus DTO/JSON serialization in fresh ORM sessions. Disposable SQLite fixtures, cProfile and tracemalloc enabled. No HTTP middleware/authentication/network. DBAPI rows fetched measured; internal database rows examined and Python rows considered not measured. Each fixture has three scans per service and one observation per finding. Default splits half findings into target service; all-target scenarios put all 100000 there. Many-group fixture has 5000 package/remediation groups before risk/state filters. Exceptions and overdue/resolved findings are present in state-filter fixture. Member fixture has 30 groups, including one with thousands of findings. SQLite query plans captured for representative CTE statements. Not PostgreSQL or production latency.",
+  "source_sha256": {
+    "portal/app/main.py": "3c137e512ee02204199865fa4ceae967d049879469b60a5e2d897a0ae77819ce",
+    "portal/app/simplified_queries.py": "e39b2b98f61859b39845996633cfa9209ff777eeb3917491a0a83a570f767e3d",
+    "portal/app/findings_sql.py": "97e619e5383a268ffd07605c113ac1240680f1fdd81a52c53b8790c89c416aa6",
+    "scripts/benchmark-backend.py": "b02cdc18f5b46fe16bd6c4ddb84272963a5645334ff01fc7d0e8023f5000cc80",
+    "scripts/benchmark-simplified-pages.py": "af5d232f810860d47725149a958c736284a450340d50c902e431d3b9fe736810"
+  },
+  "results": [
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 1000,
+      "query_count": 17,
+      "database_execute_ms": 7.517099998949561,
+      "dbapi_rows_fetched": 35,
+      "orm_objects_loaded": 2,
+      "duration_ms": 166.55670000182,
+      "response_bytes": 9156,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 21
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 21,
+        "total_pages": 1
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 2097787,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.5263000000000001,
+          "inclusive_ms": 0.9767
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1257,
+          "inclusive_ms": 8.849900000000002
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.1102,
+          "inclusive_ms": 8.2185
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0035000000000000005,
+          "inclusive_ms": 0.35800000000000004
+        }
+      ],
+      "scenario": "simplified_default",
+      "route_parameters": {}
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 10000,
+      "query_count": 17,
+      "database_execute_ms": 26.645300014934037,
+      "dbapi_rows_fetched": 35,
+      "orm_objects_loaded": 2,
+      "duration_ms": 158.9144999961718,
+      "response_bytes": 9177,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 21
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 21,
+        "total_pages": 1
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 1402595,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.377,
+          "inclusive_ms": 0.7778
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.11180000000000001,
+          "inclusive_ms": 2.2876000000000003
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.0982,
+          "inclusive_ms": 1.6729000000000003
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0037,
+          "inclusive_ms": 0.36060000000000003
+        }
+      ],
+      "scenario": "simplified_default",
+      "route_parameters": {}
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 286.7382999975234,
+      "dbapi_rows_fetched": 35,
+      "orm_objects_loaded": 2,
+      "duration_ms": 450.42499999544816,
+      "response_bytes": 9198,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 21
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 21,
+        "total_pages": 1
+      },
+      "route_timings": null,
+      "sqlite_query_plans": [
+        {
+          "sql": "WITH members AS MATERIALIZED \n(SELECT findings.id AS id, findings.cve AS cve, findings.cve_normalized AS cve_normalized, findings.severity AS severity, findings.active AS active, findings.episode_started AS started, CASE WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? ELSE ? END AS rank, coalesce(finding_observations_1.simplified_key, ?) AS group_id, coalesce(finding_observations_1.simplified_package, ?) AS package, coalesce(finding_observations_1.simplified_remediation, ?) AS remediation, coalesce(finding_observations_1.simplified_fixed, ?) AS fixed, coalesce(finding_observations_1.simplified_package_sort, ?) AS package_sort, coalesce(finding_observations_1.simplified_fixed_sort, ?) AS fixed_sort \nFROM findings LEFT OUTER JOIN finding_observations AS finding_observations_1 ON finding_observations_1.id = coalesce((SELECT max(finding_observations.id) AS max_1 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id AND finding_observations.execution_id = ?), (SELECT max(finding_observations.id) AS max_2 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id)) \nWHERE findings.service_id = ? AND findings.active IS 1 AND findings.service_id = ? AND NOT (findings.service_id = ? AND (findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND ((lower(findings.severity) NOT IN (?, ?, ?, ?)) OR findings.severity IS NULL) AND findings.episode_started <= ?)) AND NOT (EXISTS (SELECT exceptions.id \nFROM exceptions \nWHERE exceptions.finding_id = findings.id AND exceptions.revoked_at IS NULL AND exceptions.starts_at <= ? AND exceptions.expires_at > ?))), \ngroups AS \n(SELECT members.group_id AS group_id, min(members.package) AS package, min(members.remediation) AS remediation, min(members.package_sort) AS package_sort, min(members.id) AS first_id, count(distinct(nullif(members.cve_normalized, ?))) AS member_count, min(nullif(members.cve_normalized, ?)) AS representative_cve, min(CAST(? - members.rank AS VARCHAR) || ? || printf(?, members.id) || ? || members.severity) AS severity_key, min(CASE WHEN (members.active IS 1) THEN CAST(datetime(members.started, ? || CAST(CASE WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? ELSE ? END AS VARCHAR) || ?) AS VARCHAR) || substr(CAST(members.started AS VARCHAR), ?, ?) END) AS due \nFROM members GROUP BY members.group_id), \nfixed_groups AS \n(SELECT anon_1.group_id AS group_id, group_concat(anon_1.fixed, ?) AS fixed_version, group_concat(anon_1.fixed_sort, ?) AS fixed_sort \nFROM (SELECT anon_2.group_id AS group_id, anon_2.fixed AS fixed, anon_2.fixed_sort AS fixed_sort \nFROM (SELECT DISTINCT members.group_id AS group_id, members.fixed AS fixed, members.fixed_sort AS fixed_sort \nFROM members) AS anon_2 ORDER BY anon_2.group_id, anon_2.fixed) AS anon_1 GROUP BY anon_1.group_id), \nselected_groups AS \n(SELECT groups.group_id AS group_id, groups.package AS package, groups.remediation AS remediation, groups.package_sort AS package_sort, groups.first_id AS first_id, groups.member_count AS member_count, groups.representative_cve AS representative_cve, groups.severity_key AS severity_key, groups.due AS due, fixed_groups.fixed_sort AS fixed_sort, substr(fixed_groups.fixed_version, ?, ?) AS fixed_version, count(*) OVER () AS total_items \nFROM groups JOIN fixed_groups ON fixed_groups.group_id = groups.group_id ORDER BY groups.package_sort, fixed_groups.fixed_sort, groups.first_id\n LIMIT ? OFFSET ?), \nrepresentatives AS \n(SELECT members.group_id AS group_id, min(members.id) AS representative_id \nFROM members JOIN selected_groups ON selected_groups.group_id = members.group_id AND members.cve_normalized = selected_groups.representative_cve GROUP BY members.group_id), \ngroup_images AS \n(SELECT members.group_id AS group_id, count(distinct(finding_observations.image)) AS image_count \nFROM members JOIN selected_groups ON selected_groups.group_id = members.group_id JOIN finding_observations ON finding_observations.finding_id = members.id \nWHERE finding_observations.execution_id = ? AND finding_observations.image IS NOT NULL AND finding_observations.image != ? GROUP BY members.group_id)\n SELECT selected_groups.group_id, substr(selected_groups.package, ?, ?) AS package, substr(selected_groups.remediation, ?, ?) AS remediation, selected_groups.fixed_version, selected_groups.member_count, selected_groups.representative_cve, representatives.representative_id, selected_groups.severity_key, selected_groups.due, selected_groups.total_items, coalesce(group_images.image_count, ?) AS image_count \nFROM selected_groups LEFT OUTER JOIN representatives ON representatives.group_id = selected_groups.group_id LEFT OUTER JOIN group_images ON group_images.group_id = selected_groups.group_id ORDER BY selected_groups.package_sort, selected_groups.fixed_sort, selected_groups.first_id",
+          "plan": [
+            [
+              3,
+              0,
+              0,
+              "MATERIALIZE selected_groups"
+            ],
+            [
+              6,
+              3,
+              0,
+              "CO-ROUTINE (subquery-13)"
+            ],
+            [
+              9,
+              6,
+              0,
+              "MATERIALIZE groups"
+            ],
+            [
+              12,
+              9,
+              0,
+              "MATERIALIZE members"
+            ],
+            [
+              20,
+              12,
+              60,
+              "SEARCH findings USING INDEX ix_findings_service_id (service_id=?)"
+            ],
+            [
+              95,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 3"
+            ],
+            [
+              100,
+              95,
+              60,
+              "SEARCH exceptions USING INDEX ix_exceptions_finding_id (finding_id=?)"
+            ],
+            [
+              116,
+              12,
+              45,
+              "SEARCH finding_observations_1 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN"
+            ],
+            [
+              119,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 1"
+            ],
+            [
+              124,
+              119,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_obs_finding_execution_id (finding_id=? AND execution_id=?)"
+            ],
+            [
+              143,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 2"
+            ],
+            [
+              148,
+              143,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_finding_observations_finding_id (finding_id=?)"
+            ],
+            [
+              234,
+              9,
+              45,
+              "SCAN members"
+            ],
+            [
+              236,
+              9,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              366,
+              9,
+              0,
+              "USE TEMP B-TREE FOR count(DISTINCT)"
+            ],
+            [
+              372,
+              6,
+              0,
+              "MATERIALIZE fixed_groups"
+            ],
+            [
+              374,
+              372,
+              0,
+              "CO-ROUTINE anon_1"
+            ],
+            [
+              376,
+              374,
+              0,
+              "CO-ROUTINE anon_2"
+            ],
+            [
+              380,
+              376,
+              216,
+              "SCAN members"
+            ],
+            [
+              390,
+              376,
+              0,
+              "USE TEMP B-TREE FOR DISTINCT"
+            ],
+            [
+              393,
+              374,
+              186,
+              "SCAN anon_2"
+            ],
+            [
+              402,
+              374,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ],
+            [
+              417,
+              372,
+              186,
+              "SCAN anon_1"
+            ],
+            [
+              458,
+              6,
+              82,
+              "SCAN groups"
+            ],
+            [
+              464,
+              6,
+              0,
+              "BLOOM FILTER ON fixed_groups (group_id=?)"
+            ],
+            [
+              475,
+              6,
+              47,
+              "SEARCH fixed_groups USING AUTOMATIC COVERING INDEX (group_id=?)"
+            ],
+            [
+              507,
+              3,
+              125,
+              "SCAN (subquery-13)"
+            ],
+            [
+              580,
+              3,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ],
+            [
+              591,
+              0,
+              0,
+              "MATERIALIZE representatives"
+            ],
+            [
+              601,
+              591,
+              216,
+              "SCAN members"
+            ],
+            [
+              605,
+              591,
+              0,
+              "BLOOM FILTER ON selected_groups (group_id=?)"
+            ],
+            [
+              615,
+              591,
+              53,
+              "SEARCH selected_groups USING AUTOMATIC COVERING INDEX (group_id=?)"
+            ],
+            [
+              624,
+              591,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              667,
+              0,
+              0,
+              "MATERIALIZE group_images"
+            ],
+            [
+              680,
+              667,
+              60,
+              "SEARCH finding_observations USING INDEX ix_finding_observations_execution_id (execution_id=?)"
+            ],
+            [
+              691,
+              667,
+              0,
+              "BLOOM FILTER ON members (id=?)"
+            ],
+            [
+              702,
+              667,
+              53,
+              "SEARCH members USING AUTOMATIC PARTIAL COVERING INDEX (id=?)"
+            ],
+            [
+              710,
+              667,
+              0,
+              "BLOOM FILTER ON selected_groups (group_id=?)"
+            ],
+            [
+              720,
+              667,
+              53,
+              "SEARCH selected_groups USING AUTOMATIC PARTIAL COVERING INDEX (group_id=?)"
+            ],
+            [
+              726,
+              667,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              768,
+              667,
+              0,
+              "USE TEMP B-TREE FOR count(DISTINCT)"
+            ],
+            [
+              775,
+              0,
+              72,
+              "SCAN selected_groups"
+            ],
+            [
+              781,
+              0,
+              0,
+              "BLOOM FILTER ON representatives (group_id=?)"
+            ],
+            [
+              791,
+              0,
+              47,
+              "SEARCH representatives USING AUTOMATIC COVERING INDEX (group_id=?) LEFT-JOIN"
+            ],
+            [
+              803,
+              0,
+              0,
+              "BLOOM FILTER ON group_images (group_id=?)"
+            ],
+            [
+              813,
+              0,
+              47,
+              "SEARCH group_images USING AUTOMATIC COVERING INDEX (group_id=?) LEFT-JOIN"
+            ]
+          ]
+        }
+      ],
+      "python_peak_traced_bytes": 1399324,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.37970000000000004,
+          "inclusive_ms": 0.7829
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10800000000000001,
+          "inclusive_ms": 2.2678
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09720000000000001,
+          "inclusive_ms": 1.6582000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0036000000000000003,
+          "inclusive_ms": 0.3698
+        }
+      ],
+      "scenario": "simplified_default",
+      "route_parameters": {}
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 510.2630000037607,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 674.6025000029476,
+      "response_bytes": 19943,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 3500,
+        "total_pages": 70
+      },
+      "route_timings": null,
+      "sqlite_query_plans": [
+        {
+          "sql": "WITH members AS MATERIALIZED \n(SELECT findings.id AS id, findings.cve AS cve, findings.cve_normalized AS cve_normalized, findings.severity AS severity, findings.active AS active, findings.episode_started AS started, CASE WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? ELSE ? END AS rank, coalesce(finding_observations_1.simplified_key, ?) AS group_id, coalesce(finding_observations_1.simplified_package, ?) AS package, coalesce(finding_observations_1.simplified_remediation, ?) AS remediation, coalesce(finding_observations_1.simplified_fixed, ?) AS fixed, coalesce(finding_observations_1.simplified_package_sort, ?) AS package_sort, coalesce(finding_observations_1.simplified_fixed_sort, ?) AS fixed_sort \nFROM findings LEFT OUTER JOIN finding_observations AS finding_observations_1 ON finding_observations_1.id = coalesce((SELECT max(finding_observations.id) AS max_1 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id AND finding_observations.execution_id = ?), (SELECT max(finding_observations.id) AS max_2 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id)) \nWHERE findings.service_id = ? AND findings.active IS 1 AND findings.service_id = ? AND NOT (findings.service_id = ? AND (findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND ((lower(findings.severity) NOT IN (?, ?, ?, ?)) OR findings.severity IS NULL) AND findings.episode_started <= ?)) AND NOT (EXISTS (SELECT exceptions.id \nFROM exceptions \nWHERE exceptions.finding_id = findings.id AND exceptions.revoked_at IS NULL AND exceptions.starts_at <= ? AND exceptions.expires_at > ?))), \ngroups AS \n(SELECT members.group_id AS group_id, min(members.package) AS package, min(members.remediation) AS remediation, min(members.package_sort) AS package_sort, min(members.id) AS first_id, count(distinct(nullif(members.cve_normalized, ?))) AS member_count, min(nullif(members.cve_normalized, ?)) AS representative_cve, min(CAST(? - members.rank AS VARCHAR) || ? || printf(?, members.id) || ? || members.severity) AS severity_key, min(CASE WHEN (members.active IS 1) THEN CAST(datetime(members.started, ? || CAST(CASE WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? WHEN (lower(members.severity) = ?) THEN ? ELSE ? END AS VARCHAR) || ?) AS VARCHAR) || substr(CAST(members.started AS VARCHAR), ?, ?) END) AS due \nFROM members GROUP BY members.group_id), \nfixed_groups AS \n(SELECT anon_1.group_id AS group_id, group_concat(anon_1.fixed, ?) AS fixed_version, group_concat(anon_1.fixed_sort, ?) AS fixed_sort \nFROM (SELECT anon_2.group_id AS group_id, anon_2.fixed AS fixed, anon_2.fixed_sort AS fixed_sort \nFROM (SELECT DISTINCT members.group_id AS group_id, members.fixed AS fixed, members.fixed_sort AS fixed_sort \nFROM members) AS anon_2 ORDER BY anon_2.group_id, anon_2.fixed) AS anon_1 GROUP BY anon_1.group_id), \nselected_groups AS \n(SELECT groups.group_id AS group_id, groups.package AS package, groups.remediation AS remediation, groups.package_sort AS package_sort, groups.first_id AS first_id, groups.member_count AS member_count, groups.representative_cve AS representative_cve, groups.severity_key AS severity_key, groups.due AS due, fixed_groups.fixed_sort AS fixed_sort, substr(fixed_groups.fixed_version, ?, ?) AS fixed_version, count(*) OVER () AS total_items \nFROM groups JOIN fixed_groups ON fixed_groups.group_id = groups.group_id ORDER BY groups.package_sort, fixed_groups.fixed_sort, groups.first_id\n LIMIT ? OFFSET ?), \nrepresentatives AS \n(SELECT members.group_id AS group_id, min(members.id) AS representative_id \nFROM members JOIN selected_groups ON selected_groups.group_id = members.group_id AND members.cve_normalized = selected_groups.representative_cve GROUP BY members.group_id), \ngroup_images AS \n(SELECT members.group_id AS group_id, count(distinct(finding_observations.image)) AS image_count \nFROM members JOIN selected_groups ON selected_groups.group_id = members.group_id JOIN finding_observations ON finding_observations.finding_id = members.id \nWHERE finding_observations.execution_id = ? AND finding_observations.image IS NOT NULL AND finding_observations.image != ? GROUP BY members.group_id)\n SELECT selected_groups.group_id, substr(selected_groups.package, ?, ?) AS package, substr(selected_groups.remediation, ?, ?) AS remediation, selected_groups.fixed_version, selected_groups.member_count, selected_groups.representative_cve, representatives.representative_id, selected_groups.severity_key, selected_groups.due, selected_groups.total_items, coalesce(group_images.image_count, ?) AS image_count \nFROM selected_groups LEFT OUTER JOIN representatives ON representatives.group_id = selected_groups.group_id LEFT OUTER JOIN group_images ON group_images.group_id = selected_groups.group_id ORDER BY selected_groups.package_sort, selected_groups.fixed_sort, selected_groups.first_id",
+          "plan": [
+            [
+              3,
+              0,
+              0,
+              "MATERIALIZE selected_groups"
+            ],
+            [
+              6,
+              3,
+              0,
+              "CO-ROUTINE (subquery-13)"
+            ],
+            [
+              9,
+              6,
+              0,
+              "MATERIALIZE groups"
+            ],
+            [
+              12,
+              9,
+              0,
+              "MATERIALIZE members"
+            ],
+            [
+              20,
+              12,
+              60,
+              "SEARCH findings USING INDEX ix_findings_service_id (service_id=?)"
+            ],
+            [
+              95,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 3"
+            ],
+            [
+              100,
+              95,
+              60,
+              "SEARCH exceptions USING INDEX ix_exceptions_finding_id (finding_id=?)"
+            ],
+            [
+              116,
+              12,
+              45,
+              "SEARCH finding_observations_1 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN"
+            ],
+            [
+              119,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 1"
+            ],
+            [
+              124,
+              119,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_obs_finding_execution_id (finding_id=? AND execution_id=?)"
+            ],
+            [
+              143,
+              12,
+              0,
+              "CORRELATED SCALAR SUBQUERY 2"
+            ],
+            [
+              148,
+              143,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_finding_observations_finding_id (finding_id=?)"
+            ],
+            [
+              234,
+              9,
+              45,
+              "SCAN members"
+            ],
+            [
+              236,
+              9,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              366,
+              9,
+              0,
+              "USE TEMP B-TREE FOR count(DISTINCT)"
+            ],
+            [
+              372,
+              6,
+              0,
+              "MATERIALIZE fixed_groups"
+            ],
+            [
+              374,
+              372,
+              0,
+              "CO-ROUTINE anon_1"
+            ],
+            [
+              376,
+              374,
+              0,
+              "CO-ROUTINE anon_2"
+            ],
+            [
+              380,
+              376,
+              216,
+              "SCAN members"
+            ],
+            [
+              390,
+              376,
+              0,
+              "USE TEMP B-TREE FOR DISTINCT"
+            ],
+            [
+              393,
+              374,
+              186,
+              "SCAN anon_2"
+            ],
+            [
+              402,
+              374,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ],
+            [
+              417,
+              372,
+              186,
+              "SCAN anon_1"
+            ],
+            [
+              458,
+              6,
+              82,
+              "SCAN groups"
+            ],
+            [
+              464,
+              6,
+              0,
+              "BLOOM FILTER ON fixed_groups (group_id=?)"
+            ],
+            [
+              475,
+              6,
+              47,
+              "SEARCH fixed_groups USING AUTOMATIC COVERING INDEX (group_id=?)"
+            ],
+            [
+              507,
+              3,
+              125,
+              "SCAN (subquery-13)"
+            ],
+            [
+              580,
+              3,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ],
+            [
+              591,
+              0,
+              0,
+              "MATERIALIZE representatives"
+            ],
+            [
+              601,
+              591,
+              216,
+              "SCAN members"
+            ],
+            [
+              605,
+              591,
+              0,
+              "BLOOM FILTER ON selected_groups (group_id=?)"
+            ],
+            [
+              615,
+              591,
+              53,
+              "SEARCH selected_groups USING AUTOMATIC COVERING INDEX (group_id=?)"
+            ],
+            [
+              624,
+              591,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              667,
+              0,
+              0,
+              "MATERIALIZE group_images"
+            ],
+            [
+              680,
+              667,
+              60,
+              "SEARCH finding_observations USING INDEX ix_finding_observations_execution_id (execution_id=?)"
+            ],
+            [
+              691,
+              667,
+              0,
+              "BLOOM FILTER ON members (id=?)"
+            ],
+            [
+              702,
+              667,
+              53,
+              "SEARCH members USING AUTOMATIC PARTIAL COVERING INDEX (id=?)"
+            ],
+            [
+              710,
+              667,
+              0,
+              "BLOOM FILTER ON selected_groups (group_id=?)"
+            ],
+            [
+              720,
+              667,
+              53,
+              "SEARCH selected_groups USING AUTOMATIC PARTIAL COVERING INDEX (group_id=?)"
+            ],
+            [
+              726,
+              667,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              768,
+              667,
+              0,
+              "USE TEMP B-TREE FOR count(DISTINCT)"
+            ],
+            [
+              775,
+              0,
+              72,
+              "SCAN selected_groups"
+            ],
+            [
+              781,
+              0,
+              0,
+              "BLOOM FILTER ON representatives (group_id=?)"
+            ],
+            [
+              791,
+              0,
+              47,
+              "SEARCH representatives USING AUTOMATIC COVERING INDEX (group_id=?) LEFT-JOIN"
+            ],
+            [
+              803,
+              0,
+              0,
+              "BLOOM FILTER ON group_images (group_id=?)"
+            ],
+            [
+              813,
+              0,
+              47,
+              "SEARCH group_images USING AUTOMATIC COVERING INDEX (group_id=?) LEFT-JOIN"
+            ]
+          ]
+        }
+      ],
+      "python_peak_traced_bytes": 1469656,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.37410000000000004,
+          "inclusive_ms": 0.7781000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1489,
+          "inclusive_ms": 4.671200000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.12680000000000002,
+          "inclusive_ms": 3.5820000000000003
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0047,
+          "inclusive_ms": 0.741
+        }
+      ],
+      "scenario": "simplified_all_target_first",
+      "route_parameters": {}
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 505.24390002101427,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 621.7685000010533,
+      "response_bytes": 20040,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 35,
+        "page_size": 50,
+        "total_items": 3500,
+        "total_pages": 70
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 720209,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.8129000000000001,
+          "inclusive_ms": 1.6483
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1239,
+          "inclusive_ms": 5.0806000000000004
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.11710000000000001,
+          "inclusive_ms": 4.071899999999999
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.005,
+          "inclusive_ms": 0.7081000000000001
+        }
+      ],
+      "scenario": "simplified_all_target_middle",
+      "route_parameters": {
+        "page": 35
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 538.6578000034206,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 624.4004999971366,
+      "response_bytes": 20040,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 70,
+        "page_size": 50,
+        "total_items": 3500,
+        "total_pages": 70
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 718386,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.3743,
+          "inclusive_ms": 0.7741
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10830000000000001,
+          "inclusive_ms": 4.370900000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09730000000000001,
+          "inclusive_ms": 3.3999000000000006
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0037,
+          "inclusive_ms": 0.7225
+        }
+      ],
+      "scenario": "simplified_all_target_late",
+      "route_parameters": {
+        "page": 70
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 244.31769997318042,
+      "dbapi_rows_fetched": 15,
+      "orm_objects_loaded": 2,
+      "duration_ms": 365.48649999895133,
+      "response_bytes": 2341,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 1
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 1,
+        "total_pages": 1
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 953215,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.5067,
+          "inclusive_ms": 0.92
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1242,
+          "inclusive_ms": 0.9768000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.0988,
+          "inclusive_ms": 0.5001000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.004000000000000001,
+          "inclusive_ms": 0.17450000000000002
+        }
+      ],
+      "scenario": "simplified_filter_search",
+      "route_parameters": {
+        "q": "package-00012"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 273.4686999974656,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 359.98969999491237,
+      "response_bytes": 20095,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 250,
+        "total_pages": 5
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 749766,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.3688,
+          "inclusive_ms": 0.7645000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10510000000000001,
+          "inclusive_ms": 4.24
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.0988,
+          "inclusive_ms": 3.2746000000000004
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0034000000000000002,
+          "inclusive_ms": 0.7220000000000001
+        }
+      ],
+      "scenario": "simplified_filter_resource",
+      "route_parameters": {
+        "resource": "images/bench-12"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 223.44939997856272,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 343.7541000021156,
+      "response_bytes": 19963,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 1,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 1000,
+        "total_pages": 20
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 998032,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.38710000000000006,
+          "inclusive_ms": 0.79
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1139,
+          "inclusive_ms": 4.2376000000000005
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09620000000000001,
+          "inclusive_ms": 3.2539000000000002
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0039,
+          "inclusive_ms": 0.7039000000000001
+        }
+      ],
+      "scenario": "simplified_filter_severity",
+      "route_parameters": {
+        "severity": [
+          "High"
+        ]
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 501.42599998798687,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 587.414900001022,
+      "response_bytes": 19943,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 3500,
+        "total_pages": 70
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 715150,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.38480000000000003,
+          "inclusive_ms": 0.7837000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10360000000000001,
+          "inclusive_ms": 4.4072
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09750000000000002,
+          "inclusive_ms": 3.3902000000000005
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.006,
+          "inclusive_ms": 0.7792000000000001
+        }
+      ],
+      "scenario": "simplified_filter_active",
+      "route_parameters": {
+        "finding_state": "active"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 114.7562000041944,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 223.13259999646107,
+      "response_bytes": 19651,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 500,
+        "total_pages": 10
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 918886,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.36990000000000006,
+          "inclusive_ms": 0.7657
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10790000000000001,
+          "inclusive_ms": 3.3785000000000003
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.10460000000000001,
+          "inclusive_ms": 2.4454000000000002
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0034000000000000002,
+          "inclusive_ms": 0.6865
+        }
+      ],
+      "scenario": "simplified_filter_resolved",
+      "route_parameters": {
+        "finding_state": "resolved"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 84.22380001866259,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 203.27480000560172,
+      "response_bytes": 19272,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 2432,
+        "total_pages": 49
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 937559,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.41220000000000007,
+          "inclusive_ms": 0.8125000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.11030000000000001,
+          "inclusive_ms": 4.611300000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.1133,
+          "inclusive_ms": 3.6174000000000004
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0039,
+          "inclusive_ms": 0.7393000000000001
+        }
+      ],
+      "scenario": "simplified_filter_exceptions",
+      "route_parameters": {
+        "finding_state": "exceptions"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=simplified",
+      "fixture_findings": 100000,
+      "query_count": 17,
+      "database_execute_ms": 277.2333999891998,
+      "dbapi_rows_fetched": 64,
+      "orm_objects_loaded": 2,
+      "duration_ms": 396.9751999975415,
+      "response_bytes": 19724,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 0,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 3487,
+        "total_pages": 70
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 988874,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 0.37070000000000003,
+          "inclusive_ms": 0.7696000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.11200000000000002,
+          "inclusive_ms": 4.7016
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09680000000000001,
+          "inclusive_ms": 3.7198
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.004000000000000001,
+          "inclusive_ms": 0.7327000000000001
+        }
+      ],
+      "scenario": "simplified_filter_noncompliant",
+      "route_parameters": {
+        "finding_state": "noncompliant"
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=raw",
+      "fixture_findings": 100000,
+      "query_count": 31,
+      "database_execute_ms": 193.17199999204604,
+      "dbapi_rows_fetched": 269,
+      "orm_objects_loaded": 52,
+      "duration_ms": 362.9609999989043,
+      "response_bytes": 12279,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 50,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 87593,
+        "total_pages": 1752
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 1587129,
+      "orm_by_class": {
+        "Service": 1,
+        "Finding": 50,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 3.5153000000000003,
+          "inclusive_ms": 6.9172
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.11230000000000001,
+          "inclusive_ms": 9.293800000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.0965,
+          "inclusive_ms": 8.3008
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0052,
+          "inclusive_ms": 0.7311000000000001
+        }
+      ],
+      "scenario": "raw_all_target_first",
+      "route_parameters": {}
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=raw",
+      "fixture_findings": 100000,
+      "query_count": 31,
+      "database_execute_ms": 211.9720000118832,
+      "dbapi_rows_fetched": 269,
+      "orm_objects_loaded": 52,
+      "duration_ms": 323.62409999768715,
+      "response_bytes": 12347,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 50,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 876,
+        "page_size": 50,
+        "total_items": 87593,
+        "total_pages": 1752
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 871175,
+      "orm_by_class": {
+        "Service": 1,
+        "Finding": 50,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 3.2178000000000004,
+          "inclusive_ms": 6.090000000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.10830000000000001,
+          "inclusive_ms": 9.265600000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.09690000000000001,
+          "inclusive_ms": 8.313
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0047,
+          "inclusive_ms": 0.6887
+        }
+      ],
+      "scenario": "raw_all_target_middle",
+      "route_parameters": {
+        "page": 876
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=raw",
+      "fixture_findings": 100000,
+      "query_count": 34,
+      "database_execute_ms": 227.80190000776201,
+      "dbapi_rows_fetched": 160,
+      "orm_objects_loaded": 45,
+      "duration_ms": 337.6438999985112,
+      "response_bytes": 15340,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 0,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 18,
+        "policy_findings": 25,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1752,
+        "page_size": 50,
+        "total_items": 87593,
+        "total_pages": 1752
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 897340,
+      "orm_by_class": {
+        "Service": 1,
+        "Finding": 18,
+        "PolicyFinding": 25,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 1.8301,
+          "inclusive_ms": 3.3329
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1065,
+          "inclusive_ms": 8.471400000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.0937,
+          "inclusive_ms": 7.5555
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0053,
+          "inclusive_ms": 0.6621
+        }
+      ],
+      "scenario": "raw_all_target_late",
+      "route_parameters": {
+        "page": 1752
+      }
+    },
+    {
+      "endpoint": "/services/bench-1?findings_view=raw",
+      "fixture_findings": 100000,
+      "query_count": 31,
+      "database_execute_ms": 280.66919995762873,
+      "dbapi_rows_fetched": 269,
+      "orm_objects_loaded": 52,
+      "duration_ms": 414.5501000020886,
+      "response_bytes": 12359,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "history_versions": 3,
+        "severity": 1,
+        "severity_options": 5,
+        "groups": 0,
+        "findings": 50,
+        "policy_findings": 0,
+        "noncompliance_items": 0,
+        "warning_items": 0,
+        "simplified_findings": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 4865,
+        "total_pages": 98
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 1024711,
+      "orm_by_class": {
+        "Service": 1,
+        "Finding": 50,
+        "Execution": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\main.py:service_view",
+          "calls": 1,
+          "self_ms": 3.5657,
+          "inclusive_ms": 6.848300000000001
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1094,
+          "inclusive_ms": 9.416800000000002
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.1022,
+          "inclusive_ms": 8.2634
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0053,
+          "inclusive_ms": 0.7042
+        }
+      ],
+      "scenario": "raw_all_target_filter",
+      "route_parameters": {
+        "severity": [
+          "High"
+        ],
+        "resource": "images/bench-11"
+      }
+    },
+    {
+      "endpoint": "/api/v1/services/bench-1/findings/simplified/b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769/members",
+      "fixture_findings": 100000,
+      "query_count": 6,
+      "database_execute_ms": 395.60189999610884,
+      "dbapi_rows_fetched": 53,
+      "orm_objects_loaded": 1,
+      "duration_ms": 473.8989999968908,
+      "response_bytes": 6860,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "items": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 50,
+        "total_items": 3334,
+        "total_pages": 67
+      },
+      "route_timings": null,
+      "sqlite_query_plans": [
+        {
+          "sql": "WITH members AS MATERIALIZED \n(SELECT findings.id AS id, findings.cve AS cve, findings.cve_normalized AS cve_normalized, findings.severity AS severity, findings.active AS active, findings.episode_started AS started, CASE WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? ELSE ? END AS rank, coalesce(finding_observations_1.simplified_key, ?) AS group_id, coalesce(finding_observations_1.simplified_package, ?) AS package, coalesce(finding_observations_1.simplified_remediation, ?) AS remediation, coalesce(finding_observations_1.simplified_fixed, ?) AS fixed, coalesce(finding_observations_1.simplified_package_sort, ?) AS package_sort, coalesce(finding_observations_1.simplified_fixed_sort, ?) AS fixed_sort \nFROM findings LEFT OUTER JOIN finding_observations AS finding_observations_1 ON finding_observations_1.id = coalesce((SELECT max(finding_observations.id) AS max_1 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id AND finding_observations.execution_id = ?), (SELECT max(finding_observations.id) AS max_2 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id)) \nWHERE findings.service_id = ? AND findings.active IS 1 AND findings.service_id = ? AND NOT (findings.service_id = ? AND (findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND ((lower(findings.severity) NOT IN (?, ?, ?, ?)) OR findings.severity IS NULL) AND findings.episode_started <= ?)) AND NOT (EXISTS (SELECT exceptions.id \nFROM exceptions \nWHERE exceptions.finding_id = findings.id AND exceptions.revoked_at IS NULL AND exceptions.starts_at <= ? AND exceptions.expires_at > ?)) AND coalesce(finding_observations_1.simplified_key, ?) = ?), \nidentities AS \n(SELECT members.cve_normalized AS cve, min(members.id) AS id \nFROM members \nWHERE members.group_id = ? AND members.cve_normalized != ? GROUP BY members.cve_normalized)\n SELECT count(*) AS count_1 \nFROM identities",
+          "plan": [
+            [
+              2,
+              0,
+              0,
+              "CO-ROUTINE identities"
+            ],
+            [
+              5,
+              2,
+              0,
+              "MATERIALIZE members"
+            ],
+            [
+              13,
+              5,
+              60,
+              "SEARCH findings USING INDEX ix_findings_service_id (service_id=?)"
+            ],
+            [
+              88,
+              5,
+              0,
+              "CORRELATED SCALAR SUBQUERY 3"
+            ],
+            [
+              93,
+              88,
+              60,
+              "SEARCH exceptions USING INDEX ix_exceptions_finding_id (finding_id=?)"
+            ],
+            [
+              109,
+              5,
+              45,
+              "SEARCH finding_observations_1 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN"
+            ],
+            [
+              112,
+              5,
+              0,
+              "CORRELATED SCALAR SUBQUERY 1"
+            ],
+            [
+              117,
+              112,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_obs_finding_execution_id (finding_id=? AND execution_id=?)"
+            ],
+            [
+              136,
+              5,
+              0,
+              "CORRELATED SCALAR SUBQUERY 2"
+            ],
+            [
+              141,
+              136,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_finding_observations_finding_id (finding_id=?)"
+            ],
+            [
+              230,
+              2,
+              44,
+              "SCAN members"
+            ],
+            [
+              236,
+              2,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              275,
+              0,
+              82,
+              "SCAN identities"
+            ]
+          ]
+        },
+        {
+          "sql": "WITH members AS MATERIALIZED \n(SELECT findings.id AS id, findings.cve AS cve, findings.cve_normalized AS cve_normalized, findings.severity AS severity, findings.active AS active, findings.episode_started AS started, CASE WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? WHEN (lower(findings.severity) = ?) THEN ? ELSE ? END AS rank, coalesce(finding_observations_1.simplified_key, ?) AS group_id, coalesce(finding_observations_1.simplified_package, ?) AS package, coalesce(finding_observations_1.simplified_remediation, ?) AS remediation, coalesce(finding_observations_1.simplified_fixed, ?) AS fixed, coalesce(finding_observations_1.simplified_package_sort, ?) AS package_sort, coalesce(finding_observations_1.simplified_fixed_sort, ?) AS fixed_sort \nFROM findings LEFT OUTER JOIN finding_observations AS finding_observations_1 ON finding_observations_1.id = coalesce((SELECT max(finding_observations.id) AS max_1 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id AND finding_observations.execution_id = ?), (SELECT max(finding_observations.id) AS max_2 \nFROM finding_observations \nWHERE finding_observations.finding_id = findings.id)) \nWHERE findings.service_id = ? AND findings.active IS 1 AND findings.service_id = ? AND NOT (findings.service_id = ? AND (findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND lower(findings.severity) = ? AND findings.episode_started <= ? OR findings.service_id IN (?) AND ((lower(findings.severity) NOT IN (?, ?, ?, ?)) OR findings.severity IS NULL) AND findings.episode_started <= ?)) AND NOT (EXISTS (SELECT exceptions.id \nFROM exceptions \nWHERE exceptions.finding_id = findings.id AND exceptions.revoked_at IS NULL AND exceptions.starts_at <= ? AND exceptions.expires_at > ?)) AND coalesce(finding_observations_1.simplified_key, ?) = ?), \nidentities AS \n(SELECT members.cve_normalized AS cve, min(members.id) AS id \nFROM members \nWHERE members.group_id = ? AND members.cve_normalized != ? GROUP BY members.cve_normalized), \nselected_members AS \n(SELECT identities.cve AS cve, identities.id AS id \nFROM identities ORDER BY identities.cve, identities.id\n LIMIT ? OFFSET ?)\n SELECT members.id, selected_members.cve, members.severity, members.active, substr(members.package, ?, ?) AS package, substr(members.fixed, ?, ?) AS fixed, coalesce(anon_1.image_count, ?) AS image_count \nFROM members JOIN selected_members ON members.id = selected_members.id LEFT OUTER JOIN (SELECT finding_observations.finding_id AS finding_id, count(distinct(finding_observations.image)) AS image_count \nFROM finding_observations JOIN selected_members ON selected_members.id = finding_observations.finding_id \nWHERE finding_observations.execution_id = ? AND finding_observations.image IS NOT NULL AND finding_observations.image != ? GROUP BY finding_observations.finding_id) AS anon_1 ON anon_1.finding_id = members.id ORDER BY selected_members.cve, selected_members.id",
+          "plan": [
+            [
+              3,
+              0,
+              0,
+              "MATERIALIZE members"
+            ],
+            [
+              11,
+              3,
+              60,
+              "SEARCH findings USING INDEX ix_findings_service_id (service_id=?)"
+            ],
+            [
+              86,
+              3,
+              0,
+              "CORRELATED SCALAR SUBQUERY 3"
+            ],
+            [
+              91,
+              86,
+              60,
+              "SEARCH exceptions USING INDEX ix_exceptions_finding_id (finding_id=?)"
+            ],
+            [
+              107,
+              3,
+              45,
+              "SEARCH finding_observations_1 USING INTEGER PRIMARY KEY (rowid=?) LEFT-JOIN"
+            ],
+            [
+              110,
+              3,
+              0,
+              "CORRELATED SCALAR SUBQUERY 1"
+            ],
+            [
+              115,
+              110,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_obs_finding_execution_id (finding_id=? AND execution_id=?)"
+            ],
+            [
+              134,
+              3,
+              0,
+              "CORRELATED SCALAR SUBQUERY 2"
+            ],
+            [
+              139,
+              134,
+              51,
+              "SEARCH finding_observations USING COVERING INDEX ix_finding_observations_finding_id (finding_id=?)"
+            ],
+            [
+              224,
+              0,
+              0,
+              "MATERIALIZE selected_members"
+            ],
+            [
+              227,
+              224,
+              0,
+              "MATERIALIZE identities"
+            ],
+            [
+              235,
+              227,
+              216,
+              "SCAN members"
+            ],
+            [
+              241,
+              227,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              289,
+              224,
+              82,
+              "SCAN identities"
+            ],
+            [
+              304,
+              224,
+              0,
+              "USE TEMP B-TREE FOR ORDER BY"
+            ],
+            [
+              315,
+              0,
+              0,
+              "MATERIALIZE anon_1"
+            ],
+            [
+              326,
+              315,
+              60,
+              "SEARCH finding_observations USING INDEX ix_finding_observations_execution_id (execution_id=?)"
+            ],
+            [
+              335,
+              315,
+              216,
+              "SCAN selected_members"
+            ],
+            [
+              340,
+              315,
+              0,
+              "USE TEMP B-TREE FOR GROUP BY"
+            ],
+            [
+              381,
+              315,
+              0,
+              "USE TEMP B-TREE FOR count(DISTINCT)"
+            ],
+            [
+              388,
+              0,
+              72,
+              "SCAN selected_members"
+            ],
+            [
+              392,
+              0,
+              44,
+              "SCAN members"
+            ],
+            [
+              401,
+              0,
+              0,
+              "BLOOM FILTER ON anon_1 (finding_id=?)"
+            ],
+            [
+              411,
+              0,
+              47,
+              "SEARCH anon_1 USING AUTOMATIC COVERING INDEX (finding_id=?) LEFT-JOIN"
+            ]
+          ]
+        }
+      ],
+      "python_peak_traced_bytes": 862941,
+      "orm_by_class": {
+        "Service": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.004000000000000001,
+          "inclusive_ms": 0.41100000000000003
+        }
+      ],
+      "scenario": "members_first",
+      "route_parameters": {
+        "group_id": "b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769"
+      }
+    },
+    {
+      "endpoint": "/api/v1/services/bench-1/findings/simplified/b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769/members",
+      "fixture_findings": 100000,
+      "query_count": 6,
+      "database_execute_ms": 394.85559999593534,
+      "dbapi_rows_fetched": 53,
+      "orm_objects_loaded": 1,
+      "duration_ms": 449.2303999941214,
+      "response_bytes": 6950,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "items": 50
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 33,
+        "page_size": 50,
+        "total_items": 3334,
+        "total_pages": 67
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 659290,
+      "orm_by_class": {
+        "Service": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0041,
+          "inclusive_ms": 0.4081
+        }
+      ],
+      "scenario": "members_middle",
+      "route_parameters": {
+        "group_id": "b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769",
+        "page": 33
+      }
+    },
+    {
+      "endpoint": "/api/v1/services/bench-1/findings/simplified/b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769/members",
+      "fixture_findings": 100000,
+      "query_count": 6,
+      "database_execute_ms": 355.3252000056091,
+      "dbapi_rows_fetched": 37,
+      "orm_objects_loaded": 1,
+      "duration_ms": 388.97670000005746,
+      "response_bytes": 4774,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "items": 34
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 67,
+        "page_size": 50,
+        "total_items": 3334,
+        "total_pages": 67
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 460357,
+      "orm_by_class": {
+        "Service": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0037,
+          "inclusive_ms": 0.2941
+        }
+      ],
+      "scenario": "members_late",
+      "route_parameters": {
+        "group_id": "b003410a325ff6a6b5bee3ca4bae94bccfca403f1e3b680a0ad19c8b803c9769",
+        "page": 67
+      }
+    }
+  ]
+}

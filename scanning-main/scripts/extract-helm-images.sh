@@ -5,9 +5,9 @@
 # will append its own chart results to the same skipped_charts.txt file later.
 set -uo pipefail
 
-SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh"
-source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh"
+SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh" || { echo "Fatal: cannot source Helm render helpers" >&2; exit 1; }
+source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh" || { echo "Fatal: cannot source Helm dependency helpers" >&2; exit 1; }
 
 is_true() {
   case "${1,,}" in
@@ -38,10 +38,10 @@ RENDER_ROOT="${HELM_IMAGE_RENDER_ROOT:-helm-image-rendered}"
 IMAGE_FILE="helm-images.txt"
 DISCOVERY_FILE="helm-discovery.jsonl"
 HELM_DEPENDENCY_MODE="${HELM_DEPENDENCY_MODE:-auto}"
-: > "$IMAGE_FILE"
-: > "$DISCOVERY_FILE"
-touch "$SKIPPED_CHARTS_FILE"
-mkdir -p "$RENDER_ROOT"
+: > "$IMAGE_FILE" || exit 1
+: > "$DISCOVERY_FILE" || exit 1
+touch "$SKIPPED_CHARTS_FILE" || exit 1
+mkdir -p "$RENDER_ROOT" || exit 1
 declare -A PROCESSED_CHARTS=()
 
 record_skip() {
@@ -157,7 +157,7 @@ fi
 
 render_chart() {
   local chart_path="$1" chart_name="$2" rendered="$3" entry_json="${4:-}"
-  local values_file set_value dependency_mode
+  local values_file set_value dependency_mode release namespace source_chart metadata_name
   local -a helm_command
   [ -n "$entry_json" ] || entry_json='{}'
   [ -f "${chart_path}/Chart.yaml" ] || {
@@ -169,13 +169,14 @@ render_chart() {
   identity="$(chart_identity "$chart_path")"
   chart_instance_id="$(jq -r '.chart_id // empty' <<< "$entry_json" 2>/dev/null || true)"
   [ -n "$chart_instance_id" ] && identity="${identity}|${chart_instance_id}"
+  [ -n "$chart_instance_id" ] || identity="${identity}|$(jq -cS '{release,namespace,values,set}' <<< "$entry_json")"
   [ -n "${PROCESSED_CHARTS[$identity]:-}" ] && return
   PROCESSED_CHARTS["$identity"]=1
   declared_by="$(jq -r '.declared_by // empty' <<< "$entry_json" 2>/dev/null || true)"
   declared_enabled="$(jq -r '.declared_enabled // "unknown"' <<< "$entry_json" 2>/dev/null || printf unknown)"
   record_discovery "$chart_name" "$identity" "$declared_by" "$declared_enabled" "processing"
   if ! jq -e '.graph_discovery == true' <<< "$entry_json" >/dev/null 2>&1; then
-    discover_components "$chart_path" "$identity/values.yaml"
+    discover_components "$chart_path" "$(chart_identity "$chart_path")/values.yaml"
   fi
   dependency_mode="$(jq -r --arg mode "$HELM_DEPENDENCY_MODE" '.dependency_mode // $mode' <<< "$entry_json" 2>/dev/null || printf '%s' "$HELM_DEPENDENCY_MODE")"
   if ! run_dependency_preparation "$chart_path" "$dependency_mode"; then
@@ -183,7 +184,16 @@ render_chart() {
     return
   fi
   chart_name="${chart_name:-$(basename "$chart_path")}"
-  helm_command=(helm template "${chart_name:-chart}" "$chart_path" --namespace "${HELM_DEFAULT_NAMESPACE:-default}")
+  metadata_name="$(yq -r '.name // ""' "${chart_path}/Chart.yaml")"
+  release="$(jq -r --arg name "${metadata_name:-${chart_name:-chart}}" '.release // .name // $name' <<< "$entry_json")"
+  namespace="$(jq -r --arg namespace "${HELM_DEFAULT_NAMESPACE:-default}" '.namespace // $namespace' <<< "$entry_json")"
+  source_chart="$(jq -r --arg path "$chart_path" '.source_chart // .path // .reference // .chart // $path' <<< "$entry_json")"
+  source_chart="$(source_path_for "$source_chart")"
+  if [ -z "$chart_instance_id" ]; then
+    chart_instance_id="$(jq -cS --arg source "$source_chart" --arg release "$release" --arg namespace "$namespace" \
+      '{source:$source,release:$release,namespace:$namespace,values:(.values // []),set:(.set // [])}' <<< "$entry_json" | sha256sum | awk '{print $1}')"
+  fi
+  helm_command=(helm template "$release" "$chart_path" --namespace "$namespace")
   if jq -e '.include_crds == true' <<< "$entry_json" >/dev/null 2>&1; then
     helm_command+=(--include-crds)
   fi
@@ -203,7 +213,8 @@ render_chart() {
     record_skip "$chart_name" "helm template produced no manifests during image extraction"
     return
   fi
-  printf '%s\n' "$entry_json" > "${rendered%.yaml}.chart.json"
+  jq --arg namespace "$namespace" --arg release "$release" --arg path "$source_chart" --arg instance "$chart_instance_id" \
+    '. + {namespace:$namespace, release:$release, source_chart:$path, chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
   # A rendered ConfigMap or custom resource may also have an `image` field.
   # Only pod container locations provide affirmative image evidence.
   python3 "${SCRIPT_DIRECTORY}/extract-workload-images.py" "$rendered" >> "$IMAGE_FILE" || {
@@ -346,7 +357,7 @@ while IFS= read -r values_file; do
   render_values_file_apps "$values_file"
 done < <(values_files | sort -u)
 
-sort -u "$IMAGE_FILE" -o "$IMAGE_FILE"
+sort -u "$IMAGE_FILE" -o "$IMAGE_FILE" || exit 1
 if [ -s "$IMAGE_FILE" ]; then
   echo "Helm image references discovered:"
   cat "$IMAGE_FILE"

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 from .secrets import decrypt_secret
 from .service_oci import destination_trust, validate_destination
+from .deployment_bundle import file_digest
 
 
 class DeliveryAttempt(Base):
@@ -123,6 +124,11 @@ def materialize(files, mappings):
         return value
     result = {}
     for path, content in files.items():
+        if isinstance(content, bytes):
+            # Vendored chart packages are opaque, integrity-preserved input.
+            # The rendered-image gate below still rejects stale image identities.
+            result[path] = content
+            continue
         # Helm template syntax is not YAML. Replace quoted / standalone literals only.
         if "{{" in content:
             for old, new in mappings.items():
@@ -151,6 +157,29 @@ def checked_values_files(values, files):
             raise ValueError("Helm values files must be confined to retained candidate files")
         seen.add(value)
     return list(values)
+
+
+def embed_values(files, chart_root, values_files):
+    """Helm's ordered values merge, retained inside the exact delivered chart."""
+    def mapping(content):
+        parsed = yaml.safe_load(content) if content else {}
+        if parsed is None:
+            return {}
+        if not isinstance(parsed, dict):
+            raise ValueError("Helm values must be mappings")
+        return parsed
+    def merge(base, override):
+        result = dict(base)
+        for key, value in override.items():
+            result[key] = merge(result[key], value) if isinstance(value, dict) and isinstance(result.get(key), dict) else value
+        return result
+    name = (PurePosixPath(str(chart_root).replace('\\', '/')) / 'values.yaml').as_posix()
+    values = mapping(files.get(name, ''))
+    for path in values_files:
+        values = merge(values, mapping(files[path]))
+    content = yaml.safe_dump(values, sort_keys=False)
+    files[name] = content
+    return name, content
 
 
 def deliver(record, destination, attempt_id, root, *, signing_material=None):
@@ -221,13 +250,16 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                 reference += "@" + digest
                 mappings[image["remediated"]] = reference
                 results.append({"kind": "image", "reference": reference, "digest": digest, "identity_type": "oci_manifest"})
-            files = materialize({name[10:]: bundle.read(name).decode() for name in names if name.startswith("candidate/") and not name.endswith("/")}, mappings)
+            files = materialize({name[10:]: (bundle.read(name) if name.endswith(".tgz") else bundle.read(name).decode("utf-8")) for name in names if name.startswith("candidate/") and not name.endswith("/")}, mappings)
             candidate = work / "candidate"
             candidate.mkdir()
             for relative, content in files.items():
                 target = candidate / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content, encoding="utf-8")
+                if isinstance(content, bytes):
+                    target.write_bytes(content)
+                else:
+                    target.write_text(content, encoding="utf-8")
             charts = []
             chart_roots = [path.parent for path in candidate.rglob("Chart.yaml")
                            if "charts" not in path.relative_to(candidate).parts[:-1]]
@@ -250,9 +282,10 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                     for child in value:
                         collect_images(child)
             for chart_root in chart_roots:
-                overrides = [argument for value in values_files for argument in ("--values", str(candidate / value))]
-                run([helm, "lint", str(chart_root), *overrides], env=env)
-                rendered = run([helm, "template", "cats-delivery", str(chart_root), *overrides], env=env)
+                name, content = embed_values(files, chart_root.relative_to(candidate), values_files)
+                (candidate / name).write_text(content, encoding="utf-8")
+                run([helm, "lint", str(chart_root)], env=env)
+                rendered = run([helm, "template", "cats-delivery", str(chart_root)], env=env)
                 for document in yaml.safe_load_all(rendered):
                     collect_images(document)
             if chart_roots and mappings and (set(mappings) & rendered_images or not set(mappings.values()).issubset(rendered_images)):
@@ -273,7 +306,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                 match = re.search(r"(?im)^Digest:\s*(sha256:[0-9a-f]{64})\s*$", output)
                 if not match:
                     raise ValueError("Helm registry did not return immutable identity")
-                digest = "sha256:" + hashlib.sha256(archive.read_bytes()).hexdigest()
+                digest = file_digest(archive)
                 charts.append(archive)
                 results.extend([{"kind": "helm", "reference": archive.name, "digest": digest, "identity_type": "package_sha256"},
                                 {"kind": "helm", "reference": prefix + "/" + str(yaml.safe_load((chart_root / "Chart.yaml").read_text())["name"]) + "@" + match.group(1), "digest": match.group(1), "identity_type": "oci_manifest"}])
@@ -295,8 +328,9 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                     output.writestr("candidate/" + relative, content)
                 for archive in charts:
                     output.write(archive, "helm/" + archive.name)
-            digest = "sha256:" + hashlib.sha256(output_path.read_bytes()).hexdigest()
+            digest = file_digest(output_path)
             signatures = [item["signature_status"] for item in results if item["identity_type"] == "oci_manifest"]
             return {"artifact_identities": results, "materialized_digest": digest,
                     "values_files": values_files,
+                    "values_embedded": True,
                     "signing_status": "failed" if "failed" in signatures else "verified" if signatures and all(value == "verified" for value in signatures) else "not_requested"}, str(output_path)

@@ -14,21 +14,21 @@ and DefectDojo stages are not included in the image-owned workflow.
 
 ## Build locally
 
-From the repository root, build the scanner layer and then the final image:
+From the repository root, build the CATS runtime:
 
 ```text
-docker build -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local -f cats-image/Dockerfile.all-in-one -t cats-portal:local .
+python scripts/build-cats-release.py --cats-version 1.3 --tag cats:1.3
 ```
 
-The current versioned release tag is `cats:1.3`:
+On Windows, `build.bat` builds this runtime and then deploys the image. The
+runtime profile retains scanner and validator tools without preparing Ubuntu
+packages or the offline host installation bundle. Existing validator API
+connections remain available; the offline SSH installer is unavailable unless
+its separately verified payload is configured. Container-based VM provisioning
+is not yet wired into the managed provisioning flow.
 
-```text
-docker build -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local \
-  --build-arg CATS_VERSION=1.3 \
-  -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
-```
+To explicitly prepare the optional self-contained offline host installer, use
+`--profile release`. That profile downloads and qualifies trusted release inputs.
 
 Save the versioned image as a Docker archive for transfer or offline import:
 
@@ -52,8 +52,8 @@ produce an image with an empty Grype cache:
 docker build --pull --no-cache \
   --build-arg GRYPE_DB_REFRESH="$(date -u +%Y%m%d%H%M%S)" \
   -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local \
-  -f cats-image/Dockerfile.all-in-one -t cats-portal:local .
+python scripts/build-cats-release.py --scanner-base catscan-base:local \
+  --cats-version 1.3 --tag cats-portal:local
 ```
 
 Both stages now fail if `/opt/catscan/grype-db` does not contain a real

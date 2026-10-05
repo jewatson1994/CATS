@@ -28,6 +28,12 @@ it('keeps unattempted deployment validation independent of completed static scan
   expect(screen.getByText('Complete')).toBeInTheDocument();
   expect(screen.getAllByText('NOT ATTEMPTED').length).toBeGreaterThan(0);
 });
+it('labels modern validation and distinguishes missing runtime counts from measured zero', () => {
+  render(<Page data={fixture({deployment_validation: {status: 'COULD_NOT_VALIDATE', diagnostics: {schrodinger: {schema_version: 'cats.validation/v2'}}, resource_summary: {pods: {ready: 0, expected: 1}}}})}/>);
+  expect(screen.getByText('CATSchrödinger’s')).toBeInTheDocument();
+  expect(screen.getByText('0 / 1')).toBeInTheDocument();
+  expect(screen.getAllByText('Unavailable / Unavailable')).toHaveLength(2);
+});
 it('shows immutable artifact matches with independent producer evidence and no whole release claim', () => {
   const digest = 'sha256:' + 'a'.repeat(64);
   render(<Page data={fixture({artifact_provenance: [{artifact_kind: 'image', digest,

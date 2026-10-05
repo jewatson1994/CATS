@@ -1,0 +1,6 @@
+apiVersion: v2
+name: cats-validator-self-test
+description: Local deterministic managed validator health workload
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

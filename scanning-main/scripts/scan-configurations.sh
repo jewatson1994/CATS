@@ -2,9 +2,9 @@
 
 set -uo pipefail
 
-SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh"
-source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh"
+SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh" || { echo "Fatal: cannot source Helm render helpers" >&2; exit 1; }
+source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh" || { echo "Fatal: cannot source Helm dependency helpers" >&2; exit 1; }
 
 TRIVY_CONFIG_SCAN_ENABLED="${TRIVY_CONFIG_SCAN_ENABLED:-false}"
 TRIVY_IMAGE_CONFIG_SCAN_ENABLED="${TRIVY_IMAGE_CONFIG_SCAN_ENABLED:-false}"
@@ -35,11 +35,13 @@ HELM_DISCOVERY_FILE="helm-discovery.jsonl"
 GRAPH_OUTPUT="${HELM_GRAPH_OUTPUT:-.cats-helm-graph.json}"
 GRAPH_ENTRIES="${HELM_GRAPH_ENTRIES:-.cats-helm-entries.jsonl}"
 
-mkdir -p "$RAW_ROOT" "$NORMALIZED_ROOT" "$RENDER_ROOT"
-: > "$SKIPPED_FILE"
-touch "$SKIPPED_CHARTS_FILE"
-printf '[]\n' > "$POLICY_FINDINGS_FILE"
-[ -f "$HELM_DISCOVERY_FILE" ] || : > "$HELM_DISCOVERY_FILE"
+mkdir -p "$RAW_ROOT" "$NORMALIZED_ROOT" "$RENDER_ROOT" || exit 1
+: > "$SKIPPED_FILE" || exit 1
+touch "$SKIPPED_CHARTS_FILE" || exit 1
+printf '[]\n' > "$POLICY_FINDINGS_FILE" || exit 1
+if [ ! -f "$HELM_DISCOVERY_FILE" ]; then
+  : > "$HELM_DISCOVERY_FILE" || exit 1
+fi
 
 # A chart can be reached from more than one catalog entry (or can refer back
 # to an ancestor).  Keep identity by normalized path so recursive discovery is
@@ -116,8 +118,8 @@ update_chart_graph_dependencies() {
 merge_policy_findings() {
   local input="$1" next_file="${POLICY_FINDINGS_FILE}.next"
   jq -s '.[0] + .[1] | unique_by(.fingerprint)' \
-    "$POLICY_FINDINGS_FILE" "$input" > "$next_file"
-  mv "$next_file" "$POLICY_FINDINGS_FILE"
+    "$POLICY_FINDINGS_FILE" "$input" > "$next_file" || exit 1
+  mv "$next_file" "$POLICY_FINDINGS_FILE" || exit 1
 }
 
 write_status() {
@@ -164,9 +166,9 @@ write_status() {
 
 finish() {
   sort -u "$SKIPPED_CHARTS_FILE" -o "$SKIPPED_CHARTS_FILE" 2>/dev/null || true
-  write_status
+  write_status || return 1
   local finding_count
-  finding_count="$(jq 'length' "$POLICY_FINDINGS_FILE")"
+  finding_count="$(jq 'length' "$POLICY_FINDINGS_FILE")" || return 1
   echo "Configuration scan summary: ${finding_count} finding(s); ${FAILURES} incomplete target(s)."
   if [ "$FAILURES" -gt 0 ] && is_true "$TRIVY_CONFIG_STRICT"; then
     return 1
@@ -217,14 +219,14 @@ run_trivy_config() {
     return 1
   fi
 
-  if ! bash "${SCRIPT_DIRECTORY}/normalize-trivy-config.sh" \
+  if ! TRIVY_CONFIGURATION_INPUT="$input_path" bash "${SCRIPT_DIRECTORY}/normalize-trivy-config.sh" \
       "$raw" "$normalized" "$label" "$deployment_namespace" "$framework"; then
     if [ "$kind" = "helm" ]; then
       record_chart_failure "$label" "Trivy result normalization failed"
     else
       record_failure "$kind" "$label" "Trivy result normalization failed"
     fi
-    return 1
+    exit 1
   fi
 
   merge_policy_findings "$normalized"
@@ -273,7 +275,7 @@ run_trivy_image_config() {
   if ! bash "${SCRIPT_DIRECTORY}/normalize-trivy-config.sh" \
       "$raw" "$normalized" "$image" "" "Docker Image Configuration"; then
     record_failure image "$image" "Image configuration result normalization failed"
-    return 1
+    exit 1
   fi
 
   merge_policy_findings "$normalized"
@@ -311,7 +313,7 @@ run_dockle_image_config() {
   if ! bash "${SCRIPT_DIRECTORY}/normalize-dockle-config.sh" \
       "$raw" "$normalized" "$image"; then
     record_failure image "$image" "Dockle result normalization failed"
-    return 1
+    exit 1
   fi
 
   merge_policy_findings "$normalized"
@@ -476,7 +478,7 @@ process_chart_entry() {
   framework="$(jq -r '.framework // empty' <<< "$entry_json")"
   declared_by="$(jq -r '.declared_by // empty' <<< "$entry_json")"
   declared_enabled="$(jq -r '.declared_enabled // empty' <<< "$entry_json")"
-  chart_source_identity="${path:-${reference:-$name}}"
+  chart_source_identity="$(jq -r --arg source "${path:-${reference:-$name}}" '.source_chart // $source' <<< "$entry_json")"
 
   HELM_REQUESTED=$((HELM_REQUESTED + 1))
   HELM_MATERIALIZATION_SEQUENCE=$((HELM_MATERIALIZATION_SEQUENCE + 1))
@@ -506,6 +508,7 @@ process_chart_entry() {
   normalized_identity="$(chart_identity "$path")"
   chart_instance_id="$(jq -r '.chart_id // empty' <<< "$entry_json" 2>/dev/null || true)"
   [ -n "$chart_instance_id" ] && normalized_identity="${normalized_identity}|${chart_instance_id}"
+  [ -n "$chart_instance_id" ] || normalized_identity="${normalized_identity}|$(jq -cS '{release,namespace,values,set}' <<< "$entry_json")"
   if [ -n "${HELM_PROCESSED_CHARTS[$normalized_identity]:-}" ]; then
     return
   fi
@@ -517,11 +520,16 @@ process_chart_entry() {
   name="${name:-$chart_name}"
   release="${release:-$name}"
   release="${release:-chart-${HELM_REQUESTED}}"
+  chart_source_identity="$(source_path_for "$chart_source_identity")"
+  if [ -z "$chart_instance_id" ]; then
+    chart_instance_id="$(jq -cS --arg source "$chart_source_identity" --arg release "$release" --arg namespace "$namespace" \
+      '{source:$source,release:$release,namespace:$namespace,values:(.values // []),set:(.set // [])}' <<< "$entry_json" | sha256sum | awk '{print $1}')"
+  fi
   # Discover declared children even if dependency resolution or rendering
   # later fails; useful inventory and Missing Evidence must not be erased by a
   # separate Helm failure.
   if ! jq -e '.graph_discovery == true' <<< "$entry_json" >/dev/null 2>&1; then
-    discover_local_components "$path" "${normalized_identity}/values.yaml"
+    discover_local_components "$path" "$(chart_identity "$path")/values.yaml"
   fi
   if ! run_dependency_preparation "$path" "$dependency_mode"; then
     update_chart_graph_dependencies "$chart_instance_id" "UNAVAILABLE"
@@ -573,7 +581,8 @@ process_chart_entry() {
     record_chart_failure "$name" "helm template produced no Kubernetes manifests"
     return
   fi
-  printf '%s\n' "$entry_json" > "${rendered%.yaml}.chart.json"
+  jq --arg namespace "$namespace" --arg release "$release" --arg path "$chart_source_identity" --arg instance "$chart_instance_id" \
+    '. + {namespace:$namespace, release:$release, source_chart:$path, chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
   update_chart_graph_status "$chart_instance_id" "$path" "Rendered" "helm template" "" "$rendered"
 
   if run_trivy_config helm "${name} (${release})" "$rendered" "$namespace" "$framework"; then
@@ -643,8 +652,9 @@ if command -v trivy >/dev/null 2>&1; then
   fi
 fi
 if [ "$FAILURES" -gt 0 ]; then
-  finish
-  exit $?
+  # Missing scanner executables/cache infrastructure is not a target skip.
+  finish || true
+  exit 1
 fi
 
 if is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED" || is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED"; then
@@ -698,6 +708,11 @@ if is_true "$HELM_SCAN_ENABLED"; then
       helm_tools_ready=false
     fi
   done
+
+  if ! is_true "$helm_tools_ready"; then
+    finish || true
+    exit 1
+  fi
 
   if is_true "$helm_tools_ready"; then
     if command -v python3 >/dev/null 2>&1; then

@@ -362,6 +362,19 @@ def test_public_oci_to_download_worker_flow(monkeypatch, tmp_path: Path):
     assert not any("cats-custom-ca.pem" in " ".join(command) for command in trust_copies)
 
 
+@pytest.mark.parametrize("policies", [{}, {"alpine": {"mode": "default"}}])
+def test_remediation_worker_uses_image_defined_default_repositories(monkeypatch, tmp_path: Path, policies):
+    config = {"job_id": "job-default-repositories", "source_mode": "oci",
+              "source_image": "registry.internal/library/alpine:3.20", "output_mode": "download",
+              "remediation_evidence": True, "require_repository_policy": False,
+              "repository_policies": policies}
+    code, output, _state, calls = run_worker(monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2.0"])]), grype_report([]), source_credentials=("", ""))
+    assert code == 0
+    assert any(command and command[0] == "copa" for command, _ in calls)
+    assert not any("cats-repository" in " ".join(command) for command, _ in calls)
+
+
 def test_remediation_worker_refuses_missing_os_mirror_without_public_fallback(monkeypatch, tmp_path: Path):
     config = {"job_id": "job-mirror-required", "source_mode": "oci",
               "source_image": "registry.internal/library/alpine:3.20", "output_mode": "download",

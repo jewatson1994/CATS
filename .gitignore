@@ -58,3 +58,6 @@ AGENTS.md
 portal/frontend/node_modules/
 portal/app/static/frontend/
 .pnpm-store/
+
+# Connected managed-validator release cache (large, verified build inputs)
+.release-cache/

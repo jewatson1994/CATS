@@ -68,13 +68,19 @@ jq \
         title: (.Title // $finding_id),
         description: (.Description // .Message // ""),
         remediation: (.Resolution // ""),
+        evidence: {
+          cause_metadata: (.CauseMetadata // {}),
+          scanner_target: ($result.Target // ""),
+          deployment_namespace: $deployment_namespace,
+          policy_namespace: (.Namespace // "")
+        },
         fingerprint: (
           [
             "trivy",
             $finding_id,
             $finding_target,
             $finding_namespace,
-            (.CauseMetadata.Resource // .CauseMetadata.Provider // "")
+            ((.CauseMetadata // {}) | tojson)
           ]
           | map(tostring)
           | join("|")
@@ -94,3 +100,5 @@ while IFS= read -r encoded_finding; do
   fingerprint_digest="$(printf '%s' "$fingerprint_material" | sha256sum | awk '{print $1}')"
   jq --arg fingerprint "trivy:${fingerprint_digest}" '.fingerprint = $fingerprint' <<< "$finding_json"
 done < <(jq -r '.[] | @base64' "$UNHASHED_OUTPUT") | jq -s 'unique_by(.fingerprint)' > "$OUTPUT_JSON"
+
+python3 "$(dirname "$0")/configuration-lineage.py" "$OUTPUT_JSON" "${TRIVY_CONFIGURATION_INPUT:-}"

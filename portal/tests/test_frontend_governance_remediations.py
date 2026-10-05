@@ -49,3 +49,27 @@ def test_remediation_report_projects_snapshots_not_paths_credentials_or_raw_payl
     assert data['job']['has_artifact'] is True
     assert data['job']['before_snapshot']['vulnerabilities']['Critical'] == 2
     assert data['job']['validation'][0]['status'] == 'PASS'
+
+
+def test_report_keeps_patch_blockers_and_worker_identity():
+    job = N(job_key='job', patched_images=[{'original': 'ubuntu:test', 'classification': 'REVIEW REQUIRED',
+        'reason': 'Mirror policy missing', 'patch_status': 'FAILED', 'patch_job_id': 'patch-1'}])
+    data = {'can': {}, 'next_path': '/remediations'}
+    project_remediations(data, 'remediation_report.html', {'service': service(), 'job': job}, lambda *args: False, {})
+    assert data['job']['patched_images'][0]['reason'] == 'Mirror policy missing'
+    assert data['job']['patched_images'][0]['patch_job_id'] == 'patch-1'
+
+
+def test_final_delivery_evidence_is_separate_and_missing_measurements_stay_unknown():
+    evidence = {'status': 'VERIFIED', 'offlineVerified': True, 'network': {'isolated': True, 'external_chart_fetches': 0, 'external_image_pulls': 0, 'credentials': 'SECRET'}, 'raw_payload': 'SECRET'}
+    job = N(job_key='job', delivery_attempts=[N(id=41, status='download_ready', result={'validation_type': 'offline-bundle', 'service': {'id': 7, 'version': 'v2', 'credentials': 'SECRET'}, 'materialized_digest': 'digest', 'verification': evidence})], validation_results={'deployment': {'status': 'FAILED'}})
+    data = {'can': {}, 'next_path': '/remediations'}
+    project_remediations(data, 'remediation_report.html', {'service': service(), 'job': job}, lambda *args: True, {})
+    attempt = data['job']['delivery_attempts'][0]
+    assert attempt['verification']['offlineVerified'] is True
+    assert attempt['verification']['network']['external_image_pulls'] == 0
+    assert attempt['service'] == {'id': 7, 'version': 'v2'}
+    assert data['job']['candidate_validation']['status'] == 'FAILED'
+    assert data['job']['original_validation']['offlineVerified'] is None
+    assert data['job']['original_validation']['network']['isolated'] is None
+    assert 'SECRET' not in json.dumps(data)

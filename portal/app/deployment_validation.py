@@ -33,6 +33,7 @@ from .ingress import IngressNginxProvider, bootstrap as bootstrap_ingress
 from .load_balancer import MetalLBProvider, bootstrap as bootstrap_load_balancer
 from .provider_inventory import INGRESS_NGINX, KIND_LOCAL_STORAGE, METALLB
 from .trusted_ca import write_additive_bundle
+from .runtime_diagnostics import startup_message
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,7 @@ class ValidationConfig:
     max_cpu: str = "8"
     max_memory: str = "16Gi"
     max_storage: str = "20Gi"
+    enforce_resource_limits: bool = True
     node_cpus: str = "4"
     node_memory: str = "8g"
     node_pids: int = 2048
@@ -178,6 +180,7 @@ class ValidationConfig:
             max_cpu=os.getenv("CATS_DEPLOYMENT_MAX_CPU", "8"),
             max_memory=os.getenv("CATS_DEPLOYMENT_MAX_MEMORY", "16Gi"),
             max_storage=os.getenv("CATS_DEPLOYMENT_MAX_STORAGE", "20Gi"),
+            enforce_resource_limits=flag("CATS_DEPLOYMENT_ENFORCE_RESOURCE_LIMITS", True),
             node_cpus=os.getenv("CATS_DEPLOYMENT_NODE_CPUS", "4"),
             node_memory=os.getenv("CATS_DEPLOYMENT_NODE_MEMORY", "8g"),
             node_pids=number("CATS_DEPLOYMENT_NODE_PIDS", 2048),
@@ -203,6 +206,13 @@ class ValidationArtifact:
     job_id: str = "job"
     reference: str | None = None
     trusted_ca_certificates: Sequence[Mapping[str, object]] = field(default_factory=tuple)
+    prepared_directory: str | None = None
+    image_archives: Mapping[str, str] = field(default_factory=dict)
+    offline: bool = False
+    require_helm_lifecycle: bool = False
+    namespace: str | None = None
+    expected_images: Sequence[str] | None = None
+    chart_path: str | None = None
 
 
 ArtifactInput = ValidationArtifact
@@ -251,6 +261,9 @@ def attempt_resource_isolation(config: ValidationConfig, container: str, runner:
     unsupported or unexpectedly failed defense-in-depth controls are reported
     as BEST_EFFORT and validation proceeds.
     """
+    if not config.enforce_resource_limits:
+        return {"overall": "DISABLED", "classification": None,
+                "warnings": [], "reason": "Resource limits disabled by operator configuration."}
     controls = _resource_limit_config(config)
     warnings: list[str] = []
     for name, item in controls.items():
@@ -477,7 +490,7 @@ def _service_dns_probe(
     }
 
 
-def capability_preflight(resources: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def capability_preflight(resources: Sequence[Mapping[str, Any]], config: ValidationConfig | None = None) -> list[dict[str, Any]]:
     """Detect environmental requirements without turning prediction into a gate.
 
     The returned rows are bounded, manifest-derived evidence.  They describe
@@ -486,8 +499,12 @@ def capability_preflight(resources: Sequence[Mapping[str, Any]]) -> list[dict[st
     marked rather than silently mapped to a generic local implementation.
     """
     rows: list[dict[str, Any]] = []
+    permissive = bool(config and config.permissive_workloads and not config.strict_sandbox_policy)
 
     def add(capability: str, *, required: bool, source: str = "manifest", source_resource: str = "", source_namespace: str = "", source_field: str = "", strategy: str = "kind", status: str = "NOT_REQUIRED", explanation: str = "", provider_specific: bool = False) -> None:
+        if permissive and capability in {"Host namespace access", "Privileged/security-sensitive workload"}:
+            status = "AVAILABLE"
+            explanation = "Permitted by the dedicated sandbox workload policy; workload readiness is assessed separately."
         rows.append({"capability": capability, "required": required, "source": source,
                      "source_resource": source_resource, "source_namespace": source_namespace,
                      "source_field": source_field, "provider_strategy": strategy,
@@ -1231,7 +1248,7 @@ def security_preflight(resources: Sequence[Mapping[str, Any]], config: Validatio
             failures.append({"resource": name, "reason": "invalid replica or parallelism count is prohibited", "category": "RESOURCE_GOVERNANCE"}); pod_count = max(pod_count, config.max_pods + 1)
         pod = _pod_spec(resource)
         if not pod: continue
-    if pod_count > config.max_pods: failures.append({"resource": "Chart", "reason": f"requested pods {pod_count} exceeds limit {config.max_pods}", "category": "RESOURCE_GOVERNANCE"})
+    if config.enforce_resource_limits and pod_count > config.max_pods: failures.append({"resource": "Chart", "reason": f"requested pods {pod_count} exceeds limit {config.max_pods}", "category": "RESOURCE_GOVERNANCE"})
     failures.extend(dict(decision) for decision in sandbox_preflight(resources, config, namespace=namespace)
                     if decision["classification"] == "SANDBOX_BOUNDARY_VIOLATION")
     return failures
@@ -1789,15 +1806,11 @@ def classification_reason_evidence(result: Mapping[str, Any], status: str, categ
 def _safe_event(event: Mapping[str, Any]) -> dict[str, Any]:
     involved = event.get("involvedObject") or {}
     message = str(event.get("message") or "")
-    category = classify_failure(message)
     lower_message = message.lower()
     condition = "INSUFFICIENT_CPU" if "insufficient cpu" in lower_message else "INSUFFICIENT_MEMORY" if "insufficient memory" in lower_message else ""
-    if "probe" in message.lower(): summary = "Probe failure observed"
-    elif category != FailureCategory.UNKNOWN.value: summary = f"Classified as {category}"
-    else: summary = "Technical event message withheld"
     return {
         "type": str(event.get("type") or ""), "reason": str(event.get("reason") or ""),
-        "message": summary, "condition": condition, "count": event.get("count"),
+        "message": startup_message(message), "condition": condition, "count": event.get("count"),
         "firstTimestamp": event.get("firstTimestamp"), "lastTimestamp": event.get("lastTimestamp"),
         "involvedObject": {"kind": str(involved.get("kind") or ""), "name": str(involved.get("name") or ""),
                            "namespace": str(involved.get("namespace") or ""), "uid": str(involved.get("uid") or "")},
@@ -1869,6 +1882,8 @@ def _policy_documents(namespace: str, config: ValidationConfig) -> str:
         {"apiVersion": "v1", "kind": "ResourceQuota", "metadata": {"name": "cats-validation-limits", "namespace": namespace, "labels": labels}, "spec": {"hard": {"pods": str(config.max_pods), "requests.cpu": config.max_cpu, "requests.memory": config.max_memory, "requests.storage": config.max_storage, "requests.ephemeral-storage": config.max_storage, "limits.ephemeral-storage": config.max_storage, "persistentvolumeclaims": str(config.max_pods), "count/jobs.batch": str(config.max_pods), "count/cronjobs.batch": str(config.max_objects), "count/secrets": str(config.max_objects), "count/configmaps": str(config.max_objects), "count/services": str(config.max_objects), "count/deployments.apps": str(config.max_objects), "count/statefulsets.apps": str(config.max_objects), "count/daemonsets.apps": str(config.max_objects), "count/replicasets.apps": str(config.max_objects)}}},
         {"apiVersion": "v1", "kind": "LimitRange", "metadata": {"name": "cats-validation-defaults", "namespace": namespace, "labels": labels}, "spec": {"limits": [{"type": "Container", "default": {"cpu": "500m", "memory": "512Mi", "ephemeral-storage": "1Gi"}, "defaultRequest": {"cpu": "50m", "memory": "64Mi", "ephemeral-storage": "100Mi"}}]}},
     ]
+    if not config.enforce_resource_limits:
+        documents = []
     if not config.allow_network_egress: documents.append({"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": {"name": "cats-default-deny-egress", "namespace": namespace, "labels": labels}, "spec": {"podSelector": {}, "policyTypes": ["Egress"], "egress": []}})
     return "---\n".join(yaml.safe_dump(item, sort_keys=False) for item in documents)
 
@@ -1889,12 +1904,56 @@ def _rewrite_kubeconfig(path: Path, api_host: str) -> None:
     except OSError: pass
 
 
+class _IsolatedNodeTransport:
+    """Run trusted API clients in the owned node, without a published host port."""
+
+    def __init__(self, cfg: ValidationConfig, node: str, root: Path, kubeconfig: Path, run: CommandRunner):
+        self.cfg, self.node, self.root, self.kubeconfig, self.run = cfg, node, root, kubeconfig, run
+        self.tools: dict[str, str] = {}
+
+    def prepare(self, *, timeout: float, env: Mapping[str, str]) -> CommandResult:
+        for binary in (self.cfg.kubectl_binary, self.cfg.helm_binary):
+            source = shutil.which(binary)
+            if not source:
+                return CommandResult(127, "", "Trusted validation client is unavailable")
+            target = "/usr/local/bin/cats-validation-" + Path(binary).name
+            copied = self.run([self.cfg.docker_binary, "cp", str(Path(source).resolve()), f"{self.node}:{target}"], timeout=timeout, env=env)
+            if copied.returncode:
+                return copied
+            self.tools[binary] = target
+        return self.run([self.cfg.docker_binary, "exec", self.node, "mkdir", "-m", "700", "-p", str(self.root)], timeout=timeout, env=env)
+
+    def execute(self, argv: Sequence[str], *, timeout: float, env: Mapping[str, str]) -> CommandResult:
+        # Docker copies validator-local files into the owned node. Host bind
+        # mounts cannot access the validator container's temporary workspace.
+        copied = self.run([self.cfg.docker_binary, "cp", str(self.root) + "/.", f"{self.node}:{self.root}"], timeout=timeout, env=env)
+        if copied.returncode:
+            return copied
+        forwarded = [self.cfg.docker_binary, "exec", "--env", "KUBECONFIG=" + str(self.kubeconfig)]
+        for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
+            if key in env:
+                forwarded.extend(["--env", key + "=" + env[key]])
+        forwarded.extend([self.node, self.tools[argv[0]], *argv[1:]])
+        return self.run(forwarded, timeout=timeout, env=env)
+
+
+def _missing_isolated_api_port(completed: CommandResult) -> bool:
+    evidence = completed.stderr + "\n" + completed.stdout
+    return completed.returncode != 0 and "failed to get api server port" in evidence and "6443/tcp" in evidence and "index of untyped nil" in evidence
+
+
 def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, config: ValidationConfig | None = None, runner: CommandRunner | None = None, progress_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
     cfg = config or ValidationConfig.from_env(); run = runner or _default_runner
     if isinstance(artifact, Mapping): artifact = ValidationArtifact(**{key: artifact[key] for key in ValidationArtifact.__dataclass_fields__ if key in artifact})
     workspace_prefix = f"cats-deployment-{artifact.job_id}-" if (cfg.strict_sandbox_policy or cfg.workspace_root) and re.fullmatch(r"[a-f0-9]{32}", artifact.job_id) else "cats-deployment-"
-    cluster, namespace = validation_names(cfg, artifact.job_id); network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=cfg.workspace_root or None)); kubeconfig = root / "kubeconfig.yaml"
+    cluster, namespace = validation_names(cfg, artifact.job_id)
+    if artifact.namespace is not None:
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", artifact.namespace):
+            raise ValueError("Invalid deployment namespace")
+        namespace = artifact.namespace
+    network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=cfg.workspace_root or None)); kubeconfig = root / "kubeconfig.yaml"
     network_attempted = False; create_attempted = False; rendered_resources: list[dict[str, Any]] = []; diagnostics: dict[str, Any] = {}
+    node_transport: _IsolatedNodeTransport | None = None
     provider_lifecycle: dict[str, Any] = {}
     result: dict[str, Any] = {"engine": "kind", "status": ValidationStatus.NOT_ATTEMPTED.value, "classification": ValidationStatus.NOT_ATTEMPTED.value, "phase": "QUEUED", "reason_category": None, "reason": None, "classification_reasons": [], "classification_summary": {"expected_resources": 0, "observed_expected": 0, "expected_only": 0, "runtime_generated": 0, "observed_only": 0, "failed": 0}, "helm_result": {"template": "NOT_ATTEMPTED", "install": "NOT_ATTEMPTED", "release_status": "NOT_ATTEMPTED", "rendered_resource_count": 0}, "resource_summary": {}, "conditions": {}, "dependencies": {"missing_crds": [], "missing_storage_classes": [], "unavailable_images": []}, "capability_preflight": [], "capability_bootstrap": {"provisioned": [], "warnings": [], "duration_ms": 0}, "observed_topology": {"nodes": [], "edges": []}, "comparison": {"matched": [], "declared_only": [], "observed_only": [], "defaulted": [], "changed": [], "unresolved": []}, "events": [], "unhealthy_resources": [], "sandbox_sensitive_behaviors": [], "security_policy_violations": [], "policy_violations": [], "resource_isolation": {"overall": "NOT_ATTEMPTED"}, "warnings": [], "diagnostics": diagnostics, "cluster_name": cluster, "namespace": namespace, "cleanup_status": "NOT_ATTEMPTED", "duration_seconds": 0}
     helm_timing: dict[str, Any] = result["helm_result"]
@@ -1940,7 +1999,8 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         if left <= 0: raise TimeoutError("Deployment Validation total timeout exceeded")
         return max(1, min(float(cap), left))
     def command(argv: Sequence[str], cap: float, key: str | None = None, command_env: Mapping[str, str] | None = None) -> CommandResult:
-        completed = run(argv, timeout=remaining(cap), env=command_env or env)
+        executor = node_transport.execute if node_transport is not None and argv[0] in node_transport.tools else run
+        completed = executor(argv, timeout=remaining(cap), env=command_env or env)
         if key:
             diagnostics[key] = _diagnostic_summary(completed)
         return completed
@@ -1970,9 +2030,25 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         diagnostics["classification"] = {"status": status.value, "reason_category": result["reason_category"], "reason_count": len(reasons), **summary}
         return result
     try:
+        if artifact.offline and (not cfg.strict_sandbox_policy or cfg.allow_network_egress):
+            return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Offline validation requires verified strict network isolation.")
         if cfg.strict_sandbox_policy and (cfg.allow_network_egress or cfg.api_address != "127.0.0.1"):
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Remote execution requires an internal Docker network and loopback API binding.")
-        phase("PREFLIGHT"); artifact_root = root / "artifact"; materialize_sources(artifact.source_files, artifact_root, max_bytes=cfg.max_source_bytes); charts = _root_charts(artifact_root)
+        phase("PREFLIGHT"); artifact_root = root / "artifact"
+        if artifact.prepared_directory:
+            prepared = Path(artifact.prepared_directory)
+            if not prepared.is_dir() or any(p.is_symlink() for p in [prepared, *prepared.parents]) or any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in prepared.rglob("*")):
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_CHART_INVALID, "Prepared chart directory is invalid.")
+            if sum(p.stat().st_size for p in prepared.rglob("*") if p.is_file()) > cfg.max_source_bytes:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_EXCEEDED, "Prepared chart exceeds the configured source limit.")
+            shutil.copytree(prepared, artifact_root)
+        else:
+            materialize_sources(artifact.source_files, artifact_root, max_bytes=cfg.max_source_bytes)
+        if artifact.chart_path is not None:
+            chart = artifact_root / Path(*_safe_path(artifact.chart_path).parts)
+            charts = [chart] if (chart / "Chart.yaml").is_file() else []
+        else:
+            charts = _root_charts(artifact_root)
         if not charts: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_CHART_INVALID, "The selected artifact does not contain a concrete root Chart.yaml.")
         values_paths: list[Path] = []
         for value in artifact.values_files:
@@ -1985,6 +2061,13 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         _start_helm_stage("template")
         rendered_bytes = 0
         for index, chart in enumerate(charts, 1):
+            metadata = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8")) or {}
+            if cfg.allow_network_egress and not artifact.offline and metadata.get("dependencies"):
+                fetched = command([cfg.helm_binary, "dependency", "build", str(chart)], cfg.install_timeout_seconds, f"helm_dependencies_{index}")
+                if fetched.returncode:
+                    _complete_helm_stage("template")
+                    result["helm_result"]["template"] = "FAIL"
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_LINT_FAILURE, "Helm dependency resolution failed; check repository availability and registry authentication.")
             lint = command([cfg.helm_binary, "lint", str(chart), *values_args], cfg.install_timeout_seconds, f"helm_lint_{index}")
             if lint.returncode:
                 _complete_helm_stage("template")
@@ -2005,7 +2088,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             rendered_resources.extend(_yaml_documents(rendered.stdout, cfg.max_render_bytes))
         _complete_helm_stage("template")
         result["helm_result"].update(template="PASS", rendered_resource_count=len(rendered_resources)); _merge_rendered_provenance(rendered_resources, artifact.declared_resources)
-        result["capability_preflight"] = capability_preflight(rendered_resources)
+        result["capability_preflight"] = capability_preflight(rendered_resources, cfg)
         result["capability_preflight"].extend(detect_runtime_requirements(rendered_resources))
         sandbox_decisions = sandbox_preflight(rendered_resources, cfg, namespace=namespace)
         result["sandbox_sensitive_behaviors"] = [
@@ -2024,13 +2107,27 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             result["policy_violations"] = result["security_policy_violations"]
             diagnostics["security_policy_violations"] = result["security_policy_violations"]
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, f"CATS did not execute this workload because the validation sandbox boundary detected {len(security_violations)} violation(s). See the preflight evidence below for each rejected resource and field.")
-        images = sorted({str(container.get("image")) for resource in rendered_resources for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or [])] if isinstance(container, Mapping) and container.get("image")})
+        images = sorted({str(container.get("image")) for resource in rendered_resources for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or []), *(_pod_spec(resource).get("ephemeralContainers") or [])] if isinstance(container, Mapping) and container.get("image")})
+        if artifact.offline:
+            result["offline"] = {"required_images": images, "provided_images": sorted(artifact.image_archives), "loaded_images": [], "network_isolated": False, "external_chart_fetches": None, "external_image_pulls": None}
+            missing = sorted(set(images) - set(artifact.image_archives))
+            if artifact.expected_images is None or set(images) != set(artifact.expected_images):
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Rendered workload image inventory differs from the immutable bundle manifest.")
+            if missing:
+                result["dependencies"]["unavailable_images"] = missing
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Offline bundle does not contain every rendered workload image.")
+            for resource in rendered_resources:
+                for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or []), *(_pod_spec(resource).get("ephemeralContainers") or [])]:
+                    image = str(container.get("image") or "") if isinstance(container, Mapping) else ""
+                    defaults_to_always = "@" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest"))
+                    if isinstance(container, Mapping) and (container.get("imagePullPolicy") == "Always" or (not container.get("imagePullPolicy") and defaults_to_always)):
+                        return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Offline deployment requires an external pull under imagePullPolicy Always.")
         if cfg.kind_node_archive:
             if command([cfg.docker_binary, "load", "--input", cfg.kind_node_archive], cfg.create_timeout_seconds, "kind_node_archive").returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The configured kind node archive could not be loaded.")
         node_available = command([cfg.docker_binary, "image", "inspect", "--", cfg.kind_node_image], cfg.create_timeout_seconds, "kind_node_image").returncode == 0
         if not node_available and (cfg.strict_sandbox_policy or cfg.require_local_images or not cfg.allow_network_egress):
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The pinned kind node image is unavailable in the local validation environment.")
-        local_images = [image for image in images if command([cfg.docker_binary, "image", "inspect", "--", image], cfg.collect_timeout_seconds).returncode == 0]
+        local_images = images if artifact.offline else [image for image in images if command([cfg.docker_binary, "image", "inspect", "--", image], cfg.collect_timeout_seconds).returncode == 0]
         unavailable = sorted(set(images) - set(local_images))
         if unavailable:
             if cfg.strict_sandbox_policy:
@@ -2062,23 +2159,64 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         kubeadm_patch = yaml.safe_dump({"kind": "ClusterConfiguration", "apiServer": {"certSANs": cert_sans}}, sort_keys=False)
         kind_config = root / "kind-config.yaml"; kind_config.write_text(yaml.safe_dump({"kind": "Cluster", "apiVersion": "kind.x-k8s.io/v1alpha4", "networking": {"apiServerAddress": cfg.api_address}, "kubeadmConfigPatches": [kubeadm_patch]}, sort_keys=False), encoding="utf-8")
         phase("CREATING_CLUSTER"); create_attempted = True
-        made = command([cfg.kind_binary, "create", "cluster", "--name", cluster, "--image", cfg.kind_node_image, "--kubeconfig", str(kubeconfig), "--config", str(kind_config), "--wait", f"{int(cfg.create_timeout_seconds)}s"], cfg.create_timeout_seconds, "kind_create", env)
-        if made.returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not create the ephemeral Kubernetes cluster.")
+        create_args = [cfg.kind_binary, "create", "cluster", "--name", cluster, "--image", cfg.kind_node_image, "--kubeconfig", str(kubeconfig), "--config", str(kind_config), "--wait", f"{int(cfg.create_timeout_seconds)}s"]
+        if cfg.strict_sandbox_policy:
+            # Keep a successfully booted node when only external kubeconfig
+            # export fails. The unconditional finally block still deletes it.
+            create_args.append("--retain")
+        made = command(create_args, cfg.create_timeout_seconds, "kind_create", env)
+        internal_api = cfg.strict_sandbox_policy and _missing_isolated_api_port(made)
+        if made.returncode and not internal_api: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not create the ephemeral Kubernetes cluster.")
         if cfg.strict_sandbox_policy:
             attached = command([cfg.docker_binary, "inspect", "--format={{json .NetworkSettings.Networks}}", f"{cluster}-control-plane"], cfg.collect_timeout_seconds, "node_network_isolation", env)
             try: attached_networks = json.loads(attached.stdout) if attached.returncode == 0 else {}
             except (ValueError, TypeError): attached_networks = {}
             if not isinstance(attached_networks, Mapping) or set(attached_networks) != {network_name}:
                 return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "The kind node must attach exclusively to the owned internal network.")
+            if artifact.offline:
+                result["offline"]["network_isolated"] = True
         resource_isolation = attempt_resource_isolation(cfg, f"{cluster}-control-plane", lambda argv, *, timeout, env=None: command(argv, timeout, None, env), timeout=remaining(cfg.create_timeout_seconds), env=env)
         result["resource_isolation"] = resource_isolation
         diagnostics["resource_isolation"] = {name: {key: value for key, value in item.items() if key != "configured_limit" or value is not None} for name, item in resource_isolation.items() if isinstance(item, Mapping)}
         for warning in resource_isolation.get("warnings", []):
             record_warning(f"Optional resource control unavailable: {warning}")
-        if cfg.strict_sandbox_policy and resource_isolation.get("overall") != "ENFORCED":
+        if cfg.strict_sandbox_policy and cfg.enforce_resource_limits and resource_isolation.get("overall") != "ENFORCED":
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Remote execution requires verified CPU, memory and PID limits.")
-        _rewrite_kubeconfig(kubeconfig, cfg.api_host)
-        if local_images:
+        if internal_api:
+            exported = command([cfg.kind_binary, "get", "kubeconfig", "--name", cluster, "--internal"], cfg.collect_timeout_seconds, None, env)
+            if exported.returncode or not exported.stdout.strip():
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not obtain the isolated cluster's internal API configuration.")
+            # Credentials are never recorded in diagnostics.
+            kubeconfig.write_text(exported.stdout, encoding="utf-8")
+            kubeconfig.chmod(0o600)
+            node_transport = _IsolatedNodeTransport(cfg, f"{cluster}-control-plane", root, kubeconfig, run)
+            prepared = node_transport.prepare(timeout=remaining(cfg.collect_timeout_seconds), env=env)
+            if prepared.returncode:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "CATS could not prepare trusted API clients inside the isolated node.")
+            ready = command([cfg.kubectl_binary, "wait", "--for=condition=Ready", "nodes", "--all", "--timeout=30s", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, "internal_api_ready", env)
+            if ready.returncode:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The isolated Kubernetes API did not confirm node readiness.")
+            diagnostics["api_transport"] = "owned-node-internal"
+        else:
+            _rewrite_kubeconfig(kubeconfig, cfg.api_host)
+        if artifact.offline:
+            for image, archive in artifact.image_archives.items():
+                loaded = command([cfg.kind_binary, "load", "image-archive", archive, "--name", cluster], cfg.install_timeout_seconds, "kind_load_archive", env)
+                if loaded.returncode:
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "A bundled image archive could not be loaded into Kind.")
+                runtime_image = image
+                first = image.split("/", 1)[0]
+                if "/" not in image:
+                    runtime_image = "docker.io/library/" + image
+                elif "." not in first and ":" not in first and first != "localhost":
+                    runtime_image = "docker.io/" + image
+                if "@" not in runtime_image and ":" not in runtime_image.rsplit("/", 1)[-1]:
+                    runtime_image += ":latest"
+                inspected = command([cfg.docker_binary, "exec", f"{cluster}-control-plane", "ctr", "--namespace=k8s.io", "images", "check", "--quiet", "--filter", f"name=={runtime_image}"], cfg.collect_timeout_seconds, "kind_archive_verify", env)
+                if inspected.returncode or runtime_image not in inspected.stdout.splitlines():
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "A bundled image was not confirmed complete in the Kind container runtime.")
+                result["offline"]["loaded_images"].append(image)
+        elif local_images:
             loaded = command([cfg.kind_binary, "load", "docker-image", "--name", cluster, *local_images], cfg.install_timeout_seconds, "kind_load_images", env)
             if loaded.returncode:
                 if cfg.strict_sandbox_policy:
@@ -2101,7 +2239,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         policy_result = command([cfg.kubectl_binary, "apply", "--kubeconfig", str(kubeconfig), "-f", str(policy)], cfg.install_timeout_seconds, "resource_policy", env)
         if policy_result.returncode:
             if cfg.strict_sandbox_policy:
-                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Remote execution requires namespace resource guardrails.")
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Required namespace resource or network policy could not be applied.")
             # ResourceQuota, LimitRange, and the default-deny policy are
             # defense-in-depth controls.  Their absence is recorded, but the
             # chart still needs to reach Kubernetes for authoritative evidence.
@@ -2118,7 +2256,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         release_evidence: list[dict[str, str]] = []
         install_failures: list[dict[str, str]] = []
         for index, chart in enumerate(charts, 1):
-            if cfg.strict_sandbox_policy:
+            if cfg.strict_sandbox_policy and not artifact.require_helm_lifecycle:
                 if index > 1: continue
                 manifest = root / "approved-workload.yaml"
                 manifest.write_text(yaml.safe_dump_all([{key: value for key, value in resource.items() if not key.startswith("_cats_")} for resource in rendered_resources]), encoding="utf-8")
@@ -2146,6 +2284,9 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             result["helm_result"].update(install="PASS", release_status="DEPLOYED")
         else:
             result["helm_result"].update(install="FAIL", release_status="FAILED")
+        if result["helm_result"].get("execution_mode") != "PREFLIGHTED_MANIFEST_APPLY":
+            result["helm_result"]["execution_mode"] = "HELM"
+            result["helm_result"]["helm_release_verified"] = bool(release_evidence) and not install_failures
         result["helm_result"]["releases"] = release_evidence
         phase("WAITING_FOR_READY")
         wait_commands: list[list[str]] = []
@@ -2196,6 +2337,15 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         cluster_kinds = "namespaces,clusterroles,clusterrolebindings,ingressclasses,customresourcedefinitions,mutatingwebhookconfigurations,validatingwebhookconfigurations,storageclasses,persistentvolumes,priorityclasses,runtimeclasses"
         cluster_result = command([cfg.kubectl_binary, "get", cluster_kinds, "--ignore-not-found", "-o", "json", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, "cluster_resource_collection", env)
         events_result = command([cfg.kubectl_binary, "get", "events", "--namespace", namespace, "-o", "json", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, "event_collection", env); secrets_result = command([cfg.kubectl_binary, "get", "secrets", "--namespace", namespace, "-o", "custom-columns=NAME:.metadata.name,TYPE:.type", "--no-headers", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, None, env)
+        if artifact.offline:
+            event_payload = _decode(events_result.stdout)
+            if events_result.returncode == 0 and isinstance(event_payload, Mapping) and isinstance(event_payload.get("items"), list):
+                attempts = [item for item in event_payload["items"] if isinstance(item, Mapping) and item.get("reason") in {"Pulling", "FailedToPullImage", "ErrImagePull", "ImagePullBackOff"}]
+                result["offline"]["external_image_pulls"] = len(attempts)
+                # Helm lint/template/install operate on the verified local
+                # dependency closure; no dependency update/build/fetch runs.
+                result["offline"]["external_chart_fetches"] = 0
+                result["offline"]["retrieval_detection"] = "LOCAL_HELM_ONLY_AND_KUBERNETES_IMAGE_EVENTS"
         if resources_result.returncode:
             result["events"] = parse_observations([], _decode(events_result.stdout), max_events=cfg.max_events)["events"]
             exceeded = node_limit_event()
@@ -2456,6 +2606,37 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
     except TimeoutError as exc: return finish(ValidationStatus.PARTIALLY_VERIFIED if result["helm_result"]["install"] == "PASS" else ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.WORKLOAD_TIMEOUT, str(exc))
     except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as exc: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.UNKNOWN, str(exc))
     finally:
+        # Evidence has its own small budget: the main deadline may be exhausted.
+        if create_attempted:
+            evidence = {"collection_status": "UNAVAILABLE", "pods": [], "events": []}
+            deadline = time.monotonic() + 15
+            def evidence_command(argv):
+                executor = node_transport.execute if node_transport is not None else run
+                return executor(argv, timeout=max(1, min(5, deadline - time.monotonic())), env=env)
+            try:
+                captured = evidence_command([cfg.kubectl_binary, "get", "pods", "-n", namespace, "-o", "json"])
+                if captured.returncode == 0:
+                    for pod in _resource_rows(json.loads(captured.stdout))[:20]:
+                        status = pod.get("status") or {}
+                        containers = []
+                        for container in (status.get("initContainerStatuses", []) + status.get("containerStatuses", []))[:20]:
+                            state = container.get("state") or {}
+                            state_name = next((name for name in ("waiting", "terminated", "running") if name in state), "unknown")
+                            detail = state.get(state_name) or {}
+                            containers.append({"name": str(container.get("name", ""))[:160], "state": state_name,
+                                "reason": str(detail.get("reason", ""))[:160], "message": startup_message(detail.get("message")), "exit_code": detail.get("exitCode"),
+                                "ready": container.get("ready") is True, "restarts": container.get("restartCount", 0)})
+                        evidence["pods"].append({"name": str((pod.get("metadata") or {}).get("name", ""))[:160],
+                            "phase": str(status.get("phase", ""))[:80], "containers": containers})
+                    evidence["collection_status"] = "COLLECTED"
+                if time.monotonic() < deadline:
+                    captured = evidence_command([cfg.kubectl_binary, "get", "events", "-n", namespace, "-o", "json"])
+                    if captured.returncode == 0:
+                        evidence["events"] = [_safe_event(event) for event in _resource_rows(json.loads(captured.stdout))[-50:]]
+            except Exception:
+                # Diagnostic failures must never prevent teardown.
+                evidence["collection_status"] = "PARTIAL" if evidence["pods"] else "UNAVAILABLE"
+            diagnostics["runtime_evidence"] = evidence
         phase("CLEANING_UP")
         def cleanup_command(argv: Sequence[str]) -> CommandResult:
             try:

@@ -165,6 +165,7 @@ RUN set -eux; \
     copa --version
 
 COPY catscan-version /usr/local/bin/catscan-version
+RUN bash -c 'if LC_ALL=C od -An -t x1 /usr/local/bin/catscan-version | grep -w 0d >/dev/null; then echo "CR byte in catscan-version" >&2; exit 1; fi; bash -n /usr/local/bin/catscan-version'
 RUN chmod 0755 /usr/local/bin/catscan-version
 
 # Prepare the Grype database while building the image. A pre-populated archive
@@ -172,6 +173,7 @@ RUN chmod 0755 /usr/local/bin/catscan-version
 # build stage downloads a current snapshot from the configured endpoint.
 COPY grype-db /opt/catscan/grype-db
 COPY catscan-validate-offline-release /usr/local/bin/catscan-validate-offline-release
+RUN bash -c 'if LC_ALL=C od -An -t x1 /usr/local/bin/catscan-validate-offline-release | grep -w 0d >/dev/null; then echo "CR byte in offline validator" >&2; exit 1; fi; bash -n /usr/local/bin/catscan-validate-offline-release'
 RUN set -eux; \
     echo "Refreshing Grype database (token=${GRYPE_DB_REFRESH})"; \
     if [ -s /opt/catscan/grype-db/grype-vuln-db.tar.zst ]; then \
@@ -230,6 +232,7 @@ ENV TRIVY_CACHE_DIR=/opt/catscan/trivy-cache \
 COPY catscan-import-grype-db /usr/local/bin/catscan-import-grype-db
 COPY catscan-trivy-config /usr/local/bin/catscan-trivy-config
 COPY catscan-self-test /usr/local/bin/catscan-self-test
+RUN bash -c 'for f in /usr/local/bin/catscan-import-grype-db /usr/local/bin/catscan-trivy-config /usr/local/bin/catscan-self-test; do if LC_ALL=C od -An -t x1 "$f" | grep -w 0d >/dev/null; then echo "CR byte in runtime script: $f" >&2; exit 1; fi; bash -n "$f" || exit; done'
 RUN chmod 0755 \
       /usr/local/bin/catscan-import-grype-db \
       /usr/local/bin/catscan-trivy-config \

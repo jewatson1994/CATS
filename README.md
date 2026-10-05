@@ -2,7 +2,7 @@
   <img src="portal/app/static/cats-icon.png" alt="CATS logo" width="180">
 </p>
 
-# CATS — Continuous Assessment & Tracking System
+# CATS â€” Continuous Assessment & Tracking System
 
 CATS is a container-security assessment and governance platform. It discovers
 the images that make up a service, generates software bills of materials
@@ -36,7 +36,8 @@ The current local release tag is **`cats:1.3`**.
 
 The [cybersecurity and validation guide](docs/cybersecurity-and-validation.md)
 describes watchlist formats, dashboard status, OIDC claim mapping, the separate
-CATSchrödinger validator, and connected or disconnected security data updates.
+CATSchrÃ¶dinger validator, and connected or disconnected security data updates.
+The [managed validator completion and acceptance report](docs/managed-validator-completion-report.md) covers provisioning, trust, payload preparation and fresh-VM tests.
 The [service remediation guide](docs/remediation.md) covers the default-off
 feature flag, OCI and bundle outputs, provenance, and validation states.
 
@@ -81,10 +82,10 @@ as image tags, digests, packages, and service versions change.
 
 Services move through three lifecycle views:
 
-- **Staged** — a prepared service with no ingested findings, evidence, or
+- **Staged** â€” a prepared service with no ingested findings, evidence, or
   artifacts. Its first ingestion automatically makes it active.
-- **Active** — a governed production service included in the default snapshot.
-- **Archived** — retained historical evidence that is excluded from the active
+- **Active** â€” a governed production service included in the default snapshot.
+- **Archived** â€” retained historical evidence that is excluded from the active
   snapshot.
 
 Metadata edits do not alter findings, scans, artifacts, lifecycle history, or
@@ -129,12 +130,12 @@ flowchart LR
 
 The canonical Compose stack contains:
 
-- **`portal`** — FastAPI web application, API, scanner-job coordinator, service
+- **`portal`** â€” FastAPI web application, API, scanner-job coordinator, service
   governance, reporting, configuration, and authentication.
-- **`patch-worker`** — isolated FastAPI worker for patch, scan, publish, sign,
+- **`patch-worker`** â€” isolated FastAPI worker for patch, scan, publish, sign,
   and verification operations.
-- **`db`** — PostgreSQL 16 for persistent portal state.
-- **`keycloak`** — bundled local OIDC provider for development, evaluation, and
+- **`db`** â€” PostgreSQL 16 for persistent portal state.
+- **`keycloak`** â€” bundled local OIDC provider for development, evaluation, and
   disconnected deployments.
 
 Both application services use the same versioned CATS image. Shared job volumes
@@ -216,29 +217,20 @@ testing the local realm so the local administrator remains available. See
 
 ## Building the release image
 
-The scanner base and unified application image are separate build stages. The
-scanner build downloads and validates the vulnerability database that will be
-used when CATS runs offline.
+The supported connected build acquires pinned managed-validator assets, verifies
+and qualifies them for Ubuntu 22.04 amd64, then builds the scanner base and the
+self-contained CATS image. Docker must support Linux amd64 containers and the
+disposable privileged qualification harness.
 
-PowerShell:
-
-```powershell
-$stamp = Get-Date -Format 'yyyyMMddHHmmss'
-docker build --pull --no-cache --build-arg "GRYPE_DB_REFRESH=$stamp" -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build --build-arg CATSCAN_BASE_IMAGE=catscan-base:local --build-arg CATS_VERSION=1.3 -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
+```text
+python scripts/build-cats-release.py --cats-version 1.3 --tag cats:1.3
 ```
 
-Linux:
-
-```bash
-docker build --pull --no-cache \
-  --build-arg "GRYPE_DB_REFRESH=$(date -u +%Y%m%d%H%M%S)" \
-  -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
-docker build \
-  --build-arg CATSCAN_BASE_IMAGE=catscan-base:local \
-  --build-arg CATS_VERSION=1.3 \
-  -f cats-image/Dockerfile.all-in-one -t cats:1.3 .
-```
+No manual asset staging is required. The verified cache lives under
+`.release-cache/managed-validator`. Use `--profile development` only to build an
+image that explicitly disables managed-validator payload construction. For the
+portal-only image, add `--image portal`. See
+[managed-validator release preparation](docs/managed-validator-release-inputs.md).
 
 Save the image for disconnected transfer:
 
@@ -284,12 +276,12 @@ manual-import result directory follows this shape:
 
 ```text
 results/
-├── grype/          # Native Anchore Grype JSON
-├── trivy/          # Native Trivy JSON
-├── dockle/         # Native Dockle JSON
-├── cats/           # CATS Generic Findings Import JSON
-├── manifest.json   # File metadata and DefectDojo scan-type mapping
-└── README.txt      # Manual import guidance
+â”œâ”€â”€ grype/          # Native Anchore Grype JSON
+â”œâ”€â”€ trivy/          # Native Trivy JSON
+â”œâ”€â”€ dockle/         # Native Dockle JSON
+â”œâ”€â”€ cats/           # CATS Generic Findings Import JSON
+â”œâ”€â”€ manifest.json   # File metadata and DefectDojo scan-type mapping
+â””â”€â”€ README.txt      # Manual import guidance
 ```
 
 Additional job artifacts include SBOM formats and their manifest, Helm graph and
@@ -368,6 +360,9 @@ The tool submits through the normal pipeline API and stores temporary raw output
 under `.demo-scan-results/`, which is excluded from Git.
 
 ## Operational notes
+
+For final Helm/OCI/Standard/Offline Bundle validation, see the
+[CATSchrÃ¶dinger delivery contract and disconnected limits](docs/schrodinger-deliveries.md).
 
 - CATS scans vulnerabilities with an available fix in the configured Grype
   database. Database and KEV/EPSS freshness is determined by the release build.

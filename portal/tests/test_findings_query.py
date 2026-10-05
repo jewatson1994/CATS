@@ -94,6 +94,76 @@ def test_empty_page_support_does_not_query():
     assert load_page_support(None, 1, [], None) == {}
 
 
+def test_simplified_groups_preserve_duplicate_cves_fallback_and_order():
+    from app.findings_query import group_simplified_findings
+    now = datetime.now(timezone.utc)
+    def finding(identifier, cve, severity, observations):
+        return SimpleNamespace(id=identifier, cve=cve, severity=severity,
+                               observations=observations)
+    def observation(identifier, execution, package, fixed, image, evidence=None):
+        return SimpleNamespace(id=identifier, execution_id=execution, package=package,
+                               fixed_version=fixed, image=image, evidence=evidence or {})
+    rows = [
+        finding(1, " cve-b ", "High", [observation(1, 1, "zlib", "2", "b")]),
+        finding(2, "CVE-B", "Critical", [observation(2, 1, "zlib", "3", "a")]),
+        finding(3, "CVE-A", "Low", [observation(3, 1, "zlib", "2", "b")]),
+        finding(4, "", "Medium", [observation(4, 1, "zlib", "2", "")]),
+        finding(5, "CVE-C", "Unknown", [observation(5, 2, "Alpha", None, "old",
+                                                        {"recommendation": "Rebuild"})]),
+    ]
+    groups = group_simplified_findings(rows, SimpleNamespace(id=1),
+                                     {1: now, 2: now - timedelta(days=1), 3: None, 4: None, 5: None})
+    assert [group["package"] for group in groups] == ["Alpha", "zlib"]
+    assert groups[0]["images"] == []
+    assert groups[0]["remediation"] == "Rebuild"
+    assert groups[0]["fixed_version"] == "Latest fixed version"
+    assert groups[1] == {
+        "package": "zlib", "fixed_versions": ["2", "3"],
+        "fixed_version": "2, 3", "remediation": "Update the affected package to the fixed version.",
+        "cves": ["CVE-A", "CVE-B"], "finding_ids": [3, 1], "images": ["a", "b"],
+        "severities": ["High", "Critical", "Low", "Medium"], "severity": "Critical",
+        "due": now - timedelta(days=1),
+    }
+    assert group_simplified_findings([], None, {}) == []
+
+
+def test_support_batches_preserve_evidence_below_sqlite_parameter_limit():
+    import sqlite3
+    from sqlalchemy import event, insert
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    now = datetime.now(timezone.utc)
+    with engine.begin() as connection:
+        connection.execute(insert(Service), {"id": 1, "service_key": "large", "name": "Large"})
+        connection.execute(insert(Execution), {"id": 1, "service_id": 1,
+                           "execution_key": "large-scan", "scanned_at": now, "complete": True,
+                           "raw_payload": {}})
+        connection.execute(insert(Finding), [dict(id=i, service_id=1, cve=f"CVE-{i}",
+                           severity="High", first_seen=now, last_seen=now,
+                           episode_started=now, active=True) for i in range(1, 1201)])
+        connection.execute(insert(FindingObservation), [dict(id=i, finding_id=i,
+                           execution_id=1, image=f"image-{i}", package=f"package-{i}",
+                           evidence={"epss": .9}) for i in range(1, 1201)])
+        connection.connection.driver_connection.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
+    parameters = []
+    def record(_connection, _cursor, _statement, bound, _context, _many):
+        parameters.append(len(bound))
+    event.listen(engine, "before_cursor_execute", record)
+    with Session(engine) as db:
+        findings = [SimpleNamespace(id=i, active=True, observations=[]) for i in range(1, 1201)]
+        load_filter_support(db, 1, findings)
+        assert all(finding.observations[0].finding_id == finding.id for finding in findings)
+        load_simplified_support(db, 1, findings, SimpleNamespace(id=1))
+        images = load_page_support(db, 1, findings, SimpleNamespace(id=1))
+        assert images == {i: [f"image-{i}"] for i in range(1, 1201)}
+        assert all(finding.observations[0].package == f"package-{finding.id}" for finding in findings)
+        assert not any(isinstance(item, FindingObservation) for item in db.identity_map.values())
+    assert max(parameters) <= 999
+    assert len(parameters) == 15
+    engine.dispose()
+
+
 def test_current_version_header_global_images_risk_and_exceptions():
     from app.main import CONFIG_DEFAULTS, service_view
 

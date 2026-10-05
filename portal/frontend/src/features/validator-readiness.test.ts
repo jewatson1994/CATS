@@ -1,0 +1,32 @@
+import {describe, expect, it} from 'vitest';
+import {provisioningReadiness} from './validator-readiness';
+const facts = {os:'ubuntu',os_version:'22.04',architecture:'amd64',sudo_password_required:true,api_port_available:true,docker_present:false};
+const base = () => ({validator:{status:'DRAFT',ssh_fingerprint:'SHA256:trusted'},preflight:{status:'supported',supported:true,facts,checks:{ssh:true,sudo:true,systemd:true,cgroup_v2:true,disk:true,api_port:true},warnings:[] as string[]},payload:{available:true,platforms:[{os:'ubuntu',os_version:'22.04',architecture:'amd64'}]},warningsAccepted:false,credentials:{authentication:true,sudo:true},operation:'provision',upgradeConfirmed:false,permission:true,busy:false});
+function blocked(input: Parameters<typeof provisioningReadiness>[0], id: string) {const result=provisioningReadiness(input); expect(result.ready).toBe(false); expect(result.checks.find(check=>check.id===id)?.ready).toBe(false); expect(result.checks.find(check=>check.id===id)?.reason).toBeTruthy();}
+describe('provisioning readiness prerequisites',()=>{
+ it('allows a supported clean DRAFT host without preinstalled runtime',()=>expect(provisioningReadiness(base()).ready).toBe(true));
+ it('blocks warnings before acknowledgement',()=>blocked({...base(),preflight:{...base().preflight,status:'supported_with_warnings',warnings:['Low memory']}},'warnings'));
+ it('allows acknowledged supported_with_warnings',()=>expect(provisioningReadiness({...base(),preflight:{...base().preflight,status:'supported_with_warnings',warnings:['Low memory']},warningsAccepted:true}).ready).toBe(true));
+ it('blocks unsupported even with accepted warnings',()=>blocked({...base(),preflight:{...base().preflight,status:'unsupported'},warningsAccepted:true},'connection'));
+ it('blocks explicitly unsupported hard prerequisites',()=>blocked({...base(),preflight:{...base().preflight,supported:false}},'preflight'));
+ it('blocks a failed hard check',()=>blocked({...base(),preflight:{...base().preflight,checks:{sudo:false}}},'preflight'));
+ it('blocks absent Test Connection',()=>blocked({...base(),preflight:undefined},'connection'));
+ it('blocks absent temporary authentication credentials',()=>blocked({...base(),credentials:{authentication:false,sudo:true}},'credentials'));
+ it('blocks absent required sudo password',()=>blocked({...base(),credentials:{authentication:true,sudo:false}},'sudo'));
+ it('allows omitted sudo password for passwordless sudo',()=>expect(provisioningReadiness({...base(),preflight:{...base().preflight,facts:{...facts,sudo_password_required:false}},credentials:{authentication:true,sudo:false}}).ready).toBe(true));
+ it('blocks an absent trusted fingerprint',()=>blocked({...base(),validator:{}},'fingerprint'));
+ it('blocks an unavailable API port fact',()=>blocked({...base(),preflight:{...base().preflight,facts:{...facts,api_port_available:false}}},'api_port'));
+ it('blocks a failed API port check',()=>blocked({...base(),preflight:{...base().preflight,checks:{api_port:false}}},'api_port'));
+ it('blocks missing provisioning payload',()=>blocked({...base(),payload:{available:false}},'payload'));
+ it('names the platform when the payload is missing',()=>expect(provisioningReadiness({...base(),payload:{available:false}}).checks.find(check=>check.id==='payload')?.reason).toContain('Ubuntu 22.04 amd64'));
+ it('blocks incompatible payload architecture',()=>blocked({...base(),payload:{available:true,platforms:[{os:'ubuntu',os_version:'22.04',architecture:'arm64'}]}},'payload'));
+ it('blocks incompatible payload OS release',()=>blocked({...base(),payload:{available:true,platforms:[{os:'ubuntu',os_version:'24.04',architecture:'amd64'}]}},'payload'));
+ it('does not require upgrade confirmation for provision or retry',()=>expect(provisioningReadiness({...base(),upgradeConfirmed:false}).ready).toBe(true));
+ it('requires upgrade confirmation only for upgrade',()=>blocked({...base(),operation:'upgrade'},'upgrade'));
+ it('allows explicitly confirmed upgrade',()=>expect(provisioningReadiness({...base(),operation:'upgrade',upgradeConfirmed:true}).ready).toBe(true));
+ it('requires verified payload for confirmed upgrade',()=>blocked({...base(),operation:'upgrade',upgradeConfirmed:true,payload:{available:false}},'payload'));
+ it('temporarily blocks submitting state',()=>blocked({...base(),busy:true},'busy'));
+ it('blocks missing operation permission',()=>blocked({...base(),permission:false},'permission'));
+ it('respects an authoritative durable backend blocker',()=>{const input={...base(),validator:{...base().validator,provisioning_readiness:{checks:{connectionTest:{ready:false,reason:'Retest changed host identity'}}}}}; blocked(input,'connection'); expect(provisioningReadiness(input).checks.find(check=>check.id==='connection')?.reason).toBe('Retest changed host identity');});
+ it('never lets durable credential readiness override absent ephemeral secrets',()=>blocked({...base(),validator:{...base().validator,provisioning_readiness:{checks:{credentials:{ready:true}}}},credentials:{authentication:false,sudo:false}},'credentials'));
+});

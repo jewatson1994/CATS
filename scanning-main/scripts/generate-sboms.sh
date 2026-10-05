@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_MATERIALIZATION_DIR="${IMAGE_MATERIALIZATION_DIR:-${DOCKER_IMAGE_ARCHIVE_DIR:-/docker/images}}"

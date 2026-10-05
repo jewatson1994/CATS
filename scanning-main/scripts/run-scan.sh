@@ -14,9 +14,31 @@ if [ ! -f "$SCRIPT_DIR/prepare-inputs.sh" ] && [ -f /opt/cats/scanning/scripts/p
   SCRIPT_DIR=/opt/cats/scanning/scripts
 fi
 
-mkdir -p "$OUTPUT_DIR"
-cp -a "$INPUT_DIR"/. "$OUTPUT_DIR"/ 2>/dev/null || true
-cd "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR" || exit 1
+cd "$OUTPUT_DIR" || exit 1
+
+# Preserve diagnostics, but never assemble or ingest reports after a fatal phase.
+fatal_phase() {
+  local name="$1" rc="$2"
+  printf '{"phase":"%s","status":"failed","exit_code":%s}\n' "$name" "$rc" > "phase-${name}.json"
+  printf '{"phase":"%s","exit_code":%s,"error":"Required scanner phase failed; see phase log and worker.log"}\n' "$name" "$rc" > scan-failure.json
+  printf '{"status":"failed","failed_phase":"%s","exit_code":%s}\n' "$name" "$rc" > scan-summary.json
+  printf 'failed\n' > scan-status.txt
+  echo "[cats-scan] phase=$name exit=$rc (fatal; diagnostic files retained)" >&2
+  exit "$rc"
+}
+cp -a "$INPUT_DIR"/. ./ 2>input_copy.log || fatal_phase input_copy "$?"
+
+# Syntax checks alone do not reject all CRLF scripts (e.g. a CR-tainted source
+# path). Check both before any phase runs, including indirectly sourced helpers.
+for runtime_script in "$SCRIPT_DIR"/*.sh; do
+  if LC_ALL=C od -An -t x1 "$runtime_script" | grep -qw '0d'; then
+    printf 'CR byte in Linux runtime script: %s\n' "$runtime_script" > preflight.log
+    cat preflight.log >&2
+    fatal_phase preflight 2
+  fi
+  bash -n "$runtime_script" >> preflight.log 2>&1 || fatal_phase preflight "$?"
+done
 
 echo "[cats-scan] input=$INPUT_DIR output=$OUTPUT_DIR"
 echo "[cats-scan] runner=$(command -v bash)"
@@ -101,13 +123,13 @@ run_phase() {
     tail -n 80 "${name}.log" || true
     printf '{"phase":"%s","status":"complete"}\n' "$name" > "phase-${name}.json"
     return 0
+  else
+    rc=$?
   fi
-  rc=$?
   echo "[cats-scan] phase=$name exit=$rc"
   echo "[cats-scan] phase=$name log tail:"
   tail -n 80 "${name}.log" || true
-  printf '{"phase":"%s","status":"incomplete"}\n' "$name" > "phase-${name}.json"
-  return 1
+  fatal_phase "$name" "$rc"
 }
 
 overall=complete
@@ -143,9 +165,9 @@ if [ "$JOB_MODE" = "sbom" ]; then
       --argjson sboms "$sbom_count" --argjson reports "$report_count" \
       --argjson skipped_images "$skipped_count" --argjson formats "$formats" \
       '{status:$status, sboms:$sboms, reports:$reports, formats:$formats, skipped_images:$skipped_images, skipped_charts:0, results:0, configuration_findings:0}' \
-      > scan-summary.json
+      > scan-summary.json || fatal_phase summary "$?"
   fi
-  printf '%s\n' "$overall" > scan-status.txt
+  printf '%s\n' "$overall" > scan-status.txt || fatal_phase summary "$?"
   [ "$overall" = complete ]
   exit $?
 fi
@@ -167,10 +189,10 @@ if command -v jq >/dev/null 2>&1; then
     --argjson skipped_images "$skipped_count" --argjson skipped_charts "$skipped_chart_count" \
     --argjson configuration_findings "$policy_count" \
     '{status:$status, sboms:$sboms, results:$results, skipped_images:$skipped_images, skipped_charts:$skipped_charts, configuration_findings:$configuration_findings}' \
-    > scan-summary.json
+    > scan-summary.json || fatal_phase summary "$?"
 fi
 
-# This command intentionally never calls report-to-portal.sh. Portal ingestion
-# is an explicit authenticated action performed after the public job completes.
-printf '%s\n' "$overall" > scan-status.txt
+# REPORT_ONLY assembles the report without ingesting it. Portal ingestion is
+# an explicit authenticated action performed after the public job completes.
+printf '%s\n' "$overall" > scan-status.txt || fatal_phase summary "$?"
 [ "$overall" = complete ]

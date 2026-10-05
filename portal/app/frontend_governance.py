@@ -75,7 +75,7 @@ def project_governance(data, name, context, can, formatters):
     elif name == "poam_service.html":
         data["service"] = service(context.get("service"))
         data["view"] = fields(context.get("view"), ("version",))
-        data.update(fields(context, ("embedded", "can_create_poam", "status_filter", "sort_by")))
+        data.update(fields(context, ("embedded", "can_create_poam", "status_filter", "sort_by", "page", "page_size", "page_count", "total_items", "pagination_base")))
         data["overdue_entry_ids"] = [scalar(item) for item in context.get("overdue_entry_ids", [])]
         data["entries"] = [entry(item, formatters) for item in context.get("entries", [])]
     elif name == "poam_entry.html":

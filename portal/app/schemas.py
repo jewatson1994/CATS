@@ -53,6 +53,9 @@ class PolicyFindingPayload(BaseModel):
     description: str | None = None
     remediation: str | None = None
     fingerprint: str | None = None
+    # Preserve scanner identity/lineage in the retained execution payload.
+    # The finding index remains unchanged; remediation reads this evidence.
+    evidence: dict = Field(default_factory=dict)
 
 
 class ExecutionPayload(BaseModel):

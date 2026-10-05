@@ -179,21 +179,17 @@ def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(Fa
 
 
 @router.get("/services/{service_key}/history")
-def history_page(service_key: str, request: Request, version: str = "", db=Depends(get_db), auth=Depends(require_user)):
+def history_page(service_key: str, request: Request, version: str = "", page: int = 1,
+                 imported_page: int = 1, page_size: int = 10, db=Depends(get_db), auth=Depends(require_user)):
     service = service_for(db, auth, service_key, "service.view")
-    imported = [item for provenance in db.scalars(select(ServiceTransferProvenance).where(
-        ServiceTransferProvenance.service_id == service.id))
-        for item in provenance.detail.get("historical_executions", [])]
-    imported_versions = list(dict.fromkeys(str((item.get("raw_payload", item).get("service") or {}).get("version") or "Unknown") for item in imported))
-    choices = history_version_choices(db, service, imported_versions)
-    if not version and imported and not db.scalar(select(Execution.id).where(Execution.service_id == service.id).limit(1)):
-        version = imported_versions[0]
+    if page_size not in {10, 25, 50}:
+        raise HTTPException(422, detail="History page size must be 10, 25, or 50")
+    from .history_queries import history_page_evidence
     try:
-        selected, executions = selected_evidence(db, service, version)
+        history = history_page_evidence(db, service, version, page=page, imported_page=imported_page, page_size=page_size)
     except ValueError as exc:
-        if version not in imported_versions:
-            raise HTTPException(404, detail=str(exc)) from exc
-        selected, executions = version, []
+        raise HTTPException(404, detail=str(exc)) from exc
+    selected, executions, imported = history["version"], history["executions"], history["imported"]
     from .main import templates, page_context
     # Only immutable payloads belonging to this version are exposed. Mutable
     # current workspaces, approvals and remediation state are deliberately absent.
@@ -203,7 +199,7 @@ def history_page(service_key: str, request: Request, version: str = "", db=Depen
             "sbom_components", "skipped_images", "skipped_charts")},
         "source_files": sorted((e.raw_payload.get("helm_source_files") or {}).keys())} for e in executions]
     imported_snapshots = []
-    for index, item in enumerate(imported):
+    for index, item in zip(history["imported_indices"], imported):
         raw = item.get("raw_payload", item)
         if str((raw.get("service") or {}).get("version") or "Unknown") != selected:
             continue
@@ -213,16 +209,16 @@ def history_page(service_key: str, request: Request, version: str = "", db=Depen
             "data": {key: raw.get(key) for key in ("service", "findings", "policy_findings", "service_overview", "sbom_images", "sbom_components")},
             "source_files": sorted((raw.get("helm_source_files") or {}).keys())})
     return templates.TemplateResponse(request, "service_history.html", page_context(auth,
-        service=service, version=selected, versions=choices, snapshots=snapshots,
-        imported_snapshots=imported_snapshots))
+        service=service, version=selected, versions=history["versions"], snapshots=snapshots,
+        imported_snapshots=imported_snapshots,
+        **{key: history[key] for key in ("page", "page_size", "total_pages", "total_items",
+           "imported_page", "imported_total_pages", "imported_total_items")}))
 
 
 def history_version_choices(db, service, imported_versions=None):
     if imported_versions is None:
-        imported_versions = [str((item.get("raw_payload", item).get("service") or {}).get("version") or "Unknown")
-                             for provenance in db.scalars(select(ServiceTransferProvenance).where(
-                                 ServiceTransferProvenance.service_id == service.id))
-                             for item in provenance.detail.get("historical_executions", [])]
+        from .history_queries import imported_metadata
+        imported_versions = [str(row.version or "Unknown") for row in imported_metadata(db, service.id)]
     return list(dict.fromkeys(versions(db, service) + list(imported_versions)))
 
 

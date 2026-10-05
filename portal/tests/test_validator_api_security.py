@@ -1,10 +1,53 @@
 import json
+import base64
+import hashlib
 import sys
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app import validator_api as api
+
+
+def modern_request(digest):
+    return {"schema_version": "cats.validation/v2", "request_id": "1" * 32, "validation_type": "helm-chart",
+            "service": {"id": "test-service", "version": "1"},
+            "artifact": {"reference": "chart.zip", "digest": digest}, "deployment": {"type": "helm"}}
+
+
+def test_modern_upload_integrity_and_owner(client_factory, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(api.EXECUTOR, "submit", lambda *args: submitted.append(args))
+    payload = b"retained exact artifact"
+    declaration = modern_request("sha256:" + hashlib.sha256(payload).hexdigest())
+    headers = {"content-type": "application/octet-stream",
+               "x-cats-declaration": base64.urlsafe_b64encode(json.dumps(declaration).encode()).decode()}
+    with client_factory("a" * 64) as client:
+        response = client.post("/api/v2/validations", content=payload, headers=headers)
+        assert response.status_code == 202
+        job = response.json()["validation_id"]
+        path = submitted[0][3]
+        assert path.read_bytes() == payload
+        assert api.JOBS[job]["request_identity"]["service"] == declaration["service"]
+        assert client.post("/api/v2/validations", content=b"changed", headers=headers).status_code == 422
+    with client_factory("b" * 64) as client:
+        assert client.get(f"/api/v1/validations/{job}").status_code == 404
+    path.unlink(missing_ok=True)
+
+
+def test_modern_cancel_preserves_identity_and_cleans_upload(tmp_path, monkeypatch):
+    monkeypatch.setattr(api, "STATE_DIR", tmp_path)
+    package = modern_request("sha256:" + "a" * 64)
+    path = tmp_path / "upload.zip"
+    path.write_bytes(b"artifact")
+    job = "9" * 32
+    api.JOBS[job] = {"validation_id": job, "cancel_requested": True}
+    api._execute(job, package, path)
+    result = api.JOBS[job]["result"]
+    assert result["status"] == "CANCELLED"
+    assert result["service"] == package["service"]
+    assert result["artifact_digest"] == package["artifact"]["digest"]
+    assert not path.exists()
 
 
 @pytest.fixture

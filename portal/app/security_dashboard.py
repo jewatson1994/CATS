@@ -1,15 +1,21 @@
 """Historical dashboard counts from immutable scan payloads, not live findings."""
 from datetime import timezone
-from sqlalchemy import select
-from .models import Execution
+from sqlalchemy import and_, case, select
+from .models import Execution, ExecutionSummary
+from .execution_summaries import SUMMARY_VERSION, load_execution_summaries, snapshot_from_summary
 
 HISTORY_CANDIDATE_LIMIT = 128
 HISTORY_TREND_LIMIT = 8
 
 
 def bounded_service_history(db, service):
-    """Inspect bounded metadata, then hydrate at most ten immutable payloads."""
-    candidates = db.execute(select(Execution.id, Execution.raw_payload["service"]["version"].as_string())
+    """Read retained metadata; legacy scans hydrate at most ten payloads."""
+    valid = and_(Execution.payload_digest.is_not(None), Execution.payload_digest == ExecutionSummary.payload_digest,
+                 ExecutionSummary.summary_version == SUMMARY_VERSION, ExecutionSummary.source_complete == Execution.complete)
+    version = case((valid, ExecutionSummary.data["version"].as_string()),
+                   else_=Execution.raw_payload["service"]["version"].as_string())
+    candidates = db.execute(select(Execution.id, version)
+        .outerjoin(ExecutionSummary, ExecutionSummary.execution_id == Execution.id)
         .where(Execution.service_id == service.id, Execution.scan_scope == "service")
         .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(HISTORY_CANDIDATE_LIMIT)).all()
     trend_ids = [row.id for row in candidates[:HISTORY_TREND_LIMIT]]
@@ -22,8 +28,7 @@ def bounded_service_history(db, service):
             if len(version_ids) == 2:
                 break
     ids = set(trend_ids + version_ids)
-    snapshots = {execution.id: scan_snapshot(execution) for execution in db.scalars(
-        select(Execution).where(Execution.service_id == service.id, Execution.id.in_(ids)))} if ids else {}
+    snapshots = {key: snapshot_from_summary(value) for key, value in load_execution_summaries(db, ids).items()} if ids else {}
     return {"service_key": service.service_key, "name": service.name,
             "trend": [snapshots[key] for key in reversed(trend_ids)],
             "versions": [snapshots[key] for key in version_ids],
