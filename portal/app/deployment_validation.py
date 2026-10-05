@@ -203,6 +203,13 @@ class ValidationArtifact:
     job_id: str = "job"
     reference: str | None = None
     trusted_ca_certificates: Sequence[Mapping[str, object]] = field(default_factory=tuple)
+    prepared_directory: str | None = None
+    image_archives: Mapping[str, str] = field(default_factory=dict)
+    offline: bool = False
+    require_helm_lifecycle: bool = False
+    namespace: str | None = None
+    expected_images: Sequence[str] | None = None
+    chart_path: str | None = None
 
 
 ArtifactInput = ValidationArtifact
@@ -1893,7 +1900,12 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
     cfg = config or ValidationConfig.from_env(); run = runner or _default_runner
     if isinstance(artifact, Mapping): artifact = ValidationArtifact(**{key: artifact[key] for key in ValidationArtifact.__dataclass_fields__ if key in artifact})
     workspace_prefix = f"cats-deployment-{artifact.job_id}-" if (cfg.strict_sandbox_policy or cfg.workspace_root) and re.fullmatch(r"[a-f0-9]{32}", artifact.job_id) else "cats-deployment-"
-    cluster, namespace = validation_names(cfg, artifact.job_id); network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=cfg.workspace_root or None)); kubeconfig = root / "kubeconfig.yaml"
+    cluster, namespace = validation_names(cfg, artifact.job_id)
+    if artifact.namespace is not None:
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", artifact.namespace):
+            raise ValueError("Invalid deployment namespace")
+        namespace = artifact.namespace
+    network_name = f"{cluster}-network"; started = time.monotonic(); root = Path(tempfile.mkdtemp(prefix=workspace_prefix, dir=cfg.workspace_root or None)); kubeconfig = root / "kubeconfig.yaml"
     network_attempted = False; create_attempted = False; rendered_resources: list[dict[str, Any]] = []; diagnostics: dict[str, Any] = {}
     provider_lifecycle: dict[str, Any] = {}
     result: dict[str, Any] = {"engine": "kind", "status": ValidationStatus.NOT_ATTEMPTED.value, "classification": ValidationStatus.NOT_ATTEMPTED.value, "phase": "QUEUED", "reason_category": None, "reason": None, "classification_reasons": [], "classification_summary": {"expected_resources": 0, "observed_expected": 0, "expected_only": 0, "runtime_generated": 0, "observed_only": 0, "failed": 0}, "helm_result": {"template": "NOT_ATTEMPTED", "install": "NOT_ATTEMPTED", "release_status": "NOT_ATTEMPTED", "rendered_resource_count": 0}, "resource_summary": {}, "conditions": {}, "dependencies": {"missing_crds": [], "missing_storage_classes": [], "unavailable_images": []}, "capability_preflight": [], "capability_bootstrap": {"provisioned": [], "warnings": [], "duration_ms": 0}, "observed_topology": {"nodes": [], "edges": []}, "comparison": {"matched": [], "declared_only": [], "observed_only": [], "defaulted": [], "changed": [], "unresolved": []}, "events": [], "unhealthy_resources": [], "sandbox_sensitive_behaviors": [], "security_policy_violations": [], "policy_violations": [], "resource_isolation": {"overall": "NOT_ATTEMPTED"}, "warnings": [], "diagnostics": diagnostics, "cluster_name": cluster, "namespace": namespace, "cleanup_status": "NOT_ATTEMPTED", "duration_seconds": 0}
@@ -1970,9 +1982,25 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         diagnostics["classification"] = {"status": status.value, "reason_category": result["reason_category"], "reason_count": len(reasons), **summary}
         return result
     try:
+        if artifact.offline and (not cfg.strict_sandbox_policy or cfg.allow_network_egress):
+            return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Offline validation requires verified strict network isolation.")
         if cfg.strict_sandbox_policy and (cfg.allow_network_egress or cfg.api_address != "127.0.0.1"):
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "Remote execution requires an internal Docker network and loopback API binding.")
-        phase("PREFLIGHT"); artifact_root = root / "artifact"; materialize_sources(artifact.source_files, artifact_root, max_bytes=cfg.max_source_bytes); charts = _root_charts(artifact_root)
+        phase("PREFLIGHT"); artifact_root = root / "artifact"
+        if artifact.prepared_directory:
+            prepared = Path(artifact.prepared_directory)
+            if not prepared.is_dir() or any(p.is_symlink() for p in [prepared, *prepared.parents]) or any(p.is_symlink() or not (p.is_file() or p.is_dir()) for p in prepared.rglob("*")):
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_CHART_INVALID, "Prepared chart directory is invalid.")
+            if sum(p.stat().st_size for p in prepared.rglob("*") if p.is_file()) > cfg.max_source_bytes:
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_EXCEEDED, "Prepared chart exceeds the configured source limit.")
+            shutil.copytree(prepared, artifact_root)
+        else:
+            materialize_sources(artifact.source_files, artifact_root, max_bytes=cfg.max_source_bytes)
+        if artifact.chart_path is not None:
+            chart = artifact_root / Path(*_safe_path(artifact.chart_path).parts)
+            charts = [chart] if (chart / "Chart.yaml").is_file() else []
+        else:
+            charts = _root_charts(artifact_root)
         if not charts: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.HELM_CHART_INVALID, "The selected artifact does not contain a concrete root Chart.yaml.")
         values_paths: list[Path] = []
         for value in artifact.values_files:
@@ -2024,13 +2052,27 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             result["policy_violations"] = result["security_policy_violations"]
             diagnostics["security_policy_violations"] = result["security_policy_violations"]
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, f"CATS did not execute this workload because the validation sandbox boundary detected {len(security_violations)} violation(s). See the preflight evidence below for each rejected resource and field.")
-        images = sorted({str(container.get("image")) for resource in rendered_resources for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or [])] if isinstance(container, Mapping) and container.get("image")})
+        images = sorted({str(container.get("image")) for resource in rendered_resources for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or []), *(_pod_spec(resource).get("ephemeralContainers") or [])] if isinstance(container, Mapping) and container.get("image")})
+        if artifact.offline:
+            result["offline"] = {"required_images": images, "provided_images": sorted(artifact.image_archives), "loaded_images": [], "network_isolated": False, "external_chart_fetches": None, "external_image_pulls": None}
+            missing = sorted(set(images) - set(artifact.image_archives))
+            if artifact.expected_images is None or set(images) != set(artifact.expected_images):
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Rendered workload image inventory differs from the immutable bundle manifest.")
+            if missing:
+                result["dependencies"]["unavailable_images"] = missing
+                return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Offline bundle does not contain every rendered workload image.")
+            for resource in rendered_resources:
+                for container in [*(_pod_spec(resource).get("initContainers") or []), *(_pod_spec(resource).get("containers") or []), *(_pod_spec(resource).get("ephemeralContainers") or [])]:
+                    image = str(container.get("image") or "") if isinstance(container, Mapping) else ""
+                    defaults_to_always = "@" not in image and (":" not in image.rsplit("/", 1)[-1] or image.endswith(":latest"))
+                    if isinstance(container, Mapping) and (container.get("imagePullPolicy") == "Always" or (not container.get("imagePullPolicy") and defaults_to_always)):
+                        return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "Offline deployment requires an external pull under imagePullPolicy Always.")
         if cfg.kind_node_archive:
             if command([cfg.docker_binary, "load", "--input", cfg.kind_node_archive], cfg.create_timeout_seconds, "kind_node_archive").returncode: return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The configured kind node archive could not be loaded.")
         node_available = command([cfg.docker_binary, "image", "inspect", "--", cfg.kind_node_image], cfg.create_timeout_seconds, "kind_node_image").returncode == 0
         if not node_available and (cfg.strict_sandbox_policy or cfg.require_local_images or not cfg.allow_network_egress):
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.KIND_CREATION_FAILURE, "The pinned kind node image is unavailable in the local validation environment.")
-        local_images = [image for image in images if command([cfg.docker_binary, "image", "inspect", "--", image], cfg.collect_timeout_seconds).returncode == 0]
+        local_images = images if artifact.offline else [image for image in images if command([cfg.docker_binary, "image", "inspect", "--", image], cfg.collect_timeout_seconds).returncode == 0]
         unavailable = sorted(set(images) - set(local_images))
         if unavailable:
             if cfg.strict_sandbox_policy:
@@ -2070,6 +2112,8 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
             except (ValueError, TypeError): attached_networks = {}
             if not isinstance(attached_networks, Mapping) or set(attached_networks) != {network_name}:
                 return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.SECURITY_POLICY_VIOLATION, "The kind node must attach exclusively to the owned internal network.")
+            if artifact.offline:
+                result["offline"]["network_isolated"] = True
         resource_isolation = attempt_resource_isolation(cfg, f"{cluster}-control-plane", lambda argv, *, timeout, env=None: command(argv, timeout, None, env), timeout=remaining(cfg.create_timeout_seconds), env=env)
         result["resource_isolation"] = resource_isolation
         diagnostics["resource_isolation"] = {name: {key: value for key, value in item.items() if key != "configured_limit" or value is not None} for name, item in resource_isolation.items() if isinstance(item, Mapping)}
@@ -2078,7 +2122,24 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         if cfg.strict_sandbox_policy and resource_isolation.get("overall") != "ENFORCED":
             return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.RESOURCE_LIMIT_ENFORCEMENT_UNAVAILABLE, "Remote execution requires verified CPU, memory and PID limits.")
         _rewrite_kubeconfig(kubeconfig, cfg.api_host)
-        if local_images:
+        if artifact.offline:
+            for image, archive in artifact.image_archives.items():
+                loaded = command([cfg.kind_binary, "load", "image-archive", archive, "--name", cluster], cfg.install_timeout_seconds, "kind_load_archive", env)
+                if loaded.returncode:
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "A bundled image archive could not be loaded into Kind.")
+                runtime_image = image
+                first = image.split("/", 1)[0]
+                if "/" not in image:
+                    runtime_image = "docker.io/library/" + image
+                elif "." not in first and ":" not in first and first != "localhost":
+                    runtime_image = "docker.io/" + image
+                if "@" not in runtime_image and ":" not in runtime_image.rsplit("/", 1)[-1]:
+                    runtime_image += ":latest"
+                inspected = command([cfg.docker_binary, "exec", f"{cluster}-control-plane", "ctr", "--namespace=k8s.io", "images", "check", "--quiet", "--filter", f"name=={runtime_image}"], cfg.collect_timeout_seconds, "kind_archive_verify", env)
+                if inspected.returncode or runtime_image not in inspected.stdout.splitlines():
+                    return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "A bundled image was not confirmed complete in the Kind container runtime.")
+                result["offline"]["loaded_images"].append(image)
+        elif local_images:
             loaded = command([cfg.kind_binary, "load", "docker-image", "--name", cluster, *local_images], cfg.install_timeout_seconds, "kind_load_images", env)
             if loaded.returncode:
                 if cfg.strict_sandbox_policy:
@@ -2118,7 +2179,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         release_evidence: list[dict[str, str]] = []
         install_failures: list[dict[str, str]] = []
         for index, chart in enumerate(charts, 1):
-            if cfg.strict_sandbox_policy:
+            if cfg.strict_sandbox_policy and not artifact.require_helm_lifecycle:
                 if index > 1: continue
                 manifest = root / "approved-workload.yaml"
                 manifest.write_text(yaml.safe_dump_all([{key: value for key, value in resource.items() if not key.startswith("_cats_")} for resource in rendered_resources]), encoding="utf-8")
@@ -2196,6 +2257,15 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         cluster_kinds = "namespaces,clusterroles,clusterrolebindings,ingressclasses,customresourcedefinitions,mutatingwebhookconfigurations,validatingwebhookconfigurations,storageclasses,persistentvolumes,priorityclasses,runtimeclasses"
         cluster_result = command([cfg.kubectl_binary, "get", cluster_kinds, "--ignore-not-found", "-o", "json", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, "cluster_resource_collection", env)
         events_result = command([cfg.kubectl_binary, "get", "events", "--namespace", namespace, "-o", "json", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, "event_collection", env); secrets_result = command([cfg.kubectl_binary, "get", "secrets", "--namespace", namespace, "-o", "custom-columns=NAME:.metadata.name,TYPE:.type", "--no-headers", "--kubeconfig", str(kubeconfig)], cfg.collect_timeout_seconds, None, env)
+        if artifact.offline:
+            event_payload = _decode(events_result.stdout)
+            if events_result.returncode == 0 and isinstance(event_payload, Mapping) and isinstance(event_payload.get("items"), list):
+                attempts = [item for item in event_payload["items"] if isinstance(item, Mapping) and item.get("reason") in {"Pulling", "FailedToPullImage", "ErrImagePull", "ImagePullBackOff"}]
+                result["offline"]["external_image_pulls"] = len(attempts)
+                # Helm lint/template/install operate on the verified local
+                # dependency closure; no dependency update/build/fetch runs.
+                result["offline"]["external_chart_fetches"] = 0
+                result["offline"]["retrieval_detection"] = "LOCAL_HELM_ONLY_AND_KUBERNETES_IMAGE_EVENTS"
         if resources_result.returncode:
             result["events"] = parse_observations([], _decode(events_result.stdout), max_events=cfg.max_events)["events"]
             exceeded = node_limit_event()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import re
 from pathlib import Path
@@ -13,7 +14,7 @@ import urllib.parse
 import urllib.request
 
 from .secrets import decrypt_secret
-from .validator_protocol import SCHEMA_VERSION, validate_package, strict_json_loads
+from .validator_protocol import SCHEMA_VERSION, validate_package, validate_request, strict_json_loads
 
 
 TERMINAL = {"VERIFIED", "PARTIALLY_VERIFIED", "COULD_NOT_VALIDATE", "FAILED", "ERROR", "CANCELLED", "TIMED_OUT"}
@@ -51,15 +52,25 @@ def _endpoint(configuration: dict) -> str:
     return endpoint
 
 
-def _request(url: str, context: ssl.SSLContext, body: dict | None = None) -> dict:
+def _request(url: str, context: ssl.SSLContext, body: dict | None = None, *, artifact_path=None, declaration=None) -> dict:
     payload = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"} if payload is not None else {}
+    if artifact_path is not None:
+        path = Path(artifact_path)
+        def chunks():
+            with path.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    yield chunk
+        payload = chunks()
+        headers = {"Content-Type": "application/octet-stream", "Content-Length": str(path.stat().st_size),
+                   "X-CATS-Declaration": base64.urlsafe_b64encode(json.dumps(declaration).encode()).decode()}
     request = urllib.request.Request(url, data=payload, method="POST" if payload is not None else "GET",
-        headers={"Content-Type": "application/json"} if payload is not None else {})
+        headers=headers)
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, request, fp, code, msg, headers, newurl):
             raise ValueError("Validator redirected; configure its final endpoint explicitly")
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context), NoRedirect)
-    with opener.open(request, timeout=30) as response:
+    with opener.open(request, timeout=600 if artifact_path is not None else 30) as response:
         result = response.read(8 * 1024 * 1024 + 1)
     if len(result) > 8 * 1024 * 1024:
         raise ValueError("Validator response exceeds size limit")
@@ -75,20 +86,33 @@ def health(configuration: dict) -> dict:
         return _request(_endpoint(configuration) + "/health", context)
 
 
-def validate(configuration: dict, package: dict, progress_callback=None) -> dict:
-    validate_package(package)
+def validate(configuration: dict, package: dict, progress_callback=None, *, artifact_path=None) -> dict:
+    modern = package.get("schema_version") == "cats.validation/v2"
+    (validate_request if modern else validate_package)(package)
+    schema = package["schema_version"]
+    identity = ({"schema_version": schema, "request_id": package["request_id"],
+                 "validation_type": package["validation_type"], "service": package["service"],
+                 "artifact_digest": package["artifact"]["digest"],
+                 "artifact_reference": package["artifact"].get("reference"),
+                 "artifact": {"reference": package["artifact"].get("reference"), "digest": package["artifact"]["digest"]}} if modern else {})
+    def bound(value):
+        return all(key in value and value[key] == expected for key, expected in identity.items())
+    if modern and ((package["validation_type"] == "oci") != (artifact_path is None)):
+        raise ValueError("Binary artifacts require an upload; OCI references require a declaration")
     endpoint = _endpoint(configuration)
     with tempfile.TemporaryDirectory(prefix="cats-validator-client-") as root:
         context = _client_context(configuration, Path(root))
-        submitted = _request(endpoint + "/api/v1/validations", context, package)
-        if submitted.get("schema_version") != SCHEMA_VERSION or not isinstance(submitted.get("validation_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", submitted["validation_id"]) or submitted.get("status") != "QUEUED":
+        submitted = (_request(endpoint + "/api/v2/validations", context, artifact_path=artifact_path, declaration=package)
+                     if modern and artifact_path is not None else
+                     _request(endpoint + ("/api/v2/validations" if modern else "/api/v1/validations"), context, package))
+        if not bound(submitted) or submitted.get("schema_version") != schema or not isinstance(submitted.get("validation_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", submitted["validation_id"]) or submitted.get("status") != "QUEUED":
             raise ValueError("Validator returned an incompatible response")
         job_id = str(submitted["validation_id"])
-        deadline = time.monotonic() + package["manifest"].get("timeout_seconds", 600) + 120
+        deadline = time.monotonic() + package.get("manifest", {}).get("timeout_seconds", 600) + 120
         last_phase = None
         while time.monotonic() < deadline:
-            state = _request(endpoint + "/api/v1/validations/" + urllib.parse.quote(job_id, safe=""), context)
-            if state.get("schema_version") != SCHEMA_VERSION or state.get("validation_id") != job_id or state.get("status") not in TERMINAL | {"QUEUED", "RUNNING"}:
+            state = _request(endpoint + ("/api/v2/validations/" if modern else "/api/v1/validations/") + urllib.parse.quote(job_id, safe=""), context)
+            if not bound(state) or state.get("schema_version") != schema or state.get("validation_id") != job_id or state.get("status") not in TERMINAL | {"QUEUED", "RUNNING"}:
                 raise ValueError("Validator returned an incompatible job state")
             phase = state.get("phase")
             if not isinstance(phase, str) or not re.fullmatch(r"[A-Z][A-Z_]{0,79}", phase):
@@ -101,10 +125,12 @@ def validate(configuration: dict, package: dict, progress_callback=None) -> dict
                 result = state.get("result")
                 if not isinstance(result, dict) or result.get("status") != state.get("status") or result.get("cleanup_status") not in {"COMPLETE", "FAILED", "NOT_REQUIRED"}:
                     raise ValueError("Validator terminal status and result disagree")
+                if modern and (not bound(result) or result.get("validation_id") != job_id):
+                    raise ValueError("Validator returned evidence for a different artifact or service version")
                 return result
             time.sleep(2)
         try:
-            _request(endpoint + "/api/v1/validations/" + job_id + "/cancel", context, {})
+            _request(endpoint + ("/api/v2/validations/" if modern else "/api/v1/validations/") + job_id + "/cancel", context, {})
         except Exception:
             # Remote failure cannot weaken TLS or make cleanup completion certain.
             pass

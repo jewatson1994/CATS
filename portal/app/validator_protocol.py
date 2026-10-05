@@ -5,9 +5,42 @@ from __future__ import annotations
 from pathlib import PurePosixPath
 import re
 import json
+import hashlib
 
 
 SCHEMA_VERSION = "cats.validation/v1"
+REQUEST_SCHEMA_VERSION = "cats.validation/v2"
+VALIDATION_TYPES = frozenset({"helm-chart", "oci", "standard-bundle", "offline-bundle"})
+
+
+def source_digest(source_files):
+    """Identity of the exact text-source representation, independent of key order."""
+    return "sha256:" + hashlib.sha256(json.dumps(source_files, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def validate_request(request):
+    """Explicit artifact declaration shared by all deployment adapters."""
+    _fields(request, {"schema_version", "request_id", "validation_type", "service", "artifact", "deployment", "validation_profile"}, "request")
+    if request.get("schema_version") != REQUEST_SCHEMA_VERSION or request.get("validation_type") not in VALIDATION_TYPES:
+        raise ValueError("Unsupported validation request schema or type")
+    if not isinstance(request.get("request_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", request["request_id"]):
+        raise ValueError("Invalid validation request identity")
+    service, artifact, deployment = request.get("service"), request.get("artifact"), request.get("deployment")
+    _fields(service, {"id", "version"}, "service")
+    _fields(artifact, {"reference", "digest"}, "artifact identity")
+    _fields(deployment, {"type", "namespace"}, "deployment")
+    if not _text(service.get("id"), 120) or not service.get("id") or not _text(service.get("version"), 200) or not service.get("version"):
+        raise ValueError("Validation requires service and version identity")
+    if deployment.get("type") != "helm" or request.get("validation_profile", "default") != "default":
+        raise ValueError("Unsupported deployment type or validation profile")
+    namespace = deployment.get("namespace")
+    if namespace is not None and (not isinstance(namespace, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", namespace)):
+        raise ValueError("Invalid deployment namespace")
+    if not _text(artifact.get("reference"), 1000) or not artifact.get("reference") or not isinstance(artifact.get("digest"), str) or not re.fullmatch(r"sha256:[a-f0-9]{64}", artifact["digest"]):
+        raise ValueError("Validation requires reference and immutable SHA-256 digest")
+    if request["validation_type"] == "oci" and (not artifact["reference"].startswith("oci://") or not artifact["reference"].endswith("@" + artifact["digest"])):
+        raise ValueError("OCI validation requires an immutable digest reference")
+    return request
 
 
 def _fields(value, allowed, label):

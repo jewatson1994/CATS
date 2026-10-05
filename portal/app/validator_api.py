@@ -16,13 +16,15 @@ import uuid
 import re
 import logging
 import asyncio
+import base64
+import hashlib
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .deployment_validation import (CommandResult, KindDeploymentValidator,
     ValidationArtifact, ValidationConfig, cleanup_stale_clusters, validation_names)
-from .validator_protocol import SCHEMA_VERSION, validate_package, strict_json_loads
+from .validator_protocol import SCHEMA_VERSION, validate_package, validate_request, strict_json_loads
 from .validator_settings import fingerprints, execution_settings
 
 
@@ -100,6 +102,33 @@ def _safe_result(result: dict) -> dict:
     safe["policy_violations"] = [{key: str(row[key])[:160] for key in
         ("rule_id", "rule_name", "kind", "field_path") if key in row}
         for row in (result.get("security_policy_violations") or [])[:100] if isinstance(row, dict)]
+    # Preserve bounded runtime evidence without exposing raw logs or submitted values.
+    fields = {
+        "deployment": {"type", "status"}, "helm": {"status", "dependencies_vendored"},
+        "network": {"isolated", "external_chart_fetches", "external_image_pulls"},
+        "images": {"required", "provided", "loaded"},
+        "offline": {"network_isolated", "external_chart_fetches", "external_image_pulls",
+                    "required_images", "provided_images", "loaded_images", "dependencies_vendored"},
+    }
+    def bounded(value):
+        if value is None or isinstance(value, bool):
+            return value
+        if isinstance(value, int) and 0 <= value <= 1000000:
+            return value
+        if isinstance(value, str) and len(value) <= 1000 and not any(ord(c) < 32 for c in value):
+            return value
+        if isinstance(value, list) and len(value) <= 500 and all(isinstance(item, str) and len(item) <= 1000 and not any(ord(c) < 32 for c in item) for item in value):
+            return list(value)
+        return None
+    for key, keys in fields.items():
+        row = result.get(key)
+        if isinstance(row, dict):
+            safe[key] = {field: bounded(row[field]) for field in keys if field in row}
+    for key in ("validator", "environment", "validation_run_id", "validated_at"):
+        if key in result:
+            safe[key] = bounded(result[key])
+    if "offlineVerified" in result:
+        safe["offlineVerified"] = result["offlineVerified"] is True
     return safe
 
 
@@ -166,12 +195,22 @@ def _runner(job_id: str, current_phase: list[str]):
     return run
 
 
-def _execute(job_id: str, package: dict) -> None:
+def _request_identity(package):
+    if package.get("schema_version") != "cats.validation/v2":
+        return {}
+    return {"schema_version": package["schema_version"], "validation_type": package["validation_type"],
+            "request_id": package["request_id"], "service": package["service"], "artifact_reference": package["artifact"].get("reference"), "artifact": {"reference": package["artifact"].get("reference"), "digest": package["artifact"]["digest"]}, "artifact_digest": package["artifact"]["digest"], }
+
+
+def _execute(job_id: str, package: dict, artifact_path=None) -> None:
     with LOCK:
         if JOBS[job_id].get("cancel_requested"):
             JOBS[job_id].update(status="CANCELLED", phase="COMPLETE", completed_at=_now(),
-                result={"status": "CANCELLED", "outcome": "CANCELLED", "reason_category": "CANCELLED", "cleanup_status": "NOT_REQUIRED"})
-            _persist(JOBS[job_id]); return
+                result={**_request_identity(package), "validation_id": job_id, "status": "CANCELLED", "outcome": "CANCELLED", "reason_category": "CANCELLED", "cleanup_status": "NOT_REQUIRED"})
+            _persist(JOBS[job_id])
+            if artifact_path:
+                Path(artifact_path).unlink(missing_ok=True)
+            return
         RUNNING.add(job_id)
     _update(job_id, status="RUNNING", phase="PREFLIGHT", started_at=_now())
     current_phase = ["PREFLIGHT"]
@@ -185,29 +224,122 @@ def _execute(job_id: str, package: dict) -> None:
         if settings["node_image"]:
             config.kind_node_image = settings["node_image"]
         config.workspace_root = str(STATE_DIR / "workspaces")
-        config.total_timeout_seconds = min(MAX_TIMEOUT, package["manifest"]["timeout_seconds"])
+        config.total_timeout_seconds = min(MAX_TIMEOUT, package.get("manifest", {}).get("timeout_seconds", MAX_TIMEOUT))
         config.require_local_images = True if config.strict_sandbox_policy else settings["require_local_images"]
         def progress(phase: str) -> None:
             current_phase[0] = phase
             _update(job_id, phase=phase)
-        result = KindDeploymentValidator(config, runner=_runner(job_id, current_phase)).validate_artifact(
+        if package.get("schema_version") == "cats.validation/v2":
+            from .schrodinger_validation import SchrodingerValidator
+            ca_path = STATE_DIR / "ca-bundle.pem"
+            result = SchrodingerValidator(config, runner=_runner(job_id, current_phase),
+                oci_ca_file=str(ca_path) if ca_path.is_file() and not ca_path.is_symlink() else None).validate(
+                package, artifact_path=artifact_path, job_id=job_id, progress_callback=progress)
+        else:
+            result = KindDeploymentValidator(config, runner=_runner(job_id, current_phase)).validate_artifact(
             ValidationArtifact(source_files=artifact["source_files"], values_files=artifact.get("values_files") or [],
                 declared_resources=artifact.get("declared_resources") or [], job_id=job_id,
                 artifact_type=artifact.get("artifact_type") or "ORIGINAL",
                 reference=artifact.get("reference")), progress_callback=progress)
         with LOCK:
             cancelled = JOBS[job_id].get("cancel_requested", False)
-        safe = _safe_result(result)
+        identity = _request_identity(package)
+        if identity and any(result.get(key) != expected for key, expected in identity.items()):
+            raise ValueError("Validator evidence does not match the submitted request")
+        safe = {**_safe_result(result), **identity, "validation_id": job_id}
         if cancelled:
             safe["status"] = "CANCELLED"
             safe["outcome"] = "CANCELLED"
+            if "offlineVerified" in safe:
+                safe["offlineVerified"] = False
         _update(job_id, status=safe["status"], phase="COMPLETE", completed_at=_now(), result=safe)
     except Exception:
         _update(job_id, status="ERROR", phase="COMPLETE", completed_at=_now(),
-            result={"status": "ERROR", "reason_category": "VALIDATOR_ERROR", "cleanup_status": "FAILED"})
+            result={**_request_identity(package), "validation_id": job_id, "status": "ERROR", "reason_category": "VALIDATOR_ERROR", "cleanup_status": "FAILED"})
     finally:
+        if artifact_path:
+            Path(artifact_path).unlink(missing_ok=True)
         with LOCK:
             RUNNING.discard(job_id)
+
+
+@app.post("/api/v2/validations", status_code=202)
+async def submit_artifact(request: Request):
+    """Stream final artifacts to owned storage; never buffer container archives in JSON."""
+    media = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    path = None
+    try:
+        if media == "application/octet-stream":
+            encoded = request.headers.get("x-cats-declaration", "")
+            if not encoded or len(encoded) > 16000:
+                raise ValueError("Invalid declaration")
+            package = validate_request(strict_json_loads(base64.b64decode(encoded, altchars=b"-_", validate=True)))
+            maximum = min(int(os.getenv("CATS_VALIDATOR_MAX_ARTIFACT_BYTES", str(8 * 1024 ** 3))), 32 * 1024 ** 3)
+            if package["validation_type"] == "oci":
+                raise ValueError("OCI references require JSON declarations")
+            length = int(request.headers.get("content-length", "0"))
+            if length <= 0 or length > maximum:
+                raise HTTPException(413, "Artifact exceeds upload limit")
+            if UPLOAD_SLOTS.locked():
+                raise HTTPException(429, "Validator upload capacity is full")
+            async with UPLOAD_SLOTS:
+                descriptor, name = tempfile.mkstemp(prefix="upload-", suffix=".artifact", dir=STATE_DIR)
+                path = Path(name)
+                digest = hashlib.sha256()
+                total = 0
+                with os.fdopen(descriptor, "wb") as stream:
+                    async with asyncio.timeout(600):
+                        async for chunk in request.stream():
+                            total += len(chunk)
+                            if total > length or total > maximum:
+                                raise HTTPException(413, "Artifact exceeds upload limit")
+                            digest.update(chunk)
+                            stream.write(chunk)
+                if total != length or "sha256:" + digest.hexdigest() != package["artifact"]["digest"]:
+                    raise ValueError("Artifact digest mismatch")
+        elif media == "application/json":
+            if UPLOAD_SLOTS.locked():
+                raise HTTPException(429, "Validator upload capacity is full")
+            body = bytearray()
+            async with UPLOAD_SLOTS:
+                async with asyncio.timeout(30):
+                    async for chunk in request.stream():
+                        if len(body) + len(chunk) > MAX_REQUEST_BYTES:
+                            raise HTTPException(413, "Declaration exceeds upload limit")
+                        body.extend(chunk)
+            package = validate_request(strict_json_loads(body))
+            if package["validation_type"] != "oci":
+                raise ValueError("This artifact requires a binary upload")
+        else:
+            raise HTTPException(415, "Expected binary artifact or OCI declaration")
+        with LOCK:
+            active = sum(row.get("status") in {"QUEUED", "RUNNING"} for row in JOBS.values())
+            if active >= MAX_JOBS * 2 or len(JOBS) >= MAX_RECORDS:
+                raise HTTPException(429, "Validator capacity is full")
+            job_id = uuid.uuid4().hex
+            record = {"validation_id": job_id, "schema_version": package["schema_version"], "status": "QUEUED",
+                      **_request_identity(package), "phase": "QUEUED", "created_at": _now(), "cancel_requested": False,
+                      "client_identity": request.state.client_identity, "request_identity": _request_identity(package),
+                      "artifact_upload": path.name if path is not None else None}
+            JOBS[job_id] = record
+            _persist(record)
+        try:
+            EXECUTOR.submit(_execute, job_id, package, path)
+        except RuntimeError:
+            _update(job_id, status="ERROR", phase="COMPLETE", completed_at=_now(),
+                    result={**_request_identity(package), "validation_id": job_id, "status": "ERROR", "reason_category": "WORKER_UNAVAILABLE", "cleanup_status": "COMPLETE"})
+            raise HTTPException(503, "Validator worker is unavailable") from None
+        path = None
+        return {**_request_identity(package), "validation_id": job_id, "schema_version": package["schema_version"], "status": "QUEUED"}
+    except HTTPException:
+        raise
+    except TimeoutError as exc:
+        raise HTTPException(408, "Artifact upload timed out") from exc
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise HTTPException(422, "Invalid artifact declaration or upload") from exc
+    finally:
+        if path:
+            path.unlink(missing_ok=True)
 
 
 @app.middleware("http")
@@ -254,7 +386,7 @@ def recover():
                 cluster, _ = validation_names(config, record["validation_id"])
                 cleanup = cleanup_stale_clusters([cluster], config=config)
                 workspace_failed = False
-                for candidate in workspace.glob(f"cats-deployment-{path.stem}-*"):
+                for candidate in [*workspace.glob(f"cats-deployment-{path.stem}-*"), *workspace.glob(f"cats-schrodinger-{path.stem}-*")]:
                     if candidate.is_symlink() or candidate.resolve().parent != workspace.resolve():
                         workspace_failed = True
                         continue
@@ -262,8 +394,14 @@ def recover():
                         shutil.rmtree(candidate)
                     except OSError:
                         workspace_failed = True
+                upload_name = record.get("artifact_upload")
+                if isinstance(upload_name, str) and re.fullmatch(r"upload-[a-zA-Z0-9_-]+\.artifact", upload_name):
+                    try:
+                        (STATE_DIR / upload_name).unlink(missing_ok=True)
+                    except OSError:
+                        workspace_failed = True
                 record.update(status="ERROR", phase="COMPLETE", completed_at=_now(),
-                    result={"status": "ERROR", "reason_category": "WORKER_RESTARTED",
+                    result={**record.get("request_identity", {}), "validation_id": record["validation_id"], "status": "ERROR", "reason_category": "WORKER_RESTARTED",
                             "cleanup_status": "FAILED" if cleanup.get("failed") or workspace_failed else "COMPLETE"})
                 _persist(record)
             JOBS[record["validation_id"]] = record
@@ -352,6 +490,7 @@ async def submit(request: Request):
     return {"validation_id": job_id, "status": "QUEUED", "schema_version": SCHEMA_VERSION}
 
 
+@app.get("/api/v2/validations/{job_id}")
 @app.get("/api/v1/validations/{job_id}")
 def result(job_id: str, request: Request):
     with LOCK:
@@ -361,6 +500,7 @@ def result(job_id: str, request: Request):
         return dict(record)
 
 
+@app.post("/api/v2/validations/{job_id}/cancel")
 @app.post("/api/v1/validations/{job_id}/cancel")
 def cancel(job_id: str, request: Request):
     with LOCK:
@@ -370,4 +510,4 @@ def cancel(job_id: str, request: Request):
         if record["status"] in {"QUEUED", "RUNNING"}:
             record["cancel_requested"] = True
             _persist(record)
-        return {"validation_id": job_id, "status": record["status"], "cancel_requested": record["cancel_requested"]}
+        return {**record.get("request_identity", {}), "validation_id": job_id, "status": record["status"], "cancel_requested": record["cancel_requested"]}
