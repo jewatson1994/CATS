@@ -176,24 +176,67 @@ def oidc_groups(claims: dict, configuration: dict | None = None) -> list[str]:
     return sorted(set(item.strip("/") for item in values if item.strip("/")))
 
 
+def oidc_identity_key(issuer: str, subject: str) -> str:
+    """Fit the full issuer/subject identity in the existing unique identity column."""
+    identity = json.dumps([issuer, subject], separators=(",", ":"), ensure_ascii=False)
+    return "oidc:v1:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = None) -> User:
     config = oidc_configuration(configuration)
     subject = str(claims.get("sub") or "").strip()
+    expected_issuer = config["browser_issuer"] or config["issuer"]
+    issuer = str(claims.get("iss") or expected_issuer).rstrip("/")
+    if expected_issuer and issuer != expected_issuer:
+        raise ValueError("OIDC issuer does not match the configured provider")
     username = str(claims.get(config["username_claim"]) or claims.get(config["email_claim"]) or subject).strip().lower()
     if not subject or not username:
         raise ValueError("OIDC token did not contain a subject or username")
-    user = db.scalar(select(User).where(User.external_subject == subject))
-    if not user:
-        user = db.scalar(select(User).where(User.username == username))
+    identity = oidc_identity_key(issuer, subject)
+    # Only administrator-owned configuration may associate a provider identity
+    # with an existing local account. Mutable username/email claims are not
+    # evidence that the caller owns a CATS account.
+    links = (configuration or {}).get("account_links")
+    if links is None:
+        links = json.loads(os.getenv("CATS_OIDC_ACCOUNT_LINKS", "{}"))
+    if not isinstance(links, dict):
+        raise ValueError("OIDC account links must be an object")
+    linked_username = links.get(identity)
+    provider_links = links.get(issuer, {})
+    if not isinstance(provider_links, dict):
+        raise ValueError("OIDC provider account links must be an object")
+    linked_username = linked_username or provider_links.get(subject)
+    if linked_username is not None and not isinstance(linked_username, str):
+        raise ValueError("OIDC account link must reference a CATS username")
+    user = db.scalar(select(User).where(User.external_subject == identity).with_for_update())
+    legacy = db.scalar(select(User).where(User.external_subject == subject).with_for_update())
+    if not user and legacy:
+        # Legacy identities lacked an issuer. Require an explicit administrator
+        # binding before upgrading them, rather than guessing their provider.
+        if not linked_username or legacy.username != str(linked_username).lower():
+            raise ValueError("Legacy OIDC identity requires an explicit account link")
+        user = legacy
+    if not user and linked_username:
+        user = db.scalar(select(User).where(User.username == str(linked_username).lower()).with_for_update())
+        if not user:
+            raise ValueError("OIDC account link references an unknown CATS account")
+        if user.external_subject and user.external_subject != identity:
+            raise ValueError("CATS account is already linked to another OIDC identity")
+    collision = db.scalar(select(User).where(User.username == username[:120]))
+    if not user and collision:
+        raise ValueError("Existing CATS account requires an explicit OIDC account link")
     if not user:
         if os.getenv("CATS_OIDC_AUTO_PROVISION", "true").lower() != "true":
             raise ValueError("OIDC user is not provisioned in CATS")
         user = User(username=username[:120], display_name=str(claims.get("name") or username)[:240], auth_source="oidc", must_change_password=False)
         db.add(user); db.flush()
-    user.auth_source = "oidc"
-    user.external_subject = subject
+    user.external_subject = identity
+    if not user.enabled:
+        # Keep the link and all authorization/history intact. The callback must
+        # deny a session independently of successful provider authentication.
+        db.flush()
+        return user
     user.display_name = str(claims.get("name") or claims.get("email") or user.display_name)[:240]
-    user.enabled = True
     configured_mappings = db.scalars(select(OidcClaimMapping).order_by(OidcClaimMapping.id)).all()
     # OIDC grants are a synchronized projection of the current token, not
     # durable entitlements.  Remove the previous projection on every login,
@@ -204,6 +247,7 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
     for assignment in existing_oidc:
         db.delete(assignment)
     db.flush()
+    db.expire(user, ["role_assignments"])
     if configured_mappings:
         desired = matching_claim_mappings(claims, configured_mappings)
         assigned = set()
@@ -214,6 +258,9 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
             if identity in assigned:
                 continue
             assigned.add(identity)
+            if any(a.role_id == mapping.role_id and a.service_id == mapping.service_id
+                   and a.group_id == mapping.group_id for a in user.role_assignments):
+                continue
             db.add(UserRoleAssignment(user_id=user.id, role_id=mapping.role_id,
                 service_id=mapping.service_id, group_id=mapping.group_id, source="oidc"))
         db.flush()
@@ -249,7 +296,8 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
         if not any(a.role_id == role.id and a.group_id is None and a.service_id is None for a in existing_global):
             db.add(UserRoleAssignment(user=user, role=role, source="oidc"))
         assigned = True
-    if not assigned:
+    if not assigned and not db.scalar(select(UserRoleAssignment.id).where(
+            UserRoleAssignment.user_id == user.id, UserRoleAssignment.source == "local")):
         raise ValueError("OIDC user did not map to a CATS role")
     db.flush()
     return user

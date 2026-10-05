@@ -2310,6 +2310,14 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
         # Never reflect provider responses, token payloads, or configuration
         # values into the browser.  They may contain credentials or claims.
         return RedirectResponse(f"/login?error={urllib.parse.quote(f'OIDC login failed: {redact(exc)}')}", status_code=303)
+    if not user.enabled:
+        record_audit(db, AuthContext(user, None), "auth.oidc_denied_disabled", "user", user.id)
+        db.commit()
+        response = RedirectResponse("/login?error=CATS%20account%20is%20disabled", status_code=303)
+        response.delete_cookie("cats_oidc_state")
+        response.delete_cookie("cats_oidc_nonce")
+        response.delete_cookie("cats_oidc_next")
+        return response
     now = utcnow()
     user.last_login_at = now
     raw_token = secrets.token_urlsafe(48)

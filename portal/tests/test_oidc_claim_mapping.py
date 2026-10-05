@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from app.auth import matching_claim_mappings, provision_oidc_user
+from app.auth import matching_claim_mappings, oidc_identity_key, provision_oidc_user
 from app.database import Base
 from app.models import Group, Role, User, UserRoleAssignment
 
@@ -28,7 +28,8 @@ def test_legacy_group_claim_stays_group_scoped_and_stale_oidc_grants_are_removed
     monkeypatch.setenv("CATS_OIDC_ROLE_MAP", "{}")
     monkeypatch.setenv("CATS_OIDC_GROUP_ROLE_MAP", '{"engineering": "Service Manager"}')
     monkeypatch.setenv("CATS_OIDC_DEFAULT_ROLE", "")
-    configuration = {"roles_claim": "realm_access.roles", "groups_claim": "groups"}
+    configuration = {"roles_claim": "realm_access.roles", "groups_claim": "groups",
+                     "account_links": {oidc_identity_key("", "subject-1"): "person"}}
     with Session(engine) as db:
         manager = Role(name="Service Manager", permissions=["service.view"])
         local_role = Role(name="Local Recovery", permissions=["service.view"])
@@ -54,3 +55,12 @@ def test_legacy_group_claim_stays_group_scoped_and_stale_oidc_grants_are_removed
                    and item.group_id == group.id and item.service_id is None for item in assignments)
         assert not any(item.source == "oidc" and item.role_id == manager.id
                        and item.group_id is None and item.service_id is None for item in assignments)
+        # Repeated login in the same session must not mistake deleted grants
+        # left in an ORM relationship for the newly synchronized projection.
+        provision_oidc_user(db, {"sub": "subject-1", "preferred_username": "person",
+                                 "groups": ["engineering"]}, configuration)
+        db.commit()
+        assignments = db.scalars(select(UserRoleAssignment).where(
+            UserRoleAssignment.user_id == user.id)).all()
+        assert len(assignments) == 2
+        assert any(item.source == "oidc" and item.group_id == group.id for item in assignments)

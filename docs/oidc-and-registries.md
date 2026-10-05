@@ -37,6 +37,20 @@ Keycloak is then available to the browser at `http://localhost:8081` and to CATS
 
 The internal issuer prevents the CATS container from trying to reach itself through `localhost`. The browser issuer rewrites only the browser-facing authorization URL. HTTP issuers require the explicit local-development setting `CATS_OIDC_ALLOW_INSECURE_HTTP=true` and must not be used in production.
 
+## Linking existing CATS accounts
+
+Existing accounts require an explicit administrator binding. Username and email claims alone cannot claim a local account. Set `CATS_OIDC_ACCOUNT_LINKS` to a JSON object indexed by the token issuer (`browser_issuer` when configured, otherwise `issuer`) and the provider's immutable subject, for example:
+
+```json
+{"https://identity.example/realms/cats":{"provider-subject-123":"admin"}}
+```
+
+The same object can be supplied as `account_links` in administrator-managed OIDC configuration. When present, that configuration takes precedence over the environment mapping. Confirm the subject in the provider's administration interface before binding it. Each CATS account accepts one issuer/subject identity; a conflicting link is rejected. Email claims never identify an existing account. An email used as the fallback username follows the same collision rules. New identities can still be automatically provisioned when their username is unused and existing claim mapping rules authorize them.
+
+CATS stores a versioned SHA-256 key of the issuer/subject pair in its existing unique identity column, preserving user IDs, local roles, scopes, ownership and audit history without a database schema migration. Accounts linked by older releases stored only the subject: add the explicit issuer/subject binding above before their first upgraded login so CATS can safely migrate the identity. The legacy subject is never automatically assumed to belong to a different provider.
+
+Linking preserves local password recovery and account enablement. A disabled account stays disabled, retains its link and grants, and receives no session after provider authentication. Re-enable it through the existing administrative account control to restore access. Bootstrap creates an administrator only when the user table is empty; it does not replace disabled accounts.
+
 ## Reusable OCI registries
 
 Add a registry profile with an HTTPS endpoint, optional namespace, and either anonymous or credential authentication. Patch input pages expose saved profiles as optional source/destination selectors. Selecting a profile supplies its username/token to that job without copying the secret into the job configuration. Source and destination profiles are independent, so a public source can be patched and pushed to a private destination.
