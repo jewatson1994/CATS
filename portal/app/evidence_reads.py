@@ -194,11 +194,37 @@ def overview_payload(db, execution_id) -> tuple[dict, list[dict]]:
             payload[key] = value
     if row[3]:
         payload["policy_findings"] = True
-    dialect = db.get_bind().dialect.name
-    statement = _FINDING_IMAGES_POSTGRESQL if dialect == "postgresql" else _FINDING_IMAGES_SQLITE
+    statement = finding_images_statement(db.get_bind().dialect.name)
+    if statement is None:
+        # Unsupported dialect: derive the same rows from the payload in Python.
+        full = execution_payload(db, execution_id)
+        findings = full.get("findings")
+        rows = [(item.get("image"), item.get("image_digest"), item.get("discovered_from"))
+                for item in findings if isinstance(item, dict)] if isinstance(findings, list) else []
+    else:
+        rows = db.execute(text(statement), {"id": execution_id}).all()
     images = [{"image": image, "digest": digest, "discovered_from": discovered or "Submitted"}
-              for image, digest, discovered in db.execute(text(statement), {"id": execution_id}) if image]
+              for image, digest, discovered in rows if image]
     return payload, images
+
+
+def finding_images_statement(dialect_name):
+    """Dialect-specific JSON array expansion for per-finding image references.
+
+    Table-valued JSON functions differ between engines, so each supported
+    dialect has an explicit statement (both return rows in array order and only
+    for object elements; ``findings`` that is not an array yields no rows):
+
+    * SQLite: ``json_each`` over ``$.findings``; ``json_extract`` returns the
+      JSON string values as text and JSON null as NULL.
+    * PostgreSQL: ``json_array_elements ... WITH ORDINALITY`` with ``->>``,
+      which also returns string values as text and JSON null as NULL.
+
+    The ingest schema types ``image``/``image_digest`` as strings, so both match
+    the legacy ``item.get(...)`` values.  Other dialects return ``None`` and the
+    caller falls back to reading the payload.
+    """
+    return {"sqlite": _FINDING_IMAGES_SQLITE, "postgresql": _FINDING_IMAGES_POSTGRESQL}.get(dialect_name)
 
 
 _OVERVIEW_CACHE: "OrderedDict[tuple, tuple]" = OrderedDict()

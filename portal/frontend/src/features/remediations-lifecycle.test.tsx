@@ -27,6 +27,17 @@ describe('remediation candidate lifecycle', () => {
     expect(screen.queryByRole('button',{name:'OCI destinations'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Create POA&M entry'})).not.toBeInTheDocument();
   });
+  it('pages service remediation collections with server-side page links', () => {
+    const workspace = {...data,can:{},remediation_preview:{images:0,charts:0,configuration_changes:0,manual_review:0},remediation_jobs:[],poams:[],mitigations:[],exceptions:[{kind:'Vulnerability',item:'CVE-1',severity:'High',status:'Active',service:data.service}],
+      tab:'exceptions',page:2,page_count:3,total_items:120,pagination_base:'/services/example?remediations=true&tab=exceptions&page_size=50'};
+    render(<Service data={workspace}/>);
+    expect(screen.getAllByText('Page 2 of 3 · 120 records')).toHaveLength(2);
+    expect(screen.getAllByRole('link',{name:'Previous'})[0]).toHaveAttribute('href','/services/example?remediations=true&tab=exceptions&page_size=50&page=1');
+    expect(screen.getAllByRole('link',{name:'Next'})[0]).toHaveAttribute('href','/services/example?remediations=true&tab=exceptions&page_size=50&page=3');
+    cleanup();
+    render(<Service data={{...workspace,tab:'pipeline',exceptions:[],page:1,page_count:2,remediation_jobs:[job]}}/>);
+    expect(screen.getByText('Page 1 of 2 · 120 records')).toBeInTheDocument();
+  });
   it('shows terminal patch blockers rather than suggesting patching is still pending', () => {
     render(<Report data={{...data,job:{...job,status:'review_required',patched_images:[{original:'ubuntu:test',classification:'REVIEW REQUIRED',reason:'No explicit package repository mirror policy is configured for remediation'}]}}}/>);
     expect(screen.getByText(/Copa not started/)).toBeInTheDocument();

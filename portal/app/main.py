@@ -7268,85 +7268,66 @@ def service_detail(
     if remediations:
         if tab not in {"pipeline", "poams", "exceptions", "mitigations"}:
             raise HTTPException(422, detail="Unknown remediation tab")
-        entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).options(
-            selectinload(PoamEntry.finding), selectinload(PoamEntry.policy_finding),
-            selectinload(PoamEntry.created_by), selectinload(PoamEntry.approved_by),
-        ).order_by(PoamEntry.created_at.desc())).all()
-        poams = [entry for entry in entries if entry.item_type != "mitigation"]
-        mitigations = [entry for entry in entries if entry.item_type == "mitigation"]
-        exceptions = []
-        for record in db.scalars(select(ExceptionRecord).join(Finding).where(Finding.service_id == service.id).options(
-            selectinload(ExceptionRecord.finding),
-        ).order_by(ExceptionRecord.created_at.desc())).all():
-            finding = record.finding
-            state = "Revoked" if record.revoked_at else ("Expired" if aware(record.expires_at) < now else "Active")
-            exceptions.append({"kind": "Vulnerability", "item": finding.cve, "severity": finding.severity,
-                               "status": state, "expires_at": record.expires_at, "approved_by": record.approved_by,
-                               "created_at": record.created_at, "justification": record.justification,
-                               "record_id": record.id, "href": f"/services/{service.service_key}/findings/{finding.id}",
-                               "revoke_href": f"/exceptions/{record.id}/revoke"})
-        for record in db.scalars(select(PolicyExceptionRecord).join(PolicyFinding).where(PolicyFinding.service_id == service.id).options(
-            selectinload(PolicyExceptionRecord.policy_finding),
-        ).order_by(PolicyExceptionRecord.created_at.desc())).all():
-            finding = record.policy_finding
-            state = "Revoked" if record.revoked_at else ("Expired" if aware(record.expires_at) < now else "Active")
-            exceptions.append({"kind": "Configuration", "item": finding.finding, "severity": finding.severity,
-                               "status": state, "expires_at": record.expires_at, "approved_by": record.approved_by,
-                               "created_at": record.created_at, "justification": record.justification,
-                               "record_id": record.id, "href": f"/services/{service.service_key}?finding_state=exceptions&finding_type=configuration",
-                               "revoke_href": f"/policy-exceptions/{record.id}/revoke"})
-        for workflow in db.scalars(select(WorkflowRequest).where(
-            WorkflowRequest.service_id == service.id, WorkflowRequest.request_type == "exception", WorkflowRequest.status == "pending",
-        ).options(selectinload(WorkflowRequest.finding), selectinload(WorkflowRequest.policy_finding)).order_by(WorkflowRequest.created_at.desc())).all():
-            target = workflow.finding or workflow.policy_finding
-            if not target:
-                continue
-            is_vulnerability = bool(workflow.finding)
-            exceptions.append({"kind": "Vulnerability" if is_vulnerability else "Configuration",
-                               "item": target.cve if is_vulnerability else target.finding,
-                               "severity": target.severity, "status": "Pending", "expires_at": workflow.requested_expires_at,
-                               "approved_by": "Pending review", "created_at": workflow.created_at,
-                               "justification": workflow.justification, "record_id": workflow.id,
-                               "href": f"/services/{service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{service.service_key}?finding_state=exceptions&finding_type=configuration"})
-        from .remediation_list_queries import remediation_history, active_image_references
-        remediation_jobs = remediation_history(db, service.id)
+        # Only the selected collection is loaded, counted and paged in the
+        # database; every record remains reachable through pagination.
+        from .remediation_list_queries import (REMEDIATION_PAGE_SIZES, active_image_references, exceptions_page,
+                                               poam_entries_page, remediation_jobs_page)
+        if page_size not in REMEDIATION_PAGE_SIZES:
+            raise HTTPException(422, detail="Page size must be 25, 50, 100, or 250")
+        poams, mitigations, exceptions, remediation_jobs = [], [], [], []
+        if tab == "pipeline":
+            remediation_jobs, remediation_pages = remediation_jobs_page(db, service.id, page, page_size)
+        elif tab == "exceptions":
+            exceptions, remediation_pages = exceptions_page(db, service, now, aware, page, page_size)
+        else:
+            entries, remediation_pages = poam_entries_page(db, service.id, mitigations=tab == "mitigations",
+                                                           page=page, page_size=page_size)
+            if tab == "mitigations":
+                mitigations = entries
+            else:
+                poams = entries
         if remediations_only:
             # The tab header carries no finding rows: read the active policy
-            # findings as scalar rows and the newest evidence as an untracked copy.
+            # findings as scalar rows; the newest evidence (untracked copy) is
+            # read only when the content-keyed preview is not cached.
             from .evidence_reads import execution_payload
             from .findings_query import _rows
             preview_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
                                    .order_by(Execution.scanned_at.desc(), Execution.id.asc()).limit(1))
-            preview_payload = execution_payload(db, preview_id)
+            preview_payload = lambda: execution_payload(db, preview_id)
             preview_policy = _rows(db, PolicyFinding, PolicyFinding.service_id == service.id,
                                    PolicyFinding.active.is_(True), order_by=PolicyFinding.id)
         else:
             preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
-            preview_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
+            loaded_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
+            preview_payload = lambda: loaded_payload
             preview_policy = [item for item in service.policy_findings if item.active]
         def compute_preview():
-            plan = build_plan(preview_payload, preview_policy, "PREVIEW")
+            payload = preview_payload()
+            plan = build_plan(payload, preview_policy, "PREVIEW")
+            files = payload.get("helm_source_files") or payload.get("source_files") or {}
             return ({str(item.get("original")) for item in plan.get("images", [])},
+                    sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in files) if isinstance(files, dict) else 0,
                     sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan.get("configuration_changes", [])),
                     sum(item.get("classification") == "REVIEW REQUIRED" for item in plan.get("configuration_changes", [])))
         if remediations_only:
             # Content-keyed (evidence digest + exact finding fields); never time-based.
             preview_key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
                            tuple(tuple(sorted((key, str(value)) for key, value in vars(item).items())) for item in preview_policy))
-            plan_images, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
+            plan_images, plan_charts, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
         else:
-            plan_images, plan_changes, plan_review = compute_preview()
+            plan_images, plan_charts, plan_changes, plan_review = compute_preview()
         preview_images = set(plan_images)
         preview_images.update(active_image_references(db, service.id))
-        preview_files = preview_payload.get("helm_source_files") or preview_payload.get("source_files") or {}
-        remediation_preview = {"images": len(preview_images),
-            "charts": sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in preview_files) if isinstance(preview_files, dict) else 0,
+        remediation_preview = {"images": len(preview_images), "charts": plan_charts,
             "configuration_changes": plan_changes, "manual_review": plan_review}
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
             remediation_enabled=remediation_enabled(db),
             remediation_preview=remediation_preview, oci_destinations=_remediation_destinations(db, service.id),
+            **remediation_pages, pagination_base=f"/services/{urllib.parse.quote(service.service_key, safe='')}?"
+                f"{urllib.parse.urlencode({'remediations': 'true', 'tab': tab, 'page_size': page_size})}",
             can_create_poam=auth.has("poam.request", service.id), now=now,
         ))
     if poam:

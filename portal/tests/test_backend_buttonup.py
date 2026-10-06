@@ -283,3 +283,33 @@ def test_lifespan_starts_read_model_maintenance(monkeypatch, tmp_path):
     with factory() as db:
         assert db.scalar(select(ExecutionSummary.summary_version)) == SUMMARY_VERSION
     file_engine.dispose()
+
+
+def test_architecture_summary_polling_never_builds_layouts_or_full_graph(monkeypatch):
+    from app import architecture_layout
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("summary-only"), headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        db.add(DeploymentValidationRun(service_id=service.id, run_key="live", status="RUNNING", phase="DEPLOYING"))
+        db.commit()
+    def no_layouts(*args, **kwargs):
+        raise AssertionError("summary polling must not compute layouts")
+    monkeypatch.setattr(architecture_layout, "build_layouts", no_layouts)
+    url = "/api/v1/services/payments-service/architecture-evidence"
+    for _ in range(3):
+        response = client.get(url + "?summary=true")
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body["graph"]) == {"summary"} and body["active_validation"]["run_key"] == "live"
+        assert len(response.content) < 4096
+    monkeypatch.undo()
+    with SessionLocal() as db:
+        run = db.scalar(select(DeploymentValidationRun).where(DeploymentValidationRun.run_key == "live"))
+        run.status, run.phase, run.cleanup_status = "VERIFIED", "COMPLETE", "COMPLETE"
+        db.commit()
+    terminal = client.get(url + "?summary=true").json()
+    assert terminal["active_validation"] is None
+    full = client.get(url).json()  # the page's single terminal request
+    assert full["graph"]["nodes"] and full["graph"]["layouts"]
+    assert page_data(client.get("/services/payments-service?architecture=true"))["architecture_polling"] is False

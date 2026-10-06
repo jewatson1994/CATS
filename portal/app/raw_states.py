@@ -6,9 +6,9 @@ queries select, order and count the same rows in the database and project only
 the requested page, keeping the item dictionaries, ordering and filters
 identical:
 
-* Non-Compliant rows are ordered by (item, type) case-insensitively; equal keys
-  keep CVE rows by finding id, then configuration rows by id, then evidence rows
-  in their recorded order.  Text filtering matches the joined, per-field
+* Non-Compliant rows are ordered by (item, type) case-insensitively and by code
+  point (``COLLATE "C"`` on PostgreSQL); equal keys keep CVE rows by finding id,
+  then configuration rows by id, then evidence rows in their recorded order.  Text filtering matches the joined, per-field
   (500 character) text of each row; a severity filter matches no row because
   non-compliance items carry no severity.  Case folding uses SQL ``lower``, which
   equals Python ``casefold`` for the ASCII identifiers used by CVE IDs and rules.
@@ -46,8 +46,28 @@ def _due_days(configuration):
     return lambda severity: rules.get(str(severity or "").lower(), overdue_days)
 
 
+def _codepoint_order(db, *columns):
+    """Order text by code point, as Python sorts the legacy casefolded keys.
+
+    SQLite's default BINARY collation already compares code points.  PostgreSQL
+    columns use the database collation (often a linguistic ``en_US.UTF-8``
+    order that ignores punctuation), so the ``"C"`` collation is explicit there;
+    UTF-8 byte order equals code point order.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        return [column.collate("C") for column in columns]
+    return list(columns)
+
+
+LIKE_ESCAPE = "!"
+
+
 def _like(needle):
-    escaped = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    """Literal substring pattern.  ``!`` (not backslash) is the escape character:
+    a backslash escape literal is rendered differently by PostgreSQL depending
+    on ``standard_conforming_strings``, while ``ESCAPE '!'`` is identical on
+    SQLite and PostgreSQL."""
+    escaped = needle.replace("!", "!!").replace("%", "!%").replace("_", "!_")
     return f"%{escaped}%"
 
 
@@ -161,9 +181,9 @@ def noncompliant_page(db, service_id, configuration, now, evidence, *, finding_t
         combined = (union_all(*parts) if len(parts) > 1 else parts[0]).subquery()
         filters = []
         if needle:
-            filters.append(combined.c.text.like(_like(needle), escape="\\"))
+            filters.append(combined.c.text.like(_like(needle), escape=LIKE_ESCAPE))
         if resource_needle:
-            filters.append(combined.c.text.like(_like(resource_needle), escape="\\"))
+            filters.append(combined.c.text.like(_like(resource_needle), escape=LIKE_ESCAPE))
         sql_total = db.scalar(select(func.count()).select_from(combined).where(*filters)) or 0
     total = sql_total + len(evidence)
     pages = max(1, (total + page_size - 1) // page_size)
@@ -174,7 +194,8 @@ def noncompliant_page(db, service_id, configuration, now, evidence, *, finding_t
         # Evidence rows interleave by sort key; read enough SQL rows to cover them.
         offset = min(max(0, start - len(evidence)), sql_total - 1)
         window = db.execute(select(combined.c.kind, combined.c.id, combined.c.sort_item, combined.c.sort_type)
-            .where(*filters).order_by(combined.c.sort_item, combined.c.sort_type, combined.c.kind, combined.c.id)
+            .where(*filters).order_by(*_codepoint_order(db, combined.c.sort_item, combined.c.sort_type),
+                                      combined.c.kind, combined.c.id)
             .offset(offset).limit(page_size + len(evidence))).all()
         before = sum(key < ((window[0].sort_item or ""), window[0].sort_type) for key in evidence_keys) if window else 0
         merged = []

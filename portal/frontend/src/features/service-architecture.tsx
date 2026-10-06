@@ -15,15 +15,76 @@ export function Page({data}:{data:PageData}) {
   const nodes=new Map<string,any>((graph.nodes || []).map((node:any)=>[node.id,node]));
   const fit=useCallback(()=>setCamera({scale:1,x:Math.max(0,(size.width-(layout?.bounds?.width || 0))/2)-(layout?.bounds?.x || 0),y:Math.max(0,(size.height-(layout?.bounds?.height || 0))/2)-(layout?.bounds?.y || 0)}),[layout,size.width,size.height]);
   useEffect(()=>{fit();},[fit]);
-  // Poll only while a Deployment Validation is running; the terminal response
-  // carries the final graph and ends polling.
+  // While a Deployment Validation runs, poll only the lightweight summary
+  // (verification state + graph counts). When it reaches a terminal state the
+  // complete graph is requested exactly once; a later validation (noticed when
+  // the page becomes visible again) resumes summary polling.
+  const summaryUrl=`${evidenceUrl}${evidenceUrl.includes('?')?'&':'?'}summary=true`;
   const [polling,setPolling]=useState(Boolean(data.architecture_polling));
+  const runKey=useRef<string>(verification.run_key || '');
+  const fullGraph=useRef<{key:string;controller:AbortController}|null>(null);
+  const applyGraph=useCallback((next:any)=>{
+    setGraph((old:any)=>JSON.stringify(old)===JSON.stringify(next)?old:next);
+    setLayer(old=>next.layouts?.[old]?old:'all');
+    setSelection((old:any)=>old && [...(next.nodes || []),...(next.relationships || [])].find((item:any)=>item.id===old.id) || null);
+  },[]);
+  const applyVerification=useCallback((next:any)=>{runKey.current=next?.run_key || '';setVerification(next || {});},[]);
+  const loadFullGraph=useCallback(async(key:string)=>{
+    // One request per terminal transition; a newer transition supersedes it.
+    if(fullGraph.current?.key===key)return;
+    fullGraph.current?.controller.abort();
+    const controller=new AbortController();fullGraph.current={key,controller};
+    try {
+      const state=await requestJson<any>(evidenceUrl,{signal:controller.signal});
+      if(fullGraph.current?.controller!==controller)return;
+      applyVerification(state.architecture);
+      if(state.graph)applyGraph(state.graph);
+      setError('');
+      if(state.active_validation)setPolling(true);
+    } catch {
+      if(controller.signal.aborted || fullGraph.current?.controller!==controller)return;
+      fullGraph.current=null;
+      setError('Could not load the final architecture evidence. Reload to retry.');
+    }
+  },[evidenceUrl,applyGraph,applyVerification]);
+  useEffect(()=>()=>{fullGraph.current?.controller.abort();fullGraph.current=null;},[evidenceUrl]);
   useEffect(()=>{
     if(!polling)return;
-    let cancelled=false,timer:ReturnType<typeof setTimeout>; const controller=new AbortController();
-    const poll=async()=>{try {if(!document.hidden){const state=await requestJson<any>(evidenceUrl,{signal:controller.signal});if(!cancelled){if(!state.active_validation){cancelled=true;setPolling(false);}setVerification(state.architecture || {});if(state.graph){setGraph((old:any)=>JSON.stringify(old)===JSON.stringify(state.graph)?old:state.graph);setLayer(old=>state.graph.layouts?.[old]?old:'all');setSelection((old:any)=>old && [...(state.graph.nodes || []),...(state.graph.relationships || [])].find(item=>item.id===old.id) || null);}}}}catch {/* Keep the last verified evidence during temporary outages. */}finally{if(!cancelled)timer=setTimeout(poll,5000);}};
+    let cancelled=false,timer:ReturnType<typeof setTimeout>,activeRun='';const controller=new AbortController();
+    const poll=async()=>{
+      try {
+        if(!document.hidden){
+          const state=await requestJson<any>(summaryUrl,{signal:controller.signal});
+          if(cancelled)return;
+          applyVerification(state.architecture);
+          const summary=state.graph?.summary;
+          if(summary)setGraph((old:any)=>JSON.stringify(old.summary)===JSON.stringify(summary)?old:{...old,summary});
+          if(!state.active_validation){cancelled=true;setPolling(false);void loadFullGraph(`terminal:${activeRun || 'initial'}:${state.architecture?.run_key || ''}`);return;}
+          activeRun=state.active_validation.run_key || state.active_validation.run_id || activeRun;
+        }
+      } catch {/* Keep the last verified evidence during temporary outages. */}
+      finally {if(!cancelled)timer=setTimeout(poll,5000);}
+    };
     timer=setTimeout(poll,5000);return()=>{cancelled=true;clearTimeout(timer);controller.abort();};
-  },[evidenceUrl,polling]);
+  },[summaryUrl,polling,loadFullGraph,applyVerification]);
+  useEffect(()=>{
+    // Idle: one summary check when the page becomes visible again resumes
+    // polling for a newly started validation, or loads newer final evidence.
+    if(polling)return;
+    let checking=false;const controller=new AbortController();
+    const check=async()=>{
+      if(document.hidden || checking)return;checking=true;
+      try {
+        const state=await requestJson<any>(summaryUrl,{signal:controller.signal});
+        if(state.active_validation)setPolling(true);
+        else if((state.architecture?.run_key || '')!==runKey.current)void loadFullGraph(`run:${state.architecture?.run_key || ''}`);
+      } catch {/* A later visibility change retries. */}
+      finally {checking=false;}
+    };
+    const visible=()=>{if(!document.hidden)void check();};
+    document.addEventListener('visibilitychange',visible);
+    return()=>{document.removeEventListener('visibilitychange',visible);controller.abort();};
+  },[summaryUrl,polling,loadFullGraph]);
   useEffect(()=>{
     if(!svg.current || typeof ResizeObserver==='undefined')return;
     let timer:ReturnType<typeof setTimeout>,width=0,sequence=0,controller:AbortController|undefined;
