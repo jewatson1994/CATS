@@ -56,6 +56,7 @@ from .simplified_queries import upgrade_projection
 from . import dependency_queries
 from .helm_sources import normalize_chart_reference, oci_pull_arguments
 from .helm_archives import extract_chart, compressed_limit
+from .runtime_diagnostics import runtime_failure_details
 from .helm_downloads import DownloadedChart, copy_bounded, close_downloads, check_space
 from .auth import (
     PERMISSIONS, SESSION_COOKIE, AuthContext, hash_password, record_audit,
@@ -511,6 +512,7 @@ def deployment_validation_view(run: DeploymentValidationRun | None) -> dict | No
         "classification_summary": (run.diagnostics or {}).get("classification_summary") or (run.diagnostics or {}).get("classification", {}),
         "capability_assessment": capability_assessment_groups(run.capability_preflight or []),
         "reason": run.reason, "detail": run.reason,
+        "failure_details": runtime_failure_details({**((run.diagnostics or {}).get("runtime_evidence") or {"events": run.events or []}), "helm_failures": (run.diagnostics or {}).get("helm_failures") or []}) if run.status != "VERIFIED" else [],
         # Security boundary violations remain preflight blocks; optional
         # resource-governance warnings are exposed separately below.
         "preflight_blocked": run.reason_category == "SECURITY_POLICY_VIOLATION" or bool(run.security_policy_violations or []),

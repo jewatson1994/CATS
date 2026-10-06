@@ -2003,6 +2003,8 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
         completed = executor(argv, timeout=remaining(cap), env=command_env or env)
         if key:
             diagnostics[key] = _diagnostic_summary(completed)
+            if completed.returncode and key.startswith(("helm_dependencies_", "helm_lint_", "helm_template_", "helm_install_")):
+                diagnostics.setdefault("helm_failures", []).append({"object": key, "reason": "Helm command failed", "message": startup_message(completed.stderr or completed.stdout)})
         return completed
     def node_limit_event() -> dict[str, Any] | None:
         if result.get("resource_isolation", {}).get("overall") != "ENFORCED":
