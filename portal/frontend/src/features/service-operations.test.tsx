@@ -86,7 +86,7 @@ describe('native service operations', () => {
   it('preserves preflight boundary evidence and independent static results', () => {
     render(<Validation data={fixture({validation:{status:'COULD_NOT_VALIDATE',phase:'COMPLETE',cleanup_status:'NOT_REQUIRED',terminal:true,static_scan_complete:true,reason_category:'SECURITY_POLICY_VIOLATION',security_policy_violations:[{rule_id:'BOUNDARY',kind:'Pod',name:'test',field_path:'spec.hostPID',value:true,source_template:'templates/pod.yaml',source_line:3}],capability_assessment:[{capability:'Configuration dependencies',status:'AVAILABLE',dependency_rows:[{kind:'ConfigMap',name:'config',status:'AVAILABLE',required_by:['Pod/test']}]}]}})} />);
     expect(screen.getAllByText('BLOCKED BY PREFLIGHT').length).toBeGreaterThan(0);
-    expect(screen.getByText('Static Scan: Complete')).toBeInTheDocument();
+    expect(screen.getByRole('group',{name:'Evidence sources'})).toHaveTextContent(/Static scan\s*Complete/);
     expect(screen.getByText('BOUNDARY')).toBeInTheDocument();
     expect(screen.getByText('ConfigMap/config')).toBeInTheDocument();
     expect(screen.getByText('templates/pod.yaml')).toBeInTheDocument();

@@ -14,7 +14,7 @@ name: cats
 # Image:
 #   - CATS_IMAGE may be used to select the CATS image/version.
 #   - Example:
-#       CATS_IMAGE=cats:1.3
+#       CATS_IMAGE=cats:YOUR_VERSION
 #
 #   - The rebuild utility sets CATS_IMAGE automatically before
 #     recreating the portal and patch-worker.
@@ -299,9 +299,8 @@ services:
       # NOTE:
       # These are intentionally retained for now.
       #
-      # Current CATS Deployment Validation behavior is being
-      # changed so inability to enforce optional CPU/memory/PID
-      # controls does NOT prevent Helm installation.
+      # Enforcement and evidence depend on the validation host.
+      # Review the validation result for effective resource controls.
       # -------------------------------------------------------
 
       CATS_DEPLOYMENT_MAX_CPU: ${CATS_DEPLOYMENT_MAX_CPU:-8}

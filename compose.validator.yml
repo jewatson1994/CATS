@@ -1,3 +1,4 @@
+# Dedicated Linux amd64 sandbox; see docs/validator-appliance.md.
 services:
   validator:
     build:
@@ -5,7 +6,7 @@ services:
       dockerfile: portal/Dockerfile.validator
       args:
         DOCKER_SHA256: ${CATS_VALIDATOR_DOCKER_SHA256:?Verified Docker archive SHA256 is required}
-    image: cats-validator:local
+    image: ${CATS_VALIDATOR_IMAGE:-cats-validator:local}
     network_mode: host
     init: true
     restart: unless-stopped
@@ -13,9 +14,9 @@ services:
     environment:
       CATS_VALIDATOR_STATE_DIR: /var/lib/cats-validator
       CATS_VALIDATOR_LISTEN: ${CATS_VALIDATOR_LISTEN:-0.0.0.0}
-      CATS_VALIDATOR_PORT: "8443"
+      CATS_VALIDATOR_PORT: "${CATS_VALIDATOR_PORT:-8443}"
       CATS_VALIDATOR_ADMIN_LISTEN: ${CATS_VALIDATOR_ADMIN_LISTEN:-0.0.0.0}
-      CATS_VALIDATOR_ADMIN_PORT: "8444"
+      CATS_VALIDATOR_ADMIN_PORT: "${CATS_VALIDATOR_ADMIN_PORT:-8444}"
       CATS_VALIDATOR_SERVER_CERT: /run/validator-tls/server.crt
       CATS_VALIDATOR_SERVER_KEY: /run/validator-tls/server.key
       CATS_VALIDATOR_CLIENT_CA: /run/validator-tls/client-ca.crt

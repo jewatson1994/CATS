@@ -1,6 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {can, requestJson, type PageData} from '../api';
 import {AdminTabs, Heading} from './admin_shared';
+import {StageProgress, type Stage, type StageState} from '../components/ui';
 import './validators.css';
 type RecordData = Record<string, any>;
 const base = '/api/frontend/settings/validators';
@@ -12,10 +13,11 @@ function OperationStages({item}: {item: RecordData}) {
   const stages = ['provision','rotate'].includes(item.action) ? provisionStages : [[item.phase || 'PENDING', words(item.phase || 'Pending')]];
   const index = stages.findIndex(([phase]) => phase === item.phase);
   const succeeded = item.status === 'SUCCEEDED';
-  return <div className="validator-progress" aria-label="Operation stages"><p role="status">{succeeded ? 'Completed' : words(item.status || 'Pending') + ': ' + (stages[index]?.[1] || words(item.phase || 'Pending'))}</p><ol>{stages.map(([phase,label], position) => {
-    const state = succeeded || position < index ? 'complete' : position === index ? ['FAILED','CANCELLED'].includes(item.status) ? 'failed' : 'current' : 'pending';
-    return <li key={phase} className={state} aria-current={state === 'current' ? 'step' : undefined}><span className="validator-stage-marker">{state === 'complete' ? 'OK' : position + 1}</span><span>{label}<small>{state === 'complete' ? 'Completed' : state === 'current' ? 'In progress' : state === 'failed' ? words(item.status) : 'Waiting'}</small></span></li>;
-  })}</ol></div>;
+  const progress: Stage[] = stages.map(([phase,label], position) => {
+    const state: StageState = succeeded || position < index ? 'complete' : position === index ? ['FAILED','CANCELLED'].includes(item.status) ? 'failed' : 'current' : 'pending';
+    return {key: phase, label, state, detail: state === 'complete' ? 'Completed' : state === 'current' ? 'In progress' : state === 'failed' ? words(item.status) : 'Waiting'};
+  });
+  return <div className="validator-progress"><p role="status">{succeeded ? 'Completed' : words(item.status || 'Pending') + ': ' + (stages[index]?.[1] || words(item.phase || 'Pending'))}</p><StageProgress label="Operation stages" orientation={stages.length > 1 ? 'horizontal' : 'vertical'} stages={progress}/></div>;
 }
 
 export function Page({data}: {data: PageData}) {

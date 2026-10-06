@@ -8,7 +8,7 @@ export function AdminTabs({data, selected}: {data: PageData; selected: string}) 
     ['general', `/admin/general-policy${group}`, 'General Policy', can(data, 'audit.view') || can(data, 'config.manage')],
     ['compliance', '/admin/compliance-frameworks', 'Hardening Policy', can(data, 'config.manage')], ['vulnerability', `/admin/compliance${group}`, 'Vulnerability Policy', can(data, 'config.manage')],
     ['watchlist', '/admin/dependency-watchlist', 'Dependency Watchlist', can(data, 'config.manage')]];
-  return <nav className="admin-tabs" aria-label="Administration sections">{items.filter(item => item[3]).map(([key, href, label]) => <a key={String(key)} href={String(href)} className={selected === key ? 'selected' : ''}>{label}</a>)}</nav>;
+  return <nav className="admin-tabs" aria-label="Administration sections">{items.filter(item => item[3]).map(([key, href, label]) => <a key={String(key)} href={String(href)} className={selected === key ? 'selected' : ''} aria-current={selected === key ? 'page' : undefined}>{label}</a>)}</nav>;
 }
 export function Heading({title, description}: {title: string; description: string}) {return <section className="heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>{title}</h1><p>{description}</p></div></section>;}
 export function Post({data, action, children, upload = false, className}: {data: PageData; action: string; children: ReactNode; upload?: boolean; className?: string}) {

@@ -12,7 +12,7 @@ const fixture = (extra: Partial<PageData> = {}): PageData => ({
 });
 it('renders separate static and runtime statuses, scoped exports and stale evidence notice', () => {
   render(<Page data={fixture({evidence_notice: 'stale'})}/>);
-  expect(screen.getByText('IN PROGRESS')).toBeInTheDocument();
+  expect(screen.getByText('In progress')).toBeInTheDocument();
   expect(screen.getByText('Complete')).toBeInTheDocument();
   expect(screen.getByText('Verified')).toBeInTheDocument();
   expect(screen.getByRole('alert')).toHaveTextContent('evidence changed');
@@ -26,13 +26,14 @@ it('renders separate static and runtime statuses, scoped exports and stale evide
 it('keeps unattempted deployment validation independent of completed static scanning', () => {
   render(<Page data={fixture({deployment_validation: {status: 'NOT_ATTEMPTED', static_scan_complete: true}})}/>);
   expect(screen.getByText('Complete')).toBeInTheDocument();
-  expect(screen.getAllByText('NOT ATTEMPTED').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Not attempted').length).toBeGreaterThan(0);
 });
 it('labels modern validation and distinguishes missing runtime counts from measured zero', () => {
   render(<Page data={fixture({deployment_validation: {status: 'COULD_NOT_VALIDATE', diagnostics: {schrodinger: {schema_version: 'cats.validation/v2'}}, resource_summary: {pods: {ready: 0, expected: 1}}}})}/>);
   expect(screen.getByText('CATSchrödinger’s')).toBeInTheDocument();
   expect(screen.getByText('0 / 1')).toBeInTheDocument();
-  expect(screen.getAllByText('Unavailable / Unavailable')).toHaveLength(2);
+  // Unmeasured Deployments/StatefulSets and both unreported conditions are labelled, never shown as zero.
+  expect(screen.getAllByText('Not reported')).toHaveLength(4);
 });
 it('shows immutable artifact matches with independent producer evidence and no whole release claim', () => {
   const digest = 'sha256:' + 'a'.repeat(64);
@@ -42,9 +43,9 @@ it('shows immutable artifact matches with independent producer evidence and no w
   const section = screen.getByRole('region', {name: 'Known Artifacts'});
   expect(section).toHaveTextContent('Service 1.5 / Remediation R1');
   expect(section).toHaveTextContent(digest);
-  expect(section).toHaveTextContent('PASS');
-  expect(section).toHaveTextContent('NOT VERIFIED');
-  expect(section).toHaveTextContent('FAILED');
+  expect(section).toHaveTextContent('Pass');
+  expect(section).toHaveTextContent('Not verified');
+  expect(section).toHaveTextContent('Failed');
   expect(section).toHaveTextContent('do not establish verification or lineage for the complete release');
 });
 it('scopes evidence polling to the selected release and aborts when leaving', async () => {

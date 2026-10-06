@@ -1,54 +1,103 @@
-.remediation-wizard { width: min(960px, 94vw); max-height: 88vh; overflow: auto; }
-.remediation-wizard button, .remediation-report button { min-height: 38px; padding: 8px 16px; border: 1px solid #3dd6ad; border-radius: 6px; background: #143b32; color: #edfff8; font: inherit; cursor: pointer; margin: 4px; }
-.remediation-wizard button.secondary-button, .remediation-report button.secondary-button { background: transparent; }
-.remediation-wizard button:disabled, .remediation-report button:disabled { opacity: .45; cursor: default; }
-.remediation-wizard [role=tab][aria-selected=true] { background: #21664f; }
-.remediation-wizard fieldset, .configuration-card { padding: 16px; border: 1px solid #2c5147; border-radius: 8px; margin: 12px 0; }
-.remediation-wizard legend { color: #65e4bd; padding: 0 8px; }
-.remediation-steps { display: flex; flex-wrap: wrap; gap: 12px; padding: 0; list-style: none; }
-.remediation-steps li { flex: 1 1 130px; padding: 12px; border: 1px solid #2c5147; border-radius: 6px; display: grid; gap: 8px; }
-.remediation-steps [aria-current=step] { border-color: #65e4bd; background: #143b32; }
-.finding-pages { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 16px 0; }
-.finding-pages label { display: flex; align-items: center; gap: 8px; }
+/* Remediation workspace, wizard and Before / After report. Colours come from the design-system tokens. */
+.remediation-wizard { width: min(960px, 94vw); max-width: min(960px, 94vw) !important; max-height: 88vh; overflow: auto; }
+.remediation-wizard button, .remediation-report button, .service-remediation-workspace button:not(.link-button):not(.secondary-button):not(.danger-button) {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: var(--control-height); padding: 0 var(--space-4);
+  border: 1px solid var(--accent); border-radius: var(--radius-md); background: var(--accent); color: var(--accent-contrast); font: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer;
+}
+.remediation-wizard button, .remediation-report button { margin: 4px; }
+.remediation-wizard button.secondary-button, .remediation-report button.secondary-button,
+.remediation-wizard [role=tab], .service-remediation-workspace td button:not(.link-button) {
+  background: var(--surface) !important; border-color: var(--border-strong) !important; color: var(--text) !important; font-weight: 500;
+}
+.remediation-wizard button:disabled, .remediation-report button:disabled, .service-remediation-workspace button:disabled { opacity: .45; cursor: not-allowed; }
+.remediation-wizard [role=tab][aria-selected=true] { background: color-mix(in srgb, var(--accent) 16%, var(--surface)) !important; border-color: var(--accent) !important; }
+.remediation-wizard fieldset, .configuration-card { padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); margin: var(--space-3) 0; background: var(--surface); }
+.remediation-wizard legend { color: var(--text); font-weight: 600; padding: 0 var(--space-2); }
+.finding-pages { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin: var(--space-4) 0; color: var(--text-muted); font-size: var(--text-sm); }
+.finding-pages label { display: flex; align-items: center; gap: var(--space-2); }
 .finding-pages select { width: auto; }
-.configuration-card summary { cursor: pointer; color: #65e4bd; }
-.service-remediation-workspace button { min-height: 38px; padding: 8px 16px; border: 1px solid #3dd6ad; border-radius: 6px; background: #143b32; color: #edfff8; font: inherit; cursor: pointer; }
-.service-remediation-workspace button:disabled { opacity: .45; cursor: default; }
-.remediation-workspace-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; }
-.remediation-workspace-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.remediation-workspace-actions dialog { text-align: left; }
-.remediation-record-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin: 16px 0; }
-.service-remediation-workspace > .request-tabs { margin-top: 20px; }
-.execution-summary .remediation-steps { gap: 12px; }
-.execution-summary .remediation-steps li { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; min-height: 140px; padding: 16px; gap: 12px; background: #0b1c18; border-radius: 8px; }
-.execution-summary .remediation-steps strong { font-size: 14px; text-transform: capitalize; }
-.execution-summary .stage-status { display: inline-flex; align-items: center; justify-content: center; min-width: 80px; height: 28px; box-sizing: border-box; padding: 0 12px; border: 1px solid #56776d; border-radius: 999px; background: #192e28; color: #d5e5df; font-size: 12px; font-weight: 600; text-transform: capitalize; }
-.execution-summary [data-status=success] .stage-status { background: #123b2c; border-color: #3dd6ad; color: #76edc4; }
-.execution-summary [data-status=partial] .stage-status { background: #392f16; border-color: #b69a42; color: #f2d779; }
-.execution-summary [data-status=failed] .stage-status { background: #3a2020; border-color: #cd7070; color: #ffaaaa; }
-.execution-summary [data-status=running] .stage-status { background: #173641; border-color: #60b9cf; color: #a0e2f1; }
-.execution-summary .remediation-steps small { color: #abc5bc; line-height: 1.5; }
-.remediation-report > .detail-grid { margin-top: 20px; }
-.remediation-report > .panel { margin-top: 20px; }
-.remediation-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 20px; }
-.comparison-card { border: 1px solid #2c5147; border-radius: 12px; padding: 24px; min-width: 0; background: #0b1c18; }
-.comparison-card h3 { font-size: 20px; margin: 12px 0; }
-.comparison-card > p:not(.eyebrow) { color: #abc5bc; }
-.comparison-severity { margin-top: 20px; --severity-color: #ef7787; }
-.comparison-severity[data-severity=High] { --severity-color: #e8a56b; }
-.comparison-severity[data-severity=Medium] { --severity-color: #e8c86a; }
-.comparison-severity[data-severity=Low] { --severity-color: #74b9cf; }
-.comparison-bar-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 82px; align-items: center; gap: 12px; margin-top: 8px; font-size: 12px; }
-.comparison-bar-row b { text-align: right; }
-.comparison-track { height: 10px; background: #152923; border-radius: 3px; overflow: hidden; }
-.comparison-track > div { height: 100%; background: var(--severity-color); }
-.comparison-bar-row.before .comparison-track > div { opacity: .45; }
-.comparison-metric { border-top: 1px solid #263d35; padding: 16px 0; }
-.comparison-metric > div { display: flex; flex-wrap: wrap; gap: 24px; margin: 8px 0; }
-.comparison-metric b { margin-left: 8px; font-size: 20px; }
-.comparison-metric small { color: #abc5bc; }
-@media (max-width: 760px) { .remediation-comparison { grid-template-columns: 1fr; padding: 12px; } .comparison-card { padding: 16px; } }
+.finding-pages button { min-height: 30px !important; padding: 0 var(--space-3) !important; background: var(--surface) !important; border-color: var(--border-strong) !important; color: var(--text) !important; font-weight: 500 !important; }
+.configuration-card summary { cursor: pointer; color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+.configuration-card[open] summary { margin-bottom: var(--space-2); }
+.configuration-card p { margin: 4px 0; color: var(--text-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
 
-.comparison-metric { --severity-color: #74b9cf; }
-.comparison-metric > .comparison-bar-row { display: grid; gap: 12px; }
-.comparison-metric .comparison-bar-row b { margin-left: 0; font-size: 12px; }
+/* Wizard step indicator (Plan → Review → Delivery → Confirm) */
+.remediation-wizard > .remediation-steps { display: flex; gap: var(--space-2); padding: 0; margin: 0 0 var(--space-4); list-style: none; counter-reset: none; }
+.remediation-wizard > .remediation-steps li { flex: 1 1 0; padding: var(--space-2) var(--space-3); border-bottom: 2px solid var(--border); color: var(--text-muted); font-size: var(--text-sm); font-weight: 500; }
+.remediation-wizard > .remediation-steps [aria-current=step] { border-bottom-color: var(--accent); color: var(--text); font-weight: 600; }
+
+/* Service remediation workspace */
+.remediation-workspace-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-4); }
+.remediation-workspace-head h2, .service-remediation-workspace .panel.padded > h2 { margin: 0 0 4px; font-size: var(--text-lg); font-weight: 600; }
+.remediation-workspace-head p, .service-remediation-workspace .panel.padded > p { margin: 0; color: var(--text-muted); font-size: var(--text-sm); }
+.service-remediation-workspace .panel.padded > p + p { margin-top: var(--space-2); }
+.remediation-workspace-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.remediation-workspace-actions dialog { text-align: left; }
+.remediation-record-actions { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-4) 0; }
+.service-remediation-workspace > .request-tabs { margin-top: var(--space-5) !important; }
+.service-remediation-workspace > .panel + .panel { margin-top: var(--space-4); }
+
+/* Execution stages: a vertical stage progress driven by the stage's own data-status */
+.execution-summary .remediation-steps { display: grid; gap: 0; padding: 0; margin: var(--space-4) 0 0; list-style: none; }
+.execution-summary .remediation-steps li {
+  position: relative; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; grid-template-areas: "marker name status" "marker detail detail";
+  align-items: center; gap: 2px var(--space-3); min-height: 0; padding: 0 0 var(--space-4); background: none; border: 0; border-radius: 0;
+}
+.execution-summary .remediation-steps li::before {
+  content: ""; grid-area: marker; align-self: start; width: 26px; height: 26px; border-radius: 50%; box-sizing: border-box;
+  border: 2px solid var(--border-strong); background: var(--surface); z-index: 1;
+}
+.execution-summary .remediation-steps li:not(:last-child)::after { content: ""; position: absolute; left: 12px; top: 26px; bottom: 0; width: 2px; background: var(--border); }
+.execution-summary .remediation-steps strong { grid-area: name; font-size: var(--text-sm); font-weight: 600; text-transform: capitalize; }
+.execution-summary .remediation-steps small { grid-area: detail; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
+.execution-summary .stage-status {
+  grid-area: status; display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-2); border: 1px solid; border-radius: var(--radius-pill);
+  font-size: var(--text-xs); font-weight: 600; text-transform: capitalize; white-space: nowrap;
+  color: var(--neutral); border-color: color-mix(in srgb, var(--neutral) 35%, transparent); background: color-mix(in srgb, var(--neutral) 12%, transparent);
+}
+.execution-summary [data-status=success]::before, .execution-summary [data-status=complete]::before, .execution-summary [data-status=completed]::before { border-color: var(--success); background: var(--success); }
+.execution-summary [data-status=success]::after, .execution-summary [data-status=complete]::after, .execution-summary [data-status=completed]::after { background: var(--success) !important; }
+.execution-summary [data-status=success] .stage-status, .execution-summary [data-status=complete] .stage-status, .execution-summary [data-status=completed] .stage-status { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.execution-summary [data-status=partial]::before { border-color: var(--warning); background: linear-gradient(90deg, var(--warning) 50%, var(--surface) 50%); }
+.execution-summary [data-status=partial] .stage-status { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.execution-summary [data-status=failed]::before { border-color: var(--danger); background: var(--danger); border-radius: 4px; }
+.execution-summary [data-status=failed] .stage-status { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.execution-summary [data-status=running]::before { border-color: var(--info); border-style: dashed; animation: cats-spin 2s linear infinite; }
+.execution-summary [data-status=running] .stage-status { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
+@media (prefers-reduced-motion: reduce) { .execution-summary [data-status=running]::before { animation: none; } }
+
+/* Before / After report */
+.remediation-report > .detail-grid { margin-top: var(--space-5); }
+.remediation-report > .panel { margin-top: var(--space-4); }
+.remediation-report dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3) var(--space-5); margin: var(--space-3) 0; }
+.remediation-report dl > div { min-width: 0; }
+.remediation-report dt { color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; text-transform: uppercase; letter-spacing: .05em; }
+.remediation-report dd { margin: 2px 0 0; font-weight: 600; overflow-wrap: anywhere; }
+.remediation-report ol:not(.remediation-steps) { padding-left: var(--space-5); }
+.remediation-report ol:not(.remediation-steps) > li + li { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.remediation-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); padding: var(--space-4) var(--space-5); }
+.comparison-card { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4) var(--space-5); min-width: 0; background: var(--surface-raised); }
+.comparison-card h3 { font-size: var(--text-lg); margin: 4px 0 var(--space-3); }
+.comparison-card > p:not(.eyebrow) { color: var(--text-muted); font-size: var(--text-sm); }
+.comparison-severity { margin-top: var(--space-4); --severity-color: var(--danger); }
+.comparison-severity[data-severity=High] { --severity-color: color-mix(in srgb, var(--danger) 55%, var(--warning)); }
+.comparison-severity[data-severity=Medium] { --severity-color: var(--warning); }
+.comparison-severity[data-severity=Low] { --severity-color: var(--info); }
+.comparison-bar-row { display: grid; grid-template-columns: 48px minmax(0, 1fr) 82px; align-items: center; gap: var(--space-3); margin-top: var(--space-2); font-size: var(--text-xs); }
+.comparison-bar-row > span:first-child { color: var(--text-muted); }
+.comparison-bar-row b { text-align: right; font-variant-numeric: tabular-nums; }
+.comparison-track { height: 10px; background: var(--surface-sunken); border-radius: 3px; overflow: hidden; }
+.comparison-track > div { height: 100%; background: var(--severity-color); }
+/* "Before" bars are hatched as well as faded so the difference does not depend on colour. */
+.comparison-bar-row.before .comparison-track > div { opacity: .55; background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgb(0 0 0 / 35%) 3px 5px); }
+.comparison-metric { border-top: 1px solid var(--border); padding: var(--space-4) 0; --severity-color: var(--info); }
+.comparison-metric > div { display: flex; flex-wrap: wrap; gap: var(--space-6); margin: var(--space-2) 0; }
+.comparison-metric b { margin-left: var(--space-2); font-size: var(--text-xl); font-variant-numeric: tabular-nums; }
+.comparison-metric small { color: var(--text-muted); }
+.comparison-metric > .comparison-bar-row { display: grid; gap: var(--space-3); }
+.comparison-metric .comparison-bar-row b { margin-left: 0; font-size: var(--text-xs); }
+@media (max-width: 760px) { .remediation-comparison { grid-template-columns: 1fr; padding: var(--space-3); } .comparison-card { padding: var(--space-4); } }
+.comparison-delta { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.comparison-delta.improved { color: var(--success) !important; }
+.comparison-delta.worse { color: var(--danger) !important; }
+.comparison-metric > div > span { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-sm); }
