@@ -22,7 +22,7 @@ def dependency_version(db, execution):
     return summary.get("raw_version") or "Unknown"
 
 
-def persist_projection(db, execution, matches, findings, risk_metadata, *, fingerprint=None):
+def persist_projection(db, execution, matches, findings, risk_metadata, *, fingerprint=None, expected_token=None):
     """Persist independently only when the binding permits a separate transaction.
 
     Evidence must refer to a committed execution (as it does on GET endpoints).
@@ -30,6 +30,8 @@ def persist_projection(db, execution, matches, findings, risk_metadata, *, finge
     transaction without committing it. Their projection remains visible to
     this page, but a request rollback also discards the disposable cache.
     """
+    if expected_token is not None:
+        return ensure_projection(db, execution, matches, findings, risk_metadata, fingerprint=fingerprint, expected_token=expected_token)
     from sqlalchemy.orm import Session
     from sqlalchemy.engine import Connection
     from sqlalchemy.pool import StaticPool, SingletonThreadPool
@@ -44,12 +46,12 @@ def persist_projection(db, execution, matches, findings, risk_metadata, *, finge
         caller_owned |= bool(driver.in_transaction)
     if caller_owned:
         with db.no_autoflush:
-            return ensure_projection(db, execution, matches, findings, risk_metadata, fingerprint=fingerprint)
+            return ensure_projection(db, execution, matches, findings, risk_metadata, fingerprint=fingerprint, expected_token=expected_token)
     with db.no_autoflush, Session(bind=binding) as cache_db, cache_db.begin():
-        return ensure_projection(cache_db, execution, matches, findings, risk_metadata, fingerprint=fingerprint)
+        return ensure_projection(cache_db, execution, matches, findings, risk_metadata, fingerprint=fingerprint, expected_token=expected_token)
 
 
-def ensure_projection(db, execution, matches, findings, risk_metadata, *, fingerprint=None):
+def ensure_projection(db, execution, matches, findings, risk_metadata, *, fingerprint=None, expected_token=None):
     answers = {finding.cve: risk_metadata(finding.cve) for finding in findings}
     evidence = []
     for finding in findings if fingerprint is None else []:
@@ -66,15 +68,19 @@ def ensure_projection(db, execution, matches, findings, risk_metadata, *, finger
                            for m in matches], key=repr)})
     existing = db.scalar(select(DependencyProjection).where(
         DependencyProjection.execution_id == execution.id).execution_options(populate_existing=True))
-    if existing is not None and existing.fingerprint == fingerprint:
+    if existing is not None and existing.fingerprint == fingerprint and existing.status == "ready":
         return False
     # Serialize cold rebuilds without locking warm read requests.
     from .models import Execution
     db.execute(select(Execution.id).where(Execution.id == execution.id).with_for_update())
     existing = db.scalar(select(DependencyProjection).where(
         DependencyProjection.execution_id == execution.id).execution_options(populate_existing=True))
-    if existing is not None and existing.fingerprint == fingerprint:
+    if existing is not None and existing.fingerprint == fingerprint and existing.status == "ready":
         return False
+    if expected_token is not None:
+        existing = db.scalar(select(DependencyProjection).where(DependencyProjection.execution_id == execution.id).with_for_update().execution_options(populate_existing=True))
+        if existing is None or existing.build_token != expected_token or existing.status != "building":
+            return False
     rows = dependency_rows(execution, matches, findings, lambda cve: answers[cve])
     db.execute(delete(DependencyProjectionRow).where(DependencyProjectionRow.execution_id == execution.id))
     for offset in range(0, len(rows), 250):
@@ -95,6 +101,10 @@ def ensure_projection(db, execution, matches, findings, risk_metadata, *, finger
         db.add(DependencyProjection(execution_id=execution.id, fingerprint=fingerprint))
     else:
         existing.fingerprint = fingerprint
+        existing.status = "ready"
+        existing.error = None
+        from datetime import datetime, timezone
+        existing.updated_at = datetime.now(timezone.utc)
     db.flush()
     return True
 
@@ -133,13 +143,14 @@ def dependency_page(db, execution_id, *, q="", component_type="", image="", lice
         counts[name] = db.scalar(select(func.count()).select_from(row).where(base, condition))
     types = sorted(db.scalars(select(row.component_type).where(base, row.component_type != "").distinct()).all())
     images = sorted(db.scalars(select(row.image).where(base).distinct()).all())
-    return {**counts, "dependency_rows": data, "dependency_total": total,
+    return {**counts, "dependency_projection_status": "ready", "dependency_projection_error": None,
+        "dependency_rows": data, "dependency_total": total,
             "dependency_page": current, "dependency_pages": pages,
             "dependency_types": types, "dependency_images": [value for value in images if value],
             "dependency_artifacts": len(images)}
 
 
-def persist_current_projection(db, execution, risk_metadata):
+def persist_current_projection(db, execution, risk_metadata, *, expected_token=None):
     """Revision-aware warm reads are constant-size; hydrate evidence only cold.
 
     ORM and SQLAlchemy bulk observation writers invalidate the disposable header.
@@ -180,17 +191,20 @@ def persist_current_projection(db, execution, risk_metadata):
     fingerprint = digest.hexdigest()
     existing_fingerprint = db.scalar(select(DependencyProjection.fingerprint).where(
         DependencyProjection.execution_id == execution.id))
-    if existing_fingerprint == fingerprint:
+    existing_status = db.scalar(select(DependencyProjection.status).where(DependencyProjection.execution_id == execution.id))
+    if existing_fingerprint == fingerprint and existing_status == "ready":
         return False
     observations = {}
-    for observation in db.scalars(select(FindingObservation).where(
-            FindingObservation.execution_id == execution.id).order_by(FindingObservation.id)):
+    columns = [getattr(FindingObservation, name) for name in ("finding_id", "execution_id", "package", "installed_version", "image", "fixed_version", "evidence")]
+    for values in db.execute(select(*columns).where(
+            FindingObservation.execution_id == execution.id).order_by(FindingObservation.id)).mappings():
+        observation = SimpleNamespace(**values)
         observations.setdefault(observation.finding_id, []).append(observation)
     findings = [SimpleNamespace(cve=row.cve, severity=row.severity,
         observations=observations.get(row.id, [])) for row in db.execute(relevant)]
     matches = [SimpleNamespace(**dict(row)) for row in db.execute(watch_query).mappings()]
     return persist_projection(db, execution, matches, findings,
-        risk_metadata, fingerprint=fingerprint)
+        risk_metadata, fingerprint=fingerprint, expected_token=expected_token)
 
 
 
@@ -242,3 +256,132 @@ for _operation in ("before_update", "before_delete"):
     event.listen(Finding, _operation, _invalidate_finding_projection)
 for _operation in ("after_insert", "after_update", "after_delete"):
     event.listen(DependencyWatchlistMatch, _operation, _invalidate_watchlist_projection)
+
+
+# A bounded executor isolates expensive disposable projections from GET latency.
+# Database tokens coordinate claims across processes; executor slots bound local work.
+from concurrent.futures import ThreadPoolExecutor
+from threading import BoundedSemaphore
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
+
+_projection_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cats-projection")
+_projection_slots = BoundedSemaphore(4)
+
+
+def _requested_fingerprint(execution, risk_metadata):
+    token = getattr(risk_metadata, "cache_token", None)
+    return payload_digest([PROJECTION_VERSION, execution.payload_digest, token() if token else None])
+
+
+def request_current_projection(db, execution, risk_metadata, *, retry=False):
+    """Return scalar lifecycle state without reading raw scan/evidence populations.
+
+    Call schedule_projection only after response serialization (BackgroundTask).
+    Source writers transactionally delete headers; a deleted build cannot activate.
+    Legacy sources without a digest are established by the worker, never the GET.
+    """
+    from sqlalchemy.orm import Session
+    from sqlalchemy.exc import IntegrityError
+    wanted = _requested_fingerprint(execution, risk_metadata)
+    now = datetime.now(timezone.utc)
+    def state(row):
+        return {"status": row.status, "build_token": row.build_token,
+                "error": "Dependency projection failed; retry the request." if row.error else None}
+    with Session(bind=db.get_bind()) as cache:
+        row = cache.get(DependencyProjection, execution.id)
+        if row is not None:
+            stamp = row.updated_at
+            if stamp is not None and stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            # Recover abandoned claims after process exit/crash with a conservative lease.
+            expired = row.status == "building" and (stamp is None or now - stamp > timedelta(minutes=30))
+            if row.status == "ready" and row.build_token == wanted:
+                return state(row)
+            if row.status in {"pending", "building"} and not expired:
+                return state(row)
+            if row.status == "failed" and not retry:
+                return state(row)
+            row.status = "pending"
+            row.fingerprint = wanted
+            row.build_token = uuid4().hex
+            row.error = None
+            row.updated_at = now
+        else:
+            row = DependencyProjection(execution_id=execution.id, fingerprint=wanted,
+                status="pending", build_token=uuid4().hex, updated_at=now)
+            cache.add(row)
+        result = state(row)
+        try:
+            cache.commit()
+        except IntegrityError:
+            cache.rollback()
+            return state(cache.get(DependencyProjection, execution.id))
+        return result
+
+
+def build_projection(binding, execution_id, token, risk_metadata):
+    """Claim, build transactionally, and activate only the retained source token."""
+    from sqlalchemy.orm import Session
+    from sqlalchemy import update
+    from .models import Execution
+    try:
+        with Session(bind=binding) as cache, cache.begin():
+            claimed = cache.execute(update(DependencyProjection).where(
+                DependencyProjection.execution_id == execution_id,
+                DependencyProjection.build_token == token,
+                DependencyProjection.status == "pending").values(status="building", updated_at=datetime.now(timezone.utc)))
+            if claimed.rowcount != 1:
+                return False
+        with Session(bind=binding) as cache, cache.begin():
+            execution = cache.get(Execution, execution_id)
+            if execution is None:
+                return False
+            changed = persist_current_projection(cache, execution, risk_metadata, expected_token=token)
+            row = cache.get(DependencyProjection, execution_id)
+            if changed and row is not None and row.status == "ready" and row.build_token == token:
+                # Keep both the exact evidence fingerprint and cheap request revision.
+                row.build_token = _requested_fingerprint(execution, risk_metadata)
+            return changed
+    except Exception as exc:
+        with Session(bind=binding) as cache, cache.begin():
+            cache.execute(update(DependencyProjection).where(
+                DependencyProjection.execution_id == execution_id,
+                DependencyProjection.build_token == token).values(
+                    status="failed", error=type(exc).__name__, updated_at=datetime.now(timezone.utc)))
+        return False
+
+
+def schedule_projection(binding, execution_id, token, risk_metadata):
+    """Submit after the response; excess work stays PENDING for a subsequent GET."""
+    if not _projection_slots.acquire(blocking=False):
+        return None
+    try:
+        future = _projection_executor.submit(build_projection, binding, execution_id, token, risk_metadata)
+    except Exception:
+        _projection_slots.release()
+        raise
+    future.add_done_callback(lambda _: _projection_slots.release())
+    return future
+
+
+def pending_dependency_page(status):
+    """Unavailable derived evidence is distinct from an assessed zero count."""
+    return {"dependency_rows": [], "dependency_total": None,
+        "dependency_all_total": None, "dependency_page": 1, "dependency_pages": 1,
+        "dependency_types": [], "dependency_images": [], "dependency_artifacts": None,
+        "vulnerable_components": None, "critical_components": None, "kev_components": None,
+        "fixed_components": None, "license_unknown_components": None, "watchlisted_components": None,
+        "dependency_projection_status": status["status"], "dependency_projection_error": status["error"]}
+
+
+
+def upgrade_dependency_schema(connection):
+    """Add lifecycle fields to legacy disposable projections without source changes."""
+    from sqlalchemy import inspect, text
+    columns = {item["name"] for item in inspect(connection).get_columns("dependency_projections")}
+    additions = {"status": "VARCHAR(16) NOT NULL DEFAULT 'ready'", "build_token": "VARCHAR(64)",
+                 "error": "TEXT", "updated_at": "TIMESTAMP"}
+    for name, sql in additions.items():
+        if name not in columns:
+            connection.execute(text(f"ALTER TABLE dependency_projections ADD COLUMN {name} {sql}"))

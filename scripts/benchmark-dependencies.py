@@ -25,7 +25,8 @@ def run():
         os.environ["DATABASE_URL"] = "sqlite:///" + str(Path(directory) / "unused.db")
         from app import main
         from app.database import Base, engine as default_engine
-        from app.models import Execution
+        from app.models import Execution, DependencyProjection
+        from app.dependency_queries import build_projection
         from app.execution_summaries import refresh_execution_summary
         database = Path(directory) / "fixture.sqlite"
         engine = create_engine("sqlite://", creator=lambda: sqlite3.connect(database, factory=benchmark.Connection), poolclass=QueuePool)
@@ -42,7 +43,7 @@ def run():
         auth = SimpleNamespace(user=SimpleNamespace(id=1, username="benchmark", display_name="Benchmark", role_assignments=[]),
             csrf_token="benchmark", has=lambda *args, **kwargs: True, accessible_service_ids=lambda permission: None)
         results = []
-        for phase in ("cold", "warm", "warm-second-page"):
+        for phase in ("cold", "background-build", "warm", "warm-second-page"):
             metrics = {"phase": phase, "fixture_findings": 100000, "fixture_components": 100000,
                 "query_count": 0, "dbapi_rows_fetched": 0, "orm_objects_loaded": 0, "evidence_queries": 0, "evidence_sql": []}
             def before(conn, cursor, statement, parameters, context, many):
@@ -60,14 +61,22 @@ def run():
             tracemalloc.start()
             started = time.perf_counter()
             with Session(engine) as db:
-                response = main.service_detail("bench-1", request, dependencies=True, severity=[],
-                    page=2 if phase == "warm-second-page" else 1, page_size=50, db=db, auth=auth)
+                if phase == "background-build":
+                    projection = db.get(DependencyProjection, 3)
+                    token = projection.build_token
+                    db.rollback()
+                    metrics["build_succeeded"] = build_projection(engine, 3, token, main.risk_metadata)
+                    response = SimpleNamespace(body=b"{}", status_code=200)
+                else:
+                    response = main.service_detail("bench-1", request, dependencies=True, severity=[],
+                        page=2 if phase == "warm-second-page" else 1, page_size=50, db=db, auth=auth)
                 metrics["duration_ms"] = (time.perf_counter() - started) * 1000
                 metrics["response_bytes"] = len(response.body)
                 metrics["status_code"] = response.status_code
                 data = json.loads(response.body).get("data", {})
                 metrics["dependency_page_rows"] = len(data.get("dependency_rows", []))
                 metrics["dependency_total"] = data.get("dependency_total")
+                metrics["projection_status"] = data.get("dependency_projection_status")
             _, metrics["python_peak_traced_bytes"] = tracemalloc.get_traced_memory()
             tracemalloc.stop()
             benchmark.ACTIVE = None
@@ -76,7 +85,7 @@ def run():
             results.append(metrics)
             print(json.dumps(metrics), flush=True)
         output = ROOT / "docs/backend-dependencies-second-pass.json"
-        output.write_text(json.dumps({"method": "Actual dependencies route body including DTO/JSON serialization, SQLite, 100k shared fixture findings and 100k components; tracemalloc enabled; no middleware/network/authentication. Cold rebuild measured separately from fresh-session warm requests.", "source_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in [ROOT / "portal/app/main.py", ROOT / "portal/app/service_tab_queries.py", ROOT / "portal/app/dependency_queries.py", ROOT / "portal/app/execution_summaries.py", ROOT / "portal/app/recursive_json.py", ROOT / "portal/app/policy_data.py"]}, "results": results}, indent=2) + "\n")
+        output.write_text(json.dumps({"method": "Actual dependencies route body including DTO/JSON serialization, SQLite, 100k shared fixture findings and 100k components; tracemalloc enabled; no middleware/network/authentication. Cold request and background rebuild measured separately from fresh-session warm requests.", "source_sha256": {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in [ROOT / "portal/app/main.py", ROOT / "portal/app/service_tab_queries.py", ROOT / "portal/app/dependency_queries.py", ROOT / "portal/app/execution_summaries.py", ROOT / "portal/app/recursive_json.py", ROOT / "portal/app/policy_data.py"]}, "results": results}, indent=2) + "\n")
         engine.dispose()
         default_engine.dispose()
 

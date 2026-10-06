@@ -123,6 +123,7 @@ with migration_transaction(engine) as connection:
     upgrade_connection(connection)
     upgrade_validators(connection)
     upgrade_projection(connection)
+    dependency_queries.upgrade_dependency_schema(connection)
     if "payload_digest" not in {column["name"] for column in inspect(connection).get_columns("executions")}:
         connection.execute(text("ALTER TABLE executions ADD COLUMN payload_digest VARCHAR(64)"))
     if "current_version_id" not in {column["name"] for column in inspect(connection).get_columns("services")}:
@@ -340,6 +341,7 @@ async def app_lifespan(_app: FastAPI):
 
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
 app.include_router(validator_management.router)
+app.add_middleware(PerformanceMiddleware)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
 app.include_router(service_oci.router)
@@ -6853,7 +6855,7 @@ def service_detail(
             archive_pending=archive_pending, now=now,
         ))
     if dependencies:
-        from .dependency_queries import persist_current_projection, dependency_page, dependency_version
+        from .dependency_queries import request_current_projection, pending_dependency_page, schedule_projection, dependency_page, dependency_version
         from .exchange_routes import history_version_choices
         if dependencies_only:
             from .service_tab_queries import prepare_dependency_evidence
@@ -6864,11 +6866,13 @@ def service_detail(
                       if dependency_execution is not None else latest_scan)
         if dependency_execution is not None and latest is None:
             raise HTTPException(404, detail="Dependency evidence not found for this service")
-        if latest:
-            persist_current_projection(db, latest, risk_metadata)
-        dependency_result = dependency_page(db, latest.id if latest else -1,
-            q=q, component_type=dependency_type, image=dependency_image, license=dependency_license,
-            filter=dependency_filter, epss=dependency_epss, page=page, page_size=page_size)
+        projection_state = request_current_projection(db, latest, risk_metadata,
+            retry=request.query_params.get("dependency_retry") == "true") if latest else None
+        dependency_result = (pending_dependency_page(projection_state)
+            if projection_state and projection_state["status"] != "ready" else
+            dependency_page(db, latest.id if latest else -1,
+                q=q, component_type=dependency_type, image=dependency_image, license=dependency_license,
+                filter=dependency_filter, epss=dependency_epss, page=page, page_size=page_size))
         size = max(10, min(page_size, 100))
         query_args = {"dependencies": "true", "q": q, "dependency_type": dependency_type,
                       "dependency_image": dependency_image, "dependency_license": dependency_license,
@@ -6879,7 +6883,7 @@ def service_detail(
         if dependency_epss is not None:
             query_args["dependency_epss"] = dependency_epss
         page_url = f"/services/{service.service_key}?{urllib.parse.urlencode(query_args)}&page="
-        return templates.TemplateResponse(request, "service_dependencies.html", page_context(auth,
+        response = templates.TemplateResponse(request, "service_dependencies.html", page_context(auth,
             view={**view, "version": dependency_version(db, latest)} if latest else view,
             service=service, **dependency_result, dependency_page_url=page_url,
             dependency_query={"q": q, "type": dependency_type, "image": dependency_image,
@@ -6890,6 +6894,11 @@ def service_detail(
             history_versions=history_version_choices(db, service),
             archive_pending=archive_pending, now=now,
         ))
+        if projection_state and projection_state["status"] == "pending":
+            from starlette.background import BackgroundTask
+            response.background = BackgroundTask(schedule_projection, db.get_bind(), latest.id,
+                projection_state["build_token"], risk_metadata)
+        return response
     if architecture:
         if architecture_only:
             from .overview_queries import overview_architecture_execution
@@ -7709,6 +7718,8 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
                      "error": image.scan_error})
     db.commit()
     return {"images": rows}
+
+
 
 
 def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:

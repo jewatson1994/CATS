@@ -101,6 +101,11 @@ def measure(engine,main,name,size, *, route_kwargs=None, capture_plan=False):
             if name.startswith('/api/v1/services/'):
                 from starlette.responses import JSONResponse
                 response=JSONResponse(main.simplified_members('bench-1',**(dict(severity=[],page=1,page_size=50) | route_kwargs),db=db,auth=auth))
+            elif name.endswith('/history'):
+                from app.exchange_routes import history_page
+                response=history_page('bench-1', request, page=1, imported_page=1, page_size=10, db=db, auth=auth)
+            elif name.endswith('/exports/findings.xlsx'):
+                response=main.export_service_findings('bench-1', db=db, auth=auth)
             elif name.startswith('/services/'):
                 kwargs=dict(findings=True,findings_view='raw' if 'raw' in name else 'simplified',severity=[],page=1,page_size=50)
                 kwargs.update(route_kwargs)

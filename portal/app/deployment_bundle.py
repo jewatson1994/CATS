@@ -46,7 +46,7 @@ def _json(data):
             result[key] = value
         return result
     try:
-        return json.loads(data, object_pairs_hook=unique)
+        return json.loads(data, object_pairs_hook=unique, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("Invalid JSON number")))
     except (TypeError, json.JSONDecodeError) as exc:
         raise ValueError('Invalid bundle JSON') from exc
 
@@ -93,6 +93,8 @@ def dependency_inventory(chart, *, strict=True, prefix=''):
             raise ValueError('Invalid Helm dependencies')
         lock = _yaml(root / 'Chart.lock') if (root / 'Chart.lock').is_file() else None
         locked = lock.get('dependencies', []) if lock else []
+        if not isinstance(locked, list) or any(not isinstance(item, dict) for item in locked):
+            raise ValueError('Invalid Helm lock dependencies')
         if lock and (not isinstance(locked, list) or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(lock.get('digest', '')))):
             raise ValueError('Invalid Helm lock provenance')
         candidates = []
@@ -309,7 +311,7 @@ def _manifest(value):
         raise ValueError('Invalid bundle inventory')
     for name, metadata in files.items():
         safe_path(name)
-        if name == 'manifest.json' or not isinstance(metadata, dict) or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(metadata.get('sha256', ''))) or not isinstance(metadata.get('bytes'), int) or metadata['bytes'] < 0:
+        if name == 'manifest.json' or not isinstance(metadata, dict) or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(metadata.get('sha256', ''))) or type(metadata.get('bytes')) is not int or metadata['bytes'] < 0:
             raise ValueError('Invalid file integrity inventory')
     if deployment['chartPath'] + '/Chart.yaml' not in files or any(p not in files for p in values) or 'rendered.yaml' not in files:
         raise ValueError('Declared deployment files are missing')
@@ -361,10 +363,12 @@ def validate_bundle(path, *, expected_type=None, expected_digest=None, destinati
         dependencies = dependency_inventory(root / manifest['deployment']['chartPath'], strict=offline, prefix=manifest['deployment']['chartPath'])
         if dependencies != manifest['helmDependencies']:
             raise ValueError('Helm dependency provenance mismatch')
+        if (root / 'rendered.yaml').stat().st_size > MAX_METADATA:
+            raise ValueError('Rendered inventory exceeds metadata limit')
         required = workload_images((root / 'rendered.yaml').read_text(encoding='utf-8'))
         references = []
         for image in manifest['images']:
-            if not isinstance(image, dict) or image.get('reference') in references:
+            if not isinstance(image, dict) or not isinstance(image.get('reference'), str) or not image['reference'] or image.get('reference') in references:
                 raise ValueError('Invalid image inventory')
             references.append(image.get('reference'))
             archive_name = safe_path(image.get('file'))

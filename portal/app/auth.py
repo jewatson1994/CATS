@@ -185,8 +185,9 @@ def oidc_identity_key(issuer: str, subject: str) -> str:
 def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = None) -> User:
     config = oidc_configuration(configuration)
     subject = str(claims.get("sub") or "").strip()
-    issuer = str(claims.get("iss") or config["issuer"]).rstrip("/")
-    if config["issuer"] and issuer != config["issuer"]:
+    expected_issuer = config["browser_issuer"] or config["issuer"]
+    issuer = str(claims.get("iss") or expected_issuer).rstrip("/")
+    if expected_issuer and issuer != expected_issuer:
         raise ValueError("OIDC issuer does not match the configured provider")
     username = str(claims.get(config["username_claim"]) or claims.get(config["email_claim"]) or subject).strip().lower()
     if not subject or not username:

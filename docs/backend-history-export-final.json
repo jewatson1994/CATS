@@ -1,0 +1,82 @@
+{
+  "method": "SQLite shared 100k findings fixture, history additionally 1000 retained scans. Actual history route plus DTO serialization; focused export database extraction with row consumption, workbook generation excluded. cProfile/tracemalloc instrumentation enabled.",
+  "results": [
+    {
+      "endpoint": "/services/bench-1/history",
+      "fixture_findings": 100000,
+      "query_count": 15,
+      "database_execute_ms": 108.66969999915455,
+      "dbapi_rows_fetched": 1014,
+      "orm_objects_loaded": 11,
+      "duration_ms": 175.6656999932602,
+      "response_bytes": 6464,
+      "status_code": 200,
+      "returned_collection_counts": {
+        "actionable_notifications": 0,
+        "versions": 4,
+        "snapshots": 10,
+        "imported_snapshots": 0
+      },
+      "pagination": null,
+      "page_metadata": {
+        "page": 1,
+        "page_size": 10,
+        "total_items": 1000,
+        "total_pages": 100
+      },
+      "route_timings": null,
+      "python_peak_traced_bytes": 835695,
+      "orm_by_class": {
+        "Service": 1,
+        "Execution": 10
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0036000000000000003,
+          "inclusive_ms": 0.3042
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene-performance\\portal\\app\\frontend.py:page_data",
+          "calls": 1,
+          "self_ms": 0.11930000000000002,
+          "inclusive_ms": 25.1222
+        },
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene-performance\\portal\\app\\frontend.py:TemplateResponse",
+          "calls": 1,
+          "self_ms": 0.1094,
+          "inclusive_ms": 25.682
+        }
+      ]
+    },
+    {
+      "endpoint": "/services/bench-1/exports/findings.xlsx",
+      "fixture_findings": 100000,
+      "query_count": 4,
+      "database_execute_ms": 34.675599992624484,
+      "dbapi_rows_fetched": 50027,
+      "orm_objects_loaded": 1,
+      "duration_ms": 1311.9563000072958,
+      "response_bytes": 24,
+      "status_code": 200,
+      "returned_collection_counts": {},
+      "pagination": null,
+      "page_metadata": {},
+      "route_timings": null,
+      "python_peak_traced_bytes": 1033983,
+      "orm_by_class": {
+        "Service": 1
+      },
+      "profile_selected_functions": [
+        {
+          "function": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Lib\\site-packages\\starlette\\responses.py:render",
+          "calls": 1,
+          "self_ms": 0.0064,
+          "inclusive_ms": 0.036000000000000004
+        }
+      ]
+    }
+  ]
+}

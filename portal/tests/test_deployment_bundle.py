@@ -135,3 +135,44 @@ def test_raw_helm_transport_and_existing_output_preserved(tmp_path):
     with pytest.raises(ValueError, match='already exists'):
         build_helm_archive(output, sources)
     assert file_digest(output) == digest
+
+@pytest.mark.parametrize("limit", ["MAX_FILES", "MAX_BYTES", "MAX_METADATA"])
+def test_archive_resource_limits_are_enforced(tmp_path, monkeypatch, limit):
+    import app.deployment_bundle as bundles
+    build(tmp_path)
+    monkeypatch.setattr(bundles, limit, 1)
+    with pytest.raises(ValueError):
+        validate_bundle(tmp_path / "bundle.zip")
+
+
+@pytest.mark.parametrize("mode", [0o120777, 0o010600])
+def test_zip_links_and_special_members_are_rejected(tmp_path, mode):
+    archive = tmp_path / "unsafe.zip"
+    with ZipFile(archive, "w") as output:
+        info = ZipInfo("member")
+        info.external_attr = mode << 16
+        output.writestr(info, "target")
+    with pytest.raises(ValueError, match="Unsafe bundle member"):
+        validate_bundle(archive)
+
+
+@pytest.mark.parametrize("linktype", [tarfile.SYMTYPE, tarfile.LNKTYPE])
+def test_tar_links_are_rejected(tmp_path, linktype):
+    import app.deployment_bundle as bundles
+    archive = tmp_path / "unsafe.tar"
+    with tarfile.open(archive, "w") as output:
+        member = tarfile.TarInfo("member")
+        member.type = linktype
+        member.linkname = "../../escape"
+        output.addfile(member)
+    with pytest.raises(ValueError, match="Unsafe tar member"):
+        bundles._untar(archive, tmp_path / "expanded")
+
+
+def test_duplicate_casefold_members_are_rejected(tmp_path):
+    archive = tmp_path / "unsafe.zip"
+    with ZipFile(archive, "w") as output:
+        output.writestr("file", "a")
+        output.writestr("FILE", "b")
+    with pytest.raises(ValueError, match="Unsafe bundle member"):
+        validate_bundle(archive)

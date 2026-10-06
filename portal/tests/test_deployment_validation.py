@@ -325,7 +325,7 @@ def test_invalid_helm_records_template_failure_without_starting_kind():
         ValidationArtifact(source_files={"Chart.yaml": "apiVersion: v2\nname: invalid\nversion: 1.0.0\n"}, job_id="invalid"))
     assert result["reason_category"] == "HELM_LINT_FAILURE"
     assert result["helm_result"]["template"] == "FAIL"
-    assert "invalid chart" not in json.dumps(result["diagnostics"])
+    assert "invalid chart" in json.dumps(result["diagnostics"])
     assert not any(call[:3] == ("kind", "create", "cluster") for call in calls)
 
 

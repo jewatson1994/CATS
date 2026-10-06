@@ -8,7 +8,7 @@ from app.deployment_validation import ValidationConfig
 
 def request(kind="helm-chart"):
     digest = "sha256:" + "a" * 64
-    return {"schema_version": REQUEST_SCHEMA_VERSION, "validation_type": kind, "request_id": "0123456789abcdef0123456789abcdef",
+    return {"schema_version": REQUEST_SCHEMA_VERSION, "request_id": "1" * 32, "validation_type": kind,
         "service": {"id": "test-service", "version": "1.2.3"},
         "artifact": {"reference": "oci://registry.test/chart@" + digest if kind == "oci" else "candidate.zip", "digest": digest},
         "deployment": {"type": "helm"}}
@@ -73,3 +73,54 @@ def test_oci_trust_and_destination_fail_closed(tmp_path):
     assert "configured registry CA" in result["reason"]
     validator = SchrodingerValidator(allowed_registries=[])
     assert "trusted destination" in validator.validate(request("oci"))["reason"]
+
+@pytest.mark.parametrize("field,value", [("request_id", None), ("request_id", "bad"), ("schema_version", "cats.validation/v1")])
+def test_request_requires_versioned_unique_identity(field, value):
+    declaration = request()
+    declaration[field] = value
+    with pytest.raises(ValueError):
+        validate_request(declaration)
+
+
+def test_mutable_oci_reference_is_rejected():
+    declaration = request("oci")
+    declaration["artifact"]["reference"] = "oci://registry.test/chart:latest"
+    with pytest.raises(ValueError):
+        validate_request(declaration)
+
+
+@pytest.mark.parametrize("kind", ["helm-chart", "standard-bundle", "offline-bundle"])
+def test_adapters_preserve_values_namespace_and_dispatch_common_runtime(tmp_path, monkeypatch, kind):
+    from pathlib import Path
+    from app.deployment_bundle import build_bundle, file_digest
+    import app.schrodinger_validation as core
+    archive = tmp_path / "prepared.zip"
+    build_bundle(archive, bundle_type=kind, service=request()["service"],
+        source_files={"chart/Chart.yaml": "apiVersion: v2\nname: app\nversion: 1.0.0\n", "first.yaml": "value: first", "second.yaml": "value: second"},
+        chart_path="chart", values_files=["first.yaml", "second.yaml"], rendered_manifests="", namespace="acceptance")
+    declaration = request(kind)
+    declaration["artifact"]["digest"] = file_digest(archive)
+    declaration["deployment"]["namespace"] = "acceptance"
+    seen = []
+    def runtime(self, artifact, callback):
+        seen.append(artifact)
+        assert artifact.require_helm_lifecycle is True
+        assert artifact.namespace == "acceptance"
+        assert list(artifact.values_files) == ["first.yaml", "second.yaml"]
+        assert (Path(artifact.prepared_directory) / "second.yaml").read_text() == "value: second"
+        return {"status": "VERIFIED", "helm_result": {"install": "PASS", "release_status": "DEPLOYED"}, "cleanup_status": "COMPLETE"}
+    monkeypatch.setattr(core.KindDeploymentValidator, "validate_artifact", runtime)
+    result = core.SchrodingerValidator().validate(declaration, artifact_path=archive)
+    assert len(seen) == 1
+    assert result["request_id"] == declaration["request_id"]
+    assert result["artifact"] == declaration["artifact"]
+    assert not Path(seen[0].prepared_directory).exists()
+    assert result["offlineVerified"] is False
+
+
+@pytest.mark.parametrize("helm", [{"install": "FAIL"}, {"install": "PASS", "release_status": "UNKNOWN"}, {"install": "PASS", "release_status": "DEPLOYED", "execution_mode": "PREFLIGHTED_MANIFEST_APPLY"}])
+def test_verified_requires_actual_successful_helm_release(helm):
+    result = SchrodingerValidator._result(request(), {"status": "VERIFIED", "helm_result": helm}, None)
+    assert result["status"] == "NOT_VERIFIED"
+    assert result["network"]["isolated"] is None
+    assert result["offlineVerified"] is False

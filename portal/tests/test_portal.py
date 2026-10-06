@@ -169,7 +169,9 @@ def add_user(username, role_name, service_id=None):
         db.add(UserRoleAssignment(user_id=user.id, role_id=role.id, service_id=service_id)); db.commit()
 
 
-def test_watchlist_warning_dashboard_and_authorization():
+def test_watchlist_warning_dashboard_and_authorization(monkeypatch):
+    from app import dependency_queries
+    monkeypatch.setattr(dependency_queries, "schedule_projection", lambda *args: None)
     client = new_client()
     saved = client.post("/admin/dependency-watchlist", data={"csrf_token": csrf(client), "action": "save",
         "name": "requests", "ecosystem": "python", "version_constraint": ">=2.30", "enabled": "true"}, follow_redirects=False)
@@ -182,6 +184,16 @@ def test_watchlist_warning_dashboard_and_authorization():
     dependencies = client.get("/services/payments-service?dependencies=true&dependency_filter=watchlisted")
     assert dependencies.status_code == 200, dependencies.text
     assert page_envelope(dependencies)["page"] == "service_dependencies"
+    assert page_data(dependencies)["dependency_rows"] == []
+    assert page_data(dependencies)["dependency_projection_status"] == "pending"
+    assert page_data(dependencies)["dependency_total"] is None
+    from app.models import DependencyProjection
+    from app.policy_data import risk_metadata
+    with SessionLocal() as db:
+        projection = db.scalar(select(DependencyProjection))
+        execution_id, token, binding = projection.execution_id, projection.build_token, db.get_bind()
+    assert dependency_queries.build_projection(binding, execution_id, token, risk_metadata)
+    dependencies = client.get("/services/payments-service?dependencies=true&dependency_filter=watchlisted")
     assert page_data(dependencies)["dependency_rows"][0]["watchlisted"]
     assert "requests" in dependencies.text
     warnings = client.get("/services/payments-service?finding_state=warnings")
@@ -694,6 +706,8 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
     monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
     monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
     monkeypatch.setattr(validator_client, "validate", fake_validate)
+    monkeypatch.setattr(portal_main.validator_management, "select_configuration",
+                        lambda _db, _manual, _kind: {"endpoint": "https://validator.internal"})
     monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
     response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
     assert response.status_code == 303
@@ -1411,6 +1425,7 @@ def test_simplified_findings_offer_per_cve_actions_without_view_raw():
         assert any(item['id'] == finding_id and item['cve'] == cve for item in members)
 
 
+
 def _helm_chart_archive(name: str, extra_name: str = "templates/deployment.yaml", extra_content: str = "apiVersion: apps/v1\nkind: Deployment\n") -> bytes:
     output = BytesIO()
     with tarfile.open(fileobj=output, mode="w:gz") as bundle:
@@ -1968,6 +1983,8 @@ def test_audit_logs_default_to_ten_and_expand_within_retention():
     assert full["page_count"] == 2
     older = page_data(client.get("/admin/audit?page=2&page_size=200"))
     assert not ({row["id"] for row in full["events"]} & {row["id"] for row in older["events"]})
+
+
 
 def test_archive_requires_request_and_separate_approval():
     admin = new_client(); ingest(admin)

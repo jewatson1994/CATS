@@ -139,6 +139,10 @@ class DependencyProjection(Base):
     __tablename__ = "dependency_projections"
     execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
     fingerprint: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="ready", server_default="ready")
+    build_token: Mapped[str | None] = mapped_column(String(64))
+    error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class DependencyProjectionRow(Base):
