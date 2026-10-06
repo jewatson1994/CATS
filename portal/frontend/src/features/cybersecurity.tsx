@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import {ErrorState, Loading, MetricCard, MetricGrid, PageHeader, StatusBadge, type Tone} from '../components/ui';
 import {requestJson, type PageData} from '../api';
 import {useDashboard} from '../hooks/useDashboard';
 import './cybersecurity.css';
@@ -53,42 +54,42 @@ interface SecurityData extends PageData {
 const title = (value: string) => value[0].toUpperCase() + value.slice(1).toLowerCase();
 export function Page({ data: pageData }: { data: PageData }) {
   const {data, error, retry} = useDashboard(pageData);
-  if (!data) return <><section className="heading"><h1>Cybersecurity</h1></section><section className="panel padded" aria-busy={!error}>{error ? <div role="alert"><p>{error}</p><button onClick={retry}>Retry dashboard</button></div> : <p role="status">Loading dashboard data…</p>}</section></>;
+  if (!data) return <><PageHeader title="Cybersecurity"/><section className="panel" aria-busy={!error}>{error ? <ErrorState title="Dashboard data could not be loaded" onRetry={retry} retryLabel="Retry dashboard">{error}</ErrorState> : <Loading label="Loading dashboard data…"/>}</section></>;
   return <Portfolio data={data} asynchronous={Boolean(pageData.dashboard_url)}/>;
 }
 function Portfolio({data: pageData, asynchronous}: {data: PageData; asynchronous: boolean}) {
   const data = pageData as SecurityData;
   const metrics = data.metrics || {};
-  const cards: [string, string | number][] = [
-    ['Cyber Attention', metrics.attention || 0], ['Services / scanned', `${metrics.services || 0} / ${metrics.scanned || 0}`],
-    ['Active vulnerabilities', metrics.vulnerabilities || 0], ['Critical / High', metrics.critical_high || 0],
-    ['Patchable', metrics.patchable || 0], ['Missing Evidence', metrics.missing || 0],
+  const cards: [string, string | number, Tone?][] = [
+    ['Cyber Attention', metrics.attention || 0, metrics.attention ? 'warning' : undefined], ['Services / scanned', `${metrics.services || 0} / ${metrics.scanned || 0}`],
+    ['Active vulnerabilities', metrics.vulnerabilities || 0], ['Critical / High', metrics.critical_high || 0, metrics.critical_high ? 'danger' : undefined],
+    ['Patchable', metrics.patchable || 0], ['Missing Evidence', metrics.missing || 0, metrics.missing ? 'warning' : undefined],
   ];
   const select = (name: string, label: string, options: string[]) => <label>{label}<select name={name} defaultValue={data[name] || 'all'}><option value="all">All</option>{options.map(value => <option key={value} value={value}>{title(value)}</option>)}</select></label>;
   return <>
-    <section className="heading"><div><p className="eyebrow">CURRENT POSTURE</p><h1>Cybersecurity</h1><p>Service evidence requiring review. Green means compliant, yellow means compliant with warnings, and red follows the configured CATS compliance policy.</p></div></section>
-    <section className="metrics cyber-metrics">{cards.map(([label, value]) => <article key={label}><span>{label}</span><strong>{value || 0}</strong></article>)}</section>
+    <PageHeader eyebrow="Current posture" title="Cybersecurity" description="Service evidence requiring review. Green means compliant, yellow means compliant with warnings, and red follows the configured CATS compliance policy."/>
+    <MetricGrid className="cyber-metrics" label="Posture summary">{cards.map(([label, value, tone]) => <MetricCard key={label} label={label} value={value || 0} tone={tone}/>)}</MetricGrid>
     <div className="cyber-chart-grid"><section className="panel padded"><p className="eyebrow">VULNERABILITY DISTRIBUTION</p><h2>Active findings by severity</h2><p className="cyber-muted">Across all services you can access; table filters do not change these totals.</p><Bars counts={Object.fromEntries(levels.map(level => [level, metrics[level.toLowerCase()] || 0]))} /></section>
-      <section className="panel padded"><p className="eyebrow">POLICY & COVERAGE</p><h2>Service posture</h2><div className="cyber-posture"><div className="cyber-donut" role="img" aria-label={`Service posture: ${metrics.green || 0} compliant, ${metrics.yellow || 0} warnings, ${metrics.red || 0} non-compliant`} style={{ background: metrics.services ? `conic-gradient(#69d5ad 0 ${(metrics.green || 0) / metrics.services * 100}%, #e5b960 ${(metrics.green || 0) / metrics.services * 100}% ${((metrics.green || 0) + (metrics.yellow || 0)) / metrics.services * 100}%, #f07983 ${((metrics.green || 0) + (metrics.yellow || 0)) / metrics.services * 100}% 100%)` : undefined }}><div><strong>{metrics.services || 0}</strong><span>services</span></div></div><dl className="cyber-coverage">{[['Compliant', metrics.green], ['Warnings', metrics.yellow], ['Non-compliant', metrics.red], ['SBOM coverage', `${metrics.sbom_coverage || 0} / ${metrics.scanned || 0}`], ['KEV / watchlist', `${metrics.kev || 0} / ${metrics.watchlist || 0}`], ['Open / overdue POA&M', `${metrics.poam || 0} / ${metrics.poam_overdue || 0}`], ['Validation failures', metrics.kind_failed]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 0}</dd></div>)}</dl></div><p className="cyber-muted">No findings does not mean complete evidence. Posture follows your configured compliance policy.</p></section></div>
+      <section className="panel padded"><p className="eyebrow">POLICY & COVERAGE</p><h2>Service posture</h2><div className="cyber-posture"><div className="cyber-donut" role="img" aria-label={`Service posture: ${metrics.green || 0} compliant, ${metrics.yellow || 0} warnings, ${metrics.red || 0} non-compliant`} style={{ background: metrics.services ? `conic-gradient(var(--success) 0 ${(metrics.green || 0) / metrics.services * 100}%, var(--warning) ${(metrics.green || 0) / metrics.services * 100}% ${((metrics.green || 0) + (metrics.yellow || 0)) / metrics.services * 100}%, var(--danger) ${((metrics.green || 0) + (metrics.yellow || 0)) / metrics.services * 100}% 100%)` : undefined }}><div><strong>{metrics.services || 0}</strong><span>services</span></div></div><dl className="cyber-coverage">{[['Compliant', metrics.green], ['Warnings', metrics.yellow], ['Non-compliant', metrics.red], ['SBOM coverage', `${metrics.sbom_coverage || 0} / ${metrics.scanned || 0}`], ['KEV / watchlist', `${metrics.kev || 0} / ${metrics.watchlist || 0}`], ['Open / overdue POA&M', `${metrics.poam || 0} / ${metrics.poam_overdue || 0}`], ['Validation failures', metrics.kind_failed]].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value || 0}</dd></div>)}</dl></div><p className="cyber-muted">No findings does not mean complete evidence. Posture follows your configured compliance policy.</p></section></div>
     <HistoryPanel history={data.history || []} services={data.services || data.history || []} asynchronous={asynchronous}/>
-    <section className="panel padded"><h2>Service Security Matrix</h2>
+    <section className="panel cyber-matrix"><div className="panel-head"><div><h2>Service Security Matrix</h2><p>Per-service evidence, risk and workflow counts.</p></div></div>
       <form method="get" action="/cybersecurity" className="cyber-filters" key={JSON.stringify([data.q, data.component, data.since, data.status, data.severity, data.attention])}>
         <label>Search<input name="q" defaultValue={data.q || ''} placeholder="Service name or key" /></label>
         <label>Component / image<input name="component" defaultValue={data.component || ''} /></label>
         <label>Scanned since<input name="since" type="date" defaultValue={data.since || ''} /></label>
-        {select('status', 'Status', ['GREEN', 'YELLOW', 'RED'])}{select('severity', 'Severity', ['Critical', 'High', 'Medium', 'Low'])}{select('attention', 'Attention', ['kev', 'watchlist', 'poam', 'missing', 'kind'])}<button>Filter</button>
+        {select('status', 'Status', ['GREEN', 'YELLOW', 'RED'])}{select('severity', 'Severity', ['Critical', 'High', 'Medium', 'Low'])}{select('attention', 'Attention', ['kev', 'watchlist', 'poam', 'missing', 'kind'])}<button className="secondary-button">Filter</button>
       </form>
       <div className="table-wrap"><table><thead><tr>{['Service', 'Status', 'Critical', 'High', 'Medium / Low', 'KEV', 'Watchlist', 'Patchable', 'POA&M', 'Overdue', 'Missing Evidence', 'SBOM', 'Kind', 'Last scan'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
         <tbody>{data.rows?.length ? data.rows.map(row => {
           const servicePath = `/services/${encodeURIComponent(row.service.service_key)}`;
-          return <tr key={row.service.service_key}><td><a href={servicePath}>{row.service.name}</a></td><td><span className={`status ${row.status === 'GREEN' ? 'ok' : row.status === 'YELLOW' ? 'excepted' : 'bad'}`}>{row.status}</span></td><td>{row.critical}</td><td>{row.high}</td><td>{row.medium || 0} / {row.low || 0}</td><td>{row.kev}</td><td><a href={`${servicePath}?finding_state=warnings`}>{row.watchlist}</a></td><td>{row.patchable}</td><td><a href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>{row.poam}</a></td><td>{row.poam_overdue}</td><td>{row.missing ? 'Yes' : 'No'}</td><td>{row.sbom ? 'Yes' : 'No'}</td><td><a href={`${servicePath}?validation=true`}>{row.kind}</a></td><td>{row.last_scan_display || '—'}</td></tr>;
+          return <tr key={row.service.service_key}><td><a href={servicePath}>{row.service.name}</a></td><td><StatusBadge value={row.status} label={row.status === 'GREEN' ? 'Compliant' : row.status === 'YELLOW' ? 'Warnings' : 'Non-compliant'} tone={row.status === 'GREEN' ? 'success' : row.status === 'YELLOW' ? 'warning' : 'danger'}/></td><td className={row.critical ? 'num text-danger' : 'num'}>{row.critical}</td><td className="num">{row.high}</td><td>{row.medium || 0} / {row.low || 0}</td><td>{row.kev}</td><td><a href={`${servicePath}?finding_state=warnings`}>{row.watchlist}</a></td><td>{row.patchable}</td><td><a href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>{row.poam}</a></td><td>{row.poam_overdue}</td><td>{row.missing ? 'Yes' : 'No'}</td><td>{row.sbom ? 'Yes' : 'No'}</td><td><a href={`${servicePath}?validation=true`}>{row.kind}</a></td><td>{row.last_scan_display || '—'}</td></tr>;
         }) : <tr><td colSpan={14}>No services match these filters.</td></tr>}</tbody>
       </table></div>
-      {data.pagination && data.pagination.pages > 1 && <nav className="pagination" aria-label="Security matrix pages"><span>Page {data.pagination.page} of {data.pagination.pages} · {data.pagination.total} services</span>{[[-1, 'Previous'], [1, 'Next']].map(([offset, label]) => {
+      {data.pagination && data.pagination.pages > 1 && <nav className="pagination" aria-label="Security matrix pages"><span>Page {data.pagination.page} of {data.pagination.pages} · {data.pagination.total} services</span><span className="pagination-controls">{[[-1, 'Previous'], [1, 'Next']].map(([offset, label]) => {
         const page = data.pagination.page + Number(offset);
         const params = new URLSearchParams(window.location.search); params.set('page', String(page)); params.set('page_size', String(data.pagination.page_size));
         return page >= 1 && page <= data.pagination.pages ? <a key={label} href={`/cybersecurity?${params}`}>{label}</a> : <button key={label} disabled>{label}</button>;
-      })}</nav>}
+      })}</span></nav>}
     </section>
   </>;
 }

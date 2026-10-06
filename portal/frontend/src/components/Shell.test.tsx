@@ -16,7 +16,7 @@ describe('unified administration navigation', () => {
     render(<Shell data={data}><AdminTabs data={data} selected="accounts"/></Shell>);
     const entry = screen.getByRole('link', {name: 'Administration'});
     expect(entry).toHaveAttribute('href', href);
-    expect(entry.querySelector('span')).toHaveTextContent('⚙');
+    expect(entry.querySelector('svg.icon')).toBeInTheDocument();
     expect(screen.queryByRole('link', {name: 'Configuration'})).not.toBeInTheDocument();
     expect(within(screen.getByRole('navigation', {name: 'Administration sections'})).getAllByRole('link').map(link => link.textContent)).toEqual(sections);
   });
