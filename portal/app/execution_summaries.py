@@ -14,7 +14,9 @@ from sqlalchemy import event, inspect, select
 from .models import Execution, ExecutionSummary
 from .overview import normalize_overview
 
-SUMMARY_VERSION = 3
+# v4 adds immutable architecture/Helm-source metadata used to select evidence
+# without reparsing every retained payload.
+SUMMARY_VERSION = 4
 PAYLOAD_BATCH_SIZE = 32
 _installed = WeakSet()
 _PENDING = "cats_execution_summaries"
@@ -69,7 +71,18 @@ def build_summary(payload, complete):
         skipped_images=skipped_images, skipped_charts=skipped_charts,
         incomplete=not complete)["missing_evidence"]
     service = payload.get("service")
-    return {"version": version,
+    overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
+    declared = overview.get("rendered_resources") or payload.get("rendered_resources") or []
+    helm_sources = payload.get("helm_source_files")
+    architecture = {
+        # Same truthiness as the legacy per-request payload scans.
+        "has_architecture": bool(overview.get("rendered_resources") or payload.get("rendered_resources") or helm_sources),
+        "declared_resources": len(declared) if isinstance(declared, (list, tuple, dict, str)) else 0,
+        "applicable": bool(helm_sources or declared) and str(payload.get("artifact_type") or "helm").lower() == "helm",
+        "helm_original": payload.get("artifact_type") == "helm" and bool(helm_sources),
+        "has_resources": architecture_has_resources(payload),
+    }
+    return {"version": version, "architecture": architecture,
             "raw_version": service.get("version") if isinstance(service, dict) else None,
             "counts": {level: sum(value == level for value in findings.values()) for level in levels},
             "total": len(findings),
@@ -159,6 +172,14 @@ def install_execution_summary_hooks(session_class):
     event.listen(session_class, "after_rollback", rollback)
 
 
+def architecture_has_resources(payload) -> bool:
+    payload = payload if isinstance(payload, dict) else {}
+    overview = payload.get("service_overview") or {}
+    overview = overview if isinstance(overview, dict) else {}
+    return bool(payload.get("rendered_resources") or payload.get("kubernetes_resources") or payload.get("resources")
+                or overview.get("resources") or overview.get("rendered_resources") or overview.get("kubernetes_resources"))
+
+
 def load_execution_summaries(db, execution_ids, *, include_header=False):
     """Return independent dictionaries. Legacy fallback does not write on reads."""
     ids = list(dict.fromkeys(execution_ids))
@@ -206,3 +227,30 @@ def rebuild_execution_summaries(db, *, after_id=0, limit=PAYLOAD_BATCH_SIZE):
     for execution in executions:
         refresh_execution_summary(db, execution)
     return (executions[-1].id if executions else after_id), len(executions)
+
+
+def backfill_stale_summaries(session_factory, *, batch_size=PAYLOAD_BATCH_SIZE, limit=None):
+    """Rebuild missing/outdated summaries in bounded, separately committed batches.
+
+    Readers stay correct meanwhile (stale rows fall back to the authoritative
+    payload without writing); this only restores the fast path after upgrades.
+    Returns the number of executions refreshed.
+    """
+    from sqlalchemy import or_
+    done, after_id = 0, 0
+    while limit is None or done < limit:
+        with session_factory() as db:
+            ids = db.scalars(select(Execution.id).outerjoin(ExecutionSummary, ExecutionSummary.execution_id == Execution.id)
+                .where(Execution.id > after_id, or_(ExecutionSummary.execution_id.is_(None),
+                       ExecutionSummary.summary_version != SUMMARY_VERSION,
+                       Execution.payload_digest.is_(None),
+                       ExecutionSummary.payload_digest != Execution.payload_digest,
+                       ExecutionSummary.source_complete != Execution.complete))
+                .order_by(Execution.id).limit(batch_size)).all()
+            if not ids:
+                return done
+            for execution in db.scalars(select(Execution).where(Execution.id.in_(ids)).order_by(Execution.id)):
+                refresh_execution_summary(db, execution)
+            db.commit()
+            after_id, done = ids[-1], done + len(ids)
+    return done

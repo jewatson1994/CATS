@@ -54,6 +54,37 @@ def _formatted(value, formatter=None):
     return value.isoformat() if isinstance(value, (date, datetime)) else _scalar(value)
 
 
+def _response_date_formatters(formatters):
+    """Bind date formatting to one configuration read per response.
+
+    Without a route-supplied configuration each formatted timestamp used to open
+    a session and re-read settings; the first formatted value now loads it once
+    for the remainder of this response (settings changes apply to the next one).
+    """
+    loaded = {}
+
+    def response_configuration():
+        if "value" not in loaded:
+            try:
+                from . import main
+                with main.SessionLocal() as db:
+                    loaded["value"] = main.get_configuration(db)
+            except Exception:
+                loaded["value"] = None
+        return loaded["value"]
+
+    bound = dict(formatters)
+    for key in ("cats_date", "cats_datetime"):
+        base = formatters.get(key)
+        if callable(base):
+            def formatter(value, configuration=None, _base=base):
+                if configuration is None and value:
+                    configuration = response_configuration()
+                return _base(value, configuration=configuration)
+            bound[key] = formatter
+    return bound
+
+
 def _service_data(data, context, can, formatters):
     view = context.get("view", {})
     service = _field(view, "service")
@@ -293,6 +324,8 @@ class ReactTemplates(Jinja2Templates):
                 for key in ("cats_date", "cats_datetime"):
                     if callable(formatters.get(key)):
                         formatters[key] = partial(formatters[key], configuration=merged["_date_configuration"])
+            else:
+                formatters = _response_date_formatters(formatters)
             with performance_scope("transformation"):
                 envelope = page_data(request, name, merged, self.env.globals.get("cats_deployed_version"), formatters)
             if wants_json:

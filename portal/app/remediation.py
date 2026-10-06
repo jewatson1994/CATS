@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation, localcontext
 from hashlib import sha256
 from typing import Any
 import json
+from collections import Counter
 import re
 
 import yaml
@@ -162,8 +163,9 @@ def classify_policy_finding(finding: Any, payload: dict[str, Any]) -> dict[str, 
     candidates = evidence.get("candidate_resources") or []
     resource = _find_target(resources, getattr(finding, "target", None)) if not lineage and not candidates else None
     options = []
+    identity_counts = Counter(_identity_key(item) for item in resources)
     for candidate in resources:
-        if sum(_normalized_identity(item) == _normalized_identity(candidate) for item in resources) != 1:
+        if identity_counts[_identity_key(candidate)] != 1:
             continue
         if resource and candidate != resource:
             continue
@@ -212,6 +214,16 @@ def classify_policy_finding(finding: Any, payload: dict[str, Any]) -> dict[str, 
             "source_resolution": "editable-candidates" if editable else "unavailable",
             "actionability": "target-selection-required" if editable else "source-unavailable" if options else "target-unavailable",
             "target_lineage": lineage, "reason": reason, **patch}
+
+
+def _identity_key(resource):
+    """Hashable form of ``_normalized_identity(resource)`` for uniqueness counts."""
+    key = tuple(_normalized_identity(resource).values())
+    try:
+        hash(key)
+    except TypeError:  # unhashable metadata values: fall back to an exact repr
+        return ("unhashable", repr(key))
+    return key
 
 
 def _normalized_identity(resource, container_type=None, container_name=None):

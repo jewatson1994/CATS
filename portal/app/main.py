@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections import OrderedDict
 import time
 import tarfile
 import uuid
@@ -30,7 +31,7 @@ from typing import Any
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, available_timezones
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
@@ -40,7 +41,7 @@ from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
@@ -84,7 +85,7 @@ from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
 from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
-from .policy_data import epss_scores, kev_cves, risk_metadata
+from .policy_data import epss_scores, intelligence_status, kev_cves, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
 from .purpose_exports import CATALOG as PURPOSE_CATALOG, NAMES as PURPOSE_NAMES, default_template as purpose_default_template, template_for as purpose_template_for, template_policy as purpose_template_policy, template_for_service as purpose_template_for_service, policy_key as purpose_policy_key, validate_template as validate_purpose_template, setting_key as purpose_setting_key, workbook_for as purpose_workbook_for
@@ -297,14 +298,18 @@ with migration_transaction(engine) as connection:
             connection.execute(text("UPDATE deployment_validation_runs SET artifact_revision_id = :revision_id WHERE id = :run_id"),
                                {"revision_id": revision_id, "run_id": legacy["id"]})
     # Composite indexes match the summary dashboard's bulk filters and latest-
-    # execution lookup. They are additive and safe for existing deployments.
+    # execution lookup. They are idempotent and safe for existing deployments.
     for statement in (
         "CREATE INDEX IF NOT EXISTS ix_findings_service_active ON findings (service_id, active)",
         "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active ON policy_findings (service_id, active)",
         "CREATE INDEX IF NOT EXISTS ix_executions_service_scanned ON executions (service_id, scanned_at)",
         "CREATE INDEX IF NOT EXISTS ix_poam_service_status_due ON poam_entries (service_id, status, due_date)",
         "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_id_id ON finding_observations (finding_id, id)",
-        "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_execution_id ON finding_observations (finding_id, execution_id, id)",
+        # One (finding_id, execution_id, id) index is sufficient: keep the model's
+        # ix_obs_finding_execution_id and drop the identical legacy duplicate,
+        # which only doubled observation write and storage cost.
+        "CREATE INDEX IF NOT EXISTS ix_obs_finding_execution_id ON finding_observations (finding_id, execution_id, id)",
+        "DROP INDEX IF EXISTS ix_finding_observations_finding_execution_id",
         "CREATE INDEX IF NOT EXISTS ix_findings_service_active_order ON findings (service_id, active, episode_started, cve, id)",
         "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active_order ON policy_findings (service_id, active, episode_started, finding, id)",
         "CREATE INDEX IF NOT EXISTS ix_deployment_validation_artifact_revision ON deployment_validation_runs (artifact_revision_id)",
@@ -313,6 +318,35 @@ with migration_transaction(engine) as connection:
     ):
         connection.execute(text(statement))
 seed_auth()
+
+
+def _start_read_model_maintenance():
+    """Restore derived read models after an upgrade without blocking startup.
+
+    Loads the KEV/EPSS catalogs once (status is reported on Configuration) and
+    rebuilds outdated execution summaries in small committed batches.  Readers
+    stay correct meanwhile: a stale summary falls back to the authoritative
+    payload.  In-memory databases (tests) are skipped.
+    """
+    database = engine.url.database
+    if engine.url.get_backend_name() == "sqlite" and database in (None, "", ":memory:"):
+        return None
+    def run():
+        log = logging.getLogger("cats.maintenance")
+        try:
+            intelligence_status()
+        except Exception:
+            log.exception("Risk intelligence warm-up failed")
+        try:
+            from .execution_summaries import backfill_stale_summaries
+            refreshed = backfill_stale_summaries(SessionLocal)
+            if refreshed:
+                log.info("Rebuilt %s execution summaries", refreshed)
+        except Exception:
+            log.exception("Execution summary backfill failed; readers continue with payload fallback")
+    thread = threading.Thread(target=run, name="cats-read-model-maintenance", daemon=True)
+    thread.start()
+    return thread
 
 
 @asynccontextmanager
@@ -328,6 +362,7 @@ async def app_lifespan(_app: FastAPI):
                 logging.getLogger(__name__).exception('Managed validator maintenance failed')
             await asyncio.sleep(30)
     monitor = asyncio.create_task(monitor_validators())
+    _start_read_model_maintenance()
     try:
         async with preview_cleanup_lifespan(SessionLocal):
             yield
@@ -580,6 +615,36 @@ def latest_architecture_execution(executions: list[Execution]) -> Execution | No
         overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
         return bool(overview.get("rendered_resources") or payload.get("rendered_resources") or payload.get("helm_source_files"))
     return max((item for item in executions if has_architecture(item)), key=lambda item: aware(item.scanned_at), default=None)
+
+
+_REMEDIATION_PREVIEW_CACHE: "OrderedDict[tuple, tuple]" = OrderedDict()
+_REMEDIATION_PREVIEW_LOCK = threading.Lock()
+
+
+def _remediation_preview_cached(key, compute):
+    """Small LRU for the display-only remediation preview counts.
+
+    The key holds the evidence digest and every active policy finding field,
+    so any new scan or finding change computes a fresh preview.
+    """
+    if key[1] is None:
+        return compute()
+    with _REMEDIATION_PREVIEW_LOCK:
+        if key in _REMEDIATION_PREVIEW_CACHE:
+            _REMEDIATION_PREVIEW_CACHE.move_to_end(key)
+            return _REMEDIATION_PREVIEW_CACHE[key]
+    value = compute()
+    with _REMEDIATION_PREVIEW_LOCK:
+        _REMEDIATION_PREVIEW_CACHE[key] = value
+        while len(_REMEDIATION_PREVIEW_CACHE) > 64:
+            _REMEDIATION_PREVIEW_CACHE.popitem(last=False)
+    return value
+
+
+def _architecture_has_resources(payload) -> bool:
+    """Whether retained evidence declares any Kubernetes resources (Architecture READY)."""
+    from .execution_summaries import architecture_has_resources
+    return architecture_has_resources(payload)
 
 
 def latest_architecture_working_revision(db: Session, service_id: int) -> ServiceArtifactRevision | None:
@@ -1941,6 +2006,7 @@ def service_overview_rows_detailed(
 
 
 def _overview_services_and_configurations(db: Session, auth: AuthContext, configuration: dict[str, str], *, projected: bool = False):
+    from .sql_sets import member_of
     allowed = auth.accessible_service_ids("service.view")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
@@ -1949,19 +2015,19 @@ def _overview_services_and_configurations(db: Session, auth: AuthContext, config
     query = select(*columns) if projected else select(Service)
     query = query.order_by(Service.name, Service.service_key)
     if allowed is not None:
-        query = query.where(Service.id.in_(allowed))
+        query = query.where(member_of(Service.id, allowed, numeric=True))
     services = ([SimpleNamespace(**row._mapping) for row in db.execute(query)]
                 if projected else list(db.scalars(query)))
     service_ids = [service.id for service in services]
     groups_by_service: dict[int, list[int]] = {}
     group_ids: set[int] = set()
     if service_ids:
-        for row in db.execute(select(ServiceGroup.service_id, ServiceGroup.group_id).where(ServiceGroup.service_id.in_(service_ids))):
+        for row in db.execute(select(ServiceGroup.service_id, ServiceGroup.group_id).where(member_of(ServiceGroup.service_id, service_ids, numeric=True))):
             groups_by_service.setdefault(row.service_id, []).append(row.group_id)
             group_ids.add(row.group_id)
     settings_by_group: dict[int, list[PortalSetting]] = {group_id: [] for group_id in group_ids}
     if group_ids:
-        for setting in db.scalars(select(PortalSetting).where(PortalSetting.group_id.in_(group_ids))):
+        for setting in db.scalars(select(PortalSetting).where(member_of(PortalSetting.group_id, group_ids, numeric=True))):
             settings_by_group.setdefault(setting.group_id, []).append(setting)
     configurations: dict[int, dict[str, str]] = {}
     for service_id in service_ids:
@@ -1992,6 +2058,7 @@ def _raw_due_groups(configurations: dict[int, dict[str, str]], now: datetime):
 
 
 def _raw_overdue_expression(model, configurations: dict[int, dict[str, str]], now: datetime):
+    from .sql_sets import member_of
     parts = []
     grouped = {}
     for service_id, cfg in configurations.items():
@@ -2007,15 +2074,16 @@ def _raw_overdue_expression(model, configurations: dict[int, dict[str, str]], no
         grouped.setdefault((default_days, tuple(sorted(due_by_severity.items()))), []).append(service_id)
     severity_value = func.lower(model.severity)
     for (default_days, due_by_severity), service_ids in grouped.items():
+        scope = member_of(model.service_id, service_ids, numeric=True)
         known = []
         for severity, days in due_by_severity:
             known.append(severity)
             parts.append(and_(
-                model.service_id.in_(service_ids), severity_value == severity,
+                scope, severity_value == severity,
                 model.episode_started <= now - timedelta(days=days),
             ))
         parts.append(and_(
-            model.service_id.in_(service_ids),
+            scope,
             (or_(~severity_value.in_(known), model.severity.is_(None)) if known else true()),
             model.episode_started <= now - timedelta(days=default_days),
         ))
@@ -2023,13 +2091,15 @@ def _raw_overdue_expression(model, configurations: dict[int, dict[str, str]], no
 
 
 def _hardening_overdue_expression(configurations: dict[int, dict[str, str]], now: datetime):
+    from .sql_sets import member_of
     parts = []
     grouped: dict[tuple[int, bool], list[int]] = {}
     for service_id, cfg in configurations.items():
         grouped.setdefault((max(1, int(cfg.get("hardening_overdue_days", "90"))), cfg.get("hardening_noncompliant", "true") == "true"), []).append(service_id)
     for (days, enabled), service_ids in grouped.items():
         if enabled:
-            parts.append(and_(PolicyFinding.service_id.in_(service_ids), PolicyFinding.episode_started <= now - timedelta(days=days)))
+            parts.append(and_(member_of(PolicyFinding.service_id, service_ids, numeric=True),
+                              PolicyFinding.episode_started <= now - timedelta(days=days)))
     return or_(*parts) if parts else false()
 
 
@@ -2046,8 +2116,14 @@ def _risk_finding_expressions(
     rows directly.  Catalog KEV/EPSS data is represented as CVE membership
     predicates; observation evidence remains JSON-native in PostgreSQL and
     SQLite.
+
+    Services sharing an effective configuration share one predicate, and every
+    catalog or service-id set is bound as a single JSON value (``member_of``),
+    so statement size and bind counts stay constant as services and catalogs
+    grow.  The catalogs remain the live in-memory intelligence snapshot.
     """
     from .risk_sql import evidence_score, evidence_truth, key_present
+    from .sql_sets import catalog_subset, member_of
     eligible_parts = []
     noncompliant_parts = []
     needs_observations = False
@@ -2058,30 +2134,36 @@ def _risk_finding_expressions(
     severity_order = case(*((severity_value == name, rank) for name, rank in severity_rank.items()), else_=0)
     cve_key = func.upper(func.trim(Finding.cve))
     evidence = FindingObservation.evidence
+    groups: dict[tuple, list[int]] = {}
     for service_id, cfg in configurations.items():
+        groups.setdefault(tuple(sorted((str(key), str(value)) for key, value in cfg.items())), []).append(service_id)
+    for group_key, service_ids in groups.items():
+        cfg = dict(group_key)
+        group_configurations = {service_id: configurations[service_id] for service_id in service_ids}
+        service_scope = member_of(Finding.service_id, service_ids, numeric=True)
         if cfg.get("compliance_mode", "risk_based") == "raw":
-            eligible_parts.append(Finding.service_id == service_id)
-            noncompliant_parts.append(and_(Finding.service_id == service_id, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
+            eligible_parts.append(service_scope)
+            noncompliant_parts.append(and_(service_scope, _raw_overdue_expression(Finding, group_configurations, now)))
             continue
-        service_scope = Finding.service_id == service_id
+        overdue = _raw_overdue_expression(Finding, group_configurations, now)
         eligible = []
         noncompliant = []
         minimum = str(cfg.get("minimum_severity", "None")).lower()
         if minimum in severity_rank:
             match = severity_order >= severity_rank[minimum]
             eligible.append(match)
-            noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
+            noncompliant.append(and_(match, overdue))
         if cfg.get("kev_enabled") == "true":
             needs_observations = True
             kev_match = []
             if catalog_kev:
-                kev_match.append(cve_key.in_(catalog_kev))
+                kev_match.append(member_of(cve_key, catalog_kev))
             kev_match.append(evidence_truth(evidence))
             if kev_match:
                 match = or_(*kev_match)
                 eligible.append(match)
                 if cfg.get("kev_noncompliant") == "true":
-                    noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
+                    noncompliant.append(and_(match, overdue))
         try:
             epss_rules = json.loads(cfg.get("epss_rules", "[]"))
         except (TypeError, ValueError):
@@ -2098,18 +2180,18 @@ def _risk_finding_expressions(
                     threshold = 1.0
                 severity = str(rule.get("severity", "Any")).lower()
                 severity_match = true() if severity == "any" else severity_value == severity
-                catalog_match = {cve for cve, score in catalog_epss.items() if score >= threshold}
+                catalog_match = catalog_subset(catalog_epss, ("epss>=", threshold), lambda score: score >= threshold)
                 has_score = or_(key_present(evidence, "epss"), key_present(evidence, "epss_score"))
                 explicit_match = func.coalesce(evidence_score(evidence) >= threshold, false())
-                catalog_matches = (cve_key.in_(catalog_match) if catalog_match else false())
+                catalog_matches = member_of(cve_key, catalog_match) if catalog_match else false()
                 if threshold <= 0:
-                    nonzero_catalog = {cve for cve, score in catalog_epss.items() if score < threshold}
-                    catalog_matches = ~cve_key.in_(nonzero_catalog) if nonzero_catalog else true()
+                    nonzero_catalog = catalog_subset(catalog_epss, ("epss<", threshold), lambda score: score < threshold)
+                    catalog_matches = ~member_of(cve_key, nonzero_catalog) if nonzero_catalog else true()
                 score_match = or_(and_(has_score, explicit_match), and_(~func.coalesce(has_score, false()), catalog_matches))
                 match = and_(severity_match, score_match, ~prior_match)
                 eligible.append(match)
                 if bool(rule.get("noncompliant", True)):
-                    noncompliant.append(and_(match, _raw_overdue_expression(Finding, {service_id: cfg}, now)))
+                    noncompliant.append(and_(match, overdue))
                 prior_match = or_(prior_match, and_(severity_match, score_match))
         if eligible:
             eligible_parts.append(and_(service_scope, or_(*eligible)))
@@ -2132,6 +2214,7 @@ def service_overview_rows_aggregated(
     risk-overlay comparisons, and oldest-finding calculation.  This keeps
     page cost tied to the number of services rather than finding history.
     """
+    from .sql_sets import member_of
     from .execution_summaries import CountOnly, load_execution_summaries
     if services is None or configurations is None:
         services, configurations = _overview_services_and_configurations(db, auth, configuration)
@@ -2141,7 +2224,7 @@ def service_overview_rows_aggregated(
     latest_execution_time = select(Execution.id, func.row_number().over(
         partition_by=Execution.service_id,
         order_by=(Execution.scanned_at.desc(), Execution.id.desc()),
-    ).label("position")).where(Execution.service_id.in_(service_ids)).subquery()
+    ).label("position")).where(member_of(Execution.service_id, service_ids, numeric=True)).subquery()
     latest_by_service = {
         row.service_id: row for row in db.execute(select(
             Execution.id, Execution.service_id, Execution.scanned_at, Execution.complete,
@@ -2161,11 +2244,15 @@ def service_overview_rows_aggregated(
         func.sum(case((and_(finding_eligible, finding_exception), 1), else_=0)).label("excepted"),
         func.sum(case((and_(finding_noncompliant, ~finding_exception), 1), else_=0)).label("noncompliant"),
         func.min(Finding.episode_started).label("oldest"),
-    ).where(Finding.service_id.in_(service_ids), Finding.active.is_(True)).group_by(Finding.service_id)
+    ).where(member_of(Finding.service_id, service_ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id)
     if needs_observations:
+        # Only the requested services' active findings need evidence; an
+        # unscoped GROUP BY would scan every retained observation globally.
         latest_observation = select(
             FindingObservation.finding_id,
             func.max(FindingObservation.id).label("latest_id"),
+        ).join(Finding, Finding.id == FindingObservation.finding_id).where(
+            member_of(Finding.service_id, service_ids, numeric=True), Finding.active.is_(True),
         ).group_by(FindingObservation.finding_id).subquery()
         finding_query = finding_query.outerjoin(
             latest_observation, latest_observation.c.finding_id == Finding.id,
@@ -2186,27 +2273,27 @@ def service_overview_rows_aggregated(
             func.sum(case((policy_exception, 1), else_=0)).label("excepted"),
             func.sum(case((and_(policy_overdue, ~policy_exception), 1), else_=0)).label("noncompliant"),
             func.min(PolicyFinding.episode_started).label("oldest"),
-        ).where(PolicyFinding.service_id.in_(service_ids), PolicyFinding.active.is_(True)).group_by(PolicyFinding.service_id))
+        ).where(member_of(PolicyFinding.service_id, service_ids, numeric=True), PolicyFinding.active.is_(True)).group_by(PolicyFinding.service_id))
     }
     archive_by_service: dict[int, str] = {}
     latest_archive = select(ServiceArchiveEvent.service_id, ServiceArchiveEvent.action,
         func.row_number().over(partition_by=ServiceArchiveEvent.service_id,
             order_by=(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc())).label("position")
-    ).where(ServiceArchiveEvent.service_id.in_(service_ids)).subquery()
+    ).where(member_of(ServiceArchiveEvent.service_id, service_ids, numeric=True)).subquery()
     for row in db.execute(select(latest_archive.c.service_id, latest_archive.c.action)
             .where(latest_archive.c.position == 1)):
         archive_by_service[row.service_id] = row.action
     poam_counts: dict[int, dict[str, int]] = {}
     for row in db.execute(select(
         PoamEntry.service_id, PoamEntry.status, func.count(PoamEntry.id),
-    ).where(PoamEntry.service_id.in_(service_ids)).group_by(PoamEntry.service_id, PoamEntry.status)):
+    ).where(member_of(PoamEntry.service_id, service_ids, numeric=True)).group_by(PoamEntry.service_id, PoamEntry.status)):
         counts = poam_counts.setdefault(row.service_id, {"active": 0, "pending": 0, "overdue": 0})
         if row.status == "active":
             counts["active"] += int(row[2] or 0)
         elif row.status == "pending_approval":
             counts["pending"] += int(row[2] or 0)
     for row in db.execute(select(PoamEntry.service_id, func.count(PoamEntry.id)).where(
-        PoamEntry.service_id.in_(service_ids), PoamEntry.status == "active",
+        member_of(PoamEntry.service_id, service_ids, numeric=True), PoamEntry.status == "active",
         PoamEntry.due_date.is_not(None), PoamEntry.due_date < now,
     ).group_by(PoamEntry.service_id)):
         poam_counts.setdefault(row.service_id, {"active": 0, "pending": 0, "overdue": 0})["overdue"] = int(row[1])
@@ -2581,8 +2668,44 @@ def _reconcile_image_scope(db: Session, service: Service, target_image: str, obs
 
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
-def ingest(payload: ExecutionPayload, db: Session = Depends(get_db)):
-    return ingest_payload(payload, db)
+def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
+    result = ingest_payload(payload, db)
+    if background_tasks is not None and isinstance(result, dict) and result.get("accepted") and not result.get("duplicate"):
+        queue_dependency_projection(db, background_tasks, result.get("execution_id"))
+    return result
+
+
+def _ingest_projection_enabled() -> bool:
+    configured = os.getenv("CATS_DEPENDENCY_PROJECTION_ON_INGEST", "").strip().lower()
+    if configured:
+        return configured in {"1", "true", "yes"}
+    # Disposable in-memory databases (tests) share one connection; build on demand there.
+    return not (engine.url.get_backend_name() == "sqlite" and engine.url.database in (None, "", ":memory:"))
+
+
+def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, execution_id) -> dict | None:
+    """Prepare the newly ingested scan's dependency read model after the commit.
+
+    The projection is claimed with a durable token and built on the bounded
+    projection executor after the response is sent, so the first Dependencies
+    view no longer pays for (or writes) it.  Failures never affect ingestion;
+    the Dependencies tab still requests the projection on demand.
+    """
+    if execution_id is None or not _ingest_projection_enabled():
+        return None
+    try:
+        from .dependency_queries import request_current_projection, schedule_projection
+        execution = db.scalar(select(Execution).options(defer(Execution.raw_payload)).where(Execution.id == execution_id))
+        if execution is None:
+            return None
+        state = request_current_projection(db, execution, risk_metadata)
+        if state and state["status"] == "pending":
+            background_tasks.add_task(schedule_projection, db.get_bind(), execution.id, state["build_token"], risk_metadata)
+        return state
+    except Exception:
+        logging.getLogger("cats.dependencies").exception(
+            "Dependency projection could not be queued after ingest", extra={"execution_id": execution_id})
+        return None
 
 
 def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True):
@@ -6282,46 +6405,54 @@ def deployment_validation_result(
 
 @app.get("/api/v1/services/{service_key}/architecture-evidence")
 def architecture_evidence_result(
-    service_key: str, view_version: str = "", db: Session = Depends(get_db),
+    service_key: str, view_version: str = "", summary: bool = False, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True)),
 ):
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.executions)))
+    """Architecture verification state, graph and active validation for polling.
+
+    Selection uses execution summary metadata; at most one retained payload is
+    read, and only when the content-keyed graph cache misses.  ``summary=true``
+    returns graph summary counts without nodes, relationships or layouts.
+    """
+    from .evidence_reads import architecture_execution as select_architecture_execution
+    from .evidence_reads import execution_metadata, execution_payload, latest_working_revision_id, version_execution_ids
+    from .validation_queries import applicable_run, latest_run, runtime_identity
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    executions = service.executions
+    execution_ids = None
     if view_version:
-        from .exchange import selected_evidence
         try:
-            _, executions = selected_evidence(db, service, view_version)
+            execution_ids = version_execution_ids(db, service, view_version)
         except ValueError as exc:
             raise HTTPException(404, detail=str(exc)) from exc
-    execution = latest_architecture_execution(executions)
-    payload = dict(execution.raw_payload) if execution and isinstance(execution.raw_payload, dict) else {}
-    overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
-    resources = overview.get("rendered_resources") or payload.get("rendered_resources") or []
+    execution = select_architecture_execution(execution_metadata(db, service.id, execution_ids=execution_ids))
+    from .evidence_reads import architecture_metadata
+    meta = architecture_metadata(db, execution)
     # A selected release is immutable evidence, including when its label is
     # currently deployed. Never attach today's mutable working revision.
-    working_revision = None if view_version else latest_architecture_working_revision(db, service.id)
-    runs_query = select(DeploymentValidationRun).where(
-        DeploymentValidationRun.service_id == service.id,
-    )
-    if view_version:
-        runs_query = runs_query.where(
-            DeploymentValidationRun.execution_id.in_([item.id for item in executions]),
-            DeploymentValidationRun.artifact_revision_id.is_(None),
-        )
-    runs = db.scalars(runs_query.options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100)).all()
-    summary = architecture_verification(
-        applicable=bool(payload.get("helm_source_files") or resources) and str(payload.get("artifact_type") or "helm").lower() == "helm",
-        declared_count=len(resources), runs=runs,
-        execution_id=execution.id if execution and not working_revision else None,
-        artifact_revision_id=working_revision.id if working_revision else None,
-    )
-    runtime = deployment_validation_view(summary.get("run"))
-    newest = deployment_validation_view(runs[0]) if runs else None
+    working_revision_id = None if view_version else latest_working_revision_id(db, service.id)
+    subject = dict(execution_id=execution.id if execution and not working_revision_id else None,
+                   artifact_revision_id=working_revision_id)
+    run = applicable_run(db, service.id, execution_ids=execution_ids, **subject)
+    state = architecture_verification(
+        applicable=bool(meta.get("applicable")), declared_count=int(meta.get("declared_resources") or 0),
+        runs=[run] if run else [], **subject)
+    runtime = deployment_validation_view(state.get("run"))
+    newest = deployment_validation_view(latest_run(db, service.id, execution_ids=execution_ids))
+    if execution:
+        graph = build_architecture_graph(lambda: execution_payload(db, execution.id), runtime_evidence=runtime,
+            layouts=not summary,
+            # No digest (bulk-edited evidence) means no content identity: never cache.
+            cache_key=("execution", execution.id, execution.payload_digest, runtime_identity(state.get("run")))
+            if execution.payload_digest else None)
+    else:
+        graph = build_architecture_graph({}, runtime_evidence=runtime, layouts=not summary)
+    if summary:
+        graph = {"summary": graph.get("summary", {})}
     return jsonable_encoder({
-        "architecture": architecture_summary_json(summary),
-        "graph": build_architecture_graph(payload, runtime_evidence=runtime),
+        "architecture": architecture_summary_json(state),
+        "graph": graph,
         "active_validation": newest if newest and not newest.get("terminal") else None,
     })
 
@@ -6604,6 +6735,7 @@ def service_detail(
     dependency_epss: float | None = None,
     validation: bool = False,
     validation_run: str | None = None,
+    validation_page: int = 1,
     findings: bool = False,
     findings_view: str = "",
     layout_width: int | None = None,
@@ -6695,6 +6827,77 @@ def service_detail(
             severity=severity, severity_options=severity_options, pagination_base=pagination_base,
             clear_filters_url=clear_filters_url, selected_findings_view="simplified",
             page_size=page_size, **pagination))
+    if narrow_findings and findings_view == "raw" and finding_state in {"noncompliant", "overdue", "warnings"}:
+        # Non-Compliant and Warnings are ordered, filtered and paged in SQL; only
+        # the displayed rows are projected (see raw_states for the exact rules).
+        if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
+            raise HTTPException(422, detail="Unknown finding type")
+        if page_size not in {50, 100, 250}:
+            raise HTTPException(422, detail="Page size must be 50, 100, or 250")
+        from . import raw_states
+        from .evidence_reads import execution_payload
+        from .exchange_routes import history_version_choices
+        from .findings_query import load_page_support
+        from .service_tab_queries import prepare_service_tab_view
+        from .validation_queries import latest_run
+        severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
+        view, service, current_scan = prepare_service_tab_view(db, service, now, configuration, service_view, header_only=True)
+        latest_execution = max(service.executions, key=lambda item: (aware(item.scanned_at), item.id), default=None)
+        if finding_state == "warnings":
+            other_items = [item for item in view["warning_items"] if item.get("type") not in {"CVE", "Exception"}]
+            if current_scan:
+                other_items.extend({
+                    "type": "Dependency Watchlist", "item": match.component_name,
+                    "reason": f"Watched component {match.component_name} {match.component_version} in {match.image}",
+                    "due": None, "href": f"/services/{service.service_key}/watchlist/{match.id}",
+                } for match in db.scalars(select(DependencyWatchlistMatch).where(
+                    DependencyWatchlistMatch.execution_id == current_scan.id).order_by(DependencyWatchlistMatch.id)))
+            newest_run = latest_run(db, service.id)
+            if newest_run and newest_run.status in {"FAILED", "ERROR", "COULD_NOT_VALIDATE", "PARTIALLY_VERIFIED"}:
+                other_items.append({"type": "Kind Validation", "item": newest_run.status,
+                    "reason": newest_run.reason or newest_run.reason_category or "Deployment validation needs review",
+                    "due": None, "href": f"/services/{service.service_key}?validation=true&validation_run={newest_run.run_key}"})
+            result = raw_states.warning_page(db, service.id, configuration, now, service.service_key, other_items,
+                                             finding_type=finding_type, page=page, page_size=page_size)
+        else:
+            # The retained payload is read only when missing evidence is itself non-compliant.
+            evidence = raw_states.evidence_rows(view, execution_payload(db, current_scan.id)
+                                                if current_scan and view.get("evidence_noncompliant") else {}, current_scan)
+            result = raw_states.noncompliant_page(db, service.id, configuration, now, evidence,
+                finding_type=finding_type, query=q, resource=resource, severities=severity, page=page, page_size=page_size)
+        severity_options = raw_states.severity_options(db, service.id, configuration, now)
+        archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
+            WorkflowRequest.request_type == "archive", WorkflowRequest.service_id == service.id,
+            WorkflowRequest.status == "pending")))
+        pagination_params = [("overview", "false"), ("findings_view", "raw"),
+            ("finding_state", finding_state), ("finding_type", finding_type), ("page_size", page_size)]
+        if q.strip(): pagination_params.append(("q", q.strip()))
+        if resource.strip(): pagination_params.append(("resource", resource.strip()))
+        pagination_params.extend(("severity", value) for value in severity)
+        pagination_base = f"/services/{urllib.parse.quote(service_key, safe='')}?{urllib.parse.urlencode(pagination_params, doseq=True)}"
+        clear_filters_url = f"/services/{urllib.parse.quote(service_key, safe='')}?overview=false&findings_view=raw&finding_state={urllib.parse.quote(finding_state)}&finding_type={urllib.parse.quote(finding_type)}&page_size={page_size}"
+        noncompliance_items, warning_items, affected_images = [], [], {}
+        if finding_state == "warnings":
+            warning_items = result["items"]
+        else:
+            noncompliance_items = result["items"]
+            affected_images = load_page_support(db, service.id, result["findings"], latest_execution)
+            for item in noncompliance_items:
+                if item["type"] == "CVE":
+                    item["images"] = affected_images.get(item["finding_id"], [])
+                else:
+                    item["images"] = [item["evidence_image"]] if item.get("evidence_image") else []
+        return templates.TemplateResponse(request, "service.html", page_context(auth,
+            _date_configuration=configuration, remediation_enabled=remediation_enabled(db),
+            view=view, history_versions=history_version_choices(db, service), findings=[], affected_images=affected_images,
+            policy_findings=[], noncompliance_items=noncompliance_items, warning_items=warning_items, now=now,
+            active_exception=active_exception, finding_state=finding_state,
+            groups=db.scalars(select(Group).order_by(Group.name)).all(),
+            overdue_days=view["overdue_days"], saved=request.query_params.get("saved") == "1",
+            archive_pending=archive_pending, page=result["page"], page_size=page_size,
+            total_items=result["total_items"], total_pages=result["total_pages"], finding_type=finding_type,
+            remediation_classes={}, query=q, resource=resource, severity=severity, severity_options=severity_options,
+            pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view="raw"))
     if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved"}:
         if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
             raise HTTPException(422, detail="Unknown finding type")
@@ -6714,7 +6917,8 @@ def service_detail(
             or_(Finding.active.is_(False), ~current_exception, eligible))
         if needs_observations:
             latest_observation = select(FindingObservation.finding_id,
-                func.max(FindingObservation.id).label("latest_id")).group_by(FindingObservation.finding_id).subquery()
+                func.max(FindingObservation.id).label("latest_id")).join(Finding, Finding.id == FindingObservation.finding_id).where(
+                Finding.service_id == service.id).group_by(FindingObservation.finding_id).subquery()
             severity_query = severity_query.outerjoin(latest_observation,
                 latest_observation.c.finding_id == Finding.id).outerjoin(FindingObservation,
                 FindingObservation.id == latest_observation.c.latest_id)
@@ -6732,7 +6936,9 @@ def service_detail(
         pagination_params.extend(("severity", value) for value in severity)
         pagination_base = f"/services/{urllib.parse.quote(service_key, safe='')}?{urllib.parse.urlencode(pagination_params, doseq=True)}"
         clear_filters_url = f"/services/{urllib.parse.quote(service_key, safe='')}?overview=false&findings_view=raw&finding_state={urllib.parse.quote(finding_state)}&finding_type={urllib.parse.quote(finding_type)}&page_size={page_size}"
-        latest_payload = latest_execution.raw_payload if result["policy_findings"] and latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
+        from .evidence_reads import execution_payload
+        # Untracked copy, read only when configuration rows need remediation classes.
+        latest_payload = execution_payload(db, latest_execution.id) if result["policy_findings"] and latest_execution else {}
         return templates.TemplateResponse(request, "service.html", page_context(auth,
             _date_configuration=configuration, remediation_enabled=remediation_enabled(db),
             view=view, history_versions=history_version_choices(db, service),
@@ -6751,7 +6957,7 @@ def service_detail(
         from .service_tab_queries import prepare_service_tab_view
         view, service, latest_scan = prepare_service_tab_view(db, service, now, configuration, service_view,
                                                            include_global_latest=not (dependencies_only or artifacts_only),
-                                                           header_only=architecture_only or validation_only or activity_only or poam_only or dependencies_only or artifacts_only or remediations_only)
+                                                           header_only=architecture_only or validation_only or activity_only or poam_only or dependencies_only or artifacts_only or remediations_only or overview_only)
     elif narrow_findings:
         from .findings_query import prepare_findings_view
         view, service, latest_scan = prepare_findings_view(db, service, now, configuration, service_view)
@@ -6775,10 +6981,16 @@ def service_detail(
     )))
     if artifacts_only:
         from .artifact_tab_queries import latest_validation_warning
-    validation_records = latest_validation_warning(db, service.id) if artifacts_only else db.scalars(select(DeploymentValidationRun).where(
-        DeploymentValidationRun.service_id == service.id,
-    ).options(selectinload(DeploymentValidationRun.execution).defer(Execution.raw_payload) if (overview_only or architecture_only or validation_only)
-              else selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100 if not narrow_findings else 1)).all()
+    if overview_only or architecture_only or validation_only or activity_only or poam_only or dependencies_only or remediations_only:
+        # Header warnings and polling need only the newest run; architecture and
+        # history read their own targeted rows below.
+        from .validation_queries import latest_run
+        newest_run = latest_run(db, service.id)
+        validation_records = [newest_run] if newest_run else []
+    else:
+        validation_records = latest_validation_warning(db, service.id) if artifacts_only else db.scalars(select(DeploymentValidationRun).where(
+            DeploymentValidationRun.service_id == service.id,
+        ).options(selectinload(DeploymentValidationRun.execution)).order_by(DeploymentValidationRun.created_at.desc()).limit(100 if not narrow_findings else 1)).all()
     latest_validation = deployment_validation_view(validation_records[0]) if validation_records and not artifacts_only else None
     if validation_records and validation_records[0].status in {"FAILED", "ERROR", "COULD_NOT_VALIDATE", "PARTIALLY_VERIFIED"}:
         failed_run = validation_records[0]
@@ -6792,56 +7004,74 @@ def service_detail(
             raise HTTPException(422, detail="Unknown finding type")
         if page_size not in {50, 100, 250}:
             raise HTTPException(422, detail="Page size must be 50, 100, or 250")
-        latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
-        raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
-        raw_overview = raw_overview if isinstance(raw_overview, dict) else {}
-        latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
-        raw_overview.setdefault("source", "Helm rendered manifests" if latest_payload.get("policy_findings") else "Image metadata")
-        overview_data = normalize_overview(
-            raw_overview,
-            skipped_images=latest_payload.get("skipped_images", []) or [],
-            skipped_charts=latest_payload.get("skipped_charts", []) or [],
-            findings_images=[{"image": item.get("image"), "digest": item.get("image_digest"), "discovered_from": item.get("discovered_from") or "Submitted"} for item in latest_payload.get("findings", []) if isinstance(item, dict) and item.get("image")],
-            incomplete=bool(latest_execution and not latest_execution.complete),
-            # The persisted scan overview is the source of truth for this
-            # page.  Do not run docker manifest inspect while navigating.
-            digest_resolver=None,
-        )
+        # Overview loads only what it renders: scalar execution metadata, one
+        # untracked evidence payload, targeted validation runs, SQL counts and
+        # a cached architecture summary (no layouts, no history hydration).
+        from .evidence_reads import (architecture_execution as select_architecture_execution, execution_metadata,
+                                     execution_payload, latest_working_revision_id)
+        from .service_counts import overview_finding_counts
+        from .validation_queries import applicable_run, runtime_identity
+        execution_rows = execution_metadata(db, service.id)
+        latest_execution = execution_rows[0] if execution_rows else None
+        from .evidence_reads import normalized_overview
+        # Reads only the rendered subset of the scan; normalization is content-keyed.
+        latest_payload, overview_data = normalized_overview(db, latest_execution)
+        if latest_execution:
+            latest_execution.raw_payload = latest_payload
         removable_keys = _current_removable_evidence_keys(latest_payload, latest_execution.complete) if latest_execution else set()
         for row in overview_data["missing_evidence"]:
             row["removable"] = _missing_evidence_key(row) in removable_keys
-        from .overview_queries import overview_architecture_execution
-        architecture_execution = overview_architecture_execution(db, service.id)
-        architecture_payload = dict(architecture_execution.raw_payload) if architecture_execution and isinstance(architecture_execution.raw_payload, dict) else {}
-        architecture_overview = architecture_payload.get("service_overview") if isinstance(architecture_payload.get("service_overview"), dict) else {}
-        declared_resources = architecture_overview.get("rendered_resources") or architecture_payload.get("rendered_resources") or []
-        architecture_revision = latest_architecture_working_revision(db, service.id)
+        architecture_execution = select_architecture_execution(execution_rows)
+        from .evidence_reads import architecture_metadata
+        architecture_meta = architecture_metadata(db, architecture_execution)
+        architecture_revision_id = latest_working_revision_id(db, service.id)
+        architecture_subject = dict(
+            execution_id=architecture_execution.id if architecture_execution and not architecture_revision_id else None,
+            artifact_revision_id=architecture_revision_id)
+        architecture_run = applicable_run(db, service.id, **architecture_subject)
         architecture_verification_state = architecture_verification(
-            applicable=bool(architecture_payload.get("helm_source_files") or declared_resources) and str(architecture_payload.get("artifact_type") or "helm").lower() == "helm",
-            declared_count=len(declared_resources), runs=validation_records,
-            execution_id=architecture_execution.id if architecture_execution and not architecture_revision else None,
-            artifact_revision_id=architecture_revision.id if architecture_revision else None,
-        )
-        architecture_graph = build_architecture_graph(architecture_payload, runtime_evidence=deployment_validation_view(architecture_verification_state.get("run")))
+            applicable=bool(architecture_meta.get("applicable")),
+            declared_count=int(architecture_meta.get("declared_resources") or 0),
+            runs=[architecture_run] if architecture_run else [], **architecture_subject)
+        architecture_runtime = deployment_validation_view(architecture_verification_state.get("run"))
+        if architecture_execution:
+            architecture_graph = build_architecture_graph(
+                lambda: execution_payload(db, architecture_execution.id),
+                runtime_evidence=architecture_runtime, layouts=False,
+                cache_key=("execution", architecture_execution.id, architecture_execution.payload_digest,
+                           runtime_identity(architecture_verification_state.get("run")))
+                if architecture_execution.payload_digest else None)
+        else:
+            architecture_graph = build_architecture_graph({}, runtime_evidence=architecture_runtime, layouts=False)
+        finding_counts = overview_finding_counts(db, service.id, configuration, now, view)
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
+            finding_counts=finding_counts,
+            architecture_polling=bool(latest_validation and not latest_validation.get("terminal")),
             artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
-            deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
+            deployment_validation=architecture_runtime or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all(),
             now=now, finding_type=finding_type, archive_pending=archive_pending,
             groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
     if validation:
-        selected_record = next((item for item in validation_records if item.run_key == validation_run), None) if validation_run else (validation_records[0] if validation_records else None)
+        validation_history = None
+        if validation_only:
+            from .evidence_reads import execution_metadata, original_helm_execution
+            from .validation_queries import history_page, run_by_key
+            selected_record = (run_by_key(db, service.id, validation_run) if validation_run
+                               else (validation_records[0] if validation_records else None))
+            history_rows, validation_history = history_page(db, service.id, validation_page)
+            history_views = [dict(vars(item)) for item in history_rows]
+            eligible_execution = original_helm_execution(execution_metadata(db, service.id))
+        else:
+            selected_record = next((item for item in validation_records if item.run_key == validation_run), None) if validation_run else (validation_records[0] if validation_records else None)
+            history_views = [deployment_validation_view(item) for item in validation_records]
+            eligible_execution = latest_eligible_helm_execution(service.executions)
         if validation_run and not selected_record:
             raise HTTPException(404, detail="Deployment Validation run not found")
-        if validation_only:
-            from .artifact_tab_queries import latest_original_helm
-            eligible_execution = latest_original_helm(db, service.id)
-        else:
-            eligible_execution = latest_eligible_helm_execution(service.executions)
         validation_unavailable_reason = None
         if not deployment_validation_enabled():
             validation_unavailable_reason = "Deployment Validation is disabled by configuration."
@@ -6849,7 +7079,7 @@ def service_detail(
             validation_unavailable_reason = "No Helm scan with retained source files is available to validate."
         return templates.TemplateResponse(request, "service_validation.html", page_context(auth,
             view=view, service=service, validation=deployment_validation_view(selected_record),
-            validation_runs=[deployment_validation_view(item) for item in validation_records],
+            validation_runs=history_views, validation_history=validation_history,
             can_validate=auth.has("remediation.execute", service.id) and not validation_unavailable_reason,
             validation_unavailable_reason=validation_unavailable_reason,
             archive_pending=archive_pending, now=now,
@@ -6899,19 +7129,60 @@ def service_detail(
             response.background = BackgroundTask(schedule_projection, db.get_bind(), latest.id,
                 projection_state["build_token"], risk_metadata)
         return response
+    if architecture and architecture_only:
+        # Selection from summary metadata; the payload is read only when the
+        # content-keyed graph (or a new layout width) is not cached.
+        from .evidence_reads import architecture_execution as select_architecture_execution
+        from .evidence_reads import execution_metadata, execution_payload, latest_working_revision_id
+        from .validation_queries import applicable_run, runtime_identity
+        latest_execution = select_architecture_execution(execution_metadata(db, service.id))
+        from .evidence_reads import architecture_metadata
+        meta = architecture_metadata(db, latest_execution)
+        architecture_state = (
+            "NO_SOURCE" if not latest_execution else
+            "ANALYSIS_INCOMPLETE" if latest_execution.complete is False else
+            "NO_RELATIONSHIPS" if not meta.get("has_resources") else
+            "READY"
+        )
+        working_revision_id = latest_working_revision_id(db, service.id)
+        subject = dict(execution_id=latest_execution.id if latest_execution and not working_revision_id else None,
+                       artifact_revision_id=working_revision_id)
+        architecture_run = applicable_run(db, service.id, **subject)
+        architecture_verification_state = architecture_verification(
+            applicable=bool(meta.get("applicable")), declared_count=int(meta.get("declared_resources") or 0),
+            runs=[architecture_run] if architecture_run else [], **subject)
+        runtime_view = deployment_validation_view(architecture_verification_state.get("run"))
+        def architecture_payload():
+            payload = execution_payload(db, latest_execution.id) if latest_execution else {}
+            if latest_execution:
+                payload["complete"] = latest_execution.complete
+            return payload
+        graph_key = (("execution", latest_execution.id, latest_execution.payload_digest, latest_execution.complete,
+                      runtime_identity(architecture_verification_state.get("run")))
+                     if latest_execution and latest_execution.payload_digest else None)
+        if layout_width is not None:
+            if not 240 <= layout_width <= 10000:
+                raise HTTPException(422, detail="Invalid architecture canvas width")
+            return JSONResponse(build_architecture_graph(architecture_payload, layout_width, runtime_view,
+                                                         cache_key=graph_key)["layouts"])
+        return templates.TemplateResponse(request, "service_architecture.html", page_context(auth,
+            view=view, architecture_graph=build_architecture_graph(architecture_payload, runtime_evidence=runtime_view,
+                                                                   cache_key=graph_key),
+            latest_execution=latest_execution,
+            architecture_verification=architecture_verification_state,
+            architecture_state=architecture_state,
+            architecture_polling=bool(latest_validation and not latest_validation.get("terminal")),
+            now=now, archive_pending=archive_pending,
+        ))
     if architecture:
-        if architecture_only:
-            from .overview_queries import overview_architecture_execution
-            latest_execution = overview_architecture_execution(db, service.id)
-        else:
-            latest_execution = latest_architecture_execution(service.executions)
+        latest_execution = latest_architecture_execution(service.executions)
         payload = dict(latest_execution.raw_payload) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         if latest_execution:
             payload["complete"] = latest_execution.complete
         architecture_state = (
             "NO_SOURCE" if not latest_execution else
             "ANALYSIS_INCOMPLETE" if latest_execution.complete is False else
-            "NO_RELATIONSHIPS" if not (payload.get("rendered_resources") or payload.get("kubernetes_resources") or payload.get("resources") or (payload.get("service_overview") or {}).get("resources") or (payload.get("service_overview") or {}).get("rendered_resources") or (payload.get("service_overview") or {}).get("kubernetes_resources")) else
+            "NO_RELATIONSHIPS" if not _architecture_has_resources(payload) else
             "READY"
         )
         declared_resources = (payload.get("service_overview") or {}).get("rendered_resources") or payload.get("rendered_resources") or []
@@ -6931,12 +7202,17 @@ def service_detail(
             view=view, architecture_graph=build_architecture_graph(payload, runtime_evidence=runtime_view), latest_execution=latest_execution,
             architecture_verification=architecture_verification_state,
             architecture_state=architecture_state,
+            architecture_polling=bool(latest_validation and not latest_validation.get("terminal")),
             now=now, archive_pending=archive_pending,
         ))
     if artifacts:
-        from .artifact_tab_queries import latest_original_helm, load_artifact_workspace
-        latest_execution = latest_original_helm(db, service.id)
-        original_files = dict((latest_execution.raw_payload or {}).get("helm_source_files") or {}) if latest_execution else {}
+        from .artifact_tab_queries import load_artifact_workspace
+        from .evidence_reads import execution_metadata, original_helm_execution
+        # Summary metadata selects the original; only its Helm sources are read (untracked).
+        latest_execution = original_helm_execution(execution_metadata(db, service.id))
+        original_sources = db.scalar(select(Execution.raw_payload["helm_source_files"]).where(
+            Execution.id == latest_execution.id)) if latest_execution else None
+        original_files = dict(original_sources or {}) if isinstance(original_sources, dict) else {}
         artifact_rows = []
         persisted, latest_revisions, latest_validation_by_revision, service_images = load_artifact_workspace(db, service.id)
         for artifact in persisted:
@@ -7034,16 +7310,38 @@ def service_detail(
                                "href": f"/services/{service.service_key}/findings/{target.id}" if is_vulnerability else f"/services/{service.service_key}?finding_state=exceptions&finding_type=configuration"})
         from .remediation_list_queries import remediation_history, active_image_references
         remediation_jobs = remediation_history(db, service.id)
-        preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
-        preview_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
-        preview_plan = build_plan(preview_payload, [item for item in service.policy_findings if item.active], "PREVIEW")
-        preview_images = {str(item.get("original")) for item in preview_plan.get("images", [])}
+        if remediations_only:
+            # The tab header carries no finding rows: read the active policy
+            # findings as scalar rows and the newest evidence as an untracked copy.
+            from .evidence_reads import execution_payload
+            from .findings_query import _rows
+            preview_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+                                   .order_by(Execution.scanned_at.desc(), Execution.id.asc()).limit(1))
+            preview_payload = execution_payload(db, preview_id)
+            preview_policy = _rows(db, PolicyFinding, PolicyFinding.service_id == service.id,
+                                   PolicyFinding.active.is_(True), order_by=PolicyFinding.id)
+        else:
+            preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
+            preview_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
+            preview_policy = [item for item in service.policy_findings if item.active]
+        def compute_preview():
+            plan = build_plan(preview_payload, preview_policy, "PREVIEW")
+            return ({str(item.get("original")) for item in plan.get("images", [])},
+                    sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan.get("configuration_changes", [])),
+                    sum(item.get("classification") == "REVIEW REQUIRED" for item in plan.get("configuration_changes", [])))
+        if remediations_only:
+            # Content-keyed (evidence digest + exact finding fields); never time-based.
+            preview_key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
+                           tuple(tuple(sorted((key, str(value)) for key, value in vars(item).items())) for item in preview_policy))
+            plan_images, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
+        else:
+            plan_images, plan_changes, plan_review = compute_preview()
+        preview_images = set(plan_images)
         preview_images.update(active_image_references(db, service.id))
         preview_files = preview_payload.get("helm_source_files") or preview_payload.get("source_files") or {}
         remediation_preview = {"images": len(preview_images),
             "charts": sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in preview_files) if isinstance(preview_files, dict) else 0,
-            "configuration_changes": sum(item.get("classification") == "AUTO-REMEDIABLE" for item in preview_plan.get("configuration_changes", [])),
-            "manual_review": sum(item.get("classification") == "REVIEW REQUIRED" for item in preview_plan.get("configuration_changes", []))}
+            "configuration_changes": plan_changes, "manual_review": plan_review}
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
@@ -7175,7 +7473,8 @@ def service_detail(
     latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
     if overview:
         raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
-        raw_overview = raw_overview if isinstance(raw_overview, dict) else {}
+        # Copy: normalization must never edit the tracked, retained evidence.
+        raw_overview = dict(raw_overview) if isinstance(raw_overview, dict) else {}
         latest_payload = latest_execution.raw_payload if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         raw_overview.setdefault("source", "Helm rendered manifests" if latest_payload.get("policy_findings") else "Image metadata")
         overview_data = normalize_overview(
@@ -9462,6 +9761,7 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
         oidc_groups=db.scalars(select(Group).order_by(Group.name)).all(),
         oidc_services=db.scalars(select(Service).order_by(Service.name)).all(),
         security_data_sources={row.key: row for row in db.scalars(select(SecurityDataSource))},
+        intelligence_status=intelligence_status(),
         purpose_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
                             "customized": purpose_template_for(db, kind)[1]} for kind in PURPOSE_CATALOG],
         validator=validator_display, validator_result=request.query_params.get("validator_result", ""),

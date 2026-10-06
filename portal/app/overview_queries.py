@@ -10,7 +10,7 @@ class ArchitectureValueTruth(FunctionElement):
     inherit_cache = False
 
     def __init__(self, payload, path):
-        if path not in {"service_overview.rendered_resources", "rendered_resources", "helm_source_files"}:
+        if path not in {"service_overview.rendered_resources", "rendered_resources", "helm_source_files", "policy_findings"}:
             raise ValueError("Unsupported architecture path")
         self.path = path
         super().__init__(payload)

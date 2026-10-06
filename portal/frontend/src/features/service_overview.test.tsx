@@ -51,9 +51,32 @@ it('scopes evidence polling to the selected release and aborts when leaving', as
   vi.useFakeTimers();
   const fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
   vi.stubGlobal('fetch', fetch);
-  const {unmount} = render(<Page data={fixture({view_version: '2.0 beta'})}/>);
+  const {unmount} = render(<Page data={fixture({view_version: '2.0 beta', architecture_polling: true})}/>);
   await vi.advanceTimersByTimeAsync(5000);
-  expect(fetch.mock.calls[0][0]).toBe(`${window.location.origin}/api/v1/services/sample/architecture-evidence?view_version=2.0%20beta`);
+  expect(fetch.mock.calls[0][0]).toBe(`${window.location.origin}/api/v1/services/sample/architecture-evidence?view_version=2.0%20beta&summary=true`);
   unmount();
   expect(fetch.mock.calls[0][1].signal.aborted).toBe(true);
+});
+
+const response = (body: any) => ({ok: true, status: 200, headers: new Headers({'content-type': 'application/json'}), json: async () => body});
+it('does not poll architecture evidence without an active validation', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn();
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={fixture({architecture_polling: false})}/>);
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(fetch).not.toHaveBeenCalled();
+});
+it('polls the summary while validation runs and stops at a terminal state', async () => {
+  vi.useFakeTimers();
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(response({architecture: {state: 'DECLARED', label: 'Declared'}, graph: {summary: {declared: 2}}, active_validation: {run_key: 'r1'}}))
+    .mockResolvedValueOnce(response({architecture: {state: 'VERIFIED', label: 'Verified'}, graph: {summary: {declared: 2}}, active_validation: null}));
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={fixture({architecture_polling: true})}/>);
+  await vi.advanceTimersByTimeAsync(5000);
+  await vi.advanceTimersByTimeAsync(5000);
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(new URL(fetch.mock.calls[0][0]).searchParams.get('summary')).toBe('true');
 });

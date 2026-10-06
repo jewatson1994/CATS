@@ -93,6 +93,11 @@ def project_admin(data, name, context, can=None, formatters=None):
             for field in ("last_attempt_at", "last_success_at"):
                 projected[field] = _formatted(_field(row, field), formatters.get("cats_date"))
             data["security_data_sources"][key] = projected
+        data["intelligence_status"] = {}
+        for key, status in (context.get("intelligence_status") or {}).items():
+            projected = _fields(status, ("state", "records", "rejected", "error"))
+            projected["metadata"] = _fields(_field(status, "metadata", {}), ("model_version", "score_date", "catalog_version", "date_released"))
+            data["intelligence_status"][str(key)] = projected
         data["os_definitions"] = {str(key): _fields(value, ("name", "package_manager")) for key, value in context.get("os_definitions", {}).items()}
         data["custom_os"] = list(context.get("custom_os", {}))
         data["repository_policies"] = {str(key): _fields(value, ("mode", "url", "verify_tls", "verify_packages"))

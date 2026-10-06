@@ -21,21 +21,28 @@ export function Page({data}: {data: PageData}) {
   const [action, setAction] = useState<{kind: string; row: any} | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {if (action) dialog.current?.showModal();}, [action]);
+  // Poll only while a Deployment Validation is running; stop at a terminal state.
+  const [polling, setPolling] = useState(Boolean(data.architecture_polling));
   useEffect(() => {
+    if (!polling) return;
     let stopped = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
+    const summaryUrl = `${evidenceUrl}${evidenceUrl.includes('?') ? '&' : '?'}summary=true`;
     const poll = async () => {
       if (!document.hidden) {
-        try {const result = await requestJson<any>(evidenceUrl, {signal: controller.signal});
-          if (!stopped) {setArchitecture(result.architecture || {}); setSummary(result.graph?.summary || {});}
+        try {const result = await requestJson<any>(summaryUrl, {signal: controller.signal});
+          if (!stopped) {
+            setArchitecture(result.architecture || {}); setSummary(result.graph?.summary || {});
+            if (!result.active_validation) {stopped = true; setPolling(false); return;}
+          }
         } catch { /* Keep the persisted evidence summary visible. */ }
       }
       if (!stopped) timer = setTimeout(poll, 5000);
     };
     timer = setTimeout(poll, 5000);
     return () => {stopped = true; controller.abort(); clearTimeout(timer);};
-  }, [evidenceUrl]);
+  }, [evidenceUrl, polling]);
   const csrf = <input type="hidden" name="csrf_token" value={data.csrf_token || ''}/>;
   const removeEvidence = can(data, 'evidence.remove', service.id);
   const archiveAllowed = can(data, 'archive.request', service.id);

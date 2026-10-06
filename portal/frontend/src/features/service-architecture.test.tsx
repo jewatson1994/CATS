@@ -18,14 +18,14 @@ describe('native architecture',()=>{
   });
   it('refreshes evidence and cleans up the polling timer',async()=>{
     vi.useFakeTimers();const fetch=vi.fn().mockResolvedValue({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>({architecture:{state:'VERIFIED',label:'Verified',observed:1,expected:1},graph:data.architecture_graph})});vi.stubGlobal('fetch',fetch);
-    const {unmount}=render(<Page data={data}/>);
+    const {unmount}=render(<Page data={{...data,architecture_polling:true}}/>);
     await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
     expect(screen.getByText('✓ Verified')).toBeInTheDocument();expect(new URL(fetch.mock.calls[0][0]).pathname).toBe('/api/v1/services/demo/architecture-evidence');
     unmount();await vi.advanceTimersByTimeAsync(10000);expect(fetch).toHaveBeenCalledTimes(1);
   });
   it('keeps live evidence scoped to the selected version',async()=>{
     vi.useFakeTimers();const fetch=vi.fn().mockResolvedValue({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>({architecture:{},graph:data.architecture_graph})});vi.stubGlobal('fetch',fetch);
-    render(<Page data={{...data,view_version:'1.2 / test'}}/>);
+    render(<Page data={{...data,view_version:'1.2 / test',architecture_polling:true}}/>);
     await act(async()=>{await vi.advanceTimersByTimeAsync(5000);});
     expect(new URL(fetch.mock.calls[0][0]).searchParams.get('view_version')).toBe('1.2 / test');
   });

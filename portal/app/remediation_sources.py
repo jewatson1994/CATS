@@ -5,7 +5,7 @@ import yaml
 from copy import deepcopy
 from .remediation_mutations import semantic_identity, read_path, MutationError
 from .remediation_mutations import apply_mutation
-from .remediation_mutations import source_documents
+from .remediation_mutations import source_documents, shared_source_documents
 
 
 def container_entries(resource):
@@ -50,7 +50,8 @@ def structured_mapping(resource, files, field, container_name=None, container_ty
         if source and not (path == source or path.endswith("/" + source) or source.endswith("/" + path)):
             continue
         try:
-            docs, _, _, expressions = source_documents(content)
+            # Read-only inspection of the memoized parse; matched values are copied.
+            docs, _, _, expressions = shared_source_documents(content)
         except MutationError:
             continue
         # A dynamic resource name is addressable only through affirmative render
@@ -82,7 +83,7 @@ def structured_mapping(resource, files, field, container_name=None, container_ty
                     matches.append({"template": path, "source_file": path, "resource_identity": list(identity),
                                     "source_resource_identity": list(semantic_identity(doc)),
                                     "mutation_path": target, "field_path": field, "ambiguous": False,
-                                    "original_present": present, "original_value": value})
+                                    "original_present": present, "original_value": deepcopy(value)})
     return matches[0] if len(matches) == 1 else None
 
 

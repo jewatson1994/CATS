@@ -67,7 +67,10 @@ def test_evidence_tabs_select_old_eligible_scan_without_loading_history(monkeypa
             assert context["architecture_verification"]["run_key"] == "run-40"
         else:
             assert context["validation_unavailable_reason"] is None
-            assert len(context["validation_runs"]) == 100
+            # History is paged (50 per page) instead of hydrating 100 full runs.
+            assert len(context["validation_runs"]) == 50
+            assert context["validation_history"] == {"page": 1, "pages": 2, "total": 100, "page_size": 50}
+            assert context["validation_runs"][0]["run_key"] == "run-99"
         assert len([item for item in loaded if isinstance(item, Execution) and "raw_payload" in item.__dict__]) <= 3
     engine.dispose()
 

@@ -140,7 +140,7 @@ def prepare_summary_header(db, proxy, current, latest, now, configuration, servi
         if incomplete and not evidence_noncompliant:
             view["warning_items"].append({"type": "Evidence", "item": "Incomplete evidence",
                 "reason": "Latest assessment is incomplete", "due": None,
-                "href": f"/services/{service.service_key}?overview=true"})
+                "href": f"/services/{proxy.service_key}?overview=true"})
         if evidence_noncompliant:
             view["noncompliance_items"].extend({"type": "Evidence",
                 "item": row["type"] if row["item"] != "Assessment" else "Assessment",

@@ -34,4 +34,5 @@ def project_service_architecture(context):
         "architecture_state": context.get("architecture_state"),
         "architecture_verification": verification,
         "architecture_graph": project_graph(graph),
+        "architecture_polling": bool(context.get("architecture_polling")),
     }

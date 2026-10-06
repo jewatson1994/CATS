@@ -19,4 +19,23 @@ it('renders assessed zero counts only for ready evidence', () => {
   render(<Page data={{...data,dependency_projection_status:'ready',dependency_all_total:0} as any}/>);
   expect(screen.getByText('0')).toBeInTheDocument();
   expect(screen.getByText(/No matching SBOM/)).toBeInTheDocument();
+});it('refreshes a queued assessment a bounded number of times', async () => {
+  const {vi} = await import('vitest');
+  vi.useFakeTimers();
+  const replace = vi.fn();
+  const original = window.location;
+  Object.defineProperty(window, 'location', {configurable: true, value: {...original, search: '?dependencies=true', pathname: '/services/sample', replace}});
+  try {
+    render(<Page data={{...data,dependency_projection_status:'pending'} as any}/>);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(replace).toHaveBeenCalledWith('/services/sample?dependencies=true&dependency_wait=1');
+    cleanup(); replace.mockClear();
+    Object.defineProperty(window, 'location', {configurable: true, value: {...original, search: '?dependencies=true&dependency_wait=20', pathname: '/services/sample', replace}});
+    render(<Page data={{...data,dependency_projection_status:'pending'} as any}/>);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(replace).not.toHaveBeenCalled();
+  } finally {
+    Object.defineProperty(window, 'location', {configurable: true, value: original});
+    vi.useRealTimers();
+  }
 });

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import gzip
 import io
 import json
 import os
@@ -23,19 +21,18 @@ MAX_UPLOAD = 1024 * 1024 * 1024
 
 
 def _validate_feed(key: str, data: bytes) -> str:
+    # The runtime readers in policy_data use these same parsers, so an
+    # accepted feed can never install as an apparently empty catalog.
+    from .policy_data import parse_epss, parse_kev
     if key == "kev":
-        payload = json.loads(data)
-        rows = payload.get("vulnerabilities") if isinstance(payload, dict) else None
-        if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) or not row.get("cveID") for row in rows):
-            raise ValueError("KEV feed must contain vulnerability records with cveID")
-        return str(payload.get("dateReleased") or payload.get("catalogVersion") or len(rows))[:240]
+        catalog = parse_kev(data, strict=True)
+        return str(catalog.metadata.get("date_released") or catalog.metadata.get("catalog_version")
+                   or catalog.records)[:240]
     if key == "epss":
-        decoded = gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data
-        lines = (line for line in decoded.decode("utf-8-sig").splitlines() if not line.startswith("#"))
-        rows = list(csv.DictReader(lines))
-        if not rows or any(not row.get("cve") or not row.get("epss") or not 0 <= float(row["epss"]) <= 1 for row in rows):
-            raise ValueError("EPSS feed must contain CVE and score columns")
-        return str(len(rows)) + " records"
+        catalog = parse_epss(data, strict=True)
+        details = [value for value in (catalog.metadata.get("model_version") and f"model {catalog.metadata['model_version']}",
+                                       catalog.metadata.get("score_date") and f"scored {catalog.metadata['score_date']}") if value]
+        return (f"{catalog.records} records" + (f" ({', '.join(details)})" if details else ""))[:240]
     raise ValueError("Unknown intelligence feed")
 
 

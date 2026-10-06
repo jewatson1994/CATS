@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from functools import lru_cache
 from typing import Any
 
 import yaml
@@ -132,8 +133,33 @@ def source_documents(source: str):
     """Parse literal YAML structure with opaque scalar Helm expressions.
 
     Control flow, includes producing structure, and dynamic keys remain unsafe.
-    Expressions are never evaluated or rewritten.
+    Expressions are never evaluated or rewritten.  Parsing is memoized by exact
+    source text (a plan classifies every finding against the same files); each
+    caller receives an independent deep copy, so no parsed state is shared.
     """
+    result = _parsed_source_documents(source)
+    if isinstance(result, MutationError):
+        raise type(result)(*result.args)
+    return deepcopy(result)
+
+
+def shared_source_documents(source: str):
+    """Memoized parse for read-only inspection; callers must not modify the result."""
+    result = _parsed_source_documents(source)
+    if isinstance(result, MutationError):
+        raise type(result)(*result.args)
+    return result
+
+
+@lru_cache(maxsize=256)
+def _parsed_source_documents(source: str):
+    try:
+        return _source_documents(source)
+    except MutationError as exc:
+        return exc
+
+
+def _source_documents(source: str):
     expressions = {}
     def mask(match):
         expression = match.group(0)

@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { type PageData, can } from '../api';
 import { ServiceTabs } from '../components/ServiceHeader';
 
@@ -9,9 +10,20 @@ export function Page({ data }: {data: PageData}) {
   const rows = data.dependency_rows || [];
   const projectionStatus = String(data.dependency_projection_status || 'ready').toLowerCase();
   const unavailable = ['pending', 'building', 'failed'].includes(projectionStatus);
+  // Ingest queues the projection; refresh while it is prepared (bounded, ~1 minute).
+  useEffect(() => {
+    if (!['pending', 'building'].includes(projectionStatus)) return;
+    const params = new URLSearchParams(window.location.search);
+    const attempt = Number(params.get('dependency_wait') || 0);
+    if (attempt >= 20) return;
+    params.set('dependency_wait', String(attempt + 1));
+    const timer = setTimeout(() => window.location.replace(`${window.location.pathname}?${params}`), 3000);
+    return () => clearTimeout(timer);
+  }, [projectionStatus]);
   const retryQuery = new URLSearchParams(window.location.search);
   retryQuery.set('dependencies', 'true');
   retryQuery.set('dependency_retry', 'true');
+  retryQuery.delete('dependency_wait');
   const options = (items: string[]) => (items || []).map(item => <option key={item}>{item}</option>);
   return <><a className="back" href={`${root}?overview=true`}>← Service overview</a><section className="heading"><div><p className="eyebrow">{service.service_key}</p><h1>Software Supply Chain</h1><p>SBOM component inventory and risk for {service.name}. Unknown evidence is shown as unknown, not inferred.</p></div>{can(data, 'service.export', service.id) && <a className="secondary-button" href={`${root}/exports/sbom.json`}>Export SBOM components</a>}</section><ServiceTabs serviceKey={service.service_key} active="dependencies" />
     <section className="panel padded"><h2>Dependencies</h2><p>Evidence: {data.dependency_selected_execution?.scanned_at || 'No scan'} · {data.dependency_artifacts ?? 'Unknown'} images/artifacts</p><div className="config-grid">{[['dependency_all_total','Components'],['vulnerable_components','Vulnerable'],['critical_components','Critical'],['kev_components','KEV affected'],['fixed_components','Known fix'],['watchlisted_components','Watchlisted'],['license_unknown_components','License unknown']].map(([key,label]) => <div key={key}><strong>{data[key] ?? 'Unknown'}</strong><br />{label}</div>)}</div><p><small>Each count is the number of distinct component/version/image identities in the selected SBOM evidence, not a count of finding rows. Vulnerabilities are matched to exact package, version, and image observations.</small></p>

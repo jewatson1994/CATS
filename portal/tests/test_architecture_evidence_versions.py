@@ -29,9 +29,19 @@ def seed(client):
         return service.id
 
 
+def _complete_runs():
+    with SessionLocal() as db:
+        for run in db.scalars(select(DeploymentValidationRun).where(DeploymentValidationRun.execution_id.is_not(None))):
+            run.status, run.phase, run.artifact_type = "VERIFIED", "COMPLETE", "ORIGINAL"
+            run.completed_at = run.created_at
+        db.commit()
+
+
 def test_selected_release_filters_graph_runs_and_mutable_revision(monkeypatch):
+    from app import evidence_reads
     client = new_client()
     seed(client)
+    _complete_runs()
     observed = {}
     def verify(**kwargs):
         observed.update(kwargs)
@@ -39,11 +49,13 @@ def test_selected_release_filters_graph_runs_and_mutable_revision(monkeypatch):
     monkeypatch.setattr(main, "architecture_verification", verify)
     def no_working_revision(*args):
         raise AssertionError("Historical polling must not read the mutable workspace")
+    monkeypatch.setattr(evidence_reads, "latest_working_revision_id", no_working_revision)
     monkeypatch.setattr(main, "latest_architecture_working_revision", no_working_revision)
     for label in ("old", "current"):
         response = client.get("/api/v1/services/payments-service/architecture-evidence", params={"view_version": label})
         assert response.status_code == 200
         assert label in str(response.json()["graph"])
+        # Only the selected release's applicable run is read and evaluated.
         assert [run.run_key for run in observed["runs"]] == ["run-" + label]
         assert observed["artifact_revision_id"] is None
         assert observed["execution_id"] is not None
@@ -51,16 +63,27 @@ def test_selected_release_filters_graph_runs_and_mutable_revision(monkeypatch):
 
 
 def test_unselected_polling_keeps_current_behavior(monkeypatch):
+    from app import evidence_reads
     client = new_client()
     seed(client)
     observed = {}
-    monkeypatch.setattr(main, "latest_architecture_working_revision", lambda *args: None)
+    monkeypatch.setattr(evidence_reads, "latest_working_revision_id", lambda *args: None)
     def verify(**kwargs):
         observed.update(kwargs)
         return {}
     monkeypatch.setattr(main, "architecture_verification", verify)
-    assert client.get("/api/v1/services/payments-service/architecture-evidence").status_code == 200
-    assert len(observed["runs"]) == 3
+    response = client.get("/api/v1/services/payments-service/architecture-evidence")
+    assert response.status_code == 200
+    # RUNNING runs never verify architecture; the newest run still drives polling.
+    assert observed["runs"] == []
+    assert response.json()["active_validation"]["run_id"] == "unattached-current"
+    _complete_runs()
+    response = client.get("/api/v1/services/payments-service/architecture-evidence")
+    assert [run.run_key for run in observed["runs"]] == ["run-current"]
+    assert response.json()["active_validation"]["run_id"] == "unattached-current"
+    summary = client.get("/api/v1/services/payments-service/architecture-evidence?summary=true").json()
+    assert set(summary["graph"]) == {"summary"}
+    assert summary["graph"]["summary"] == response.json()["graph"]["summary"]
 
 
 def test_historical_polling_retains_service_scoped_permission():

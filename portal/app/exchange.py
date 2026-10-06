@@ -103,19 +103,17 @@ def version_of(execution):
 
 
 def versions(db, service):
-    # Version menus need only the version scalar, not every retained scan payload.
-    values = db.scalars(select(Execution.raw_payload["service"]["version"]).where(
-        Execution.service_id == service.id
-    ).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
+    # Version menus need only the version scalar, read from execution summaries.
+    from .evidence_reads import version_rows
+    values = [value for _, value in version_rows(db, service.id)]
     return list(dict.fromkeys(str(value or "Unknown") for value in values)) or [service.manual_version or "Unknown"]
 
 
 def selected_evidence(db, service, version):
     # Retain Python's legacy version coercion, but inspect only scalar metadata.
     # Other versions' large scan payloads must never be hydrated for this request.
-    metadata = db.execute(select(Execution.id, Execution.raw_payload["service"]["version"]).where(
-        Execution.service_id == service.id,
-    ).order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
+    from .evidence_reads import version_rows
+    metadata = version_rows(db, service.id)
     available = list(dict.fromkeys(str(value or "Unknown") for _, value in metadata)) or [service.manual_version or "Unknown"]
     version = version or available[0]
     if version not in available:

@@ -27,13 +27,22 @@ def test_date_configuration_binding_is_request_local(templates, monkeypatch):
     templates.env.globals["cats_date"] = formatter
     observed = []
     def project(request_value, name, context, deployed_version, formatters):
-        observed.append(formatters["cats_date"]("date"))
+        observed.extend(formatters["cats_date"](value) for value in ("date", "other", ""))
         return {"schemaVersion": 1, "page": "dashboard", "data": {}}
     monkeypatch.setattr(frontend, "page_data", project)
+    import app.main as main
+    loads = []
+    monkeypatch.setattr(main, "get_configuration", lambda db: loads.append(1) or {"timezone": f"load-{len(loads)}"})
     config = {"timezone": "UTC"}
     templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "dashboard.html", {"_date_configuration": config})
+    assert observed == [("date", config), ("other", config), ("", config)] and loads == []
+    observed.clear()
     templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "dashboard.html", {})
-    assert observed == [("date", config), ("date", None)]
+    # Without a route configuration, settings are read once per response, lazily.
+    assert observed == [("date", {"timezone": "load-1"}), ("other", {"timezone": "load-1"}), ("", None)]
+    observed.clear()
+    templates.TemplateResponse(request(PAGE_MEDIA_TYPE), "dashboard.html", {})
+    assert observed[0] == ("date", {"timezone": "load-2"}) and len(loads) == 2
     assert templates.env.globals["cats_date"] is formatter
 
 

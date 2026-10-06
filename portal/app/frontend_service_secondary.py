@@ -34,12 +34,17 @@ def project_secondary(data, name, context, can=None, formatters=None):
         service_id = _field(_field(view, "service"), "id")
         data.setdefault("can", {})["evidence.remove"] = {str(service_id): bool(can("evidence.remove", service_id)) if callable(can) else False}
         counts = {}
+        precomputed = context.get("finding_counts")
         for key, first, second in (("active", "active", "policy_findings"), ("exceptions", "excepted", "policy_excepted"),
                                   ("resolved", "resolved", "policy_resolved")):
             counts[key] = len(_field(view, first, []) or []) + len(_field(view, second, []) or [])
         counts["noncompliant"] = len(_field(view, "noncompliance_items", []) or [])
         counts["warnings"] = len(_field(view, "warning_items", []) or [])
+        if isinstance(precomputed, Mapping):
+            # Overview counts are computed in SQL; the header carries no finding rows.
+            counts = {key: int(precomputed.get(key) or 0) for key in counts}
         data["finding_counts"] = counts
+        data["architecture_polling"] = bool(context.get("architecture_polling"))
         data["overview_data"] = overview(context.get("overview_data", {}))
         data["latest_execution"] = _fields(context.get("latest_execution"), ("id", "complete"))
         data["artifact_provenance"] = rows(context.get("artifact_provenance", []), (

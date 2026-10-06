@@ -1,6 +1,10 @@
 """Normalize rendered Kubernetes evidence into one explainable architecture graph."""
 from __future__ import annotations
 
+from collections import OrderedDict
+from copy import deepcopy
+import threading
+
 import logging
 import json
 from hashlib import sha256
@@ -148,7 +152,53 @@ def _network_label(mappings: list[dict[str, Any]], suffix: str = "") -> str:
     return f"{label}{suffix}" if label else suffix.strip()
 
 
-def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: float = 1200, runtime_evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+_GRAPH_CACHE: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
+_GRAPH_CACHE_LOCK = threading.Lock()
+GRAPH_CACHE_SIZE = 32
+
+
+def _cached(key, build):
+    with _GRAPH_CACHE_LOCK:
+        if key in _GRAPH_CACHE:
+            _GRAPH_CACHE.move_to_end(key)
+            return _GRAPH_CACHE[key]
+    value = build()
+    with _GRAPH_CACHE_LOCK:
+        _GRAPH_CACHE[key] = value
+        _GRAPH_CACHE.move_to_end(key)
+        while len(_GRAPH_CACHE) > GRAPH_CACHE_SIZE:
+            _GRAPH_CACHE.popitem(last=False)
+    return value
+
+
+def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: float = 1200,
+                             runtime_evidence: dict[str, Any] | None = None, *, layouts: bool = True,
+                             cache_key: tuple | None = None) -> dict[str, Any]:
+    """Normalized architecture graph; visual layouts only when requested.
+
+    ``cache_key`` must identify the exact evidence: the execution id with its
+    payload digest (or an artifact revision checksum) plus the runtime run
+    identity/state.  New scans or validation results therefore produce new keys;
+    nothing is invalidated by time.  ``payload`` may be a zero-argument callable
+    so evidence is loaded only on a cache miss.  Callers receive private copies.
+    """
+    def load():
+        return payload() if callable(payload) else payload
+    if cache_key is None:
+        graph = _build_architecture_graph(load(), runtime_evidence)
+        if layouts:
+            from .architecture_layout import build_layouts
+            graph["layouts"] = build_layouts(graph, viewport_width)
+        return graph
+    core = _cached(("graph", cache_key), lambda: _build_architecture_graph(load(), runtime_evidence))
+    if not layouts:
+        return deepcopy(core)
+    from .architecture_layout import build_layouts
+    computed = _cached(("layouts", cache_key, float(viewport_width)), lambda: build_layouts(deepcopy(core), viewport_width))
+    return deepcopy({**core, "layouts": computed})
+
+
+def _build_architecture_graph(payload: dict[str, Any] | None, runtime_evidence: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = payload if isinstance(payload, dict) else {}
     overview_raw = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
     overview = normalize_overview(
@@ -514,8 +564,6 @@ def build_architecture_graph(payload: dict[str, Any] | None, viewport_width: flo
                         "differences": sum(node.get("provenance") == "OBSERVED" or (
                             node.get("provenance") == "DECLARED" and node.get("kind") not in {"ContainerImage", "ExternalEndpoint"}
                         ) for node in nodes)}, "ports": overview.get("ports", [])}
-    from .architecture_layout import build_layouts
-    graph["layouts"] = build_layouts(graph, viewport_width)
     logger.info("Architecture normalization complete: resources=%d nodes=%d relationships=%d unresolved=%d warnings=%d ports=%d",
                 len(resources), len(nodes), len(relationships), len(unresolved), len(warnings), len(overview.get("ports", [])))
     return graph

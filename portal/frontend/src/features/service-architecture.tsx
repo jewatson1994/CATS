@@ -15,11 +15,15 @@ export function Page({data}:{data:PageData}) {
   const nodes=new Map<string,any>((graph.nodes || []).map((node:any)=>[node.id,node]));
   const fit=useCallback(()=>setCamera({scale:1,x:Math.max(0,(size.width-(layout?.bounds?.width || 0))/2)-(layout?.bounds?.x || 0),y:Math.max(0,(size.height-(layout?.bounds?.height || 0))/2)-(layout?.bounds?.y || 0)}),[layout,size.width,size.height]);
   useEffect(()=>{fit();},[fit]);
+  // Poll only while a Deployment Validation is running; the terminal response
+  // carries the final graph and ends polling.
+  const [polling,setPolling]=useState(Boolean(data.architecture_polling));
   useEffect(()=>{
+    if(!polling)return;
     let cancelled=false,timer:ReturnType<typeof setTimeout>; const controller=new AbortController();
-    const poll=async()=>{try {if(!document.hidden){const state=await requestJson<any>(evidenceUrl,{signal:controller.signal});if(!cancelled){setVerification(state.architecture || {});if(state.graph){setGraph((old:any)=>JSON.stringify(old)===JSON.stringify(state.graph)?old:state.graph);setLayer(old=>state.graph.layouts?.[old]?old:'all');setSelection((old:any)=>old && [...(state.graph.nodes || []),...(state.graph.relationships || [])].find(item=>item.id===old.id) || null);}}}}catch {/* Keep the last verified evidence during temporary outages. */}finally{if(!cancelled)timer=setTimeout(poll,5000);}};
+    const poll=async()=>{try {if(!document.hidden){const state=await requestJson<any>(evidenceUrl,{signal:controller.signal});if(!cancelled){if(!state.active_validation){cancelled=true;setPolling(false);}setVerification(state.architecture || {});if(state.graph){setGraph((old:any)=>JSON.stringify(old)===JSON.stringify(state.graph)?old:state.graph);setLayer(old=>state.graph.layouts?.[old]?old:'all');setSelection((old:any)=>old && [...(state.graph.nodes || []),...(state.graph.relationships || [])].find(item=>item.id===old.id) || null);}}}}catch {/* Keep the last verified evidence during temporary outages. */}finally{if(!cancelled)timer=setTimeout(poll,5000);}};
     timer=setTimeout(poll,5000);return()=>{cancelled=true;clearTimeout(timer);controller.abort();};
-  },[evidenceUrl]);
+  },[evidenceUrl,polling]);
   useEffect(()=>{
     if(!svg.current || typeof ResizeObserver==='undefined')return;
     let timer:ReturnType<typeof setTimeout>,width=0,sequence=0,controller:AbortController|undefined;

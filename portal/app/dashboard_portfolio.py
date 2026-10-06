@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select
 
 from .frontend_portfolio import cybersecurity_data
+from .sql_sets import catalog_subset, member_of
 from .models import (DependencyWatchlistMatch, DeploymentValidationRun, ExceptionRecord,
                      Execution, Finding, FindingObservation, PoamEntry, PolicyExceptionRecord,
                      PolicyFinding, Service, ServiceImage, utcnow)
@@ -30,7 +31,7 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     def latest_scans(current=False):
         query = select(Execution.id.label("id"), Execution.service_id.label("service_id"),
                        func.row_number().over(partition_by=Execution.service_id,
-                           order_by=(Execution.scanned_at.desc(), Execution.id.desc())).label("rank")).where(Execution.service_id.in_(ids))
+                           order_by=(Execution.scanned_at.desc(), Execution.id.desc())).label("rank")).where(member_of(Execution.service_id, ids, numeric=True))
         if current:
             query = query.join(Service, Service.id == Execution.service_id).where(or_(Service.current_version_id.is_(None), Execution.service_version_id == Service.current_version_id))
         return query.subquery()
@@ -47,11 +48,11 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         Execution.raw_payload["skipped_images"].label("images"),
         Execution.raw_payload["skipped_charts"].label("charts")
     ).join(latest_current, and_(latest_current.c.id == Execution.id, latest_current.c.rank == 1)))} if ids else {}
-    observation_ids = select(FindingObservation.finding_id, func.max(FindingObservation.id).label("id")).join(Finding, Finding.id == FindingObservation.finding_id).where(Finding.service_id.in_(ids), Finding.active.is_(True)).group_by(FindingObservation.finding_id).subquery()
+    observation_ids = select(FindingObservation.finding_id, func.max(FindingObservation.id).label("id")).join(Finding, Finding.id == FindingObservation.finding_id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True)).group_by(FindingObservation.finding_id).subquery()
     exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
         ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
     catalog_kev = m.kev_cves()
-    kev = or_(Finding.cve.in_(catalog_kev) if catalog_kev else false(),
+    kev = or_(member_of(Finding.cve, catalog_kev) if catalog_kev else false(),
         func.coalesce(FindingObservation.evidence["kev"].as_boolean(), FindingObservation.evidence["known_exploited"].as_boolean(), False))
     catalog_epss = m.epss_scores()
     epss = func.coalesce(FindingObservation.evidence["epss"].as_float(), FindingObservation.evidence["epss_score"].as_float())
@@ -71,7 +72,7 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         raw = cfg.get("compliance_mode", "risk_based") == "raw"
         days = max(1, int(cfg.get("overdue_days", "90")))
         overdue = raw_overdue(cfg, now) if raw else Finding.episode_started <= now - timedelta(days=days)
-        eligible, failing = ([Finding.service_id.in_(group_ids)], [overdue]) if raw else ([], [])
+        eligible, failing = ([member_of(Finding.service_id, group_ids, numeric=True)], [overdue]) if raw else ([], [])
         ranks = {"unknown": 0, "negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
         minimum = cfg.get("minimum_severity", "None").lower()
         if not raw and minimum in ranks:
@@ -89,14 +90,14 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
             for rule in rules:
                 level = str(rule.get("severity", "Any")).lower()
                 threshold = float(rule.get("threshold", 1))
-                catalog_match = [cve for cve, score in catalog_epss.items() if score >= threshold]
-                score_match = or_(epss >= threshold, and_(epss.is_(None), Finding.cve.in_(catalog_match) if catalog_match else threshold <= 0))
+                catalog_match = catalog_subset(catalog_epss, ("epss>=", threshold), lambda score, threshold=threshold: score >= threshold)
+                score_match = or_(epss >= threshold, and_(epss.is_(None), member_of(Finding.cve, catalog_match) if catalog_match else threshold <= 0))
                 match = and_(score_match, (func.lower(Finding.severity) == level if level != "any" else True))
                 eligible.append(match)
                 if bool(rule.get("noncompliant", True)):
                     failing.append(and_(match, ~prior, overdue))
                 prior = or_(prior, match)
-        scope = Finding.service_id.in_(group_ids)
+        scope = member_of(Finding.service_id, group_ids, numeric=True)
         visible = or_(*eligible) if eligible else false()
         noncompliant_parts.append(and_(scope, or_(*failing) if failing else false(), ~exception))
         warning_days = max(1, int(cfg.get("warning_days", "14")))
@@ -114,20 +115,20 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         func.sum(case((and_(FindingObservation.fixed_version.is_not(None), FindingObservation.fixed_version != ""), 1), else_=0)).label("patchable"),
         func.sum(case((or_(*noncompliant_parts), 1), else_=0)).label("noncompliant"),
         func.sum(case((or_(*warning_parts), 1), else_=0)).label("warning")]
-    counts = {row.service_id: row._mapping for row in db.execute(select(Finding.service_id, *columns).outerjoin(observation_ids, observation_ids.c.finding_id == Finding.id).outerjoin(FindingObservation, FindingObservation.id == observation_ids.c.id).where(Finding.service_id.in_(ids), Finding.active.is_(True)).group_by(Finding.service_id))} if ids else {}
+    counts = {row.service_id: row._mapping for row in db.execute(select(Finding.service_id, *columns).outerjoin(observation_ids, observation_ids.c.finding_id == Finding.id).outerjoin(FindingObservation, FindingObservation.id == observation_ids.c.id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id))} if ids else {}
     policy_exception = select(PolicyExceptionRecord.id).where(PolicyExceptionRecord.policy_finding_id == PolicyFinding.id, PolicyExceptionRecord.revoked_at.is_(None), PolicyExceptionRecord.starts_at <= now, PolicyExceptionRecord.expires_at > now).exists()
-    policy_fails = {sid: int(count) for sid, count in db.execute(select(PolicyFinding.service_id, func.count()).where(PolicyFinding.service_id.in_(ids), PolicyFinding.active.is_(True), m._hardening_overdue_expression(configs, now), ~policy_exception).group_by(PolicyFinding.service_id))} if ids else {}
-    poams = {row.service_id: row for row in db.execute(select(PoamEntry.service_id, func.count().label("count"), func.sum(case((PoamEntry.due_date < now, 1), else_=0)).label("overdue")).where(PoamEntry.service_id.in_(ids), PoamEntry.status == "active").group_by(PoamEntry.service_id))} if ids else {}
+    policy_fails = {sid: int(count) for sid, count in db.execute(select(PolicyFinding.service_id, func.count()).where(member_of(PolicyFinding.service_id, ids, numeric=True), PolicyFinding.active.is_(True), m._hardening_overdue_expression(configs, now), ~policy_exception).group_by(PolicyFinding.service_id))} if ids else {}
+    poams = {row.service_id: row for row in db.execute(select(PoamEntry.service_id, func.count().label("count"), func.sum(case((PoamEntry.due_date < now, 1), else_=0)).label("overdue")).where(member_of(PoamEntry.service_id, ids, numeric=True), PoamEntry.status == "active").group_by(PoamEntry.service_id))} if ids else {}
     watches = {sid: count for sid, count in db.execute(select(DependencyWatchlistMatch.service_id, func.count()).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).group_by(DependencyWatchlistMatch.service_id))} if ids else {}
-    ranked_validations = select(DeploymentValidationRun.service_id, DeploymentValidationRun.status, func.row_number().over(partition_by=DeploymentValidationRun.service_id, order_by=(DeploymentValidationRun.created_at.desc(), DeploymentValidationRun.id.desc())).label("rank")).where(DeploymentValidationRun.service_id.in_(ids)).subquery()
+    ranked_validations = select(DeploymentValidationRun.service_id, DeploymentValidationRun.status, func.row_number().over(partition_by=DeploymentValidationRun.service_id, order_by=(DeploymentValidationRun.created_at.desc(), DeploymentValidationRun.id.desc())).label("rank")).where(member_of(DeploymentValidationRun.service_id, ids, numeric=True)).subquery()
     validations = dict(db.execute(select(ranked_validations.c.service_id, ranked_validations.c.status).where(ranked_validations.c.rank == 1)).all()) if ids else {}
     component_ids = None
     if component and ids:
         needle = component.casefold()
-        component_ids = set(db.scalars(select(Finding.service_id).join(FindingObservation).where(Finding.service_id.in_(ids), Finding.active.is_(True), func.lower(FindingObservation.package).contains(needle, autoescape=True)).distinct()))
-        component_ids.update(db.scalars(select(ServiceImage.service_id).where(ServiceImage.service_id.in_(ids), func.lower(ServiceImage.image_reference).contains(needle, autoescape=True)).distinct()))
+        component_ids = set(db.scalars(select(Finding.service_id).join(FindingObservation).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True), func.lower(FindingObservation.package).contains(needle, autoescape=True)).distinct()))
+        component_ids.update(db.scalars(select(ServiceImage.service_id).where(member_of(ServiceImage.service_id, ids, numeric=True), func.lower(ServiceImage.image_reference).contains(needle, autoescape=True)).distinct()))
         component_ids.update(db.scalars(select(DependencyWatchlistMatch.service_id).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).where(or_(func.lower(DependencyWatchlistMatch.component_name).contains(needle, autoescape=True), func.lower(DependencyWatchlistMatch.image).contains(needle, autoescape=True))).distinct()))
-    severity_ids = set(db.scalars(select(Finding.service_id).where(Finding.service_id.in_(ids), Finding.active.is_(True), severity_lower == severity.casefold()).distinct())) if severity != "all" and ids else None
+    severity_ids = set(db.scalars(select(Finding.service_id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True), severity_lower == severity.casefold()).distinct())) if severity != "all" and ids else None
     rows = []
     failed_statuses = {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}
     for service in services:

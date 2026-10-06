@@ -31,9 +31,9 @@ def load_artifact_workspace(db, service_id):
     return artifacts, revisions, validations, images
 
 
-def latest_original_helm(db, service_id):
+def helm_original_expression(dialect):
+    """SQL truth of ``artifact_type == "helm" and bool(helm_source_files)`` on retained JSON."""
     source = Execution.raw_payload["helm_source_files"]
-    dialect = db.get_bind().dialect.name
     kind = func.json_typeof(source) if dialect == "postgresql" else func.json_type(Execution.raw_payload, "$.helm_source_files")
     # Preserve Python truthiness of retained JSON, including legacy scalar shapes.
     text = cast(source.as_string(), String)
@@ -47,8 +47,13 @@ def latest_original_helm(db, service_id):
         and_(kind.in_(("string", "text")), text != ""),
         case((kind.in_(("number", "integer", "real")), source.as_float() != 0), else_=False),
         kind == "true" if dialect != "postgresql" else and_(kind == "boolean", text == "true"))
+    return and_(Execution.raw_payload["artifact_type"].as_string() == "helm", truthy)
+
+
+def latest_original_helm(db, service_id):
+    truthy = helm_original_expression(db.get_bind().dialect.name)
     return db.scalar(select(Execution).where(Execution.service_id == service_id,
-        Execution.scan_scope == "service", Execution.raw_payload["artifact_type"].as_string() == "helm",
+        Execution.scan_scope == "service",
         truthy).order_by(Execution.scanned_at.desc(), Execution.id.asc()).limit(1))
 
 

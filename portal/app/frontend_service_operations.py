@@ -168,5 +168,7 @@ def project_service_operations(template_name, context):
             diagnostics = field(context.get("validation"), "diagnostics", {}) or {}
             diagnostic_names = ("cleanup_failure", "kind_delete", "network_delete", "validation_infrastructure", "ingress_provider", "load_balancer_provider", "workload_evidence", "reconciliation", "resource_isolation", "sandbox_preflight", "security_policy_violations", "classification", "classification_summary")
             data["validation"]["diagnostics"] = {name: safe_evidence(diagnostics[name]) for name in diagnostic_names if name in diagnostics}
+        history = context.get("validation_history") or {}
+        data["validation_history"] = {key: history.get(key) for key in ("page", "pages", "total", "page_size")} if history else None
         data["validation_runs"] = [fields(run, ("run_key", "artifact_type", "status", "completed_at", "duration_seconds", "cleanup_status")) | {"artifact_reference": public_reference(field(run, "artifact_reference"))} for run in context.get("validation_runs", [])]
     return data
