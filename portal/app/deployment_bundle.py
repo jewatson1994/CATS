@@ -339,7 +339,10 @@ def validate_bundle(path, *, expected_type=None, expected_digest=None, destinati
                 names.add(name.casefold())
             if 'manifest.json' not in names or archive.getinfo('manifest.json').file_size > MAX_METADATA:
                 raise ValueError('Bundle manifest is missing or oversized')
-            manifest = _manifest(_json(archive.read('manifest.json')))
+            declaration = _json(archive.read('manifest.json'))
+            if isinstance(declaration, dict) and declaration.get('schema_version') == 'cats.remediation/v1':
+                declaration = declaration.get('deployment_manifest')
+            manifest = _manifest(declaration)
             if expected_type and manifest['validationType'] != expected_type:
                 raise ValueError('Bundle validation type mismatch')
             if set(manifest['files']) | {'manifest.json'} != {e.filename for e in entries}:

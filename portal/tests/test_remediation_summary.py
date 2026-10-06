@@ -40,7 +40,8 @@ def test_final_scan_and_actual_value_required():
 def test_unresolved_decision_is_not_resolved_by_clean_scan():
     result = build(plan(scan(), decision="unresolved"))
     assert result["unresolved"][0]["status"] == "UNRESOLVED"
-    assert not result["configuration_changes"][0]["accepted"]
+    assert result["configuration_changes"] == []
+    assert not result["configuration_decisions"][0]["accepted"]
 
 
 def test_exact_target_and_resolution_survive_summary_and_artifacts():

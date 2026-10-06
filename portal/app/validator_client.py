@@ -95,7 +95,7 @@ def health(configuration: dict) -> dict:
         return _request(_endpoint(configuration) + "/health", context)
 
 
-def validate(configuration: dict, package: dict, progress_callback=None, *, artifact_path=None, cancel_requested=None) -> dict:
+def validate(configuration: dict, package: dict, progress_callback=None, *, artifact_path=None, cancel_requested=None, state_callback=None, resume_validation_id=None) -> dict:
     modern = package.get("schema_version") == "cats.validation/v2"
     (validate_request if modern else validate_package)(package)
     schema = package["schema_version"]
@@ -116,19 +116,26 @@ def validate(configuration: dict, package: dict, progress_callback=None, *, arti
     endpoint = _endpoint(configuration)
     with tempfile.TemporaryDirectory(prefix="cats-validator-client-") as root:
         context = _client_context(configuration, Path(root))
-        submitted = (_request(endpoint + "/api/v2/validations", context, artifact_path=artifact_path, declaration=package)
-                     if modern and artifact_path is not None else
-                     _request(endpoint + ("/api/v2/validations" if modern else "/api/v1/validations"), context, package))
-        mismatches = [key for key, expected in identity.items() if key not in submitted or submitted[key] != expected]
-        if submitted.get("schema_version") != schema:
-            mismatches.append("schema_version")
-        if not isinstance(submitted.get("validation_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", submitted["validation_id"]):
-            mismatches.append("validation_id")
-        if submitted.get("status") != "QUEUED":
-            mismatches.append("status")
-        if mismatches:
-            raise ContractError("upload acknowledgment", mismatches)
-        job_id = str(submitted["validation_id"])
+        if resume_validation_id is not None:
+            if not modern or not re.fullmatch(r"[0-9a-f]{32}", str(resume_validation_id)):
+                raise ValueError("Invalid retained validation job identity")
+            job_id = resume_validation_id
+        else:
+            submitted = (_request(endpoint + "/api/v2/validations", context, artifact_path=artifact_path, declaration=package)
+                         if modern and artifact_path is not None else
+                         _request(endpoint + ("/api/v2/validations" if modern else "/api/v1/validations"), context, package))
+            mismatches = [key for key, expected in identity.items() if key not in submitted or submitted[key] != expected]
+            if submitted.get("schema_version") != schema:
+                mismatches.append("schema_version")
+            if not isinstance(submitted.get("validation_id"), str) or not re.fullmatch(r"[0-9a-f]{32}", submitted["validation_id"]):
+                mismatches.append("validation_id")
+            if submitted.get("status") != "QUEUED":
+                mismatches.append("status")
+            if mismatches:
+                raise ContractError("upload acknowledgment", mismatches)
+            job_id = str(submitted["validation_id"])
+            if state_callback:
+                state_callback(submitted)
         deadline = time.monotonic() + package.get("manifest", {}).get("timeout_seconds", 600) + 120
         last_phase = None
         cancellation_sent = False
@@ -142,6 +149,8 @@ def validate(configuration: dict, package: dict, progress_callback=None, *, arti
             phase = state.get("phase")
             if not isinstance(phase, str) or not re.fullmatch(r"[A-Z][A-Z_]{0,79}", phase):
                 raise ValueError("Validator returned an invalid phase")
+            if state_callback:
+                state_callback(state)
             if state.get("phase") != last_phase:
                 last_phase = state.get("phase")
                 if progress_callback and last_phase:

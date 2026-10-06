@@ -680,10 +680,29 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
         changed = apply_mutation(document, parts, operation, value)
         files[filename] = yaml.safe_dump(changed, sort_keys=False, allow_unicode=True)
 
+    writes = {}
+    accepted_changes = []
     for change in plan.get("configuration_changes", []):
         if change.get("classification") != AUTO:
             continue
         mapping = change.get("source_mapping") or {}
+        if mapping.get("values_key"):
+            key = mapping["values_key"]
+            identity = key if isinstance(key, list) else re.sub(r"^\.?(Values\.)?", "", str(key)).split(".")
+            path = None
+        else:
+            resource = target_resource(change)
+            identity = mapping.get("source_resource_identity") or semantic_identity(resource)
+            path = target_path(change, resource)
+        address = (mapping.get("values_file") or mapping.get("template") or mapping.get("source_file"),
+                   json.dumps(identity, sort_keys=True), json.dumps(path, sort_keys=True))
+        write = (str(change.get("operation", "SET")).upper(), json.dumps(change.get("new_value"), sort_keys=True))
+        if address in writes:
+            if writes[address] != write:
+                raise MutationError("Conflicting accepted writes to the same source address")
+            continue
+        writes[address] = write
+        accepted_changes.append(change)
         values_file, values_key = mapping.get("values_file"), mapping.get("values_key")
         if values_file and values_key and values_file in files:
             edit_values(values_file, values_key, change.get("operation", "SET"), change.get("new_value", MISSING))
@@ -701,14 +720,20 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
         mapping = image.get("source_mapping") or {}
         values_file, values_key = mapping.get("values_file"), mapping.get("values_key")
         if values_file and values_key and values_file in files:
+            parts = values_key if isinstance(values_key, list) else re.sub(r"^\.?(Values\.)?", "", str(values_key)).split(".")
+            address = (values_file, json.dumps(parts, sort_keys=True), "null")
+            write = ("SET", json.dumps(image["candidate"], sort_keys=True))
+            if address in writes:
+                if writes[address] != write:
+                    raise MutationError("Conflicting accepted writes to the same source address")
+                continue
+            writes[address] = write
             edit_values(values_file, values_key, "SET", image["candidate"])
     if files:
         return files
     if str(payload.get("artifact_type") or "").lower() not in {"kubernetes", "manifest", "raw"}:
         return {}
-    for change in plan.get("configuration_changes", []):
-        if change.get("classification") != AUTO:
-            continue
+    for change in accepted_changes:
         resource = target_resource(change)
         index = next(index for index, item in enumerate(resources) if item is resource)
         resources[index] = apply_mutation(resource, target_path(change, resource), change.get("operation", "SET"),

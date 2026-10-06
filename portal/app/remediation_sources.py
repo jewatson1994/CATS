@@ -89,7 +89,7 @@ def structured_mapping(resource, files, field, container_name=None, container_ty
 
 def verify_rendered_changes(resources, changes):
     """Writing source is insufficient: require exact typed values in the render."""
-    failures = []
+    failures, warnings = [], []
     for change in changes:
         if change.get("decision") not in {"proposed", "custom"}:
             continue
@@ -103,21 +103,25 @@ def verify_rendered_changes(resources, changes):
                      resource.get("apiVersion", "") == normalized.get("api_version", ""))
             if exact or (not isinstance(normalized, dict) and identity in {f"{kind}/{name}", f"{namespace}/{kind}/{name}"}):
                 matches.append(resource)
-        if len(matches) != 1:
-            failures.append("Accepted change does not identify one rendered resource.")
+        if len(matches) > 1:
+            failures.append("Duplicate rendered resource identity is unsafe.")
+            continue
+        if not matches:
+            warnings.append("Accepted change cannot be attributed to one rendered resource.")
             continue
         path = container_path(matches[0], str(change.get("field_path") or ""), change.get("container_name"), change.get("container_type"))
         if not path:
-            failures.append("Accepted change does not identify one rendered container.")
+            warnings.append("Accepted change cannot be attributed to one rendered container.")
             continue
         try:
             present, actual = read_path(matches[0], path)
         except MutationError:
             present, actual = False, None
         expected = change.get("new_value")
-        if not present or type(actual) is not type(expected) or actual != expected:
+        removed = change.get("operation") in {"REMOVE", "DELETE"}
+        if (present if removed else not present or type(actual) is not type(expected) or actual != expected):
             failures.append("Accepted source mutation is absent or different in the final render.")
-    return {"status": "FAIL" if failures else "PASS", "detail": " ".join(failures) or "Every accepted configuration value appears at its exact rendered target."}
+    return {"status": "FAIL" if failures else "WARNING_UNVERIFIED" if warnings else "PASS", "detail": " ".join(failures + warnings) or "Every accepted configuration value appears at its exact rendered target."}
 
 
 def verify_rendered_scope(before, after, changes, images=()):
@@ -159,7 +163,11 @@ def verify_rendered_scope(before, after, changes, images=()):
                 result[identity] = normalize(resource)
             return result
         valid = inventory(expected) == inventory(after)
-    except (MutationError, TypeError, KeyError):
+    except MutationError as exc:
+        if str(exc).startswith("Ambiguous"):
+            return {"status": "WARNING_UNVERIFIED", "detail": "Static rendered attribution is uncertain; source mutation is retained but runtime verification is required."}
+        valid = False
+    except (TypeError, KeyError):
         valid = False
     return {"status": "PASS" if valid else "FAIL", "detail":
             "Render differs only by accepted edits, image mappings and chart version labels." if valid else

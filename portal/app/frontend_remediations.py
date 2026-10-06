@@ -35,7 +35,8 @@ def project_remediations(data, name, context, can, formatters):
         data["exceptions"].append(row)
     def validation_evidence(value):
         # Only declared public evidence fields cross the page boundary.
-        projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest"))
+        projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest", "detail", "request_id", "validation_id", "validator_id", "cleanup_status"))
+        projected["service"] = _fields(_field(value, "service", {}) or {}, ("id", "version"))
         projected["network"] = _fields(_field(value, "network", {}) or {}, ("isolated", "external_chart_fetches", "external_image_pulls"))
         return projected
     def job(item, full=False):
@@ -74,6 +75,9 @@ def project_remediations(data, name, context, can, formatters):
         validation = _field(item, "validation_results", {}) or {}
         summary = _field(validation, "summary_of_changes", {}) or {}
         result["summary_of_changes"] = _fields(summary, ("schema_version", "final_configuration_scan_complete"))
+        result["static_status"] = _scalar(_field(validation, "status"))
+        result["summary_of_changes"]["unresolved"] = [_fields(row, ("rule_id", "resource", "field_path", "status", "reason", "accepted", "source_modified")) for row in _field(summary, "unresolved", []) or []]
+        result["summary_of_changes"]["remaining_configuration_findings"] = [_fields(row, ("rule_id", "target", "title", "severity", "resource")) for row in _field(summary, "remaining_configuration_findings", []) or []]
         result["summary_of_changes"]["configuration_changes"] = []
         for row in _field(summary, "configuration_changes", []) or []:
             projected = _fields(row, ("rule_id", "resource", "field_path", "original_value", "proposed_value", "actual_value", "actual_value_available", "accepted", "source_modified", "verified", "status", "reason", "actor", "approval", "proposed_value_source"))
@@ -88,6 +92,7 @@ def project_remediations(data, name, context, can, formatters):
         result["deployment_status"] = _scalar(_field(_field(validation, "deployment", {}), "status"))
         result["original_validation"] = validation_evidence(_field(validation, "original", {}) or {})
         result["candidate_validation"] = validation_evidence(_field(validation, "deployment", {}) or {})
+        result["candidate_validation_attempts"] = [validation_evidence(row) for row in _field(validation, "runtime_attempts", []) or []]
         result["logs"] = [_scalar(row) for row in _field(item, "logs", []) or []]
         return result
     data["remediation_jobs"] = [job(item) for item in context.get("remediation_jobs", [])]

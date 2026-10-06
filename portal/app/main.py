@@ -354,6 +354,7 @@ async def app_lifespan(_app: FastAPI):
     # Recovery is a safety obligation even when administrators disable new runs.
     validator_management.recover_operations()
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
+    REMEDIATION_WORKERS.submit(_recover_retained_candidate_validations)
     async def monitor_validators():
         while True:
             try:
@@ -5315,7 +5316,7 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
             "vulnerabilities_before", "vulnerabilities_after", "classification", "reason") if key in image}
 
 
-REMEDIATION_STAGES = ("snapshot", "patch_images", "rewrite_artifacts", "static_validation", "output", "deployment_validation")
+REMEDIATION_STAGES = ("snapshot", "patch_images", "rewrite_artifacts", "static_validation", "final_rescan", "package", "output", "deployment_validation")
 
 
 def _remediation_audit(db: Session, record: RemediationExecution, action: str, **details) -> None:
@@ -5597,7 +5598,8 @@ def _run_remediation_job(record_id: int) -> None:
             from .remediation_sources import verify_rendered_scope
             validation["checks"]["baseline_render"] = {"status": "PASS" if baseline_ok and baseline_resources else "FAIL",
                 "detail": "Original retained source lint/render completed." if baseline_ok and baseline_resources else "Original source render is unavailable or failed."}
-            validation["checks"]["change_scope"] = verify_rendered_scope(baseline_resources, rendered, plan["configuration_changes"], plan["images"])
+            validation["checks"]["change_scope"] = (verify_rendered_scope(baseline_resources, rendered, plan["configuration_changes"], plan["images"])
+                if baseline_resources and rendered else {"status": "WARNING_UNVERIFIED", "detail": "Source change scope cannot be proved without both renders."})
             validation["required_checks"].extend(["baseline_render", "change_scope"])
             if any(validation["checks"][key]["status"] != "PASS" for key in ("baseline_render", "change_scope")):
                 validation["status"] = "FAIL"
@@ -5611,7 +5613,14 @@ def _run_remediation_job(record_id: int) -> None:
                     "detail": "Candidate render uses the remediated image mappings." if image_references_valid else "Original or missing remediated image references remain in the candidate render."}
                 if not image_references_valid:
                     validation["status"] = "FAIL"
-            _remediation_stage(record, "static_validation", "success" if validation["status"] == "PASS" else "failed")
+            from .remediation_validation import classify_static
+            classify_static(validation)
+            _remediation_stage(record, "static_validation", "failed" if validation["status"] == "BLOCKING" else
+                               "warning" if validation["status"] == "WARNING_UNVERIFIED" else "success")
+            scan_statuses = [validation["checks"][name]["status"] for name in ("trivy_config_rescan", "vulnerability_rescan")]
+            _remediation_stage(record, "final_rescan", "success" if all(value == "PASS" for value in scan_statuses) else "warning",
+                               "Final scan results are independent of mutation and runtime validation.")
+            _remediation_stage(record, "package", "running")
             packaged_charts: list[tuple[Path, dict]] = []
             helm_binary = shutil.which("helm")
             chart_output = job_root / "helm"
@@ -5637,7 +5646,10 @@ def _run_remediation_job(record_id: int) -> None:
                 except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
                     chart["package_status"] = "FAILED"
                     chart["reason"] = type(exc).__name__
-            if record.output_mode == "publish" and validation["status"] == "PASS":
+            validation["packaging"] = {"status": "PACKAGED" if all(chart.get("package_status") == "PACKAGED" for chart in chart_mappings) else "PARTIAL",
+                                      "charts": chart_mappings}
+            _remediation_stage(record, "package", "success" if validation["packaging"]["status"] == "PACKAGED" else "warning")
+            if record.output_mode == "publish" and validation["status"] != "BLOCKING":
                 _publish_remediation_charts(db, packaged_charts)
                 for chart in chart_mappings:
                     _remediation_audit(db, record, "remediation.chart_publication", name=chart.get("name"),
@@ -5646,45 +5658,13 @@ def _run_remediation_job(record_id: int) -> None:
                 "changes": [f"Chart {chart['original_version']} → {chart['remediated_version']}",
                             f"Package: {chart.get('package_status', 'NOT RUN')}",
                             f"OCI: {chart.get('publish_status', 'NOT REQUESTED')}"]} for chart in chart_mappings)]
-            validator_config = validator_management.select_configuration(db, parse_json(get_global_configuration(db).get("validator_configuration"), {}), 'helm-chart')
-            if validator_config.get("endpoint") and record.output_mode == "publish":
-                candidate_images = {str(image.get("candidate")) for image in plan["images"] if image.get("candidate")}
-                all_images_mapped = all(image.get("candidate") and image.get("classification") == "AUTO-REMEDIABLE"
-                                        for image in plan["images"])
-                chart_sources_valid = all(chart.get("package_status") != "FAILED" for chart in chart_mappings)
-                if validation["status"] != "PASS" or not all_images_mapped or not chart_sources_valid or not rendered:
-                    validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": "Exact remediated chart and image references are unavailable."}
-                else:
-                    rendered_images = _candidate_workload_images(rendered)
-                    original_images = {str(image.get("original")) for image in plan["images"]}
-                    if not candidate_images <= rendered_images or original_images & rendered_images:
-                        validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": "The candidate render does not exclusively use the remediated image mappings."}
-                    else:
-                        from .validator_client import validate as validate_remote_artifact
-                        from .validator_protocol import SCHEMA_VERSION as validation_schema_version
-                        package = {"schema_version": validation_schema_version,
-                            "manifest": {"service_key": service.service_key, "timeout_seconds": 600,
-                                         "referenced_images": sorted(rendered_images),
-                                         "required_capabilities": ["kind", "helm", "kubectl", "docker"]},
-                            "artifact": {"source_files": files, "values_files": values_files, "declared_resources": rendered,
-                                         "artifact_type": "REMEDIATED", "reference": record.job_key}}
-                        _remediation_stage(record, "deployment_validation", "running")
-                        db.commit()
-                        try:
-                            remote_result = validate_remote_artifact(validator_config, package)
-                            validation["deployment"] = {"status": remote_result.get("status"), "result": remote_result}
-                            _remediation_stage(record, "deployment_validation", "success" if remote_result.get("status") == "VERIFIED" else "failed")
-                            _remediation_audit(db, record, "remediation.deployment_validation", status=remote_result.get("status"))
-                        except Exception as exc:
-                            validation["deployment"] = {"status": "UNABLE TO VALIDATE", "detail": type(exc).__name__}
-                            _remediation_stage(record, "deployment_validation", "failed", type(exc).__name__)
-            elif record.output_mode == "bundle":
-                validation["deployment"] = {"status": "NOT RUN", "detail": "Import bundled images into the configured target registry before deployment validation."}
+            # Runtime validation consumes finalized retained bytes below, through v2.
+            validation["deployment"] = {"status": "NOT RUN", "detail": "Candidate packaging pending."}
             record.validation_results = validation
             validation["charts"] = chart_mappings
             original_files = payload.get("helm_source_files") or payload.get("source_files") or {}
             summary = build_remediation_summary(plan, original_files, files, validation, baseline_resources, rendered)
-            for change, evidence in zip(plan["configuration_changes"], summary["configuration_changes"]):
+            for change, evidence in zip(plan["configuration_changes"], summary["configuration_decisions"]):
                 change["post_scan_result"] = evidence["post_scan_result"]
             record.configuration_changes = plan["configuration_changes"]
             summary_documents = remediation_summary_artifacts(summary, original_files, files)
@@ -5702,7 +5682,7 @@ def _run_remediation_job(record_id: int) -> None:
             with ZipFile(artifact, "w", ZIP_DEFLATED) as bundle:
                 for document_path, document_content in summary_documents.items():
                     bundle.writestr(document_path, document_content)
-                bundle.writestr("manifest.json", json.dumps({
+                candidate_manifest = {
                     "schema_version": "cats.remediation/v1", "job_key": record.job_key,
                     "service_key": service.service_key, "output_mode": record.output_mode,
                     "created_at": record.created_at.isoformat() if record.created_at else None,
@@ -5722,7 +5702,7 @@ def _run_remediation_job(record_id: int) -> None:
                                for item in plan["images"]],
                     "charts": chart_mappings,
                     "validation": validation.get("deployment"),
-                }, indent=2))
+                }
                 bundle.writestr("remediation-plan.yaml", plan_yaml(plan))
                 bundle.writestr("README.txt", (
                     "CATS retained remediation candidate\n\n"
@@ -5772,6 +5752,25 @@ def _run_remediation_job(record_id: int) -> None:
                             path = output / name
                             if path.is_file():
                                 bundle.write(path, archive_name)
+                if rendered_path.is_file():
+                    bundle.write(rendered_path, "rendered.yaml")
+                else:
+                    bundle.writestr("rendered.yaml", "")
+            # Reopen completed ZIP entries so Windows archive member names are canonical.
+            with ZipFile(artifact, "a", ZIP_DEFLATED) as bundle:
+                from .remediation_validation import deployment_manifest
+                source_version = db.get(ServiceVersion, record.source_version_id) if record.source_version_id else None
+                try:
+                    candidate_manifest["deployment_manifest"] = deployment_manifest(bundle, candidate_dir=candidate_dir,
+                        values_files=values_files, rendered=rendered_path.read_text(encoding="utf-8") if rendered_path.is_file() else "",
+                        service={"id": service.service_key, "version": source_version.version} if source_version and source_version.service_id == record.service_id else None,
+                        images=plan["images"])
+                except (ValueError, OSError, tarfile.TarError) as exc:
+                    candidate_manifest["deployment_manifest"] = None
+                    validation["checks"]["candidate_integrity"] = {"status": "FAIL", "detail": "Candidate deployment inventory failed integrity checks."}
+                    validation["required_checks"].append("candidate_integrity")
+                    classify_static(validation)
+                bundle.writestr("manifest.json", json.dumps(candidate_manifest, indent=2))
             # Retain the completed artifact before subsequent bookkeeping can fail.
             record.artifact_path = str(artifact)
             with artifact.open("rb") as artifact_stream:
@@ -5803,7 +5802,7 @@ def _run_remediation_job(record_id: int) -> None:
             if review or unresolved_images:
                 record.status = "review_required"
                 record.logs = [*record.logs, "Candidate created; ambiguous source or image changes require review before validation and promotion."]
-            elif automatic and validation["status"] == "PASS":
+            elif automatic and validation["status"] != "BLOCKING":
                 deployment_status = (validation.get("deployment") or {}).get("status")
                 charts_complete = all(chart.get("package_status") == "PACKAGED" for chart in chart_mappings)
                 chart_publication_ok = all(chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings)
@@ -5820,16 +5819,16 @@ def _run_remediation_job(record_id: int) -> None:
                 else:
                     record.status = "validation_unavailable"
                 record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
-                record.logs = [*record.logs, "Static validation passed; publication and deployment validation are reported separately."]
+                record.logs = [*record.logs, "Candidate retained; static, scan, packaging, delivery and runtime results are reported separately."]
             elif not automatic:
                 record.status = "not_remediable"
                 record.logs = [*record.logs, "No registered deterministic remediation could be applied."]
             else:
-                record.status = "failed"
-                record.failure_reason = "Required static validation failed"
+                record.status = "validation_blocked"
+                record.failure_reason = "Blocking static validation defect; retained candidate requires correction"
             record.phase = "complete" if record.status != "failed" else "failed"
             record.remediation_status = ("failed" if record.status in {"failed", "not_remediable"} else
-                                         "partial" if review or unresolved_images or not evidence_complete or validation["status"] != "PASS" else "complete")
+                                         "partial" if review or unresolved_images or not evidence_complete else "complete")
             publication_results = [chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings]
             publication_results.extend(bool(image.get("candidate")) and bool(image.get("digest"))
                                        for image in plan["images"])
@@ -5851,7 +5850,8 @@ def _run_remediation_job(record_id: int) -> None:
                               target_type="remediation_execution", target_id=str(record.id),
                               detail={"service_id": record.service_id, "job_key": record.job_key, "status": record.status}))
             db.commit()
-            if inputs.get("requested_delivery") in {"oci", "standard-bundle", "offline-bundle"} and record.remediation_status in {"complete", "partial"}:
+            _validate_retained_remediation(db, record)
+            if inputs.get("requested_delivery") in {"oci", "standard-bundle", "offline-bundle"} and record.remediation_status in {"complete", "partial"} and validation["status"] != "BLOCKING":
                 try:
                     _queue_delivery(db, record, record.requested_by_id, inputs["requested_delivery"], inputs.get("destination_id", ""), inputs.get("verify_runtime", False))
                 except Exception as delivery_error:
@@ -5875,6 +5875,141 @@ def _run_remediation_job(record_id: int) -> None:
                 db.commit()
         finally:
             _cleanup_completed_remediations(db)
+
+
+def _validate_retained_remediation(db, record):
+    """Validate the same retained revision; never reapply decisions or image patches."""
+    from .remediation_validation import classify_static, validation_result
+    from .deployment_bundle import validate_bundle, file_digest
+    from .validator_client import validate as validate_remote
+    from .validator_protocol import REQUEST_SCHEMA_VERSION
+    validation = deepcopy(record.validation_results or {})
+    classify_static(validation)
+    prior = deepcopy(validation.get("deployment") or {})
+    resume_id = prior.get("validation_id") if prior.get("cleanup_status") in {"UNKNOWN", "FAILED"} else None
+    request = prior.get("request") if resume_id else None
+    try:
+        if validation["status"] == "BLOCKING":
+            record.verification_status = "blocked"
+            validation["deployment"] = {"status": "BLOCKED", "detail": "Blocking static defects prevent runtime deployment."}
+            _remediation_stage(record, "deployment_validation", "blocked")
+            return
+        path = retained_candidate(record, REMEDIATION_JOB_ROOT)
+        manifest = validate_bundle(path, expected_type="standard-bundle", expected_digest=record.artifact_digest)
+        configuration = validator_management.select_configuration(db,
+            parse_json(get_global_configuration(db).get("validator_configuration"), {}), "standard-bundle")
+        if not configuration.get("endpoint"):
+            record.verification_status = "unavailable"
+            validation["deployment"] = {**prior, "status": "UNAVAILABLE", "detail": "No healthy compatible managed validator or configured fallback is available.",
+                                         "artifact_digest": record.artifact_digest}
+            _remediation_stage(record, "deployment_validation", "unavailable")
+            return
+        if resume_id and (not request or prior.get("validator_id") != configuration.get("expected_validator_id")):
+            raise ValueError("Interrupted validation must resume on its original validator with bound request evidence")
+        request = request or {"schema_version": REQUEST_SCHEMA_VERSION, "request_id": uuid.uuid4().hex,
+            "validation_type": "standard-bundle", "service": manifest["service"],
+            "artifact": {"reference": record.job_key, "digest": record.artifact_digest},
+            "deployment": {"type": "helm", "namespace": manifest["deployment"]["namespace"]}, "validation_profile": "default"}
+        record.verification_status = "running"
+        validation["deployment"] = {**prior, "status": "RUNNING", "request": request, "request_id": request["request_id"],
+            "artifact_digest": record.artifact_digest, "validation_type": "standard-bundle", "service": manifest["service"]}
+        record.validation_results = deepcopy(validation)
+        _remediation_stage(record, "deployment_validation", "running")
+        db.commit()
+        def progress(phase):
+            _remediation_stage(record, "deployment_validation", "running", phase)
+            db.commit()
+        last_state = None
+        def state_changed(state):
+            nonlocal last_state
+            public = {key: state.get(key) for key in ("status", "validation_id", "validator_id", "phase")}
+            if public != last_state:
+                last_state = public
+                validation["deployment"] = {**validation["deployment"], **public}
+                record.validation_results = deepcopy(validation)
+                db.commit()
+        options = {"resume_validation_id": resume_id} if resume_id else {}
+        result = validate_remote(configuration, request, artifact_path=path, progress_callback=progress, state_callback=state_changed, **options)
+        if file_digest(path) != record.artifact_digest:
+            raise ValueError("Retained candidate integrity mismatch after validation")
+        evidence = validation_result(result, request)
+        evidence["request"] = request
+        validation["deployment"] = evidence
+        status = evidence["status"]
+        record.verification_status = "verified" if status == "VERIFIED" else "failed" if status in {"FAILED", "PARTIALLY_VERIFIED"} else "unavailable"
+        _remediation_stage(record, "deployment_validation", "success" if record.verification_status == "verified" else record.verification_status,
+                           evidence.get("detail") or "")
+    except Exception as exc:
+        # A failed attempt preserves remediation, scan, packaging, signing and delivery evidence.
+        record.verification_status = "unavailable"
+        validation["deployment"] = {**(validation.get("deployment") or {}), "request": request, "status": "UNAVAILABLE", "detail": f"Candidate validation unavailable ({type(exc).__name__}); inspect validator availability, artifact integrity and cleanup evidence.",
+            "artifact_digest": record.artifact_digest, "request_id": request["request_id"] if request else None,
+            "validation_id": (validation.get("deployment") or {}).get("validation_id"),
+            "validator_id": (validation.get("deployment") or {}).get("validator_id"),
+            "cleanup_status": "UNKNOWN" if request else "NOT_REQUIRED"}
+        _remediation_stage(record, "deployment_validation", "unavailable", type(exc).__name__)
+    finally:
+        history = list(validation.get("runtime_attempts") or [])
+        history.append(deepcopy(validation.get("deployment") or {}))
+        validation["runtime_attempts"] = history[-20:]
+        record.validation_results = validation
+        record.updated_at = utcnow()
+        _remediation_audit(db, record, "remediation.candidate_validation", status=record.verification_status,
+                           artifact_digest=record.artifact_digest)
+        db.commit()
+
+
+def _recover_retained_candidate_validations():
+    """An interrupted client cannot claim completion or retry without cleanup evidence."""
+    with SessionLocal() as db:
+        records = db.scalars(select(RemediationExecution).where(
+            RemediationExecution.verification_status.in_(["queued", "running"]))).all()
+        for record in records:
+            validation = deepcopy(record.validation_results or {})
+            prior = validation.get("deployment") or {}
+            validation["deployment"] = {**prior, "status": "UNAVAILABLE", "cleanup_status": "UNKNOWN" if prior.get("request_id") else "NOT_REQUIRED",
+                "detail": "Validation interrupted by portal restart. Verify remote job cleanup before retrying."}
+            record.validation_results = validation
+            record.verification_status = "unavailable"
+            _remediation_stage(record, "deployment_validation", "unavailable", "Interrupted; cleanup unconfirmed")
+        db.commit()
+
+
+def _run_retained_remediation_validation(record_id):
+    with SessionLocal() as db:
+        record = db.get(RemediationExecution, record_id)
+        if record:
+            _validate_retained_remediation(db, record)
+
+
+_CANDIDATE_VALIDATION_LOCK = threading.Lock()
+
+
+@app.post("/services/{service_key}/remediations/{job_key}/validate")
+def validate_remediation_candidate(service_key: str, job_key: str, csrf_token: str = Form(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    check_csrf(auth, csrf_token)
+    with _CANDIDATE_VALIDATION_LOCK:
+        record = db.scalar(select(RemediationExecution).join(Service).where(
+            RemediationExecution.job_key == job_key, Service.service_key == service_key))
+        if not record:
+            raise HTTPException(404)
+        if record.status in {"queued", "running"} or record.verification_status in {"queued", "running"}:
+            raise HTTPException(409, detail="Candidate validation or remediation is already active")
+        try:
+            retained_candidate(record, REMEDIATION_JOB_ROOT)
+        except ValueError as exc:
+            raise HTTPException(409, detail=str(exc)) from None
+        if (record.validation_results or {}).get("status") == "BLOCKING":
+            raise HTTPException(409, detail="Blocking static defects require a corrected candidate")
+        prior = (record.validation_results or {}).get("deployment") or {}
+        if prior.get("cleanup_status") == "UNKNOWN" and not prior.get("validation_id"):
+            raise HTTPException(409, detail="Cleanup is unconfirmed and no bound remote job is available to resume; reconcile the interrupted validator request before retrying")
+        record.verification_status = "queued"
+        _remediation_stage(record, "deployment_validation", "queued")
+        db.commit()
+        REMEDIATION_WORKERS.submit(_run_retained_remediation_validation, record.id)
+    return RedirectResponse(f"/services/{service_key}/remediations/{job_key}", status_code=303)
 
 
 def _cleanup_completed_remediations(db):
@@ -6028,6 +6163,8 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
 
 
 def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify_runtime=False):
+    if (record.validation_results or {}).get("status") == "BLOCKING":
+        raise HTTPException(409, detail="Candidate has blocking static validation defects")
     try:
         retained_candidate(record, REMEDIATION_JOB_ROOT)
     except ValueError as exc:
@@ -6083,7 +6220,7 @@ def _run_bundle_delivery(db, record, attempt):
                                                        configuration=material)
         attempt.artifact_path = path
         attempt.result = {**result, "delivery_mode": mode, "verification_requested": True}
-        request = {"schema_version": "cats.validation/v2", "validation_type": mode,
+        request = {"schema_version": "cats.validation/v2", "request_id": uuid.uuid4().hex, "validation_type": mode,
                    "service": {"id": record.service.service_key, "version": version.version},
                    "artifact": {"reference": Path(path).name, "digest": result["materialized_digest"]},
                    "deployment": {"type": "helm", "namespace": "cats-validation"}, "validation_profile": "default"}
@@ -6092,6 +6229,8 @@ def _run_bundle_delivery(db, record, attempt):
         configuration = validator_management.select_configuration(db, parse_json(get_global_configuration(db).get("validator_configuration"), {}), mode)
         try:
             verification = validator_client.validate(configuration, request, artifact_path=path)
+            from .remediation_validation import validation_result
+            validation_result(verification, request)
         except Exception as exc:
             verification = {"status": "COULD_NOT_VALIDATE", "reason": f"Independent validation unavailable ({type(exc).__name__})",
                             "validation_type": mode, "service": request["service"], "artifact_digest": request["artifact"]["digest"]}

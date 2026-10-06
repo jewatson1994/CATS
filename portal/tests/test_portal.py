@@ -700,9 +700,18 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
         validation["checks"]["vulnerability_rescan"] = {"status": "PASS"}
         return validation
     submitted = []
-    def fake_validate(_config, package):
-        submitted.append(package)
-        return {"status": "VERIFIED", "cleanup_status": "COMPLETE"}
+    def fake_validate(_config, package, *, artifact_path, **kwargs):
+        from app.deployment_bundle import file_digest, validate_bundle
+        assert package["artifact"]["digest"] == file_digest(artifact_path)
+        manifest = validate_bundle(artifact_path, expected_digest=package["artifact"]["digest"])
+        with ZipFile(artifact_path) as archive:
+            assert candidate in archive.read("candidate/values.yaml").decode()
+            assert "1.0.0-cats." in archive.read("candidate/Chart.yaml").decode()
+        submitted.append((package, manifest, artifact_path))
+        return {"status": "VERIFIED", "request_id": package["request_id"],
+                "validation_type": package["validation_type"], "service": package["service"],
+                "artifact_digest": package["artifact"]["digest"], "cleanup_status": "COMPLETE",
+                "helm_result": {"install": "PASS", "execution_mode": "HELM", "release_status": "DEPLOYED", "helm_release_verified": True}}
     monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
     monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
     monkeypatch.setattr(validator_client, "validate", fake_validate)
@@ -711,17 +720,19 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
     monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
     response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
     assert response.status_code == 303
-    assert submitted[0]["manifest"]["referenced_images"] == [candidate]
-    assert submitted[0]["artifact"]["values_files"] == data["helm_values_files"]
-    assert candidate in submitted[0]["artifact"]["source_files"]["values.yaml"]
-    assert "1.0.0-cats." in submitted[0]["artifact"]["source_files"]["Chart.yaml"]
-    monkeypatch.setattr(validator_client, "validate", lambda _config, _package: {"status": "FAILED", "cleanup_status": "COMPLETE"})
-    retry = client.post(response.headers["location"] + "/retry", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert submitted[0][0]["schema_version"] == "cats.validation/v2"
+    assert submitted[0][1]["requiredImages"] == [candidate]
+    assert submitted[0][1]["deployment"]["valuesFiles"] == ["candidate/" + name for name in data["helm_values_files"]]
+    def failed_validate(config, package, **kwargs):
+        return {**fake_validate(config, package, **kwargs), "status": "FAILED"}
+    monkeypatch.setattr(validator_client, "validate", failed_validate)
+    retry = client.post(response.headers["location"] + "/validate", data={"csrf_token": csrf(client)}, follow_redirects=False)
     assert retry.status_code == 303
     with SessionLocal() as db:
-        rerun = db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == retry.headers["location"].split("/")[-1]))
+        rerun = db.scalar(select(RemediationExecution))
         assert rerun.validation_results["deployment"]["status"] == "FAILED"
         assert Path(rerun.artifact_path).is_file()
+        assert len(db.scalars(select(RemediationExecution)).all()) == 1
 
 
 def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(monkeypatch):
@@ -760,7 +771,8 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
     monkeypatch.setattr(portal_main.subprocess, "run", fake_baseline_run)
     output = portal_main.PATCH_JOB_ROOT / patch_key / "output"
     output.mkdir(parents=True, exist_ok=True)
-    (output / "patched-image.tar").write_bytes(b"archive")
+    from test_deployment_bundle import docker_archive
+    docker_archive(output / "patched-image.tar", candidate)
     (output / "grype-after.json").write_text('{"matches":[]}', encoding="utf-8")
     (output / "remediated-sbom.json").write_text('{"artifacts":[]}', encoding="utf-8")
     def fake_patch(_db, _record, _service, plan):

@@ -137,14 +137,19 @@ def build_summary(plan, before_files, after_files, validation, before_resources,
             path = _path(path)
         found, actual = _actual(row, after_files, after_resources)
         accepted = row.get("decision") in {"proposed", "custom"}
-        modified = bool(path and before_files.get(path) != after_files.get(path))
+        before_found, before_actual = _actual(row, before_files, before_resources)
+        operation = str(row.get("operation") or "SET").upper()
+        modified = bool(accepted and path and before_files.get(path) != after_files.get(path)
+                        and (before_found != found or type(before_actual) is not type(actual) or before_actual != actual))
+        applied = bool(modified and (found or operation in {"REMOVE", "DELETE"}))
         # Scanner targets can be filenames rather than Kubernetes identities.
         # A remaining failure of the same rule prevents a resolution claim.
         failed = any(str(item.get("rule_id")) == str(row.get("rule_id")) for item in failures)
-        verified = bool(render_safe and scan_complete and not failed and accepted and found and type(actual) is type(row.get("new_value")) and actual == row.get("new_value"))
-        row.update(original_value=deepcopy(row.get("original_value")), proposed_value=deepcopy(row.get("new_value")),
+        matches = (not found if operation in {"REMOVE", "DELETE"} else found and type(actual) is type(row.get("new_value")) and actual == row.get("new_value"))
+        verified = bool(render_safe and scan_complete and not failed and applied and matches)
+        row.update(original_value=deepcopy(before_actual if before_found else row.get("original_value")), proposed_value=deepcopy(row.get("new_value")),
                    actual_value=actual, actual_value_available=found, accepted=accepted,
-                   source_modified=modified, verified=verified,
+                   source_modified=modified, applied=applied, verified=verified,
                    status="VERIFIED" if verified else "UNRESOLVED" if not accepted or failed else "UNVERIFIED",
                    post_scan_result="PASS" if verified else "FAIL" if scan_complete and failed else "NOT VERIFIED")
         if (_SENSITIVE.search(str(row.get("field_path"))) or _SENSITIVE.search(str(mapping.get("values_key")))
@@ -156,11 +161,11 @@ def build_summary(plan, before_files, after_files, validation, before_resources,
                "after_sha256": sha256(after_files[path].encode("utf-8") if isinstance(after_files[path], str) else after_files[path]).hexdigest() if path in after_files else None,
                "modified": before_files.get(path) != after_files.get(path)}
               for path in sorted(before_files.keys() | after_files.keys())]
-    return _redact({"schema_version": 1, "job_id": plan.get("job_id"), "mode": plan.get("mode"),
-                    "configuration_changes": rows, "images": deepcopy(plan.get("images", [])),
+    return _redact({"schema_version": 2, "job_id": plan.get("job_id"), "mode": plan.get("mode"),
+                    "configuration_decisions": rows, "configuration_changes": [r for r in rows if r["applied"]], "images": deepcopy(plan.get("images", [])),
                     "charts": deepcopy(plan.get("charts", [])), "validation": deepcopy(validation),
                     "before": deepcopy(plan.get("before", {})), "after": deepcopy(after),
-                    "final_configuration_scan_complete": scan_complete, "source_files": hashes,
+                    "final_configuration_scan_complete": scan_complete, "remaining_configuration_findings": deepcopy(failures), "source_files": hashes,
                     "unresolved": [deepcopy(r) for r in rows if not r["verified"]]})
 
 
@@ -184,10 +189,15 @@ def artifacts(summary, before_files, after_files) -> dict[str, str]:
         lines.append("  Original: " + json.dumps(row.get("original_value")) + "; proposed: " + json.dumps(row.get("proposed_value")) + "; actual: " + json.dumps(row.get("actual_value")))
         lines.append("  Target: " + json.dumps(row.get("resource_identity")) + "; resolution: " + str(row.get("target_resolution", "unresolved")) + "; source: " + json.dumps(row.get("source_mapping")))
         lines.append("  Reason: " + str(row.get("reason", "")) + "; actor: " + str(row.get("actor")) + "; approval: " + str(row.get("approval")))
+    lines.extend(["", "## Remaining findings", ""])
+    for row in summary.get("unresolved", []):
+        lines.append(f"- {row.get('rule_id', '')}: {row.get('status', 'UNRESOLVED')}; {row.get('reason', '')}")
+    for row in summary.get("remaining_configuration_findings", []):
+        lines.append(f"- Final scan: {row.get('rule_id', '')} / {row.get('target', '')}: {row.get('title', 'Unresolved configuration finding')}")
     lines.extend(["", "## Image and chart evidence", "", "```json", json.dumps({"images": summary.get("images", []), "charts": summary.get("charts", [])}, indent=2), "```",
                   "", "## Validation", "", "```json", json.dumps(summary.get("validation", {}), indent=2), "```"])
     prefix = "documentation/remediation/"
     return {prefix + "summary-of-changes.json": json.dumps(summary, indent=2, sort_keys=True) + "\n",
             prefix + "summary-of-changes.md": "\n".join(lines) + "\n",
-            prefix + "before-after.json": json.dumps({key: summary.get(key) for key in ("before", "after", "source_files", "configuration_changes", "images", "charts", "unresolved", "validation")}, indent=2, sort_keys=True) + "\n",
+            prefix + "before-after.json": json.dumps({key: summary.get(key) for key in ("before", "after", "source_files", "configuration_changes", "images", "charts", "unresolved", "remaining_configuration_findings", "validation")}, indent=2, sort_keys=True) + "\n",
             prefix + "changes.patch": "".join(patch)}

@@ -216,7 +216,9 @@ def test_final_bundle_worker_validates_exact_bytes_and_releases_only_verified(wo
     def validate(configuration, request, *, artifact_path):
         requests.append((request, artifact_path))
         return {'status': 'VERIFIED', 'artifact_digest': file_digest(artifact_path), 'service': identity,
-                'validation_type': mode, 'offlineVerified': mode == 'offline-bundle',
+                'validation_type': mode, 'request_id': request['request_id'], 'cleanup_status': 'COMPLETE',
+                'helm_result': {'install': 'PASS', 'release_status': 'DEPLOYED', 'execution_mode': 'HELM', 'helm_release_verified': True},
+                'offlineVerified': mode == 'offline-bundle',
                 'network_evidence': {'external_access_observed': False}}
     monkeypatch.setattr(validator_client, 'validate', validate)
     main._run_delivery_attempt(attempt.id)
