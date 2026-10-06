@@ -1,375 +1,182 @@
 <p align="center">
-  <img src="portal/app/static/cats-icon.png" alt="CATS logo" width="180">
+  <img src="portal/app/static/cats-icon.png" alt="CATS logo" width="160">
 </p>
 
-# CATS â€” Continuous Assessment & Tracking System
+# CATS — Continuous Assessment & Tracking System
 
-CATS is a container-security assessment and governance platform. It discovers
-the images that make up a service, generates software bills of materials
-(SBOMs), finds fixable vulnerabilities and configuration issues, tracks the
-resulting evidence over time, and supports controlled image remediation.
+Assess container services, retain the evidence, and manage remediation and security governance in one workspace. CATS brings image inventory, vulnerability and configuration findings, SBOMs, service architecture, approvals, and runtime validation into a shared portal.
 
-The project is designed for both connected and disconnected environments. The
-release image contains the portal, scanner toolchain, patch worker, policy data,
-and an offline Grype vulnerability database. PostgreSQL stores the persistent
-service and governance state.
+The React interface provides service workspaces, scan results, remediation views, and administration. Docker builds compile the frontend automatically, so the UI shipped in an image comes from the checkout used for that build.
 
-The current local release tag is **`cats:1.3`**.
+## What you can do
 
-## What CATS does
-
-| Area | Capabilities |
+| Workspace | Purpose |
 | --- | --- |
-| Service inventory | Creates and edits service records; tracks name, version, owner, POC, description, groups, lifecycle, images, evidence, and assessment history |
-| Image assessment | Resolves image digests, creates one canonical image record, retains every workload/chart occurrence, generates SBOMs, and scans for fixable CVEs |
-| Configuration assessment | Uses Trivy and Dockle for image configuration evidence, plus Trivy for Dockerfiles, Kubernetes resources, Terraform, and other supported infrastructure-as-code inputs |
-| Helm discovery | Recursively discovers local, packaged, repository, and OCI chart references; renders separate chart instances with their own values and provenance; isolates chart failures |
-| SBOM workspace | Generates one or several formats from a shared inventory: Syft JSON, CycloneDX JSON, CycloneDX XML, and SPDX JSON, with selectable CycloneDX versions where supported |
-| Results and exports | Provides portal views, Excel exports, a self-contained offline HTML overview, raw scanner files, normalized results, and a manual-import bundle for DefectDojo |
-| Governance | Applies configurable Raw or Risk Based policy, finding age, CISA KEV, EPSS, evidence-completeness, exception, mitigation, POA&M, and approval workflows |
-| Architecture | Builds service architecture and data-flow views from rendered Kubernetes resources and exports the same canonical topology as SVG or workbook data |
-| Deployment Validation | Independently deploys retained Helm artifacts to disposable kind clusters, captures runtime health/events/topology, and preserves every validation attempt without changing static scan state |
-| Remediation | Runs portal-initiated image patching with Copa, rescans the result, publishes an immutable digest, and optionally signs and verifies it with Cosign |
-| Access and audit | Supports local accounts or OIDC, scoped role-based access control, audit history, trusted CAs, registry configuration, and repository policies |
-| Cybersecurity review | Aggregates service posture, watchlist matches, missing evidence, findings, and deployment validation with links to underlying evidence |
-| Runtime security data | Refreshes configured KEV, EPSS, Grype, and Trivy sources without rebuilding the portal image |
+| Services | Track service versions, owners, image digests, workload occurrences, evidence, and assessment history. |
+| Scan | Assess images, Docker image archives, and Helm inputs without creating a persistent service. |
+| SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
+| Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
+| Architecture | Explore topology derived from rendered Kubernetes resources and export SVG or workbook data. |
+| Patch and Remediations | Patch supported Linux images with Copa, rescan candidates, download artifacts, or publish and optionally sign immutable digests. |
+| Deployment Validation | Validate retained Helm artifacts in disposable kind clusters and preserve runtime evidence separately from static assessment. |
+| Cybersecurity review | Review posture, watchlist matches, missing evidence, and links to underlying findings. |
+| Administration | Configure accounts, OIDC, access, registries, trust, validators, signing, and security data sources. |
 
-The [cybersecurity and validation guide](docs/cybersecurity-and-validation.md)
-describes watchlist formats, dashboard status, OIDC claim mapping, the separate
-CATSchrÃ¶dinger validator, and connected or disconnected security data updates.
-The [managed validator completion and acceptance report](docs/managed-validator-completion-report.md) covers provisioning, trust, payload preparation and fresh-VM tests.
-The [service remediation guide](docs/remediation.md) covers the default-off
-feature flag, OCI and bundle outputs, provenance, and validation states.
+Scan downloads include an offline HTML overview, an Excel workbook, SBOMs, raw scanner reports, normalized findings, and a manual DefectDojo import bundle. Connected and disconnected workflows are supported when their required images, charts, databases, and tools are available.
 
-## Main workflows
+## Start here
 
-### Temporary Scan
+The main stack contains **portal**, **patch-worker**, and **PostgreSQL**. Portal and worker use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
 
-The **Scan** workspace accepts public image references, local Docker image
-archives, Helm URLs, and uploaded Helm archives. It performs an assessment
-without creating a persistent service record.
+You need Docker Engine or Docker Desktop running Linux containers, Docker Compose v2, and a built CATS image. Run the following from the repository root.
 
-Completed scans provide:
+### 1. Configure your environment
 
-- An interactive results page in CATS.
-- `scan-overview.html`, which works as the offline entry page after extracting
-  the artifact ZIP. It links to findings, SBOMs, raw reports, logs, and the
-  Excel workbook stored beside it.
-- `scan-results.xlsx` for review and sharing.
-- Raw Grype, Trivy, and Dockle results.
-- Normalized CATS findings and service evidence.
-- `results-export.tar.gz`, organized for manual DefectDojo import.
-
-### Standalone SBOM generation
-
-The **SBOM** workspace creates SBOMs without running vulnerability or
-configuration scans. A user can select multiple output formats in one job:
-
-- Syft JSON
-- CycloneDX JSON
-- CycloneDX XML
-- SPDX JSON
-
-CATS collects the underlying inventory once and serializes it into the selected
-formats. The manifest records the format, specification version, generator,
-generator version, timestamp, source image, digest, and checksum.
-
-### Persistent service governance
-
-Authenticated assessment submissions create or update a service by stable
-`service.id`. A service can contain many images and retain its finding history
-as image tags, digests, packages, and service versions change.
-
-Services move through three lifecycle views:
-
-- **Staged** â€” a prepared service with no ingested findings, evidence, or
-  artifacts. Its first ingestion automatically makes it active.
-- **Active** â€” a governed production service included in the default snapshot.
-- **Archived** â€” retained historical evidence that is excluded from the active
-  snapshot.
-
-Metadata edits do not alter findings, scans, artifacts, lifecycle history, or
-security state. Archive, exception, mitigation, and POA&M actions preserve
-their approval and audit trails.
-
-### Portal patching and signing
-
-The **Patch** and **Remediations** workflows patch supported Linux container
-images with Copa, scan the candidate, and make the output available for
-download or registry publication. Publishing can require Cosign signing.
-
-When signing is enabled, CATS:
-
-1. Pushes the patched image.
-2. Captures the immutable registry digest.
-3. Signs that digest with the configured private key.
-4. Verifies the registry signature with the configured public key.
-5. Records the signing status, key fingerprint, Cosign version, and verification
-   time in the result and audit history.
-
-Signing applies only to portal-initiated patch-and-push jobs. Pipeline scans and
-download-only patch jobs do not sign. See [Portal image signing](portal/SIGNING.md).
-
-## Architecture
-
-```mermaid
-flowchart LR
-    User[Browser or API client] --> Portal[CATS portal]
-    Pipeline[CI pipeline or cats CLI] --> Portal
-    Portal --> DB[(PostgreSQL)]
-    Portal <--> Identity[Local Keycloak or external OIDC]
-    Portal --> Scanner[Scanner runner]
-    Portal --> Worker[Isolated patch worker]
-    Scanner --> Docker[Docker Engine]
-    Worker --> Docker
-    Scanner --> Artifacts[SBOMs, findings, HTML, Excel, raw results]
-    Worker --> Registry[OCI registry]
-    Worker --> Artifacts
-    Portal --> Artifacts
-```
-
-The canonical Compose stack contains:
-
-- **`portal`** â€” FastAPI web application, API, scanner-job coordinator, service
-  governance, reporting, configuration, and authentication.
-- **`patch-worker`** â€” isolated FastAPI worker for patch, scan, publish, sign,
-  and verification operations.
-- **`db`** â€” PostgreSQL 16 for persistent portal state.
-- **`keycloak`** â€” bundled local OIDC provider for development, evaluation, and
-  disconnected deployments.
-
-Both application services use the same versioned CATS image. Shared job volumes
-carry temporary results between the portal and worker. Docker access is used to
-inspect, scan, patch, and publish images.
-
-Helm and Kubernetes architecture details are documented in
-[Architecture layout](portal/docs/architecture-layout.md). The remediation
-contract is documented in
-[Remediation pipeline](portal/docs/remediation-pipeline.md). Runtime Helm
-validation, its states, security boundary, offline behavior, and limits are
-documented in [Deployment Validation](portal/docs/deployment-validation.md).
-
-## Quick start
-
-### Requirements
-
-- Docker Engine or Docker Desktop
-- Docker Compose v2
-- A locally available `cats:1.3` image, or access to the registry containing
-  the image configured by `CATS_IMAGE`
-
-Copy the environment template and replace every placeholder secret:
+For a new installation on Windows:
 
 ```powershell
 Copy-Item .env.example .env
 notepad .env
 ```
 
-```bash
+On Linux:
+
+```sh
 cp .env.example .env
 ${EDITOR:-vi} .env
 ```
 
-Start the canonical stack from the repository root:
+Replace the database and bootstrap passwords, pipeline and worker tokens, encryption-key placeholder, and prepared-release path. Set `CATS_IMAGE` to your exact image tag. **For an existing installation, update your current environment file instead of replacing it.** Preserve the database volume and encryption key.
 
-```text
-docker compose up -d --wait
-docker compose ps
-docker compose logs -f portal patch-worker
+Generate the Fernet key using a Python environment with the portal dependencies:
+
+```sh
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Open **http://localhost:8080**. The Compose project is permanently named
-`cats`, which prevents another stack from being created merely because
-the command is run through a different path.
+| Setting | Meaning |
+| --- | --- |
+| `CATS_IMAGE` | Image used by both portal and worker, for example `cats:1.3`. |
+| `CATS_PORT` | Browser-facing port; defaults to `8080`. |
+| `CATS_BOOTSTRAP_USERNAME` / `CATS_BOOTSTRAP_PASSWORD` | Initial local administrator credentials. |
+| `CATS_CONFIG_ENCRYPTION_KEY` | Stable key for stored secrets; retain it across upgrades. |
+| `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` | Host directory of the prepared validator release, mounted read-only. Use an absolute path in deployment templates. |
+| `CATS_IDENTITY_MODE` | `local`, `both`, or `oidc`; external OIDC fields start blank. |
+| `CATS_DEV_AUTH_BYPASS` | Defaults to `false`; enable only deliberately for isolated development. |
+| `SESSION_COOKIE_SECURE` | Set to `true` when serving the portal over HTTPS. |
 
-Routine restart:
+### 2. Build or load the image
 
-```text
-docker compose down --remove-orphans
-docker compose up -d --wait
+**Windows rebuild:** open your repository build shortcut or run:
+
+```powershell
+.\build.bat
 ```
 
-To deliberately erase the PostgreSQL and job volumes and start with no history:
+Enter the version you want to build. The utility builds the scanner base and CATS image, prepares verified validator image archives, recreates portal and worker, and verifies the deployed image identities. It uses the **current checkout**, including the current UI. Docker must be running. The versioned image selection applies to that rebuild; update `CATS_IMAGE` in your environment file for future Compose runs.
 
-```text
-docker compose down -v --remove-orphans
-docker compose up -d --wait
-```
+**Connected release build without deployment:**
 
-> **Warning:** `docker compose down -v` permanently deletes local CATS database
-> history and job artifacts.
-
-### Included local OIDC provider
-
-The canonical stack always starts Keycloak with the portal. Set
-`KEYCLOAK_ADMIN_PASSWORD` in `.env`, then use the normal startup command:
-
-```text
-docker compose up -d --wait
-```
-
-Keycloak is available at **http://localhost:8081** and at
-`http://keycloak:8080` inside the Compose network. CATS still supports
-`CATS_IDENTITY_MODE=local`, `both`, or `oidc`; use `both` while configuring and
-testing the local realm so the local administrator remains available. See
-[Keycloak integration](docs/KEYCLOAK-INTEGRATION.md) and
-[OIDC and registry configuration](docs/oidc-and-registries.md).
-
-## Building the release image
-
-The supported connected build acquires pinned managed-validator assets, verifies
-and qualifies them for Ubuntu 22.04 amd64, then builds the scanner base and the
-self-contained CATS image. Docker must support Linux amd64 containers and the
-disposable privileged qualification harness.
-
-```text
+```sh
 python scripts/build-cats-release.py --cats-version 1.3 --tag cats:1.3
 ```
 
-No manual asset staging is required. The verified cache lives under
-`.release-cache/managed-validator`. Use `--profile development` only to build an
-image that explicitly disables managed-validator payload construction. For the
-portal-only image, add `--image portal`. See
-[managed-validator release preparation](docs/managed-validator-release-inputs.md).
+This builds the unified runtime, acquires the configured Kind image when needed, and prepares a Docker-host validator release. Set `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` to the directory printed at completion. `--profile runtime` skips release preparation; use it only when you already have the required release inputs. See [release inputs](docs/managed-validator-release-inputs.md) for the full contract.
 
-Save the image for disconnected transfer:
+**Image transfer to a disconnected host:**
 
-```text
+```sh
 docker save --output cats-1.3.tar cats:1.3
-```
-
-Load it on the destination host:
-
-```text
 docker load --input cats-1.3.tar
-docker image inspect cats:1.3
 ```
 
-Build details and offline-database requirements are in
-[Unified image documentation](cats-image/README.md).
+Also transfer PostgreSQL and required validator/node image archives or release inputs. Exporting the CATS image alone does not export the database, runtime volumes, or mounted release directory.
 
-## CI and command-line operation
+### 3. Start and verify
 
-The unified image exposes a stable `cats` command for GitLab and other runners:
+If you loaded or built the image without using the Windows deployment utility:
 
-```text
-cats version
-cats prepare --source SOURCE_DIR --output PREPARED_DIR
-cats evaluate --source PREPARED_DIR --output RESULTS_DIR
-cats push assessment --input RESULTS_DIR/portal-result.json
-cats patch --input RESULTS_DIR --output PATCH_DIR
-cats push patch --input PATCH_DIR/patch-result.json
+```sh
+docker compose config --quiet
+docker compose up -d --wait
+docker compose ps
 ```
 
-The scanner prepares immutable inputs, discovers and renders Helm charts,
-generates SBOMs, scans them, assembles raw and normalized results, and leaves
-portal delivery as an explicit authenticated step. Independent chart failures
-are reported as missing evidence and do not stop the remaining chart graph.
+Open **http://localhost:8080** (or your configured port) and sign in with your local account. The project name is `cats`, so root and main-template deployments refer to the same stack.
 
-See [Scanning pipeline documentation](scanning-main/README.md) for the evidence
-contract, CI templates, inputs, and result layout.
-
-## Result layout
-
-Each assessment produces raw tool output and a portable normalized bundle. The
-manual-import result directory follows this shape:
-
-```text
-results/
-â”œâ”€â”€ grype/          # Native Anchore Grype JSON
-â”œâ”€â”€ trivy/          # Native Trivy JSON
-â”œâ”€â”€ dockle/         # Native Dockle JSON
-â”œâ”€â”€ cats/           # CATS Generic Findings Import JSON
-â”œâ”€â”€ manifest.json   # File metadata and DefectDojo scan-type mapping
-â””â”€â”€ README.txt      # Manual import guidance
+```sh
+docker compose logs -f portal patch-worker
 ```
 
-Additional job artifacts include SBOM formats and their manifest, Helm graph and
-render diagnostics, canonical image and occurrence data, normalized portal
-evidence, phase status files, logs, Excel workbooks, and the offline HTML
-overview.
+For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal patch-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
 
-## Security model
+## Deployment templates
 
-- Local authentication and OIDC are supported. Development authentication
-  bypass must remain disabled outside an isolated local environment.
-- Built-in and custom roles grant functional permissions independently from
-  global, group, or service scope.
-- Administrative changes, evidence ingestion, lifecycle actions, approvals,
-  patching, publishing, and signing are recorded in audit history.
-- Registry, OIDC, signing-key, and signing-password configuration uses the
-  server's `CATS_CONFIG_ENCRYPTION_KEY`. Keep this key stable and outside source
-  control.
-- Uploaded archives, paths, and symlinks are validated before traversal. Remote
-  chart and repository access is restricted by configured policies and trusted
-  certificates.
-- Private signing keys are passed to the worker only for the selected job,
-  written to restricted temporary files, and deleted after use.
-- The Docker socket gives the portal and worker powerful access to the Docker
-  host. Deploy CATS only on a dedicated, trusted host and restrict access to the
-  application services.
-
-Never commit `.env`, databases, exported image archives, scanner caches, or
-private keys. The repository `.gitignore` excludes these local assets.
-
-## Repository layout
-
-| Path | Purpose |
+| Files | Use |
 | --- | --- |
-| `portal/` | Portal application, patch worker, models, templates, reports, governance logic, and tests |
-| `cats-image/` | Unified CATS image definition and bundled policy data |
-| `cats-scanner/` | Scanner-toolchain base image and offline database validation |
-| `scanning-main/` | Scanner orchestration, Helm discovery, SBOM serializers, result normalization, CLI, and thin CI wrappers |
-| `docs/` | Deployment, identity, registry, certificate, and integration documentation |
-| `tools/` | Local data-seeding, performance, validation, and demo-ingestion utilities |
-| `compose.yaml` | Canonical PostgreSQL, portal, and patch-worker runtime |
+| `compose.yaml` + `.env.example` | Repository-root runtime and Windows rebuild utility. |
+| `templates/compose.main.yaml` + `templates/main.env.example` | Deployment with an explicitly selected image and absolute prepared-release path. |
+| `compose.validator.yml` | Source-built validator on a dedicated Linux amd64 sandbox. |
+| `templates/compose.validator.yaml` + `templates/validator.env.example` | Matching validator deployment template and trust settings. |
+| `portal/.env.example` | Reference for direct portal development; the root Compose setup uses `.env.example`. |
 
-Generated release ZIPs, Docker archives, scanner databases, handoff snapshots,
-and synthetic report sets are intentionally excluded from Git. The scripts in
-`tools/` recreate development fixtures when needed.
+Follow [template setup](templates/README.md) for commands, file locations, TLS inputs, and the separate validator environment. Real `.env` files and private keys stay outside Git.
 
-## Development and validation
+## Runtime layout and trust
 
-The portal UI is now built locally with React. See [React frontend development and local test checklist](docs/react-frontend.md) for the frontend build, security boundary, and manual acceptance tests. Build its assets before starting the Python portal; the Docker builds perform this step automatically.
+```mermaid
+flowchart LR
+    Browser[Browser or API client] --> Portal[CATS portal]
+    Pipeline[CI pipeline or cats CLI] --> Portal
+    Portal --> DB[(PostgreSQL)]
+    Portal --> Scanner[Scanner jobs]
+    Portal --> Worker[Patch worker]
+    Portal --> Validator[Dedicated validator sandbox]
+    Portal -. Optional OIDC .-> Identity[External identity provider]
+    Scanner --> Evidence[SBOMs and assessment artifacts]
+    Worker --> Registry[OCI registry]
+    Validator --> Runtime[Helm runtime and cleanup evidence]
+```
 
-Create a Python environment and install the portal dependencies:
+The worker has Docker-host access. The validator uses host networking and the Docker socket on a dedicated sandbox VM; it must not share a production host. Its validation API uses mTLS, while its administrator interface uses HTTPS. Restrict both interfaces to their intended networks.
 
-```text
+Use an HTTPS reverse proxy for shared deployments, keep development bypass disabled, and retain access/audit controls. Configure private registries, trusted CAs, and signing through administration. Signing records the published digest and verification evidence; it does not replace vulnerability or runtime assessment.
+
+Offline operation requires locally supplied inputs and usable scanner databases. Security-source freshness and missing evidence remain part of the assessment. See [cybersecurity and validation](docs/cybersecurity-and-validation.md) and [disconnected delivery limits](docs/schrodinger-deliveries.md).
+
+## Guides
+
+- [Service remediation](docs/remediation.md) and [remediation pipeline](portal/docs/remediation-pipeline.md)
+- [Deployment Validation](portal/docs/deployment-validation.md)
+- [Validator appliance](docs/validator-appliance.md) and [managed validator acceptance](docs/managed-validator-completion-report.md)
+- [Signing](portal/SIGNING.md)
+- [OIDC integration](docs/KEYCLOAK-INTEGRATION.md)
+- [Trusted CAs and repository policies](docs/trusted-ca-and-repository-policies.md)
+- [Architecture layout](portal/docs/architecture-layout.md)
+- [Standalone scanner](cats-image/STANDALONE-SCAN.md)
+- [React frontend development](docs/react-frontend.md)
+
+## Development and checks
+
+Create the backend environment from the repository root:
+
+```powershell
 python -m venv .venv
 .venv/Scripts/python -m pip install -r portal/requirements.txt -r portal/requirements-dev.txt
-```
-
-On Linux, use `.venv/bin/python` instead. Run the portal regression suite from
-the repository root:
-
-```text
+$env:PYTHONPATH = "$PWD;$PWD/portal"
 .venv/Scripts/python -m pytest portal/tests -q
 ```
 
-Scanner-specific Python and shell regression tests live under
-`scanning-main/tests/`. Several integration tests require Docker, Helm, and the
-scanner tools supplied by the CATS image.
+On Linux, use `.venv/bin/python` and `PYTHONPATH=.:portal`. Some integration checks require Docker, Helm, or scanner tools.
 
-For a populated local demonstration using ten public images:
+For the React frontend, use the tool versions pinned by the Dockerfile and package manifest:
 
-```powershell
-.\tools\ingest-real-image-services.ps1 -EnvFile .env
+```sh
+cd portal/frontend
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
 ```
 
-The tool submits through the normal pipeline API and stores temporary raw output
-under `.demo-scan-results/`, which is excluded from Git.
-
-## Operational notes
-
-For final Helm/OCI/Standard/Offline Bundle validation, see the
-[CATSchrÃ¶dinger delivery contract and disconnected limits](docs/schrodinger-deliveries.md).
-
-- CATS scans vulnerabilities with an available fix in the configured Grype
-  database. Database and KEV/EPSS freshness is determined by the release build.
-- Runtime scanning can operate without public update services, but referenced
-  images, remote charts, and destination registries must still be reachable
-  unless their inputs are supplied locally.
-- Preserve the PostgreSQL volume and `CATS_CONFIG_ENCRYPTION_KEY` during upgrades.
-- Upgrade the portal and patch worker together because they share the job and
-  signing contracts.
-- Use immutable image tags or digests for promoted deployments.
+Build frontend assets before launching the Python portal directly; container builds already do so. Keep PostgreSQL state, the encryption key, and required release inputs through upgrades, and upgrade portal and worker together.
