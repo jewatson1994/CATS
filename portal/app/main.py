@@ -2668,6 +2668,96 @@ def _reconcile_image_scope(db: Session, service: Service, target_image: str, obs
         finding.resolved_at = scanned_at
 
 
+def _overview_image_references(overview) -> list[tuple[str | None, str | None]]:
+    """Image references a scan's service overview declares, with any digest."""
+    overview = overview if isinstance(overview, dict) else {}
+    references = []
+    for raw_image in [*(overview.get("images") or []), *(overview.get("container_images") or [])]:
+        if isinstance(raw_image, dict):
+            references.append((raw_image.get("image") or raw_image.get("reference") or raw_image.get("name"),
+                               raw_image.get("digest") or raw_image.get("image_digest")))
+        else:
+            references.append((str(raw_image), None))
+    for artifact in overview.get("artifacts") or []:
+        if isinstance(artifact, dict) and str(artifact.get("type") or "").lower() == "image":
+            registry = str(artifact.get("registry") or "").strip()
+            repository = str(artifact.get("repository") or "").strip("/")
+            name = str(artifact.get("artifact") or "").strip()
+            version = str(artifact.get("version") or "").strip()
+            reference = "/".join(part for part in (registry, repository, name) if part and part != "—")
+            if version and version != "—":
+                reference = f"{reference}:{version}"
+            references.append((reference, artifact.get("digest")))
+    return references
+
+
+def backfill_incomplete_scan_findings() -> None:
+    """Surface findings that earlier releases hid until a complete scan arrived.
+
+    Before incomplete scans could make a release current, a service whose
+    newest release had only incomplete scans kept those findings inactive
+    (shown as resolved) and its images unrecorded. Replay the additive part of
+    those ingests. Nothing is resolved here and no evidence is changed.
+    """
+    with SessionLocal() as db:
+        changed = False
+        for service in db.scalars(select(Service).order_by(Service.id)).all():
+            current_latest = db.scalar(select(Execution.scanned_at).where(
+                Execution.service_id == service.id,
+                Execution.service_version_id == service.current_version_id,
+                Execution.scan_scope == "service",
+            ).order_by(Execution.scanned_at.desc()).limit(1)) if service.current_version_id else None
+            scopes = ("service",) if service.current_version_id else ("service", "image")
+            newest = db.scalar(select(Execution).where(
+                Execution.service_id == service.id, Execution.scan_scope.in_(scopes),
+                Execution.service_version_id.is_not(None),
+            ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+            if newest is None or newest.service_version_id == service.current_version_id:
+                continue
+            version_executions = db.scalars(select(Execution).where(
+                Execution.service_id == service.id,
+                Execution.service_version_id == newest.service_version_id,
+            ).order_by(Execution.scanned_at, Execution.id)).all()
+            # Only a release first seen after the current release's newest scan
+            # would have become current; an older release stays historical.
+            if service.current_version_id and (
+                any(execution.complete for execution in version_executions)
+                or (current_latest is not None and aware(version_executions[0].scanned_at) <= aware(current_latest))
+            ):
+                continue
+            service.current_version_id = newest.service_version_id
+            db.add(AuditEvent(action="service.current_version_changed", target_type="service",
+                              target_id=str(service.id),
+                              detail={"version_id": newest.service_version_id,
+                                      "reason": "incomplete_scan_findings_backfill"}))
+            for execution in version_executions:
+                observed = select(FindingObservation.finding_id).where(FindingObservation.execution_id == execution.id)
+                for finding in db.scalars(select(Finding).where(Finding.id.in_(observed))):
+                    if not finding.active:
+                        finding.active = True
+                        finding.episode_started = execution.scanned_at
+                        if finding.resolved_at is not None:
+                            finding.resolved_at = None
+                            finding.recurrence_count += 1
+                    if finding.last_seen is None or aware(execution.scanned_at) > aware(finding.last_seen):
+                        finding.last_seen = execution.scanned_at
+                for image, digest in db.execute(select(FindingObservation.image, FindingObservation.image_digest)
+                                                .where(FindingObservation.execution_id == execution.id).distinct()):
+                    _ensure_service_image(db, service, image, digest)
+                raw = execution.raw_payload if isinstance(execution.raw_payload, dict) else {}
+                for reference, digest in _overview_image_references(raw.get("service_overview")):
+                    _ensure_service_image(db, service, reference, digest)
+                if raw.get("policy_findings"):
+                    sync_policy_findings(db, service, raw["policy_findings"], execution.scanned_at, complete=False)
+            changed = True
+            db.flush()
+        if changed:
+            db.commit()
+
+
+backfill_incomplete_scan_findings()
+
+
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
 def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
     result = ingest_payload(payload, db)
@@ -2789,17 +2879,28 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         Execution.complete.is_(True),
         Execution.scan_scope == "service",
     ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if previous_current_version_id else None
+    # Incomplete scans can make a release current too, so release ordering is
+    # judged against the newest service scan of the current release, complete
+    # or not.
+    latest_current_execution = db.scalar(select(Execution).where(
+        Execution.service_id == service.id,
+        Execution.service_version_id == previous_current_version_id,
+        Execution.scan_scope == "service",
+    ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if previous_current_version_id else None
     # A delayed upload of an older release is historical evidence, even when
     # that release has never been seen before. Arrival order is not release order.
     may_promote = (
         previous_current_version_id is None
         or previous_current_version_id == service_version.id
-        or (version_created and (
-            current_version_execution is None
-            or aware(payload.scanned_at) > aware(current_version_execution.scanned_at)
+        or (version_created and scan_scope == "service" and (
+            latest_current_execution is None
+            or aware(payload.scanned_at) > aware(latest_current_execution.scanned_at)
         ))
     )
-    if effective_complete and scan_scope == "service" and may_promote:
+    # Vulnerability findings are visible from any scan of the current release.
+    # Completeness only governs resolution: an incomplete scan adds and updates
+    # findings but never resolves the ones it did not observe.
+    if may_promote:
         service.current_version_id = service_version.id
         if previous_current_version_id != service_version.id:
             db.add(AuditEvent(action="service.current_version_changed", target_type="service",
@@ -2881,22 +2982,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             evidence=evidence,
         ))
         ensure_ingest_image(item.image, item.image_digest)
-    overview_payload = payload.service_overview if isinstance(payload.service_overview, dict) else {}
-    for raw_image in [*(overview_payload.get("images") or []), *(overview_payload.get("container_images") or [])]:
-        if isinstance(raw_image, dict):
-            ensure_ingest_image(raw_image.get("image") or raw_image.get("reference") or raw_image.get("name"), raw_image.get("digest") or raw_image.get("image_digest"))
-        else:
-            ensure_ingest_image(str(raw_image), None)
-    for artifact in overview_payload.get("artifacts") or []:
-        if isinstance(artifact, dict) and str(artifact.get("type") or "").lower() == "image":
-            registry = str(artifact.get("registry") or "").strip()
-            repository = str(artifact.get("repository") or "").strip("/")
-            name = str(artifact.get("artifact") or "").strip()
-            version = str(artifact.get("version") or "").strip()
-            reference = "/".join(part for part in (registry, repository, name) if part and part != "—")
-            if version and version != "—":
-                reference = f"{reference}:{version}"
-            ensure_ingest_image(reference, artifact.get("digest"))
+    for reference, digest in _overview_image_references(payload.service_overview):
+        ensure_ingest_image(reference, digest)
     if effective_complete and current_ingest:
         if scan_scope == "image":
             ensure_ingest_image(scope_image)

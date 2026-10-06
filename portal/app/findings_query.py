@@ -117,7 +117,9 @@ def load_page_support(db, service_id, findings, latest_execution):
         .join(latest, latest.c.id == FindingObservation.id)
     ).all())
     for finding in selected.values():
-        if finding.active and latest_execution:
+        # A complete scan observed every active finding. An incomplete one may
+        # not have, so its active findings keep their own latest observation.
+        if finding.active and latest_execution and getattr(latest_execution, "complete", True):
             execution_by_finding[finding.id] = latest_execution.id
     observations_by_finding = {finding_id: [] for finding_id in selected}
     # Match exact pairs so a page containing several historical executions does

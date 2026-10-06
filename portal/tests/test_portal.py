@@ -104,18 +104,103 @@ def test_cybersecurity_chart_history_and_totals_respect_service_access():
     assert (previous["version"], previous["total"]) == ("1.0", 2)
 
 
-def test_incomplete_scan_does_not_promote_service_version():
+def test_incomplete_scan_of_new_release_shows_findings_without_resolving_any():
     client = new_client()
-    first = payload("current-release", datetime.now(timezone.utc), [])
+    now = datetime.now(timezone.utc)
+    first = payload("current-release", now, ["CVE-A-ONLY", "CVE-SHARED"])
     first["service"]["version"] = "release-A"
     assert client.post("/api/v1/pipeline-results", json=first, headers=pipeline_headers).status_code == 201
-    second = payload("incomplete-release", datetime.now(timezone.utc), [], complete=False)
+    second = payload("incomplete-release", now + timedelta(minutes=1), ["CVE-SHARED", "CVE-B-ONLY"], complete=False,
+                     skipped_images=["registry/skipped:1"])
     second["service"]["version"] = "release-B"
     assert client.post("/api/v1/pipeline-results", json=second, headers=pipeline_headers).status_code == 201
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
-        assert service.current_version.version == "release-A"
-        assert db.scalar(select(Execution).where(Execution.execution_key == "incomplete-release")).service_version.version == "release-B"
+        assert service.current_version.version == "release-B"
+        findings = {f.cve: (f.active, f.resolved_at) for f in db.scalars(select(Finding).where(Finding.service_id == service.id))}
+        # The new finding is visible; the unobserved one is not resolved by partial evidence.
+        assert findings == {"CVE-A-ONLY": (True, None), "CVE-SHARED": (True, None), "CVE-B-ONLY": (True, None)}
+        assert db.scalar(select(Execution).where(Execution.execution_key == "incomplete-release")).complete is False
+    complete = payload("complete-release", now + timedelta(minutes=2), ["CVE-B-ONLY"])
+    complete["service"]["version"] = "release-B"
+    assert client.post("/api/v1/pipeline-results", json=complete, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        findings = {f.cve: f.active for f in db.scalars(select(Finding))}
+        assert findings == {"CVE-A-ONLY": False, "CVE-SHARED": False, "CVE-B-ONLY": True}
+
+
+def test_first_scan_incomplete_still_shows_vulnerability_findings():
+    client = new_client()
+    body = payload("first-incomplete", datetime.now(timezone.utc), ["CVE-2099-0001", "CVE-2099-0002"], complete=False,
+                   skipped_images=["registry/skipped:1", "registry/skipped:2"])
+    body["policy_findings"] = [{"finding": "KSV-PARTIAL", "target": "Deployment/api"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.current_version is not None
+        assert all(f.active for f in db.scalars(select(Finding).where(Finding.service_id == service.id)))
+        assert db.scalar(select(ServiceImage).where(ServiceImage.service_id == service.id)) is not None
+        assert db.scalar(select(PolicyFinding).where(PolicyFinding.service_id == service.id)).active
+    page = client.get("/services/payments-service?findings=true&findings_view=raw&page_size=50")
+    assert page.status_code == 200
+    assert "CVE-2099-0001" in page.text and "CVE-2099-0002" in page.text
+    assert "registry/payments:first-incomplete" in page.text
+    assert page_data(client.get("/services/payments-service?overview=true"))["finding_counts"]["active"] == 3  # two CVEs and one configuration finding
+
+
+def test_incomplete_image_scan_does_not_switch_release():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    assert ingest(client, execution="release-1", cves=["CVE-ONE"], when=now).status_code == 201
+    body = payload("image-only", now + timedelta(minutes=1), ["CVE-IMAGE"], complete=False)
+    body["service"]["version"] = "release-image"
+    body["scan_scope"] = "image"
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.current_version.version == "2.4.1"
+
+
+def test_delayed_incomplete_release_does_not_replace_newer_incomplete_release():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    newer = payload("newer", now, ["CVE-NEW"], complete=False)
+    newer["service"]["version"] = "release-2"
+    older = payload("older", now - timedelta(days=3), ["CVE-OLD"], complete=False)
+    older["service"]["version"] = "release-1"
+    for body in (newer, older):
+        assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.current_version.version == "release-2"
+        assert {f.cve: f.active for f in db.scalars(select(Finding))} == {"CVE-NEW": True, "CVE-OLD": False}
+
+
+def test_startup_backfill_surfaces_findings_hidden_by_earlier_incomplete_scans():
+    from app.main import backfill_incomplete_scan_findings
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    body = payload("legacy-incomplete", now, ["CVE-HIDDEN"], complete=False)
+    body["service"]["version"] = "release-9"
+    body["service_overview"] = {"images": [{"image": "registry/overview:1", "digest": "sha256:" + "a" * 64}]}
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:  # Recreate the state earlier releases left behind.
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        service.current_version_id = None
+        for finding in db.scalars(select(Finding)):
+            finding.active = False
+        for image in db.scalars(select(ServiceImage)):
+            db.delete(image)
+        db.commit()
+    backfill_incomplete_scan_findings()
+    backfill_incomplete_scan_findings()  # idempotent
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert service.current_version.version == "release-9"
+        finding = db.scalar(select(Finding))
+        assert finding.active and finding.resolved_at is None and finding.recurrence_count == 0
+        assert {i.image_reference for i in db.scalars(select(ServiceImage))} == {"registry/payments:legacy-incomplete", "registry/overview:1"}
+        assert len(db.scalars(select(AuditEvent).where(AuditEvent.action == "service.current_version_changed")).all()) >= 1
 
 
 def test_delayed_historical_version_does_not_replace_current_posture():
