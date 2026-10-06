@@ -3697,10 +3697,8 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
     for resource in resources:
         if not isinstance(resource, dict):
             continue
-        template_name = str(resource.get("_cats_source_file") or "").replace("\\", "/").lstrip("/")
-        template_paths = [path for path in source_files if template_name and
-                          (path == template_name or path.endswith("/" + template_name)
-                           or template_name.endswith("/" + path))]
+        from .remediation_sources import retained_source_paths
+        template_paths = retained_source_paths(resource.get("_cats_source_file"), source_files)
         template_path = template_paths[0] if len(template_paths) == 1 else None
         if not template_path or "/templates/" not in "/" + template_path:
             continue
@@ -3716,8 +3714,38 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
         mappings = [item for item in (resource.get("_cats_source_mappings") or []) if isinstance(item, dict)]
         from .remediation_sources import container_entries
         # A whole-template expression cannot identify one of multiple containers.
-        if (len(container_entries(resource)) != 1 or
-                len(re.findall(r"(?m)^kind\s*:", template)) > 1 or
+        if len(container_entries(resource)) != 1:
+            continue
+        # An image value is proved by evidence rather than template shape: exactly
+        # one `image: {{ .Values.<key> }}` line in the template, and the value at
+        # that key equals the image this container actually rendered. Conditionals
+        # or other documents in the same template cannot change that proof.
+        image_pattern = r"(?m)^\s*image\s*:\s*['\"]?\s*{{-?\s*\.Values\.([A-Za-z0-9_.]+)(?:\s*\|\s*(?:quote|squote))*\s*-?}}\s*['\"]?\s*$"
+        image_matches = re.findall(image_pattern, template)
+        rendered_image = container_entries(resource)[0][1].get("image")
+
+        def values_value(dotted):
+            cursor = values_document
+            for key in dotted.split("."):
+                cursor = cursor.get(key) if isinstance(cursor, dict) else None
+            return cursor
+        simple = not (len(re.findall(r"(?m)^kind\s*:", template)) > 1 or re.search(r"{{-?\s*(?:range|if|with)\b", template))
+        # Several image lines (sidecars, CronJobs, several workloads per template)
+        # are resolved only when exactly one distinct values key holds this
+        # container's rendered image; reuse of that key by other workloads renders
+        # the same original image, so rewriting it remains exact.
+        proven = sorted({key for key in image_matches if value_exists(values_document, key)
+                         and isinstance(values_value(key), str) and values_value(key) == rendered_image})
+        if simple and len(image_matches) == 1 and value_exists(values_document, image_matches[0]):
+            proven = [image_matches[0]]
+        if len(proven) == 1:
+            image_matches = proven
+            if not any(
+                    item.get("field_path") == "spec.template.spec.containers[].image" for item in mappings):
+                mappings.append({"field_path": "spec.template.spec.containers[].image", "template": template_path,
+                                 "values_file": values_path, "values_key": f".Values.{image_matches[0]}", "ambiguous": False})
+                resource["_cats_source_mappings"] = mappings
+        if (len(re.findall(r"(?m)^kind\s*:", template)) > 1 or
                 re.search(r"{{-?\s*(?:range|if|with)\b", template)):
             continue
         for yaml_key, field_path in (
@@ -3728,14 +3756,10 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
         ):
             pattern = rf"(?m)^\s*{re.escape(yaml_key)}\s*:\s*['\"]?\s*{{{{-?\s*\.Values\.([A-Za-z0-9_.]+)(?:\s*\|\s*(?:quote|squote))*\s*-?}}}}\s*['\"]?\s*$"
             matches = re.findall(pattern, template)
-            if len(matches) == 1 and value_exists(values_document, matches[0]):
+            if len(matches) == 1 and value_exists(values_document, matches[0]) and not any(
+                    item.get("field_path") == field_path for item in mappings):
                 mappings.append({"field_path": field_path, "template": template_path, "values_file": values_path,
                                  "values_key": f".Values.{matches[0]}", "ambiguous": False})
-        image_pattern = r"(?m)^\s*image\s*:\s*['\"]?\s*{{-?\s*\.Values\.([A-Za-z0-9_.]+)(?:\s*\|\s*(?:quote|squote))*\s*-?}}\s*['\"]?\s*$"
-        image_matches = re.findall(image_pattern, template)
-        if len(image_matches) == 1 and value_exists(values_document, image_matches[0]):
-            mappings.append({"field_path": "spec.template.spec.containers[].image", "template": template_path,
-                             "values_file": values_path, "values_key": f".Values.{image_matches[0]}", "ambiguous": False})
         for object_key, fields in (
             ("securityContext", ("allowPrivilegeEscalation", "privileged", "readOnlyRootFilesystem",
                                  "runAsNonRoot", "runAsUser", "capabilities.drop")),
@@ -5358,15 +5382,76 @@ def _candidate_workload_images(resources: list[dict]) -> set[str]:
     return images
 
 
+_TEMPLATE_SOURCE_SUFFIXES = (".yaml", ".yml", ".tpl")
+
+
+def _secret_document_has_literal_data(document: str) -> bool:
+    """True when a Kubernetes Secret document carries literal (non-templated) data.
+
+    Helm charts commonly template Secrets whose values come from ``.Values`` or
+    ``lookup`` at install time; such templates contain no secret material and
+    remain transferable. Any literal value under ``data``/``stringData`` (including
+    block scalars) is treated as secret material and refused.
+    """
+    lines = document.splitlines()
+    index = 0
+    while index < len(lines):
+        match = re.match(r"^(\s*)(data|stringData):\s*(.*?)\s*$", lines[index])
+        index += 1
+        if not match:
+            continue
+        indent, inline = len(match.group(1)), match.group(3)
+        if inline and not inline.startswith(("{{", "#")) and inline not in {"{}", "null", "~"}:
+            return True
+        while index < len(lines):
+            line = lines[index]
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("{{"):
+                index += 1
+                continue
+            if len(line) - len(line.lstrip()) <= indent:
+                break
+            key, separator, value = stripped.partition(":")
+            value = value.strip()
+            if separator and value and "{{" not in value and value not in {'""', "''", "null", "~"}:
+                # Block scalars (| or >) hold literal content unless every following line is templated.
+                if value[0] in "|>":
+                    block_indent = len(line) - len(line.lstrip())
+                    block = []
+                    index += 1
+                    while index < len(lines) and (not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip()) > block_indent):
+                        if lines[index].strip():
+                            block.append(lines[index].strip())
+                        index += 1
+                    if any("{{" not in item for item in block):
+                        return True
+                    continue
+                return True
+            index += 1
+    return False
+
+
 def _assert_bundle_sources_safe(files: dict[str, str]) -> None:
-    """Refuse a transferable bundle when retained source may contain secrets."""
+    """Refuse a transferable bundle when retained source may contain secrets.
+
+    Literal secret material is refused: private keys, credential/env files,
+    Secrets with literal data, and secret-named keys with literal values. A Helm
+    template that only declares a Secret populated from values at install time is
+    not secret material and is allowed.
+    """
     sensitive_keys = {"password", "token", "clientsecret", "apikey", "privatekey", "credential", "secretkey", "secretaccesskey"}
     for path, content in files.items():
         normalized_path = path.replace("\\", "/").lower()
-        if any(part == ".env" or "secret" in part or "credential" in part for part in normalized_path.split("/")):
+        parts = normalized_path.split("/")
+        templated_source = normalized_path.endswith(_TEMPLATE_SOURCE_SUFFIXES)
+        if any(part == ".env" or part.startswith(".env.") for part in parts) or (
+                not templated_source and any("secret" in part or "credential" in part for part in parts)):
             raise ValueError("Bundle source contains a secret-bearing file")
-        if re.search(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", content) or re.search(r"(?im)^\s*kind:\s*Secret\s*$", content):
-            raise ValueError("Bundle source contains a Kubernetes Secret or private key")
+        if re.search(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", content):
+            raise ValueError("Bundle source contains a private key")
+        for document in re.split(r"(?m)^---\s*$", content):
+            if re.search(r"(?im)^\s*kind:\s*Secret\s*$", document) and _secret_document_has_literal_data(document):
+                raise ValueError("Bundle source contains a Kubernetes Secret with literal data")
         for line in content.splitlines():
             key, separator, value = line.partition(":")
             if separator and key.strip().lower().replace("_", "") in sensitive_keys:
@@ -5459,7 +5544,7 @@ def _run_remediation_job(record_id: int) -> None:
                 execution = next((item for item in service.executions if item.execution_key == record.rollback_reference), None)
             if execution is None:
                 raise ValueError("The retained source assessment is unavailable; refusing to switch to a newer scan")
-            payload = dict(execution.raw_payload) if isinstance(execution.raw_payload, dict) else {}
+            payload = _remediation_source_payload(execution)
             retained_findings = []
             identities = {item.identity_key: item.id for item in service.policy_findings}
             for item in payload.get("policy_findings") or []:
@@ -5605,9 +5690,21 @@ def _run_remediation_job(record_id: int) -> None:
                 validation["status"] = "FAIL"
             if rendered and plan["images"]:
                 actual_images = _candidate_workload_images(rendered)
-                expected_images = {str(image["candidate"]) for image in plan["images"] if image.get("candidate")}
-                replaced_images = {str(image["original"]) for image in plan["images"] if image.get("candidate")}
-                retained_images = {str(image["original"]) for image in plan["images"] if not image.get("candidate")}
+                # Only AUTO-REMEDIABLE images with a candidate are written into the chart
+                # (candidate_files). A patched image whose source mapping needs review is
+                # retained by reference until a person edits the chart, so it must still
+                # render as the original rather than count as a missing rewrite.
+                rewritten = [image for image in plan["images"]
+                             if image.get("candidate") and image.get("classification") == "AUTO-REMEDIABLE"]
+                rewritten_originals = {str(image["original"]) for image in rewritten}
+                expected_images = {str(image["candidate"]) for image in rewritten}
+                replaced_images = rewritten_originals
+                # Images known only from vulnerability evidence (not rendered by this chart)
+                # cannot be expected in the candidate render.
+                baseline_images = _candidate_workload_images(baseline_resources) if baseline_resources else None
+                retained_images = {str(image["original"]) for image in plan["images"]
+                                   if str(image["original"]) not in rewritten_originals
+                                   and (baseline_images is None or str(image["original"]) in baseline_images)}
                 image_references_valid = (expected_images | retained_images) <= actual_images and not (replaced_images - expected_images) & actual_images
                 validation["checks"]["image_references"] = {"status": "PASS" if image_references_valid else "FAIL",
                     "detail": "Candidate render uses the remediated image mappings." if image_references_valid else "Original or missing remediated image references remain in the candidate render."}
@@ -6101,15 +6198,25 @@ def _remediation_destinations(db, service_id):
     return rows
 
 
+def _remediation_source_payload(execution) -> dict:
+    """The exact evidence a remediation plan and its job are built from.
+
+    Older retained executions may predate ingestion-time lineage and values
+    joins. Reapply the same evidence-only joins to a copy (never to stored scan
+    evidence) so the plan a manager approves and the job that executes it are
+    derived identically.
+    """
+    payload = deepcopy(execution.raw_payload) if isinstance(execution.raw_payload, dict) else {}
+    _enrich_rendered_resource_lineage(payload)
+    _enrich_values_source_mappings(payload, payload.get("helm_source_files") or payload.get("source_files") or {})
+    return payload
+
+
 def _source_remediation_plan(db, service):
     execution = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
     if not execution:
         raise HTTPException(422, "No source assessment is available")
-    # Older retained executions may predate ingestion-time lineage joins.
-    # Reapply the same evidence-only join without changing stored scan evidence.
-    payload = deepcopy(execution.raw_payload or {})
-    _enrich_rendered_resource_lineage(payload)
-    _enrich_values_source_mappings(payload, payload.get("helm_source_files") or payload.get("source_files") or {})
+    payload = _remediation_source_payload(execution)
     identities = {item.identity_key: item.id for item in db.scalars(select(PolicyFinding).where(PolicyFinding.service_id == service.id))}
     findings = []
     for item in payload.get("policy_findings") or []:
@@ -7442,24 +7549,33 @@ def service_detail(
             preview_payload = lambda: loaded_payload
             preview_policy = [item for item in service.policy_findings if item.active]
         def compute_preview():
-            payload = preview_payload()
+            payload = _remediation_source_payload(SimpleNamespace(raw_payload=preview_payload()))
             plan = build_plan(payload, preview_policy, "PREVIEW")
             files = payload.get("helm_source_files") or payload.get("source_files") or {}
             return ({str(item.get("original")) for item in plan.get("images", [])},
                     sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in files) if isinstance(files, dict) else 0,
                     sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan.get("configuration_changes", [])),
                     sum(item.get("classification") == "REVIEW REQUIRED" for item in plan.get("configuration_changes", [])))
-        if remediations_only:
-            # Content-keyed (evidence digest + exact finding fields); never time-based.
-            preview_key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
-                           tuple(tuple(sorted((key, str(value)) for key, value in vars(item).items())) for item in preview_policy))
-            plan_images, plan_charts, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
-        else:
-            plan_images, plan_charts, plan_changes, plan_review = compute_preview()
+        # The preview is informational: a planner defect must never make the tab
+        # (and with it POA&M, exception and candidate history) unreachable.
+        preview_error = None
+        try:
+            if remediations_only:
+                # Content-keyed (evidence digest + exact finding fields); never time-based.
+                preview_key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
+                               tuple(tuple(sorted((key, str(value)) for key, value in vars(item).items())) for item in preview_policy))
+                plan_images, plan_charts, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
+            else:
+                plan_images, plan_charts, plan_changes, plan_review = compute_preview()
+        except Exception as exc:
+            logging.getLogger("cats.remediation").exception(
+                "Remediation plan preview failed", extra={"service_id": service.id})
+            plan_images, plan_charts, plan_changes, plan_review = set(), 0, 0, 0
+            preview_error = f"The remediation plan preview could not be built ({type(exc).__name__}). Remediation history remains available."
         preview_images = set(plan_images)
         preview_images.update(active_image_references(db, service.id))
         remediation_preview = {"images": len(preview_images), "charts": plan_charts,
-            "configuration_changes": plan_changes, "manual_review": plan_review}
+            "configuration_changes": plan_changes, "manual_review": plan_review, "error": preview_error}
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),

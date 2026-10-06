@@ -15,7 +15,7 @@ from collections import Counter
 import re
 
 import yaml
-from .remediation_sources import structured_mapping, container_entries, container_path
+from .remediation_sources import structured_mapping, container_entries, container_path, retained_source_paths
 
 from .remediation_mutations import MISSING, MutationError, apply_mutation, mutate_yaml_source, semantic_identity
 
@@ -65,6 +65,14 @@ def resource_identity(resource: dict[str, Any]) -> str:
     metadata = resource.get("metadata") if isinstance(resource.get("metadata"), dict) else {}
     prefix = f"{metadata['namespace']}/" if metadata.get("namespace") else ""
     return f"{prefix}{resource.get('kind', 'Resource')}/{metadata.get('name', 'unknown')}"
+
+
+def _addressable_identity(resource: dict[str, Any]) -> tuple[str, str, str] | None:
+    """Exact identity, or None for documents without Kubernetes metadata (never a target)."""
+    try:
+        return semantic_identity(resource)
+    except MutationError:
+        return None
 
 
 def rendered_resources(payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -348,7 +356,7 @@ def expand_source_mappings(payload: dict[str, Any]) -> None:
         if not isinstance(resource, dict) or len(_containers(resource)) != 1:
             continue
         name = str(resource.get("_cats_source_file") or resource.get("source_file") or "").replace("\\", "/").lstrip("/")
-        paths = [path for path in files if name and (path == name or path.endswith("/" + name) or name.endswith("/" + path))]
+        paths = retained_source_paths(name, files)
         if len(paths) != 1:
             continue
         path = paths[0]
@@ -649,7 +657,7 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
             if len(matches) != 1:
                 raise MutationError("Resource target must match exactly one resource")
             return matches[0]
-        matches = [item for item in resources if (semantic_identity(item) == tuple(identity)
+        matches = [item for item in resources if (_addressable_identity(item) == tuple(identity)
                    if isinstance(identity, (list, tuple)) else resource_identity(item) == change.get("resource"))]
         if len(matches) != 1:
             raise MutationError("Resource target must match exactly one resource")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import yaml
+import json
 from copy import deepcopy
 from .remediation_mutations import semantic_identity, read_path, MutationError
 from .remediation_mutations import apply_mutation
@@ -38,16 +39,76 @@ def container_path(resource, field, container_name=None, container_type=None):
     return prefix + [group, {"name": container["name"]}] + field.split(".")
 
 
+def _chart_roots(files):
+    """Map each retained chart name (from Chart.yaml) to the directories that declare it."""
+    roots = {}
+    for path, content in files.items():
+        normalized = str(path).replace("\\", "/")
+        if normalized.split("/")[-1] != "Chart.yaml":
+            continue
+        try:
+            name = (yaml.safe_load(content) or {}).get("name")
+        except yaml.YAMLError:
+            continue
+        if isinstance(name, str) and name:
+            roots.setdefault(name, []).append(normalized.rsplit("/", 1)[0] if "/" in normalized else "")
+    return roots
+
+
+def retained_source_paths(name, files):
+    """Retained source files for a rendered ``# Source:`` path.
+
+    Helm names rendered templates ``<chart-name>/templates/<file>`` (and
+    ``<parent>/charts/<child>/templates/<file>``) using the chart *name*, while the
+    retained source keeps the directory it was uploaded in, which can differ
+    (``demo/`` for chart ``helm-diagram-demo``, ``harbor-1.15.0/`` for ``harbor``).
+    Suffix matches are used first; otherwise the leading chart name is resolved
+    through each retained Chart.yaml. An ambiguous result returns every candidate
+    so callers keep failing closed.
+    """
+    name = str(name or "").replace("\\", "/").lstrip("/")
+    if not name:
+        return []
+    paths = [path for path in files if path == name or path.endswith("/" + name) or name.endswith("/" + path)]
+    if paths:
+        return paths
+    head, separator, rest = name.partition("/")
+    if not separator:
+        return []
+    candidates = []
+    for root in _chart_roots(files).get(head, []):
+        candidate = f"{root}/{rest}" if root else rest
+        if candidate in files:
+            candidates.append(candidate)
+    return candidates
+
+
+def _identity_or_none(resource):
+    """Kubernetes identity, or None for documents that are not addressable objects.
+
+    Chart sources legitimately contain YAML documents with a ``kind`` but no
+    ``metadata`` (Kustomization, kind: List, tool configuration). They can never
+    be a mutation target, so they are skipped rather than failing the whole plan.
+    """
+    try:
+        return semantic_identity(resource)
+    except MutationError:
+        return None
+
+
 def structured_mapping(resource, files, field, container_name=None, container_type=None):
     """Only exact literal YAML resources; never parse/edit Go template expressions."""
-    identity = semantic_identity(resource)
+    identity = _identity_or_none(resource)
+    if identity is None:
+        return None
     lineage = resource.get("_cats_resource_lineage") or resource.get("_cats_lineage") or {}
     source = str(resource.get("_cats_source_file") or resource.get("source_file") or resource.get("template") or "").replace("\\", "/")
     matches = []
+    source_paths = set(retained_source_paths(source, files)) if source else set()
     for path, content in files.items():
         if not str(path).endswith((".yaml", ".yml")):
             continue
-        if source and not (path == source or path.endswith("/" + source) or source.endswith("/" + path)):
+        if source and path not in source_paths:
             continue
         try:
             # Read-only inspection of the memoized parse; matched values are copied.
@@ -59,18 +120,21 @@ def structured_mapping(resource, files, field, container_name=None, container_ty
         same_kind = [doc for doc in docs if isinstance(doc, dict) and doc.get("kind") == resource.get("kind")
                      and doc.get("apiVersion") == resource.get("apiVersion")]
         for doc in docs:
+            doc_identity = _identity_or_none(doc) if isinstance(doc, dict) else None
+            if doc_identity is None:
+                continue
             dynamic_identity = (bool(source and lineage.get("source_template")) and len(same_kind) == 1
-                                and isinstance(doc, dict) and any(token in str(doc.get("metadata", {})) for token in expressions))
+                                and any(token in str(doc.get("metadata", {})) for token in expressions))
             if dynamic_identity:
-                source_identity = semantic_identity(doc)
+                source_identity = doc_identity
                 dynamic_identity = all(left == right or any(token in left for token in expressions)
                                        or (offset == 1 and not left and lineage.get("namespace_source") == "helm-release")
                                        for offset, (left, right) in enumerate(zip(source_identity, identity)))
-            if (isinstance(doc, dict) and doc.get("kind") and
-                    (semantic_identity(doc) == identity or
+            if (doc.get("kind") and
+                    (doc_identity == identity or
                      dynamic_identity or
                      (lineage.get("namespace_source") == "helm-release" and not (doc.get("metadata") or {}).get("namespace")
-                      and semantic_identity(doc)[0::2] == identity[0::2]))
+                      and doc_identity[0::2] == identity[0::2]))
                     and doc.get("apiVersion") == resource.get("apiVersion")):
                 target = container_path(doc, field, container_name, container_type)
                 if target:
@@ -81,7 +145,7 @@ def structured_mapping(resource, files, field, container_name=None, container_ty
                     if any(token in str(value) for token in expressions):
                         continue
                     matches.append({"template": path, "source_file": path, "resource_identity": list(identity),
-                                    "source_resource_identity": list(semantic_identity(doc)),
+                                    "source_resource_identity": list(doc_identity),
                                     "mutation_path": target, "field_path": field, "ambiguous": False,
                                     "original_present": present, "original_value": deepcopy(value)})
     return matches[0] if len(matches) == 1 else None
@@ -96,7 +160,10 @@ def verify_rendered_changes(resources, changes):
         identity = change.get("resource")
         matches = []
         for resource in resources:
-            kind, namespace, name = semantic_identity(resource)
+            resource_identity = _identity_or_none(resource)
+            if resource_identity is None:
+                continue
+            kind, namespace, name = resource_identity
             normalized = change.get("resource_identity")
             exact = (isinstance(normalized, dict) and
                      (kind, namespace, name) == (normalized.get("kind"), normalized.get("namespace", ""), normalized.get("name")) and
@@ -132,12 +199,13 @@ def verify_rendered_scope(before, after, changes, images=()):
             if change.get("decision") not in {"proposed", "custom"}:
                 continue
             normalized = change.get("resource_identity")
-            matches = [i for i, resource in enumerate(expected) if
-                       ((semantic_identity(resource) == (normalized.get("kind"), normalized.get("namespace", ""), normalized.get("name"))
+            identities = [(_identity_or_none(resource), resource) for resource in expected]
+            matches = [i for i, (resource_identity, resource) in enumerate(identities) if resource_identity is not None and
+                       ((resource_identity == (normalized.get("kind"), normalized.get("namespace", ""), normalized.get("name"))
                          and resource.get("apiVersion", "") == normalized.get("api_version", "")) if isinstance(normalized, dict) else
                         change.get("resource") in {
-                            f"{semantic_identity(resource)[1]}/{semantic_identity(resource)[0]}/{semantic_identity(resource)[2]}",
-                            f"{semantic_identity(resource)[0]}/{semantic_identity(resource)[2]}"})]
+                            f"{resource_identity[1]}/{resource_identity[0]}/{resource_identity[2]}",
+                            f"{resource_identity[0]}/{resource_identity[2]}"})]
             if len(matches) != 1:
                 raise MutationError("Ambiguous resource")
             index = matches[0]
@@ -155,13 +223,17 @@ def verify_rendered_scope(before, after, changes, images=()):
                 return [normalize(item) for item in value]
             return value
         def inventory(resources):
-            result = {}
+            result, unaddressable = {}, []
             for resource in resources:
-                identity = semantic_identity(resource)
+                identity = _identity_or_none(resource)
+                if identity is None:
+                    # Documents without metadata cannot be edited, but must still be unchanged.
+                    unaddressable.append(json.dumps(normalize(resource), sort_keys=True, default=str))
+                    continue
                 if identity in result:
                     raise MutationError("Duplicate resource")
                 result[identity] = normalize(resource)
-            return result
+            return result, sorted(unaddressable)
         valid = inventory(expected) == inventory(after)
     except MutationError as exc:
         if str(exc).startswith("Ambiguous"):

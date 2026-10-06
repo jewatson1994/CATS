@@ -101,9 +101,12 @@ def _actual(row: dict, files: dict, resources: list) -> tuple[bool, Any]:
         requested_identity = [requested_identity.get("kind"), requested_identity.get("namespace", ""), requested_identity.get("name")]
     matches = []
     for resource in candidates:
-        kind, namespace, name = semantic_identity(resource)
+        try:
+            kind, namespace, name = resource_key = semantic_identity(resource)
+        except MutationError:
+            continue  # Kustomization, kind: List and similar documents are never targets.
         identity = (namespace + "/" if namespace else "") + kind + "/" + name
-        if (list(semantic_identity(resource)) == list(requested_identity) if isinstance(requested_identity, (list, tuple)) else identity == row.get("resource")):
+        if (list(resource_key) == list(requested_identity) if isinstance(requested_identity, (list, tuple)) else identity == row.get("resource")):
             matches.append(resource)
     if len(matches) != 1:
         return False, None

@@ -48,8 +48,29 @@ def test_transfer_bundle_refuses_secret_bearing_source():
     _assert_bundle_sources_safe({"values.yaml": "image: registry.internal/app:1\n"})
     with pytest.raises(ValueError):
         _assert_bundle_sources_safe({"values.yaml": "password: super-secret\n"})
-    with pytest.raises(ValueError):
-        _assert_bundle_sources_safe({"templates/secret.yaml": "kind: Secret\n"})
+    # A Secret carrying literal data is secret material, whatever the file is called.
+    for literal in ("kind: Secret\nstringData:\n  DB_PASSWORD: replace-me\n",
+                    "kind: Secret\ndata:\n  token: c2VjcmV0\n",
+                    "kind: Secret\nstringData:\n  config.yaml: |\n    user: admin\n"):
+        with pytest.raises(ValueError):
+            _assert_bundle_sources_safe({"chart/templates/secret.yaml": literal})
+    for unsafe in ({".env": "A=1"}, {"chart/.env.production": "A=1"}, {"chart/files/credentials.json": "{}"},
+                   {"chart/templates/tls.yaml": "-----BEGIN PRIVATE KEY-----\nabc\n"}):
+        with pytest.raises(ValueError):
+            _assert_bundle_sources_safe(unsafe)
+
+
+def test_transfer_bundle_allows_secret_templates_without_secret_material():
+    """Charts commonly template Secrets populated from values at install time."""
+    template = (
+        "apiVersion: v1\nkind: Secret\nmetadata:\n  name: {{ include \"app.fullname\" . }}\ntype: Opaque\n"
+        "data:\n  password: {{ .Values.auth.password | b64enc | quote }}\n"
+        "  {{- range $key, $value := .Values.extraSecrets }}\n  {{ $key }}: {{ $value | b64enc }}\n  {{- end }}\n"
+        "stringData:\n  config.yaml: |\n    {{- toYaml .Values.config | nindent 4 }}\n---\n"
+        "apiVersion: v1\nkind: Secret\nmetadata:\n  name: empty\ndata: {}\n")
+    _assert_bundle_sources_safe({"chart/templates/secret.yaml": template,
+                                 "chart/templates/secrets/registry.yaml": "kind: Secret\nmetadata:\n  name: x\n",
+                                 "chart/values.yaml": "auth:\n  password: \"\"\n"})
 
 
 def test_chart_publication_uses_only_configured_oci_target(monkeypatch, tmp_path):
