@@ -87,6 +87,8 @@ def build_summary(payload, complete):
             "counts": {level: sum(value == level for value in findings.values()) for level in levels},
             "total": len(findings),
             "missing_evidence_count": len(missing),
+            # Same truthiness as reading payload["sbom_images"] directly.
+            "has_sbom_images": bool(payload.get("sbom_images")),
             "skipped_image_count": len(skipped_images), "skipped_chart_count": len(skipped_charts),
             # Bounded header previews: omit inventory, findings and large
             # overview graphs. Count-only consumers never retrieve this field.
@@ -245,7 +247,10 @@ def backfill_stale_summaries(session_factory, *, batch_size=PAYLOAD_BATCH_SIZE, 
                        ExecutionSummary.summary_version != SUMMARY_VERSION,
                        Execution.payload_digest.is_(None),
                        ExecutionSummary.payload_digest != Execution.payload_digest,
-                       ExecutionSummary.source_complete != Execution.complete))
+                       ExecutionSummary.source_complete != Execution.complete,
+                       # Additive v4 field: older v4 rows gain it without a version bump,
+                       # so readers keep their fast path during the backfill.
+                       ExecutionSummary.data["has_sbom_images"].is_(None)))
                 .order_by(Execution.id).limit(batch_size)).all()
             if not ids:
                 return done

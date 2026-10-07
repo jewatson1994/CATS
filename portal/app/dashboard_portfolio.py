@@ -7,7 +7,7 @@ from sqlalchemy import and_, case, false, func, or_, select
 
 from .frontend_portfolio import cybersecurity_data
 from .sql_sets import catalog_subset, member_of
-from .models import (DependencyWatchlistMatch, DeploymentValidationRun, ExceptionRecord,
+from .models import (DependencyWatchlistMatch, DeploymentValidationRun, ExceptionRecord, ExecutionSummary,
                      Execution, Finding, FindingObservation, PoamEntry, PolicyExceptionRecord,
                      PolicyFinding, Service, ServiceImage, utcnow)
 
@@ -35,16 +35,48 @@ def compute_rows(db, services, configs, configuration, now):
 
     latest = latest_scans()
     latest_current = latest_scans(True)
+    # Evidence presence comes from the execution summary when it is current
+    # for that exact payload (digest, version, completeness); otherwise from
+    # the retained payload itself, exactly as before. Parsing whole retained
+    # payloads only to test two flags dominated this computation.
+    from .execution_summaries import SUMMARY_VERSION
+    current_summary = and_(ExecutionSummary.execution_id == Execution.id,
+                           ExecutionSummary.payload_digest == Execution.payload_digest,
+                           ExecutionSummary.summary_version == SUMMARY_VERSION,
+                           ExecutionSummary.source_complete == Execution.complete)
     scans = {row.service_id: row for row in db.execute(select(
         Execution.service_id, Execution.id, Execution.scanned_at,
-        Execution.raw_payload["sbom_images"].label("sbom_images")
-    ).join(latest, and_(latest.c.id == Execution.id, latest.c.rank == 1)))} if ids else {}
-    evidence = {row.service_id: row for row in db.execute(select(
-        Execution.service_id, Execution.complete,
-        Execution.raw_payload["service_overview"].label("overview"),
-        Execution.raw_payload["skipped_images"].label("images"),
-        Execution.raw_payload["skipped_charts"].label("charts")
-    ).join(latest_current, and_(latest_current.c.id == Execution.id, latest_current.c.rank == 1)))} if ids else {}
+        ExecutionSummary.data["has_sbom_images"].label("has_sbom")
+    ).join(latest, and_(latest.c.id == Execution.id, latest.c.rank == 1)).outerjoin(ExecutionSummary, current_summary))}
+    sbom = {sid: row.has_sbom for sid, row in scans.items() if isinstance(row.has_sbom, bool)}
+    pending = [row.id for sid, row in scans.items() if sid not in sbom]
+    for chunk in range(0, len(pending), 100):
+        for row in db.execute(select(Execution.service_id, Execution.raw_payload["sbom_images"].label("sbom_images"))
+                              .where(Execution.id.in_(pending[chunk:chunk + 100]))):
+            sbom[row.service_id] = bool(row.sbom_images)
+    evidence_rows = db.execute(select(
+        Execution.service_id, Execution.id, Execution.complete,
+        ExecutionSummary.data["missing_evidence_count"].label("missing_count")
+    ).join(latest_current, and_(latest_current.c.id == Execution.id, latest_current.c.rank == 1))
+     .outerjoin(ExecutionSummary, current_summary)).all()
+    missing_evidence = {}
+    pending = []
+    for row in evidence_rows:
+        if not row.complete:
+            missing_evidence[row.service_id] = True
+        elif isinstance(row.missing_count, int) and not isinstance(row.missing_count, bool):
+            missing_evidence[row.service_id] = row.missing_count > 0
+        else:
+            pending.append(row.id)
+    for chunk in range(0, len(pending), 100):
+        for ev in db.execute(select(
+                Execution.service_id, Execution.complete,
+                Execution.raw_payload["service_overview"].label("overview"),
+                Execution.raw_payload["skipped_images"].label("images"),
+                Execution.raw_payload["skipped_charts"].label("charts")).where(Execution.id.in_(pending[chunk:chunk + 100]))):
+            missing_evidence[ev.service_id] = bool(not ev.complete or m.normalize_overview(
+                ev.overview or {}, skipped_images=ev.images or [], skipped_charts=ev.charts or [],
+                incomplete=not ev.complete)["missing_evidence"])
     observation_ids = select(FindingObservation.finding_id, func.max(FindingObservation.id).label("id")).join(Finding, Finding.id == FindingObservation.finding_id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True)).group_by(FindingObservation.finding_id).subquery()
     exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
         ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
@@ -123,9 +155,9 @@ def compute_rows(db, services, configs, configuration, now):
     failed_statuses = {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}
     for service in services:
         row = {key: int(counts.get(service.id, {}).get(key, 0) or 0) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "noncompliant", "warning")}
-        scan, ev, poam = scans.get(service.id), evidence.get(service.id), poams.get(service.id)
-        missing = bool(ev and (not ev.complete or m.normalize_overview(ev.overview or {}, skipped_images=ev.images or [], skipped_charts=ev.charts or [], incomplete=not ev.complete)["missing_evidence"]))
-        row.update(service_id=service.id, watchlist=int(watches.get(service.id, 0)), poam=int(poam.count if poam else 0), poam_overdue=int(poam.overdue or 0) if poam else 0, missing=missing, sbom=bool(scan and scan.sbom_images), kind=validations.get(service.id, "NOT_ATTEMPTED"), last_scan=scan.scanned_at if scan else None)
+        scan, poam = scans.get(service.id), poams.get(service.id)
+        missing = missing_evidence.get(service.id, False)
+        row.update(service_id=service.id, watchlist=int(watches.get(service.id, 0)), poam=int(poam.count if poam else 0), poam_overdue=int(poam.overdue or 0) if poam else 0, missing=missing, sbom=bool(scan and sbom.get(service.id)), kind=validations.get(service.id, "NOT_ATTEMPTED"), last_scan=scan.scanned_at if scan else None)
         kind_failed = row["kind"] in failed_statuses
         warning = row["warning"] or missing or any(warning_policy.get(key, True) and value for key, value in (("critical_high", row["critical"] + row["high"]), ("kev", row["kev"]), ("watchlist", row["watchlist"]), ("poam", row["poam"]), ("kind", kind_failed), ("missing_evidence", missing)))
         compliant = not row["noncompliant"] and not policy_fails.get(service.id) and not (missing and configs[service.id].get("incomplete_noncompliant") == "true")
