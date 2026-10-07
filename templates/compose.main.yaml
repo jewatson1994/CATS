@@ -1,10 +1,10 @@
 name: cats
 
-# Canonical CATS runtime.
+# Main CATS deployment template. See templates/README.md.
 #
 # Run from the repository root with:
 #
-#   docker compose up -d --wait
+#   docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --wait
 #
 # Authentication:
 #   - CATS provides local authentication by default.
@@ -14,7 +14,7 @@ name: cats
 # Image:
 #   - CATS_IMAGE may be used to select the CATS image/version.
 #   - Example:
-#       CATS_IMAGE=cats:1.3
+#       CATS_IMAGE=cats:YOUR_VERSION
 #
 #   - The rebuild utility sets CATS_IMAGE automatically before
 #     recreating the portal and patch-worker.
@@ -55,7 +55,7 @@ services:
   # =========================================================
 
   patch-worker:
-    image: ${CATS_IMAGE:-cats:local}
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
 
     command:
@@ -104,7 +104,7 @@ services:
   # =========================================================
 
   portal:
-    image: ${CATS_IMAGE:-cats:local}
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
 
     environment:
 
@@ -299,9 +299,8 @@ services:
       # NOTE:
       # These are intentionally retained for now.
       #
-      # Current CATS Deployment Validation behavior is being
-      # changed so inability to enforce optional CPU/memory/PID
-      # controls does NOT prevent Helm installation.
+      # Enforcement and evidence depend on the validation host.
+      # Review the validation result for effective resource controls.
       # -------------------------------------------------------
 
       CATS_DEPLOYMENT_MAX_CPU: ${CATS_DEPLOYMENT_MAX_CPU:-8}
@@ -389,7 +388,7 @@ services:
     volumes:
       # Required by current CATS Docker/kind/scanning operations.
       - type: bind
-        source: ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-./.release-cache/managed-validator/unconfigured}
+        source: ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:?Set an absolute path to the prepared validator release directory}
         target: /opt/cats/managed-validator-release
         read_only: true
 

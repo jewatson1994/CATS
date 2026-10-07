@@ -48,9 +48,12 @@ jobs:
             -t "$IMAGE:latest" .
 
       - name: Smoke test
+        timeout-minutes: 5
         run: |
-          docker run --rm "$IMAGE:${{ github.sha }}" catscan-version
-          docker run --rm "$IMAGE:${{ github.sha }}" sh -c 'command -v cats && command -v cats-scan && command -v cats-patch'
+          # The default entrypoint launches a long-running CATS role and does
+          # not dispatch CLI arguments. Run these checks directly instead.
+          docker run --rm --entrypoint catscan-version "$IMAGE:${{ github.sha }}"
+          docker run --rm --entrypoint sh "$IMAGE:${{ github.sha }}" -c 'command -v cats && command -v cats-scan && command -v cats-patch'
 
       - name: Push image
         run: |

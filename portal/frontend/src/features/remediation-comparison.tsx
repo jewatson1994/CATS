@@ -1,3 +1,5 @@
+import {Icon, StatusBadge} from '../components/ui';
+
 const severities = ['Critical', 'High', 'Medium', 'Low'] as const;
 const count = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 
@@ -24,7 +26,7 @@ export function ComparisonCharts({before, after, validation = [], deploymentStat
         return <div className="comparison-metric" key={key}><strong>{label}</strong>{(['before','after'] as const).map(period => {
           const value = period === 'before' ? original : candidate;
           return <div className={`comparison-bar-row ${period}`} key={period}><span>{period === 'before' ? 'Before' : 'After'}</span><div className="comparison-track" aria-hidden="true"><div style={{width:`${(value ?? 0) / Math.max(1,original ?? 0,candidate ?? 0) * 100}%`}}/></div><b>{value ?? 'Unavailable'}</b></div>;
-        })}<small>{delta === null ? 'Comparison unavailable' : delta === 0 ? 'No count change' : `${Math.abs(delta)} ${delta < 0 ? 'fewer' : 'more'}`}</small></div>;
+        })}<small className={`comparison-delta ${delta === null || delta === 0 || key === 'images' ? 'neutral' : delta < 0 ? 'improved' : 'worse'}`}>{delta !== null && delta !== 0 && <Icon name={delta < 0 ? 'arrowDown' : 'arrowUp'} />}{delta === null ? 'Comparison unavailable' : delta === 0 ? 'No count change' : `${Math.abs(delta)} ${delta < 0 ? 'fewer' : 'more'}`}</small></div>;
       })}
     </section>
     <section className="comparison-card" aria-label="Validation and risk"><p className="eyebrow">CHECKS / RISK</p><h3>Validation and risk</h3>
@@ -32,7 +34,7 @@ export function ComparisonCharts({before, after, validation = [], deploymentStat
         ['Helm rendering', 'Can the chart produce Kubernetes manifests? This does not verify deployment.', before?.helm_render, validation.find(row => row.name === 'helm_template')?.status],
         ['Configuration policy', 'PASS means no configuration findings were reported; FAIL means findings remain.', before?.policy_validation, after?.policy_validation],
         ['Deployment validation', 'Checks the candidate in a runtime environment. Not run means deployment has not been verified.', undefined, deploymentStatus || 'NOT RUN'],
-      ].map(([label,description,original,candidate]) => <div className="comparison-metric" key={label}><strong>{label}</strong><p>{description}</p><div><span>Before <span className="badge">{original || 'Unavailable'}</span></span><span>After <span className="badge">{candidate || 'Unavailable'}</span></span></div></div>)}
+      ].map(([label,description,original,candidate]) => <div className="comparison-metric" key={label}><strong>{label}</strong><p>{description}</p><div><span>Before <StatusBadge value={original || 'Unavailable'} label={original || 'Unavailable'} /></span><span>After <StatusBadge value={candidate || 'Unavailable'} label={candidate || 'Unavailable'} /></span></div></div>)}
       <div className="comparison-metric"><strong>Highest EPSS score</strong><p>The highest estimated exploitation probability among the assessed vulnerabilities. Unavailable means no score was retained.</p><div>{(['before','after'] as const).map(period => {const value = count((period === 'before' ? before : after)?.epss_max);return <span key={period}>{period === 'before' ? 'Before' : 'After'} <b>{value === null ? 'Unavailable' : `${(value * 100).toFixed(2)}%`}</b></span>;})}</div></div>
     </section>
   </div>;
