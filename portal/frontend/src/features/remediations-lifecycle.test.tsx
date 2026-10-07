@@ -27,6 +27,18 @@ describe('remediation candidate lifecycle', () => {
     expect(screen.queryByRole('button',{name:'OCI destinations'})).not.toBeInTheDocument();
     expect(screen.queryByRole('button',{name:'Create POA&M entry'})).not.toBeInTheDocument();
   });
+  it('renders the tab at once and loads a pending plan preview on demand', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({images:3,charts:1,configuration_changes:2,manual_review:4,error:null}),{status:200,headers:{'Content-Type':'application/json'}}));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const workspace = {...data,can:{'service.edit':{'7':true}},can_remediate:true,remediation_enabled:true,remediation_preview:{pending:true},remediation_jobs:[],poams:[],tab:'pipeline'};
+      render(<Service data={workspace}/>);
+      expect(screen.getByText('Remediation candidates')).toBeInTheDocument();
+      expect(screen.getByText('Preparing the remediation plan preview…')).toBeInTheDocument();
+      expect(await screen.findByText(/3 service images · 1 retained Helm charts · 2 mapped configuration changes · 4 configuration items/)).toBeInTheDocument();
+      expect(String((fetchMock.mock.calls[0] as any[])[0])).toContain('/api/v1/services/example/remediation-preview');
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('pages service remediation collections with server-side page links', () => {
     const workspace = {...data,can:{},remediation_preview:{images:0,charts:0,configuration_changes:0,manual_review:0},remediation_jobs:[],poams:[],mitigations:[],exceptions:[{kind:'Vulnerability',item:'CVE-1',severity:'High',status:'Active',service:data.service}],
       tab:'exceptions',page:2,page_count:3,total_items:120,pagination_base:'/services/example?remediations=true&tab=exceptions&page_size=50'};

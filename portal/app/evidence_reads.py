@@ -241,31 +241,127 @@ def normalized_overview(db, execution) -> tuple[dict, dict]:
     from copy import deepcopy
     from .overview import normalize_overview
 
-    def build():
-        payload, images = overview_payload(db, execution.id)
-        raw = payload.get("service_overview", {})
-        # Normalization never edits the retained evidence (plain copy, not tracked).
-        raw = dict(raw) if isinstance(raw, dict) else {}
-        raw.setdefault("source", "Helm rendered manifests" if payload.get("policy_findings") else "Image metadata")
-        return payload, normalize_overview(raw, skipped_images=payload.get("skipped_images", []) or [],
-            skipped_charts=payload.get("skipped_charts", []) or [], findings_images=images,
-            incomplete=not execution.complete,
-            # The persisted scan overview is the source of truth for this
-            # page.  Do not run docker manifest inspect while navigating.
-            digest_resolver=None)
-
     if execution is None:
         return {}, normalize_overview({"source": "Image metadata"}, digest_resolver=None)
     key = (execution.id, execution.payload_digest, bool(execution.complete))
     if execution.payload_digest is None:
-        return build()
+        return _build_overview(db, execution.id, execution.complete)
     with _OVERVIEW_LOCK:
         if key in _OVERVIEW_CACHE:
             _OVERVIEW_CACHE.move_to_end(key)
             return deepcopy(_OVERVIEW_CACHE[key])
-    value = build()
+    value = _stored_overview(db, *key) or _build_overview(db, execution.id, execution.complete)
     with _OVERVIEW_LOCK:
         _OVERVIEW_CACHE[key] = value
         while len(_OVERVIEW_CACHE) > 32:
             _OVERVIEW_CACHE.popitem(last=False)
     return deepcopy(value)
+
+
+# Version of the stored normalized overview; bump when normalize_overview or
+# overview_payload changes what they return, so stored rows are recomputed.
+OVERVIEW_ALGORITHM = 1
+
+
+def _build_overview(db, execution_id, complete) -> tuple[dict, dict]:
+    from .overview import normalize_overview
+    payload, images = overview_payload(db, execution_id)
+    raw = payload.get("service_overview", {})
+    # Normalization never edits the retained evidence (plain copy, not tracked).
+    raw = dict(raw) if isinstance(raw, dict) else {}
+    raw.setdefault("source", "Helm rendered manifests" if payload.get("policy_findings") else "Image metadata")
+    return payload, normalize_overview(raw, skipped_images=payload.get("skipped_images", []) or [],
+        skipped_charts=payload.get("skipped_charts", []) or [], findings_images=images,
+        incomplete=not complete,
+        # The persisted scan overview is the source of truth for this
+        # page.  Do not run docker manifest inspect while navigating.
+        digest_resolver=None)
+
+
+def _stored_overview(db, execution_id, payload_digest, complete):
+    """The stored overview when it was built from exactly this evidence."""
+    from .models import ExecutionOverview
+    row = db.execute(select(ExecutionOverview.data).where(
+        ExecutionOverview.execution_id == execution_id, ExecutionOverview.payload_digest == payload_digest,
+        ExecutionOverview.complete.is_(bool(complete)), ExecutionOverview.algorithm == OVERVIEW_ALGORITHM)).scalar_one_or_none()
+    if isinstance(row, dict) and isinstance(row.get("payload"), dict) and isinstance(row.get("overview"), dict):
+        return row["payload"], row["overview"]
+    return None
+
+
+def store_overview(bind, execution_id) -> bool:
+    """Background: build and store one scan's normalized overview.
+
+    Reads the execution's current digest and completeness first and stores
+    them with the result, so a concurrent change leaves a row that readers
+    reject (they then recompute from the evidence).
+    """
+    import json
+    from sqlalchemy.exc import IntegrityError
+    from sqlalchemy.orm import Session
+    from .models import ExecutionOverview
+    with Session(bind=bind) as db:
+        current = db.execute(select(Execution.payload_digest, Execution.complete)
+                             .where(Execution.id == execution_id)).one_or_none()
+        if current is None or current.payload_digest is None:
+            return False
+        if _stored_overview(db, execution_id, current.payload_digest, current.complete) is not None:
+            return False
+        payload, overview = _build_overview(db, execution_id, current.complete)
+        # Plain JSON (the same values readers receive), independent of ORM state.
+        data = json.loads(json.dumps({"payload": payload, "overview": overview}, default=str))
+        row = db.get(ExecutionOverview, execution_id)
+        if row is None:
+            db.add(ExecutionOverview(execution_id=execution_id, payload_digest=current.payload_digest,
+                                     complete=bool(current.complete), algorithm=OVERVIEW_ALGORITHM, data=data))
+        else:
+            row.payload_digest, row.complete, row.algorithm, row.data = (
+                current.payload_digest, bool(current.complete), OVERVIEW_ALGORITHM, data)
+        try:
+            db.commit()
+        except IntegrityError:  # a concurrent writer stored it (or the execution was deleted)
+            db.rollback()
+            return False
+        return True
+
+
+_overview_executor = None
+_overview_lock = threading.Lock()
+
+
+def schedule_overview(bind, execution_ids) -> None:
+    """Prepare stored overviews off the request path (single worker)."""
+    global _overview_executor
+    from concurrent.futures import ThreadPoolExecutor
+    import logging
+    ids = [identifier for identifier in dict.fromkeys(execution_ids) if identifier is not None]
+    if not ids:
+        return None
+    with _overview_lock:
+        if _overview_executor is None:
+            _overview_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cats-overview")
+
+    def run():
+        for identifier in ids:
+            try:
+                store_overview(bind, identifier)
+            except Exception:
+                logging.getLogger("cats.evidence").exception("Overview preparation failed; readers recompute on demand")
+    return _overview_executor.submit(run)
+
+
+def warm_overviews(bind, limit=500) -> int:
+    """Bounded startup preparation for each service's newest scan."""
+    from sqlalchemy import func
+    from sqlalchemy.orm import Session
+    from .models import ExecutionOverview
+    with Session(bind=bind) as db:
+        ranked = select(Execution.id.label("id"), Execution.payload_digest.label("digest"), Execution.complete.label("complete"),
+                        func.row_number().over(partition_by=Execution.service_id,
+                                               order_by=(Execution.scanned_at.desc(), Execution.id.desc())).label("rank")).subquery()
+        ids = list(db.scalars(select(ranked.c.id).outerjoin(ExecutionOverview, ExecutionOverview.execution_id == ranked.c.id).where(
+            ranked.c.rank == 1, ranked.c.digest.is_not(None),
+            (ExecutionOverview.execution_id.is_(None)) | (ExecutionOverview.payload_digest != ranked.c.digest)
+            | (ExecutionOverview.complete != ranked.c.complete) | (ExecutionOverview.algorithm != OVERVIEW_ALGORITHM))
+            .order_by(ranked.c.id).limit(limit)))
+    return sum(bool(store_overview(bind, identifier)) for identifier in ids)

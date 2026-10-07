@@ -150,9 +150,40 @@ def test_remediation_preview_counts_active_configuration_findings():
     expected = (sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan["configuration_changes"]),
                 sum(item.get("classification") == "REVIEW REQUIRED" for item in plan["configuration_changes"]))
     assert sum(expected) >= 1
-    for _ in range(2):  # second request is served from the content-keyed preview cache
+    main_module = __import__("app.main", fromlist=["_REMEDIATION_PREVIEW_CACHE"])
+    main_module._REMEDIATION_PREVIEW_CACHE.clear()
+    # Not cached yet: the tab renders without reading evidence, and the
+    # browser loads the preview on demand.
+    assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]["pending"] is True
+    deferred = client.get("/api/v1/services/payments-service/remediation-preview")
+    assert deferred.status_code == 200 and deferred.headers["cache-control"] == "no-store"
+    assert (deferred.json()["configuration_changes"], deferred.json()["manual_review"]) == expected
+    for _ in range(2):  # later tab renders are served from the content-keyed preview cache
         preview = page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]
-        assert (preview["configuration_changes"], preview["manual_review"]) == expected
+        assert not preview.get("pending") and (preview["configuration_changes"], preview["manual_review"]) == expected
+    # A new policy finding changes the content key: the tab defers again.
+    body = helm_payload("preview-2")
+    body["policy_findings"] = [{"type": "Configuration", "finding": "KSV-0014", "severity": "High", "scanner": "Trivy",
+                                "target": "Deployment/payments-api", "title": "Root file system is not read-only"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]["pending"] is True
+
+
+def test_remediation_preview_endpoint_requires_remediation_permission():
+    from app.auth import hash_password
+    from app.models import Role, User, UserRoleAssignment
+    client = new_client()
+    assert client.post("/api/v1/pipeline-results", json=helm_payload("perm"), headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        user = User(username="preview-viewer", display_name="Viewer", password_hash=hash_password("test-password-long"),
+                    must_change_password=False)
+        db.add(user); db.flush()
+        role = db.scalar(select(Role).where(Role.name == "Assessor"))
+        db.add(UserRoleAssignment(user_id=user.id, role_id=role.id)); db.commit()
+    viewer = new_client("preview-viewer")
+    assert viewer.get("/services/payments-service?remediations=true&tab=pipeline").status_code == 200
+    assert viewer.get("/api/v1/services/payments-service/remediation-preview").status_code == 403
+    assert client.get("/api/v1/services/missing-service/remediation-preview").status_code in {403, 404}
 
 
 def test_service_tabs_read_evidence_without_writes_and_with_bounded_payload_reads():
@@ -313,3 +344,45 @@ def test_architecture_summary_polling_never_builds_layouts_or_full_graph(monkeyp
     full = client.get(url).json()  # the page's single terminal request
     assert full["graph"]["nodes"] and full["graph"]["layouts"]
     assert page_data(client.get("/services/payments-service?architecture=true"))["architecture_polling"] is False
+
+
+def test_stored_service_overview_matches_computed_and_is_rejected_when_evidence_differs():
+    """The stored normalized overview is derived data: the Overview page must
+    be identical whether it is read or recomputed, and a row built from other
+    evidence (digest, completeness or algorithm) is never served."""
+    from app import evidence_reads
+    from app.models import ExecutionOverview
+    client = new_client()
+    body = helm_payload("stored-overview")
+    body["skipped_images"] = ["registry.example/private:1"]
+    body["findings"] = [{"cve": "CVE-2024-7000", "severity": "High", "package": "openssl", "installed_version": "1.0",
+                         "fixed_version": "1.1", "image": "registry.example/app:1", "image_digest": "sha256:" + "b" * 64}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    url = "/services/payments-service?overview=true"
+    evidence_reads._OVERVIEW_CACHE.clear()
+    computed = page_data(client.get(url))
+    with SessionLocal() as db:
+        execution_id = db.scalar(select(Execution.id))
+        assert db.scalar(select(ExecutionOverview)) is None  # GET never writes it
+    assert evidence_reads.store_overview(engine, execution_id) is True
+    assert evidence_reads.store_overview(engine, execution_id) is False  # already current
+    evidence_reads._OVERVIEW_CACHE.clear()
+    captured, stop = _statements()
+    try:
+        stored = page_data(client.get(url))
+    finally:
+        stop()
+    assert stored == computed
+    assert not any("raw_payload" in statement for statement, _ in captured)
+    for change in ({"payload_digest": "0" * 64}, {"complete": False}, {"algorithm": -1}):
+        with SessionLocal() as db:
+            db.execute(ExecutionOverview.__table__.update().values(**change)); db.commit()
+        evidence_reads._OVERVIEW_CACHE.clear()
+        assert page_data(client.get(url)) == computed, change
+        with SessionLocal() as db:
+            db.execute(ExecutionOverview.__table__.delete()); db.commit()
+        assert evidence_reads.store_overview(engine, execution_id) is True
+    assert evidence_reads.warm_overviews(engine) == 0
+    with SessionLocal() as db:
+        db.execute(ExecutionOverview.__table__.delete()); db.commit()
+    assert evidence_reads.warm_overviews(engine) == 1

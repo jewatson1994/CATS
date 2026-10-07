@@ -19,7 +19,7 @@ def project_remediations(data, name, context, can, formatters):
     data["poam_services"] = [service(item) for item in context.get("poam_services", [])]
     data["summary"] = _fields(context.get("summary", {}), ("poams", "poams_overdue", "exceptions", "exceptions_soon", "mitigations"))
     data["filters"] = _fields(context.get("filters", {}), ("service", "identifier", "title", "status_filter", "owner", "severity", "due_from", "due_to", "expiration_from", "expiration_to", "sort", "page_size"))
-    data["remediation_preview"] = _fields(context.get("remediation_preview", {}), ("images", "charts", "configuration_changes", "manual_review", "error"))
+    data["remediation_preview"] = _fields(context.get("remediation_preview", {}), ("images", "charts", "configuration_changes", "manual_review", "error", "pending"))
     data["oci_destinations"] = [_fields(row, ("id", "name", "endpoint", "namespace", "is_default", "credentials_configured", "ca_configured", "scope")) for row in context.get("oci_destinations", [])]
     for key in ("poams", "mitigations"):
         data[key] = [entry(item, formatters) for item in context.get(key, [])]

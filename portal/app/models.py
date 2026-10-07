@@ -840,6 +840,22 @@ class ExecutionSummary(Base):
     data: Mapped[dict] = mapped_column(JSON)
 
 
+class ExecutionOverview(Base):
+    """Normalized Service Overview of one scan (derived, rebuildable).
+
+    A pure function of the retained evidence: valid only while
+    ``payload_digest`` and ``complete`` equal the execution's and
+    ``algorithm`` equals the code's version; otherwise readers recompute from
+    the evidence. Written by background work after ingest, never by a GET.
+    """
+    __tablename__ = "execution_overviews"
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), primary_key=True)
+    payload_digest: Mapped[str] = mapped_column(String(64))
+    complete: Mapped[bool] = mapped_column(Boolean)
+    algorithm: Mapped[int] = mapped_column(Integer)
+    data: Mapped[dict] = mapped_column(JSON)
+
+
 class ServicePosture(Base):
     """Rebuildable per-service posture read model (never authoritative).
 

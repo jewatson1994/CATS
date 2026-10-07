@@ -210,6 +210,8 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
     tab = client.get("/services/catalog?remediations=true&tab=pipeline", headers=page)
     assert tab.status_code == 200
     assert tab.json()["data"]["remediation_preview"]["error"] is None
+    preview = client.get("/api/v1/services/catalog/remediation-preview")
+    assert preview.status_code == 200 and preview.json()["error"] is None and preview.json()["images"] == 2
 
     plan = client.get("/services/catalog/remediations/plan").json()
     assert {image["original"]: image["classification"] for image in plan["images"]} == {
@@ -258,7 +260,10 @@ def test_remediation_tab_survives_a_failing_plan_preview(remediation_portal, mon
     main._REMEDIATION_PREVIEW_CACHE.clear() if hasattr(main, "_REMEDIATION_PREVIEW_CACHE") else None
     response = client.get("/services/catalog?remediations=true&tab=pipeline", headers={"Accept": "application/vnd.cats.page+json"})
     assert response.status_code == 200
-    assert "could not be built" in response.json()["data"]["remediation_preview"]["error"]
+    # The tab never waits for the preview; the deferred preview reports the failure.
+    assert response.json()["data"]["remediation_preview"]["pending"] is True
+    preview = client.get("/api/v1/services/catalog/remediation-preview")
+    assert preview.status_code == 200 and "could not be built" in preview.json()["error"]
 
 
 def test_plan_builds_when_sources_include_kustomization_and_lists():

@@ -356,11 +356,19 @@ def _start_read_model_maintenance():
             except Exception:
                 log.exception("Startup backfill %s failed; it is retried on the next start", backfill.__name__)
         try:
-            warmed = posture.warm(engine)
+            from .database import background_bind
+            warmed = posture.warm(background_bind(engine))
             if warmed:
                 log.info("Prepared service posture for %s services", warmed)
         except Exception:
             log.exception("Service posture warm-up failed; readers compute on demand")
+        try:
+            from .evidence_reads import warm_overviews
+            prepared = warm_overviews(background_bind(engine))
+            if prepared:
+                log.info("Prepared service overviews for %s scans", prepared)
+        except Exception:
+            log.exception("Service overview preparation failed; readers compute on demand")
     thread = threading.Thread(target=run, name="cats-read-model-maintenance", daemon=True)
     thread.start()
     return thread
@@ -660,6 +668,63 @@ def _remediation_preview_cached(key, compute):
         while len(_REMEDIATION_PREVIEW_CACHE) > 64:
             _REMEDIATION_PREVIEW_CACHE.popitem(last=False)
     return value
+
+
+def _remediation_preview_counts(db: Session, service: Service, preview_payload, preview_policy, key=None, cached_only=False):
+    """Display-only counts for the Remediations tab plan preview.
+
+    ``key`` (evidence digest plus exact active policy finding fields) enables
+    the content-keyed cache; with ``cached_only`` a miss returns ``None`` so
+    the caller can defer the computation instead of blocking the tab.
+    """
+    from .remediation_list_queries import active_image_references
+
+    def compute_preview():
+        payload = _remediation_source_payload(SimpleNamespace(raw_payload=preview_payload()))
+        plan = build_plan(payload, preview_policy, "PREVIEW")
+        files = payload.get("helm_source_files") or payload.get("source_files") or {}
+        return ({str(item.get("original")) for item in plan.get("images", [])},
+                sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in files) if isinstance(files, dict) else 0,
+                sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan.get("configuration_changes", [])),
+                sum(item.get("classification") == "REVIEW REQUIRED" for item in plan.get("configuration_changes", [])))
+    # The preview is informational: a planner defect must never make the tab
+    # (and with it POA&M, exception and candidate history) unreachable.
+    preview_error = None
+    try:
+        if key is not None and key[1] is not None:
+            if cached_only:
+                with _REMEDIATION_PREVIEW_LOCK:
+                    cached = _REMEDIATION_PREVIEW_CACHE.get(key)
+                if cached is None:
+                    return None
+            plan_images, plan_charts, plan_changes, plan_review = _remediation_preview_cached(key, compute_preview)
+        else:
+            plan_images, plan_charts, plan_changes, plan_review = compute_preview()
+    except Exception as exc:
+        logging.getLogger("cats.remediation").exception(
+            "Remediation plan preview failed", extra={"service_id": service.id})
+        plan_images, plan_charts, plan_changes, plan_review = set(), 0, 0, 0
+        preview_error = f"The remediation plan preview could not be built ({type(exc).__name__}). Remediation history remains available."
+    preview_images = set(plan_images)
+    preview_images.update(active_image_references(db, service.id))
+    return {"images": len(preview_images), "charts": plan_charts,
+            "configuration_changes": plan_changes, "manual_review": plan_review, "error": preview_error}
+
+
+def _service_remediation_preview(db: Session, service: Service, *, cached_only=False):
+    """Preview from scalar rows: active policy findings and the newest evidence
+    (untracked copy), read only when the content-keyed preview is not cached."""
+    from .evidence_reads import execution_payload
+    from .findings_query import _rows
+    preview_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+                           .order_by(Execution.scanned_at.desc(), Execution.id.asc()).limit(1))
+    preview_policy = _rows(db, PolicyFinding, PolicyFinding.service_id == service.id,
+                           PolicyFinding.active.is_(True), order_by=PolicyFinding.id)
+    key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
+           tuple(tuple(sorted((k, str(v)) for k, v in vars(item).items())) for item in preview_policy))
+    preview = _remediation_preview_counts(db, service, lambda: execution_payload(db, preview_id), preview_policy,
+                                          key=key, cached_only=cached_only)
+    return {"pending": True} if preview is None else preview
 
 
 def _architecture_has_resources(payload) -> bool:
@@ -3052,6 +3117,12 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         # Warm the posture row so the first portfolio view after a scan is
         # already current; readers recompute on demand if this has not run.
         posture.schedule(engine, [service_id])
+        # Normalize the new scan's Service Overview off the request path, so
+        # the first Overview visit after a scan reads it instead of parsing
+        # the retained payload.
+        from .evidence_reads import schedule_overview
+        from .database import background_bind
+        schedule_overview(background_bind(engine), [execution_id])
     validation_run_id = None
     schedule_validation = False
     if should_record_validation:
@@ -6714,6 +6785,22 @@ def remediation_job_light_status(service_key: str, job_key: str, db: Session = D
     return JSONResponse(jsonable_encoder(result), headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/v1/services/{service_key}/remediation-preview")
+def service_remediation_preview(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    """Deferred Remediations-tab plan preview (display-only counts).
+
+    Computed from the newest retained evidence on demand and content-keyed
+    cached; the tab itself renders without waiting for it.
+    """
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    if not auth.has("remediation.execute", service.id):
+        raise HTTPException(403)
+    return JSONResponse(jsonable_encoder(_service_remediation_preview(db, service)), headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/v1/services/{service_key}/deployment-validations/{run_key}/status")
 def deployment_validation_light_status(service_key: str, run_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
@@ -7725,49 +7812,14 @@ def service_detail(
             else:
                 poams = entries
         if remediations_only:
-            # The tab header carries no finding rows: read the active policy
-            # findings as scalar rows; the newest evidence (untracked copy) is
-            # read only when the content-keyed preview is not cached.
-            from .evidence_reads import execution_payload
-            from .findings_query import _rows
-            preview_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
-                                   .order_by(Execution.scanned_at.desc(), Execution.id.asc()).limit(1))
-            preview_payload = lambda: execution_payload(db, preview_id)
-            preview_policy = _rows(db, PolicyFinding, PolicyFinding.service_id == service.id,
-                                   PolicyFinding.active.is_(True), order_by=PolicyFinding.id)
+            # Content-keyed preview: served from the cache when present, otherwise
+            # the tab renders immediately and the browser loads it on demand.
+            remediation_preview = _service_remediation_preview(db, service, cached_only=True)
         else:
             preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
             loaded_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
-            preview_payload = lambda: loaded_payload
-            preview_policy = [item for item in service.policy_findings if item.active]
-        def compute_preview():
-            payload = _remediation_source_payload(SimpleNamespace(raw_payload=preview_payload()))
-            plan = build_plan(payload, preview_policy, "PREVIEW")
-            files = payload.get("helm_source_files") or payload.get("source_files") or {}
-            return ({str(item.get("original")) for item in plan.get("images", [])},
-                    sum(str(path).replace("\\", "/").endswith("Chart.yaml") for path in files) if isinstance(files, dict) else 0,
-                    sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan.get("configuration_changes", [])),
-                    sum(item.get("classification") == "REVIEW REQUIRED" for item in plan.get("configuration_changes", [])))
-        # The preview is informational: a planner defect must never make the tab
-        # (and with it POA&M, exception and candidate history) unreachable.
-        preview_error = None
-        try:
-            if remediations_only:
-                # Content-keyed (evidence digest + exact finding fields); never time-based.
-                preview_key = (preview_id, db.scalar(select(Execution.payload_digest).where(Execution.id == preview_id)),
-                               tuple(tuple(sorted((key, str(value)) for key, value in vars(item).items())) for item in preview_policy))
-                plan_images, plan_charts, plan_changes, plan_review = _remediation_preview_cached(preview_key, compute_preview)
-            else:
-                plan_images, plan_charts, plan_changes, plan_review = compute_preview()
-        except Exception as exc:
-            logging.getLogger("cats.remediation").exception(
-                "Remediation plan preview failed", extra={"service_id": service.id})
-            plan_images, plan_charts, plan_changes, plan_review = set(), 0, 0, 0
-            preview_error = f"The remediation plan preview could not be built ({type(exc).__name__}). Remediation history remains available."
-        preview_images = set(plan_images)
-        preview_images.update(active_image_references(db, service.id))
-        remediation_preview = {"images": len(preview_images), "charts": plan_charts,
-            "configuration_changes": plan_changes, "manual_review": plan_review, "error": preview_error}
+            remediation_preview = _remediation_preview_counts(db, service, lambda: loaded_payload,
+                                                              [item for item in service.policy_findings if item.active])
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
@@ -9698,7 +9750,8 @@ def delete_service(
     deleted_execution_ids = select(Execution.id).where(Execution.service_id == service.id)
     # SQLite deployments may disable foreign-key cascades; derived evidence
     # must still be removed alongside its authoritative executions.
-    for derived_model in (DependencyProjectionRow, DependencyProjection, ExecutionSummary):
+    from .models import ExecutionOverview
+    for derived_model in (DependencyProjectionRow, DependencyProjection, ExecutionSummary, ExecutionOverview):
         db.execute(delete(derived_model).where(derived_model.execution_id.in_(deleted_execution_ids)))
     db.execute(delete(Execution).where(Execution.service_id == service.id))
     service.current_version_id = None
