@@ -1779,6 +1779,29 @@ def test_service_snapshot_separates_staged_services_from_active_and_archived():
         assert service.lifecycle_status == "active"
 
 
+def test_staging_from_the_services_page_returns_to_the_page_not_its_json():
+    client = new_client()
+    with SessionLocal() as db:
+        db.add(Group(name="Return Path"))
+        db.commit()
+    data = client.get("/api/dashboard/services?lifecycle=active").json()
+    assert data["next_path"] == "/?lifecycle=active"
+    for index, (next_path, expected) in enumerate((
+        (data["next_path"], "/?lifecycle=active&saved=1"),
+        ("/api/dashboard/services", "/?saved=1"),  # a page built before the fix
+        ("/api/dashboard/services?lifecycle=staged", "/?lifecycle=staged&saved=1"),
+        ("/api/v1/services", "/admin/staging?saved=1"),
+        ("//evil.example/", "/admin/staging?saved=1"),
+    )):
+        response = client.post("/admin/services/stage", data={
+            "csrf_token": csrf(client), "service_id": f"return-path-{index}", "next_path": next_path,
+        }, follow_redirects=False)
+        assert response.status_code == 303
+        assert response.headers["location"] == expected
+    page = client.get("/?lifecycle=active&saved=1")
+    assert page.status_code == 200 and "text/html" in page.headers["content-type"]
+
+
 def test_staged_service_promotes_on_any_ingested_finding_or_evidence():
     client = new_client()
     with SessionLocal() as db:

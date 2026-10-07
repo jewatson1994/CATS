@@ -9965,7 +9965,12 @@ def stage_service(
     # Return to the page that opened the staging modal. Only local paths are
     # accepted so this cannot become an open redirect.
     target = next_path.strip() or "/admin/staging"
-    if not target.startswith("/") or target.startswith("//"):
+    if not target.startswith("/") or target.startswith("//") or target.startswith("/\\"):
+        target = "/admin/staging"
+    elif target.split("?", 1)[0] == "/api/dashboard/services":
+        # Pages built before the return path was corrected sent their data URL.
+        target = "/" + target[len("/api/dashboard/services"):]
+    elif target.startswith("/api/"):
         target = "/admin/staging"
     separator = "&" if "?" in target else "?"
     return RedirectResponse(f"{target}{separator}saved=1", status_code=303)

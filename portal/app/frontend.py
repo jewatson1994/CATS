@@ -150,6 +150,11 @@ def _service_data(data, context, can, formatters):
         data["simplified_findings"].append(row)
 
 
+# Dashboard pages load their data from these JSON endpoints. Forms on those
+# pages must return the browser to the page, never to the raw JSON.
+_DATA_ENDPOINT_PAGES = {"/api/dashboard/services": "/", "/api/dashboard/cybersecurity": "/cybersecurity"}
+
+
 def page_data(request, name, context, deployed_version=None, formatters=None):
     user = context.get("current_user")
     can = context.get("can")
@@ -166,7 +171,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
                                      for item in context.get("actionable_notifications", [])],
         "cats_deployed_version": _scalar(deployed_version),
         "request_path": path,
-        "next_path": path + ("?" + request.url.query if request.url.query else ""),
+        "next_path": _DATA_ENDPOINT_PAGES.get(path, path) + ("?" + request.url.query if request.url.query else ""),
     }
     data["can"] = {permission: {"*": allowed} for permission, allowed in data["permissions"].items()}
     if name == "validators.html":
