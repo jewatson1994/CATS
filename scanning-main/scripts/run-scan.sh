@@ -44,19 +44,50 @@ echo "[cats-scan] input=$INPUT_DIR output=$OUTPUT_DIR"
 echo "[cats-scan] runner=$(command -v bash)"
 echo "[cats-scan] tools: yq=$(command -v yq || true) jq=$(command -v jq || true) syft=$(command -v syft || true) grype=$(command -v grype || true) trivy=$(command -v trivy || true) dockle=$(command -v dockle || true) helm=$(command -v helm || true)"
 
-# Load locally uploaded Docker archives before image preparation. `docker load`
-# prints every tag contained in a multi-image archive; those tags become image
-# inputs automatically and can be scanned without registry connectivity.
+# Image access. The CATS portal (HQ) deliberately has no Docker socket, so
+# images are read straight from their registry or archive there. CI runners
+# and other hosts with a reachable Docker daemon keep using it.
+if [ -z "${CATS_IMAGE_SOURCE:-}" ]; then
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    CATS_IMAGE_SOURCE=docker
+  else
+    CATS_IMAGE_SOURCE=daemonless
+  fi
+fi
+case "$CATS_IMAGE_SOURCE" in
+  docker|daemonless) ;;
+  *) echo "[cats-scan] unsupported CATS_IMAGE_SOURCE: $CATS_IMAGE_SOURCE" >&2; exit 2 ;;
+esac
+export CATS_IMAGE_SOURCE
+echo "[cats-scan] image source: $CATS_IMAGE_SOURCE"
+
+# Split archives exist only for this job's phases; never keep a second copy
+# of uploaded images in the retained job output.
+cleanup_split_archives() { rm -rf -- image-archives/.split; }
+trap cleanup_split_archives EXIT
+
+# Load locally uploaded image archives before image preparation. Every tag an
+# archive contains becomes an image input and is scanned without registry
+# connectivity. Without a Docker daemon the archive is read directly and the
+# image-to-archive mapping is recorded in image-archive-map.tsv.
 if [ -d image-archives ]; then
   : > loaded-images.txt
+  : > image-archive-map.tsv
   for archive in image-archives/*; do
     [ -f "$archive" ] || continue
     echo "[cats-scan] loading local image archive: $archive"
-    if load_output="$(docker load -i "$archive" 2>&1)"; then
-      printf '%s\n' "$load_output" | sed -n 's/^Loaded image: //p' >> loaded-images.txt
+    if [ "$CATS_IMAGE_SOURCE" = docker ]; then
+      if load_output="$(docker load -i "$archive" 2>&1)"; then
+        printf '%s\n' "$load_output" | sed -n 's/^Loaded image: //p' >> loaded-images.txt
+      else
+        echo "[cats-scan] WARNING: unable to load local image archive: $archive"
+        printf '%s\n' "$load_output"
+      fi
+    elif map_output="$(python3 "$SCRIPT_DIR/split-image-archive.py" "$archive" --output-dir image-archives/.split)"; then
+      printf '%s\n' "$map_output" | sed '/^[[:space:]]*$/d' >> image-archive-map.tsv
+      printf '%s\n' "$map_output" | cut -f1 | sed '/^[[:space:]]*$/d' >> loaded-images.txt
     else
-      echo "[cats-scan] WARNING: unable to load local image archive: $archive"
-      printf '%s\n' "$load_output"
+      echo "[cats-scan] WARNING: unable to read local image archive: $archive"
     fi
   done
   sed -i '/^[[:space:]]*$/d' loaded-images.txt 2>/dev/null || true

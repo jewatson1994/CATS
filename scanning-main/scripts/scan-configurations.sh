@@ -233,8 +233,15 @@ run_trivy_config() {
   return 0
 }
 
+# Where generate-sboms.sh read an image when no Docker daemon was available:
+# registry:IMAGE, docker-archive:PATH or oci-archive:PATH. Empty means Docker.
+image_source() {
+  [ -s image-sources.tsv ] || return 0
+  awk -F '\t' -v image="$1" '$1 == image { print $2; exit }' image-sources.tsv
+}
+
 run_trivy_image_config() {
-  local image="$1" safe raw normalized
+  local image="$1" safe raw normalized source
   local -a command
 
   SOURCE_REQUESTED=$((SOURCE_REQUESTED + 1))
@@ -266,8 +273,15 @@ run_trivy_image_config() {
     command+=(--checks-bundle-repository "$TRIVY_CHECKS_BUNDLE_REPOSITORY")
   fi
 
+  source="$(image_source "$image")"
+  case "$source" in
+    docker-archive:*|oci-archive:*) command+=(--input "${source#*:}") ;;
+    registry:*) command+=(--image-src remote "$image") ;;
+    *) command+=("$image") ;;
+  esac
+
   echo "Scanning image configuration: ${image}"
-  if ! "${command[@]}" "$image"; then
+  if ! "${command[@]}"; then
     record_failure image "$image" "Trivy image configuration scan failed"
     return 1
   fi
@@ -284,7 +298,7 @@ run_trivy_image_config() {
 }
 
 run_dockle_image_config() {
-  local image="$1" safe raw normalized
+  local image="$1" safe raw normalized source
   local -a command
 
   DOCKLE_REQUESTED=$((DOCKLE_REQUESTED + 1))
@@ -304,8 +318,14 @@ run_dockle_image_config() {
     --output "$raw"
     --exit-code 0)
 
+  source="$(image_source "$image")"
+  case "$source" in
+    docker-archive:*|oci-archive:*) command+=(--input "${source#*:}") ;;
+    *) command+=("$image") ;;  # Dockle reads the registry when Docker is absent.
+  esac
+
   echo "Scanning image hardening: ${image}"
-  if ! "${command[@]}" "$image"; then
+  if ! "${command[@]}"; then
     record_failure image "$image" "Dockle image hardening scan failed"
     return 1
   fi

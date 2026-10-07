@@ -32,10 +32,19 @@ chart URL (one per line). Direct archive URLs, Helm repository/index URLs, and
 public OCI references (`oci://...`) are supported; repository URLs discover the newest listed version of each
 chart (bounded by `CATS_PUBLIC_MAX_REPOSITORY_CHARTS`, default 25). Append
 `#chart-name` to a repository URL to select one chart. Multiple chart archives
-may be selected in one submission. A local Docker `.tar`/`.tar.gz`/`.tgz` archive may also be uploaded;
+may be selected in one submission. A local `docker save` or OCI `.tar`/`.tar.gz`/`.tgz` archive may also be uploaded;
 all tags loaded from a multi-image archive are added to the scan automatically.
 Uploaded archives are kept only in the job's temporary workspace and discarded
-with the job. A chart-only submission is valid; the worker creates an empty
+with the job.
+
+The portal (HQ) has no Docker socket by design, so it reads images without a
+Docker daemon: registry images are pulled directly by Syft, Trivy and Dockle,
+and each tagged image in an uploaded `docker save` or OCI archive is scanned
+from the archive. Hosts with a reachable Docker daemon (for example CI runners)
+keep using it; set `CATS_IMAGE_SOURCE=docker` or `daemonless` to force either.
+Private registries need credentials the scanners can read inside the portal
+container, such as a read-only Docker `config.json` mounted with `DOCKER_CONFIG`
+pointing at its directory. A chart-only submission is valid; the worker creates an empty
 `images.yml`, skips SBOM phases, and still renders and scans the chart
 configuration.
 
