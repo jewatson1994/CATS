@@ -68,20 +68,22 @@ it('shows static blockers and runtime evidence independently without implying re
   expect(lifecycle.getByText(/Cleanup: COMPLETE/)).toBeInTheDocument();
 });
 
-it('polls active runtime validation after remediation completes and stops at terminal evidence', async () => {
+it('polls active runtime validation through the status contract and stops at terminal evidence', async () => {
   vi.useFakeTimers();
   const active = page({verification_status:'running',candidate_validation:{status:'RUNNING',detail:'Waiting for workloads'}});
   const terminal = page({verification_status:'verified',candidate_validation:{status:'VERIFIED',detail:'Exact candidate verified',cleanup_status:'COMPLETE'}});
-  vi.mocked(requestJson).mockResolvedValueOnce({data:active}).mockResolvedValueOnce({data:terminal});
+  vi.mocked(requestJson)
+    .mockResolvedValueOnce({status:'completed',verification_status:'verified',revision:'r2',terminal:true})
+    .mockResolvedValueOnce({data:terminal});
   render(<Report data={active}/>);
   await act(async () => {await Promise.resolve();});
-  expect(requestJson).toHaveBeenCalledWith('/services/example/remediations/candidate-1',expect.objectContaining({
-    signal:expect.any(AbortSignal),headers:{Accept:PAGE_MEDIA_TYPE},
-  }));
-  expect(button()).not.toBeInTheDocument();
+  // The poll reads the lightweight status only, never the full report.
+  expect(requestJson).toHaveBeenNthCalledWith(1,'/api/v1/services/example/remediations/candidate-1/status',expect.objectContaining({signal:expect.any(AbortSignal)}));
   await act(async () => {await vi.advanceTimersByTimeAsync(1500);});
+  // Terminal: one final detail read restores the complete evidence.
+  expect(requestJson).toHaveBeenNthCalledWith(2,'/services/example/remediations/candidate-1',expect.objectContaining({headers:{Accept:PAGE_MEDIA_TYPE}}));
   expect(screen.getByText('Exact candidate verified')).toBeInTheDocument();
   expect(button()).toBeInTheDocument();
-  await act(async () => {await vi.advanceTimersByTimeAsync(4500);});
+  await act(async () => {await vi.advanceTimersByTimeAsync(30000);});
   expect(requestJson).toHaveBeenCalledTimes(2);
 });

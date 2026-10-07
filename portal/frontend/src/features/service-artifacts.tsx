@@ -1,3 +1,4 @@
+import { visibleTimeout } from '../hooks/visibleTimer';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { can, requestJson, type PageData } from '../api';
 import { ServiceTabs } from '../components/ServiceHeader';
@@ -31,18 +32,18 @@ export function Page({data}: {data:PageData}) {
   useEffect(() => {
     if (!(data.image_inventory || []).some((row:any) => ['queued','running','scanning'].includes(row.image.scan_status))) return;
     let cancelled = false;
-    let timer:ReturnType<typeof setTimeout>;
+    let cancelTimer = () => {};
     const controller = new AbortController();
     async function poll() {
       try {
         const result = await requestJson<{images:{id:number;status:string}[]}>(`/api/services/${encodeURIComponent(service.service_key)}/artifacts/images/status`,{signal:controller.signal});
         if (cancelled) return;
         setStatuses(Object.fromEntries(result.images.map(item => [String(item.id),item.status]))); setPollError('');
-        if (result.images.some(item => ['queued','running','scanning'].includes(item.status))) timer = setTimeout(poll,3000);
-      } catch {if (!cancelled) {setPollError('Live scan status unavailable; retrying.');timer = setTimeout(poll,5000);}}
+        if (result.images.some(item => ['queued','running','scanning'].includes(item.status))) cancelTimer = visibleTimeout(poll,3000);
+      } catch {if (!cancelled) {setPollError('Live scan status unavailable; retrying.');cancelTimer = visibleTimeout(poll,5000);}}
     }
-    timer = setTimeout(poll,1500);
-    return () => {cancelled = true; controller.abort(); clearTimeout(timer);};
+    cancelTimer = visibleTimeout(poll,1500);
+    return () => {cancelled = true; controller.abort(); cancelTimer();};
   },[data.image_inventory,service.service_key]);
   const charts = rows.filter((row:any) => {
     if (row.semantic_type !== 'helm_chart') return false;

@@ -17,7 +17,12 @@ it('aborts stale navigation and never shows another page response in the new sco
   const header = screen.getByRole('banner');
   fireEvent.click(screen.getByRole('link',{name:'Start Scan →'}));
   await waitFor(()=>expect(fetch).toHaveBeenCalledTimes(1));
-  expect(screen.queryByRole('heading',{name:'CATS'})).not.toBeInTheDocument();
+  // The previous page stays on screen while the next one loads, but it is
+  // inert and marked busy so it cannot be mistaken for, or used as, the new page.
+  const previous = document.querySelector('.page-navigating');
+  expect(previous).not.toBeNull();
+  expect(previous).toHaveAttribute('inert');
+  expect(previous).toHaveAttribute('aria-busy', 'true');
   expect(screen.getByRole('banner')).toBe(header);
   expect(screen.getByRole('status')).toHaveTextContent('Loading page');
   act(()=>{window.history.pushState(null,'','/sbom');window.dispatchEvent(new PopStateEvent('popstate'));});
@@ -26,6 +31,7 @@ it('aborts stale navigation and never shows another page response in the new sco
   await act(async()=>{finish(new Response(JSON.stringify({schemaVersion:1,page:'request_error',data:{detail:'Stale scan'}}),{headers:{'content-type':PAGE_MEDIA_TYPE}}));});
   expect(screen.queryByText('Stale scan')).not.toBeInTheDocument();
   expect(screen.getByText('Latest scope')).toBeInTheDocument();
+  expect(document.querySelector('.page-navigating')).toBeNull();
   expect(screen.getByRole('banner')).toBe(header);
 });
 it('keeps navigation usable when a route fails and can retry', async () => {

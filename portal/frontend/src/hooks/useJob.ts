@@ -1,5 +1,6 @@
 import {useCallback, useEffect, useState} from 'react';
 import {requestJson} from '../api';
+import {visibleTimeout} from './visibleTimer';
 
 export interface JobState {
   status: string;
@@ -21,7 +22,7 @@ export function useJob<T extends JobState>(url: string | null, scope: string,
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   useEffect(() => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelTimer = () => {};
     setResult({scope, job: null, error: null});
     if (!url) return () => controller.abort();
     const poll = async () => {
@@ -29,16 +30,16 @@ export function useJob<T extends JobState>(url: string | null, scope: string,
         const job = await load(url, controller.signal);
         if (controller.signal.aborted) return;
         setResult({scope, job, error: null});
-        if (!TERMINAL.has(job.status.toLowerCase())) timer = setTimeout(poll, 1500);
+        if (!TERMINAL.has(job.status.toLowerCase())) cancelTimer = visibleTimeout(poll, 1500);
       } catch (error) {
         if (controller.signal.aborted) return;
         setResult(previous => ({scope, job: previous.scope === scope ? previous.job : null,
           error: error instanceof Error ? error.message : 'Unable to read job status.'}));
-        timer = setTimeout(poll, 3000);
+        cancelTimer = visibleTimeout(poll, 3000);
       }
     };
     void poll();
-    return () => {controller.abort(); if (timer) clearTimeout(timer);};
+    return () => {controller.abort(); cancelTimer();};
   }, [url, scope, attempt, load]);
   const job = result.scope === scope ? result.job : null;
   useEffect(() => {

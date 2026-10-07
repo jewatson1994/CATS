@@ -4,6 +4,14 @@ export class ApiError extends Error {
   constructor(message: string, readonly status: number) {super(message);}
 }
 
+type MutationListener = () => void;
+const mutationListeners = new Set<MutationListener>();
+/** Notified after every answered non-GET request, so cached reads can be discarded. */
+export function onMutation(listener: MutationListener): () => void {
+  mutationListeners.add(listener);
+  return () => {mutationListeners.delete(listener);};
+}
+
 /** Cookies stay HttpOnly. FormData preserves backend-owned validation and CSRF. */
 export async function requestJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const target = new URL(url, window.location.origin);
@@ -14,6 +22,8 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
     ...options, credentials: 'same-origin', cache: 'no-store',
     headers,
   });
+  // Any answered mutation may have changed server state: discard cached reads.
+  if ((options.method || 'GET').toUpperCase() !== 'GET') for (const listener of mutationListeners) listener();
   if (response.redirected && new URL(response.url).pathname === '/login') {
     window.location.assign(response.url);
     throw new ApiError('Your session has expired. Please sign in again.', 401);
@@ -40,7 +50,7 @@ export interface PageData {
   cats_deployed_version?: string;
   [key: string]: any;
 }
-export interface PageEnvelope {schemaVersion: 1; page: string; data: PageData}
+export interface PageEnvelope {schemaVersion: 1; page: string; data: PageData; cacheScope?: string}
 
 export function can(data: PageData, permission: string, serviceId?: number): boolean {
   return data.can?.[permission]?.[serviceId == null ? '*' : String(serviceId)] === true;

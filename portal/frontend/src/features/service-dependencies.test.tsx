@@ -19,23 +19,30 @@ it('renders assessed zero counts only for ready evidence', () => {
   render(<Page data={{...data,dependency_projection_status:'ready',dependency_all_total:0} as any}/>);
   expect(screen.getByText('0')).toBeInTheDocument();
   expect(screen.getByText(/No matching SBOM/)).toBeInTheDocument();
-});it('refreshes a queued assessment a bounded number of times', async () => {
+});it('prepares a queued assessment in place and never reloads the document', async () => {
   const {vi} = await import('vitest');
-  vi.useFakeTimers();
-  const replace = vi.fn();
+  const {act} = await import('@testing-library/react');
+  const {PageControlContext} = await import('../pageControl');
+  vi.useFakeTimers({shouldAdvanceTime: true});
+  const replace = vi.fn(), assign = vi.fn();
   const original = window.location;
-  Object.defineProperty(window, 'location', {configurable: true, value: {...original, search: '?dependencies=true', pathname: '/services/sample', replace}});
+  Object.defineProperty(window, 'location', {configurable: true, value: {...original, search: '?dependencies=true', pathname: '/services/sample', origin: original.origin, href: original.href, replace, assign}});
+  const statuses = [{status: 'building', ready: false, terminal: false, revision: 'a'}, {status: 'ready', ready: true, terminal: true, revision: 'b'}];
+  const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify(statuses.shift() || {status: 'ready', terminal: true}), {headers: {'content-type': 'application/json'}})));
+  vi.stubGlobal('fetch', fetch);
+  const refresh = vi.fn(async () => {});
   try {
-    render(<Page data={{...data,dependency_projection_status:'pending'} as any}/>);
-    await vi.advanceTimersByTimeAsync(3000);
-    expect(replace).toHaveBeenCalledWith('/services/sample?dependencies=true&dependency_wait=1');
-    cleanup(); replace.mockClear();
-    Object.defineProperty(window, 'location', {configurable: true, value: {...original, search: '?dependencies=true&dependency_wait=20', pathname: '/services/sample', replace}});
-    render(<Page data={{...data,dependency_projection_status:'pending'} as any}/>);
-    await vi.advanceTimersByTimeAsync(10000);
+    render(<PageControlContext.Provider value={{refresh}}><Page data={{...data, dependency_projection_status: 'pending', dependency_selected_execution: {id: 42}} as any}/></PageControlContext.Provider>);
+    for (let step = 0; step < 4; step++) await act(async () => {vi.advanceTimersByTime(3000);});
+    expect((fetch.mock.calls[0] as any[])[0]).toContain('/api/v1/services/sample/dependencies/status?execution_id=42');
+    expect(refresh).toHaveBeenCalledTimes(1); // ready: data replaced in place
+    const calls = fetch.mock.calls.length;
+    await act(async () => {vi.advanceTimersByTime(60000);});
+    expect(fetch.mock.calls.length).toBe(calls);
     expect(replace).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
   } finally {
     Object.defineProperty(window, 'location', {configurable: true, value: original});
-    vi.useRealTimers();
+    vi.unstubAllGlobals(); vi.useRealTimers();
   }
 });

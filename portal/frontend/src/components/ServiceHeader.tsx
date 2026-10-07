@@ -2,9 +2,12 @@ import { useRef } from 'react';
 import { can, type PageData } from '../api';
 import { Icon, StatusBadge } from './ui';
 
+/** Tabs whose page data is a bounded summary; prefetched on deliberate hover/focus.
+ * Architecture (graph) and Deployment Validation (evidence) load only on visit. */
+const PREFETCH_TABS = new Set(['overview', 'artifacts', 'dependencies', 'findings', 'remediations', 'activity']);
 export function ServiceTabs({ serviceKey, active = 'findings' }: { serviceKey: string; active?: string }) {
   const root = `/services/${encodeURIComponent(serviceKey)}`;
-  return <nav className="service-tabs" aria-label="Service views">{[['overview', 'Overview'], ['architecture', 'Architecture'], ['artifacts', 'Artifacts'], ['dependencies', 'Dependencies'], ['validation', 'Deployment Validation'], ['findings', 'Findings'], ['remediations', 'Remediations'], ['activity', 'Activity']].map(([key, label]) => <a key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} href={`${root}?${key}=true${key === 'findings' ? '&findings_view=simplified' : key === 'remediations' ? '&tab=pipeline' : ''}`}>{label}</a>)}</nav>;
+  return <nav className="service-tabs" aria-label="Service views">{[['overview', 'Overview'], ['architecture', 'Architecture'], ['artifacts', 'Artifacts'], ['dependencies', 'Dependencies'], ['validation', 'Deployment Validation'], ['findings', 'Findings'], ['remediations', 'Remediations'], ['activity', 'Activity']].map(([key, label]) => <a key={key} className={active === key ? 'active' : ''} aria-current={active === key ? 'page' : undefined} data-prefetch={PREFETCH_TABS.has(key) && active !== key ? 'true' : undefined} href={`${root}?${key}=true${key === 'findings' ? '&findings_view=simplified' : key === 'remediations' ? '&tab=pipeline' : ''}`}>{label}</a>)}</nav>;
 }
 
 export function ServiceHeader({ data }: { data: PageData }) {

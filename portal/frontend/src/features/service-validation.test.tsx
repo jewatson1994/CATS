@@ -17,3 +17,32 @@ it('pages validation history without loading every run', () => {
   expect(screen.getByRole('link',{name:'Previous'}).getAttribute('href')).toBe('/services/demo?validation=true&validation_page=1');
   expect(screen.getByRole('link',{name:'Next'}).getAttribute('href')).toBe('/services/demo?validation=true&validation_page=3');
 });
+
+it('polls validation status, not evidence, and loads evidence once at terminal', async () => {
+  const {vi, expect: assert} = await import('vitest');
+  const {act, waitFor} = await import('@testing-library/react');
+  vi.useFakeTimers({shouldAdvanceTime: true});
+  const urls: string[] = [];
+  const statuses = [
+    {run_key: 'run-1', status: 'RUNNING', phase: 'INSTALLING', cleanup_status: 'PENDING', revision: 'v1', terminal: false},
+    {run_key: 'run-1', status: 'RUNNING', phase: 'INSTALLING', cleanup_status: 'PENDING', revision: 'v1', terminal: false},
+    {run_key: 'run-1', status: 'VERIFIED', phase: 'COMPLETE', cleanup_status: 'COMPLETE', revision: 'v2', terminal: true},
+  ];
+  const json = (body: unknown) => new Response(JSON.stringify(body), {headers: {'content-type': 'application/json'}});
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    urls.push(url);
+    return Promise.resolve(json(url.endsWith('/status') ? statuses.shift() || statuses[0]
+      : {run_key: 'run-1', status: 'VERIFIED', phase: 'COMPLETE', cleanup_status: 'COMPLETE', terminal: true, revision: 'v2', reason: 'All workloads ready'}));
+  }));
+  try {
+    render(<Page data={{view: {service: {id: 1, service_key: 'demo'}}, validation: {run_key: 'run-1', status: 'RUNNING', phase: 'INSTALLING', cleanup_status: 'PENDING', revision: 'v1'}} as any}/>);
+    for (let step = 0; step < 6; step++) await act(async () => {vi.advanceTimersByTime(4000);});
+    await waitFor(() => assert(urls.filter(url => !url.endsWith('/status'))).toHaveLength(1));
+    assert(urls.filter(url => url.endsWith('/status'))).toHaveLength(3);
+    const count = urls.length;
+    await act(async () => {vi.advanceTimersByTime(60000);});
+    assert(urls.length).toBe(count);
+  } finally {
+    vi.unstubAllGlobals(); vi.useRealTimers();
+  }
+});

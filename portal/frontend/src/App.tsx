@@ -1,5 +1,8 @@
-import {useEffect, useState, type ComponentType} from 'react';
-import {PAGE_MEDIA_TYPE, requestJson, type PageEnvelope, type PageData} from './api';
+import {useCallback, useEffect, useMemo, useRef, useState, type ComponentType} from 'react';
+import {PageControlContext, type PageControl} from './pageControl';
+import {ApiError, onMutation, type PageEnvelope, type PageData} from './api';
+import {digestText, pageStore, type PageStore} from './pageStore';
+import {afterPaint, installPerformanceTools, recordTiming} from './perf';
 import {Shell} from './components/Shell';
 import {ErrorBoundary} from './components/ErrorBoundary';
 import {Page as Home} from './features/home';
@@ -79,46 +82,172 @@ export function readBootstrap(): PageEnvelope | null {
   } catch {return null;}
 }
 
-export function App({initial}: {initial: PageEnvelope | null}) {
-  const [location, setLocation] = useState(window.location.pathname + window.location.search);
-  const [page, setPage] = useState<{location: string; envelope: PageEnvelope} | null>(initial ? {location, envelope: initial} : null);
-  const [error, setError] = useState<string | null>(null);
+/** Cached pages younger than this render without a background refresh. */
+export const FRESH_MS = 2000;
+/** Hover/focus intent before a deliberate prefetch (never on page load). */
+const PREFETCH_DELAY_MS = 120;
+const PREFETCH_FRESH_MS = 30000;
+const MAX_PREFETCHES = 2;
+const ACCESS_ERRORS = new Set([401, 403, 404]);
+
+
+interface View {location: string; envelope: PageEnvelope; generation: number}
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+const currentLocation = () => window.location.pathname + window.location.search;
+
+export function App({initial, store = pageStore}: {initial: PageEnvelope | null; store?: PageStore}) {
+  const [location, setLocation] = useState(currentLocation);
+  const generation = useRef(0);
+  const [view, setView] = useState<View | null>(initial ? {location, envelope: initial, generation: 0} : null);
+  const [error, setError] = useState<{location: string; message: string} | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const locationRef = useRef(location);
+  const scrolls = useRef(new Map<string, number>());
+  const popped = useRef(false);
+  const handledAttempt = useRef(0);
+
   useEffect(() => {
-    const navigate = () => setLocation(window.location.pathname + window.location.search);
+    installPerformanceTools();
+    if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
+    if (initial) {
+      const text = JSON.stringify(initial);
+      store.put(location, {envelope: initial, bytes: text.length, digest: digestText(text), fetchedAt: Date.now()});
+    }
+    return onMutation(() => store.invalidate());
+    // Bootstrap is read once per document.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const go = (pop: boolean) => {
+      scrolls.current.set(locationRef.current, window.scrollY);
+      popped.current = pop;
+      setLocation(currentLocation());
+    };
+    const popstate = () => go(true);
     const click = (event: MouseEvent) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const link = (event.target as HTMLElement).closest('a');
       if (!link || link.hasAttribute('download') || link.target || link.getAttribute('aria-disabled') === 'true') return;
       const url = new URL(link.href, window.location.href);
       if (url.origin !== window.location.origin || !isPageRoute(url.pathname) || url.hash) return;
-      event.preventDefault(); window.history.pushState(null, '', url.pathname + url.search); navigate();
+      event.preventDefault(); window.history.pushState(null, '', url.pathname + url.search); go(false);
     };
-    window.addEventListener('popstate', navigate); document.addEventListener('click', click);
-    return () => {window.removeEventListener('popstate', navigate); document.removeEventListener('click', click);};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let active = 0;
+    const intent = (event: Event) => {
+      const link = (event.target as HTMLElement | null)?.closest?.('a[data-prefetch]') as HTMLAnchorElement | null;
+      if (!link) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const url = new URL(link.href, window.location.href);
+        const target = url.pathname + url.search;
+        if (url.origin !== window.location.origin || !isPageRoute(url.pathname) || target === locationRef.current) return;
+        const cached = store.peek(target);
+        if ((cached && Date.now() - cached.fetchedAt < PREFETCH_FRESH_MS) || store.isLoading(target) || active >= MAX_PREFETCHES) return;
+        active += 1;
+        const started = now();
+        store.load(target).then(page => recordTiming({location: target, source: 'prefetch', started, usefulMs: null,
+          fetchMs: now() - started, bytes: page.bytes})).catch(() => {}).finally(() => {active -= 1;});
+      }, PREFETCH_DELAY_MS);
+    };
+    const cancel = () => clearTimeout(timer);
+    window.addEventListener('popstate', popstate); document.addEventListener('click', click);
+    document.addEventListener('pointerover', intent); document.addEventListener('focusin', intent);
+    document.addEventListener('pointerout', cancel);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('popstate', popstate); document.removeEventListener('click', click);
+      document.removeEventListener('pointerover', intent); document.removeEventListener('focusin', intent);
+      document.removeEventListener('pointerout', cancel);
+    };
+  }, [store]);
+
+  const show = useCallback((target: string, envelope: PageEnvelope) => {
+    generation.current += 1;
+    setView({location: target, envelope, generation: generation.current});
   }, []);
+
   useEffect(() => {
-    if (page?.location === location && attempt === 0) return;
+    locationRef.current = location;
+    const forced = attempt !== handledAttempt.current;
+    handledAttempt.current = attempt;
+    if (!forced && view?.location === location) return;
     const controller = new AbortController();
-    setError(null);
-    requestJson<PageEnvelope>(location, {signal: controller.signal, headers: {Accept: PAGE_MEDIA_TYPE}})
-      .then(envelope => {
+    const started = now();
+    const pop = popped.current;
+    popped.current = false;
+    const placeScroll = () => window.scrollTo(0, pop ? scrolls.current.get(location) || 0 : 0);
+    setError(null); setNotice(null);
+    const valid = (envelope: PageEnvelope) => envelope.schemaVersion === 1 && envelope.page in pages;
+    const cached = forced ? undefined : store.get(location);
+    if (cached && valid(cached.envelope)) {
+      show(location, cached.envelope);
+      afterPaint(() => {placeScroll(); recordTiming({location, source: 'cache', started, usefulMs: now() - started, fetchMs: null, bytes: cached.bytes});});
+      if (Date.now() - cached.fetchedAt < FRESH_MS) return () => controller.abort();
+      const refreshStarted = now();
+      store.load(location, controller.signal).then(page => {
         if (controller.signal.aborted) return;
-        if (envelope.schemaVersion !== 1 || !(envelope.page in pages)) throw new Error('This page is not available in the frontend.');
-        setPage({location, envelope}); window.scrollTo(0, 0);
-      }).catch(cause => {if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Unable to load the page.');});
+        const changed = page.digest !== cached.digest;
+        if (changed && valid(page.envelope)) show(location, page.envelope);
+        recordTiming({location, source: 'revalidate', started: refreshStarted, usefulMs: null, fetchMs: now() - refreshStarted, bytes: page.bytes, changed});
+      }).catch(cause => {
+        if (controller.signal.aborted) return;
+        if (cause instanceof ApiError && ACCESS_ERRORS.has(cause.status)) {
+          // Access changed: never keep showing the saved copy.
+          store.delete(location);
+          setView(null);
+          setError({location, message: cause.message});
+        } else {
+          setNotice('Showing the most recently loaded copy; it could not be refreshed.');
+        }
+      });
+      return () => controller.abort();
+    }
+    store.load(location, controller.signal).then(page => {
+      if (controller.signal.aborted) return;
+      if (!valid(page.envelope)) throw new Error('This page is not available in the frontend.');
+      show(location, page.envelope);
+      afterPaint(() => {placeScroll(); recordTiming({location, source: 'network', started, usefulMs: now() - started, fetchMs: null, bytes: page.bytes});});
+    }).catch(cause => {
+      if (!controller.signal.aborted) setError({location, message: cause instanceof Error ? cause.message : 'Unable to load the page.'});
+    });
     return () => controller.abort();
     // The page result must not restart its own request.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location, attempt]);
-  const current = page?.location === location ? page.envelope : null;
+
+  const control = useMemo<PageControl>(() => ({
+    refresh: async () => {
+      const target = locationRef.current;
+      const before = store.peek(target);
+      const page = await store.load(target);
+      if (locationRef.current === target && page.envelope.schemaVersion === 1 && page.envelope.page in pages
+          && page.digest !== before?.digest) show(target, page.envelope);
+    },
+  }), [store, show]);
+
+  const current = view?.location === location ? view.envelope : null;
+  const failed = error?.location === location ? error.message : null;
+  // An uncached navigation keeps the previous page on screen (inert, dimmed)
+  // until the new one arrives, instead of blanking the workspace.
+  const previous = !current && !failed && view ? view : null;
   const pageTitle = current ? `${current.page.replaceAll('_', ' ')} · CATS` : 'CATS';
   useEffect(() => {document.title = pageTitle;}, [pageTitle]);
-  const Page = current ? pages[current.page] : null;
-  return <Shell data={current?.data || page?.envelope.data || {}}><ErrorBoundary key={location}>
-    {current && Page ? <Page data={current.data}/> : <section className="panel padded" aria-busy={!error}>
-      {error ? <div role="alert"><h1>Unable to load page</h1><p>{error}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></div>
-        : <p role="status">Loading page…</p>}
-    </section>}
-  </ErrorBoundary></Shell>;
+  const shown = current ? view : previous;
+  const Page = shown ? pages[shown.envelope.page] : null;
+  return <Shell data={(current || previous?.envelope)?.data || {}}>
+    <PageControlContext.Provider value={control}>
+      {notice && current && <p className="page-refresh-notice" role="status">{notice}</p>}
+      {shown && Page && !failed ? <div className={previous ? 'page-navigating' : undefined} aria-busy={previous ? true : undefined}
+        inert={previous ? true : undefined}>
+        {previous && <p className="sr-only" role="status">Loading page…</p>}
+        <ErrorBoundary key={`${shown.location}#${shown.generation}`}><Page data={shown.envelope.data}/></ErrorBoundary>
+      </div> : <section className="panel padded" aria-busy={!failed}>
+        {failed ? <div role="alert"><h1>Unable to load page</h1><p>{failed}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></div>
+          : <p role="status">Loading page…</p>}
+      </section>}
+    </PageControlContext.Provider>
+  </Shell>;
 }

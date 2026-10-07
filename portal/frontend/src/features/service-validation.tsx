@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { usePoll } from '../hooks/usePoll';
 import { can, requestJson, type PageData } from '../api';
 import { ServiceTabs } from '../components/ServiceHeader';
 import { ExpandableEvidence, Icon, KeyValueGrid, MetricCard, MetricGrid, StageProgress, StatusBadge, type Stage } from '../components/ui';
@@ -25,23 +26,26 @@ export function Page({data}:{data:PageData}) {
   const [now,setNow] = useState(Date.now());
   const runKey = validation.run_key || validation.run_id;
   const validationTerminal = Boolean(isTerminal(validation) || validation.terminal);
-  useEffect(() => {
-    if (!runKey || validationTerminal) return;
-    let cancelled = false;
-    let timer:ReturnType<typeof setTimeout>;
-    const controller = new AbortController();
-    async function poll() {
-      try {
-        const state = await requestJson<any>(`/api/v1/services/${encodeURIComponent(service.service_key)}/deployment-validations/${encodeURIComponent(runKey)}`,{signal:controller.signal});
-        if (cancelled || state.run_key !== runKey) return;
-        setValidation(state);setMessage('');
-        if (!isTerminal(state)) timer = setTimeout(poll,2000);
-      } catch {if (!cancelled) {setMessage('Live update unavailable; retrying.');timer = setTimeout(poll,2000);}}
-    }
-    void poll();
-    return () => {cancelled = true;controller.abort();clearTimeout(timer);};
-    // Each run owns exactly one polling loop; state updates do not restart it.
-  },[runKey,service.service_key,validationTerminal]);
+  // Poll the lightweight status contract; the full evidence view is fetched
+  // only when its revision changes (throttled while running) and at terminal.
+  const shownRevision = useRef<string | undefined>(validation.revision);
+  const lastDetail = useRef(Date.now());
+  const apiRoot = `/api/v1/services/${encodeURIComponent(service.service_key)}/deployment-validations/${encodeURIComponent(runKey || '')}`;
+  const poll = usePoll<any>({url: runKey && !validationTerminal ? `${apiRoot}/status` : null, intervalMs: 2000, maxIntervalMs: 10000,
+    onStatus: async status => {
+      if (status.run_key !== runKey) return;
+      if (!status.terminal) {
+        setValidation((current: any) => current.run_key === status.run_key ? {...current, status: status.status, phase: status.phase,
+          cleanup_status: status.cleanup_status, started_at: status.started_at, duration_seconds: status.duration_seconds} : current);
+        if (status.revision === shownRevision.current || Date.now() - lastDetail.current < 4000) return;
+      }
+      lastDetail.current = Date.now();
+      const detail = await requestJson<any>(apiRoot);
+      if (detail.run_key !== runKey) return;
+      shownRevision.current = detail.revision;
+      setValidation(detail);
+    }});
+  useEffect(() => {setMessage(poll.error ? 'Live update unavailable; retrying.' : '');}, [poll.error]);
   useEffect(() => {if (!runKey || validationTerminal) return; const timer = setInterval(() => setNow(Date.now()),1000);return () => clearInterval(timer);},[runKey,validationTerminal]);
   async function rerun(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();setSubmitting(true);setMessage('');

@@ -93,12 +93,16 @@ describe('native service operations', () => {
     expect(isTerminal({status:'VERIFIED',phase:'CLEANING_UP',cleanup_status:'RUNNING'})).toBe(false);
   });
   it('starts a new validation run with CSRF then polls the new run', async () => {
-    const fetch = vi.fn().mockResolvedValueOnce(response({run_id:'run-new',url:'/services/sample?validation=true&validation_run=run-new',run:{run_key:'run-new',status:'QUEUED',phase:'QUEUED',cleanup_status:'PENDING'}})).mockResolvedValueOnce(response({run_key:'run-new',status:'VERIFIED',phase:'COMPLETE',cleanup_status:'COMPLETE',terminal:true}));vi.stubGlobal('fetch',fetch);
+    const fetch = vi.fn().mockResolvedValueOnce(response({run_id:'run-new',url:'/services/sample?validation=true&validation_run=run-new',run:{run_key:'run-new',status:'QUEUED',phase:'QUEUED',cleanup_status:'PENDING'}}))
+      .mockResolvedValueOnce(response({run_key:'run-new',status:'VERIFIED',phase:'COMPLETE',cleanup_status:'COMPLETE',terminal:true,revision:'v2'}))
+      .mockResolvedValueOnce(response({run_key:'run-new',status:'VERIFIED',phase:'COMPLETE',cleanup_status:'COMPLETE',terminal:true,revision:'v2'}));vi.stubGlobal('fetch',fetch);
     render(<Validation data={fixture({validation:{status:'NOT_ATTEMPTED',phase:'COMPLETE',terminal:true}})} />);
     fireEvent.submit(screen.getByRole('button',{name:'Re-run Validation'}).closest('form')!);
-    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
     expect((fetch.mock.calls[0][1].body as FormData).get('csrf_token')).toBe('csrf-proof');
-    expect(fetch.mock.calls[1][0]).toContain('/deployment-validations/run-new');
+    // The new run is polled through its lightweight status, then its evidence is read once at terminal.
+    expect(fetch.mock.calls[1][0]).toContain('/deployment-validations/run-new/status');
+    expect(fetch.mock.calls[2][0]).toMatch(/\/deployment-validations\/run-new$/);
     await waitFor(() => expect(screen.getAllByText('Verified').length).toBeGreaterThan(0));
   });
 });
