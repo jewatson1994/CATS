@@ -33,3 +33,12 @@ def test_pool_sizes_are_configurable_and_bounded(monkeypatch):
     monkeypatch.setenv("CATS_DB_BACKGROUND_MAX_OVERFLOW", "not-a-number")
     assert database._pool("CATS_DB", 10, 10, 15) == {"pool_size": 7, "max_overflow": 10, "pool_timeout": 15}
     assert database._pool("CATS_DB_BACKGROUND", 4, 4, 60)["max_overflow"] == 4
+
+
+def test_postgresql_connections_disable_jit_unless_configured(monkeypatch):
+    monkeypatch.delenv("CATS_DB_JIT", raising=False)
+    assert database._postgresql_options("postgresql+psycopg://cats@db/cats") == {"options": "-c jit=off"}
+    assert database._postgresql_options("postgresql+psycopg://cats@db/cats?options=-c%20work_mem%3D8MB") == {}
+    assert database._postgresql_options("sqlite:///./cats.db") == {}
+    monkeypatch.setenv("CATS_DB_JIT", "server")
+    assert database._postgresql_options("postgresql+psycopg://cats@db/cats") == {}
