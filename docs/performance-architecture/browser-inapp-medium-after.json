@@ -1,0 +1,602 @@
+[
+  [
+    {
+      "page": "Service Overview",
+      "kind": "navigate from Services",
+      "ms": 756.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "first tab visit",
+      "ms": 217.6,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4025,
+      "all_bytes": 3770
+    },
+    {
+      "page": "Architecture",
+      "kind": "first tab visit",
+      "ms": 185.9,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "first tab visit",
+      "ms": 158.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "first tab visit",
+      "ms": 118.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "first tab visit",
+      "ms": 95.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "first tab visit",
+      "ms": 46.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 42.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4025,
+      "all_bytes": 3770
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 27.5,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 87.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 35.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 27.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 21,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 32.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4025,
+      "all_bytes": 3770
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 31.9,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 46.9,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 41.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 23.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 22.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Services",
+      "kind": "navigate back to Services",
+      "ms": 35.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1265,
+      "all_bytes": 1010
+    },
+    {
+      "page": "Cybersecurity",
+      "kind": "navigate",
+      "ms": 89.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1776,
+      "all_bytes": 1521
+    },
+    {
+      "page": "Services",
+      "kind": "browser back",
+      "ms": 24.4,
+      "requests": 1,
+      "api_requests": 0,
+      "api_bytes": 0,
+      "all_bytes": -255
+    }
+  ],
+  [
+    {
+      "page": "Service Overview",
+      "kind": "navigate from Services",
+      "ms": 133.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2133,
+      "all_bytes": 1878
+    },
+    {
+      "page": "Findings",
+      "kind": "first tab visit",
+      "ms": 192.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4030,
+      "all_bytes": 3775
+    },
+    {
+      "page": "Architecture",
+      "kind": "first tab visit",
+      "ms": 113,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "first tab visit",
+      "ms": 133.6,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "first tab visit",
+      "ms": 128.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2316,
+      "all_bytes": 2061
+    },
+    {
+      "page": "Remediation",
+      "kind": "first tab visit",
+      "ms": 68.9,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1425,
+      "all_bytes": 1170
+    },
+    {
+      "page": "Service Overview",
+      "kind": "first tab visit",
+      "ms": 69.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2133,
+      "all_bytes": 1878
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 17.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4030,
+      "all_bytes": 3775
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 24.1,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 104,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 44.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2316,
+      "all_bytes": 2061
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 33.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1425,
+      "all_bytes": 1170
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 13.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2133,
+      "all_bytes": 1878
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 18.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4030,
+      "all_bytes": 3775
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 19.7,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12214,
+      "all_bytes": 11959
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 69.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17830,
+      "all_bytes": 17575
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 34.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2316,
+      "all_bytes": 2061
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 18.6,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1425,
+      "all_bytes": 1170
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 21.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2133,
+      "all_bytes": 1878
+    },
+    {
+      "page": "Services",
+      "kind": "navigate back to Services",
+      "ms": 18.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1265,
+      "all_bytes": 1010
+    },
+    {
+      "page": "Cybersecurity",
+      "kind": "navigate",
+      "ms": 73.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1776,
+      "all_bytes": 1521
+    },
+    {
+      "page": "Services",
+      "kind": "browser back",
+      "ms": 25.4,
+      "requests": 1,
+      "api_requests": 0,
+      "api_bytes": 0,
+      "all_bytes": -255
+    }
+  ],
+  [
+    {
+      "page": "Service Overview",
+      "kind": "navigate from Services",
+      "ms": 106.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "first tab visit",
+      "ms": 188.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4031,
+      "all_bytes": 3776
+    },
+    {
+      "page": "Architecture",
+      "kind": "first tab visit",
+      "ms": 93.9,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12217,
+      "all_bytes": 11962
+    },
+    {
+      "page": "Dependencies",
+      "kind": "first tab visit",
+      "ms": 141.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17835,
+      "all_bytes": 17580
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "first tab visit",
+      "ms": 109.6,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "first tab visit",
+      "ms": 83,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "first tab visit",
+      "ms": 13.9,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 23.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4031,
+      "all_bytes": 3776
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 28.2,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12217,
+      "all_bytes": 11962
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 78.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17835,
+      "all_bytes": 17580
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 73.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 14.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 36.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 31.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 4031,
+      "all_bytes": 3776
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 31.6,
+      "requests": 3,
+      "api_requests": 2,
+      "api_bytes": 12217,
+      "all_bytes": 11962
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 46.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 17835,
+      "all_bytes": 17580
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 62.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2317,
+      "all_bytes": 2062
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 17,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1426,
+      "all_bytes": 1171
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 18.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 2134,
+      "all_bytes": 1879
+    },
+    {
+      "page": "Services",
+      "kind": "navigate back to Services",
+      "ms": 22.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1266,
+      "all_bytes": 1011
+    },
+    {
+      "page": "Cybersecurity",
+      "kind": "navigate",
+      "ms": 67.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_bytes": 1776,
+      "all_bytes": 1521
+    },
+    {
+      "page": "Services",
+      "kind": "browser back",
+      "ms": 26.6,
+      "requests": 1,
+      "api_requests": 0,
+      "api_bytes": 0,
+      "all_bytes": -255
+    }
+  ]
+]
