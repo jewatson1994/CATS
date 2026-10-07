@@ -254,7 +254,7 @@ before.
 
 ## Tests
 
-* **Backend:** 1,753 passed. The same 25 tests fail on `f56bbf8`; they are
+* **Backend:** 1,755 passed, 8 skipped (Helm on PATH). The same 25 tests fail on `f56bbf8`; they are
   environment-dependent (validator release, TLS and OCI tooling) and
   unchanged by this work.
 * **Frontend:** 205 tests passed. `tsc` is clean and `vite build` succeeds.
