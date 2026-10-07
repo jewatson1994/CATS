@@ -354,6 +354,8 @@ def build_projection(binding, execution_id, token, risk_metadata):
 
 def schedule_projection(binding, execution_id, token, risk_metadata):
     """Submit after the response; excess work stays PENDING for a subsequent GET."""
+    from .database import background_bind
+    binding = background_bind(binding)
     if not _projection_slots.acquire(blocking=False):
         return None
     try:

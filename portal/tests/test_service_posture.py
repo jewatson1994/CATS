@@ -189,3 +189,20 @@ def test_new_services_get_posture_rows_in_the_creating_transaction():
         db.add(service); db.commit()
         row = db.get(ServicePosture, service.id)
         assert row is not None and row.data_generation >= 1 and row.services_built_generation == -1
+
+
+def test_idempotent_writes_do_not_invalidate_but_real_changes_do():
+    client = new_client()
+    ingest(client, "zeta", ["CVE-2024-5000"])
+    services(client)
+    before = posture_row("zeta").data_generation
+    with SessionLocal() as db:
+        finding = db.scalar(select(Finding).join(Service).where(Service.service_key == "zeta"))
+        finding.severity = finding.severity  # touched, unchanged
+        db.commit()
+    assert posture_row("zeta").data_generation == before
+    with SessionLocal() as db:
+        finding = db.scalar(select(Finding).join(Service).where(Service.service_key == "zeta"))
+        finding.severity = "Low"
+        db.commit()
+    assert posture_row("zeta").data_generation == before + 1

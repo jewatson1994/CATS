@@ -213,7 +213,8 @@ def measure(client, label, user):
             record = RECORDS[before] if len(RECORDS) > before else {}
             samples.append({"status": response.status_code, "client_ms": round(elapsed, 1),
                             "duration_ms": record.get("duration_ms"), "query_ms": record.get("query_ms"),
-                            "query_count": record.get("query_count"), "response_bytes": record.get("response_bytes")})
+                            "query_count": record.get("query_count"), "response_bytes": record.get("response_bytes"),
+                            "orm": record.get("orm_instances_loaded")})
         ok = [sample for sample in samples if sample["status"] == 200]
         def p(key, quantile):
             values = sorted(sample[key] for sample in ok if sample[key] is not None)
@@ -221,10 +222,10 @@ def measure(client, label, user):
         results.append({"user": user, "scenario": name, "status": samples[0]["status"], "cold_ms": samples[0]["duration_ms"],
                         "warm_median_ms": statistics.median([s["duration_ms"] for s in ok[1:]]) if len(ok) > 1 else None,
                         "warm_p95_ms": p("duration_ms", 0.95), "query_ms_median": p("query_ms", 0.5),
-                        "queries": samples[-1]["query_count"], "bytes": samples[-1]["response_bytes"]})
+                        "queries": samples[-1]["query_count"], "bytes": samples[-1]["response_bytes"], "orm": samples[-1]["orm"]})
         print(f"{label:<10} {name:<32} {samples[0]['status']} cold={samples[0]['duration_ms']}ms "
               f"warm={results[-1]['warm_median_ms']}ms q={samples[-1]['query_count']} "
-              f"sql={results[-1]['query_ms_median']}ms bytes={samples[-1]['response_bytes']}", flush=True)
+              f"sql={results[-1]['query_ms_median']}ms bytes={samples[-1]['response_bytes']} orm={samples[-1]['orm']}", flush=True)
     return results
 
 

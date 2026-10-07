@@ -94,6 +94,8 @@ def _mark_changed_services(session, _context):
     for instance in chain(session.new, session.dirty, session.deleted):
         if isinstance(instance, ServicePosture):
             continue
+        if instance in session.dirty and not session.is_modified(instance, include_collections=True):
+            continue  # touched without a net change (e.g. idempotent backfills)
         if isinstance(instance, _SERVICE_TABLES):
             if getattr(instance, "service_id", None) is not None:
                 service_ids.add(instance.service_id)
@@ -395,6 +397,8 @@ _queue_lock = Lock()
 
 def schedule(bind, service_ids, kinds=KINDS):
     """Background refresh (single worker, coalesced); never blocks a request."""
+    from .database import background_bind
+    bind = background_bind(bind)
     with _queue_lock:
         fresh = {(kind, sid) for kind in kinds for sid in service_ids} - _queued
         if not fresh:
