@@ -50,6 +50,8 @@ import yaml
 
 from .database import Base, engine, get_db, SessionLocal
 from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
+from .authorization_revision import cache_scope, current_revision as current_authorization_revision
+from .status_contracts import validation_revision
 from .execution_summaries import install_execution_summary_hooks
 install_sqlalchemy_diagnostics(engine, SessionLocal.class_)
 install_execution_summary_hooks(SessionLocal.class_)
@@ -377,7 +379,6 @@ async def app_lifespan(_app: FastAPI):
 
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
 app.include_router(validator_management.router)
-app.add_middleware(PerformanceMiddleware)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
 app.include_router(service_oci.router)
@@ -385,8 +386,11 @@ from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
-app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
+# Registered once, inside GZip: it measures uncompressed response bytes (the
+# payload budget) and owns the only measurement context for the request. A
+# second instance would replace that context and report zero queries.
 app.add_middleware(PerformanceMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 snapshot_logger = logging.getLogger("cats.snapshot")
 PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))))
 
@@ -574,6 +578,7 @@ def deployment_validation_view(run: DeploymentValidationRun | None) -> dict | No
                    "cleanup": run.cleanup_status},
         "cleanup_terminal": cleanup_terminal,
         "terminal": terminal,
+        "revision": validation_revision(run),
     }
 
 
@@ -1160,12 +1165,16 @@ def page_context(auth: AuthContext, **values):
             # as the navigation count, so counting them in memory avoids a
             # second query against workflow_requests.
             pending_poam_count = sum(str(item.request_type).startswith("poam") for item in pending_items)
+            cache_scope_value = cache_scope(auth.session.id, auth.user.id, current_authorization_revision(nav_db))
     except Exception:
         # Navigation must never prevent a page from rendering if an older
         # deployment is still applying its database migrations.
         pending_request_count = 0
+        # An unknown revision must never share a partition with a known one.
+        cache_scope_value = f"uncached-{uuid.uuid4().hex}"
     return {
         "current_user": auth.user,
+        "cache_scope": cache_scope_value,
         "csrf_token": auth.csrf_token,
         "can": auth.has,
         "themes": THEMES,
@@ -6605,8 +6614,13 @@ def remediation_report(service_key: str, job_key: str, request: Request, db: Ses
         raise HTTPException(404)
     record.delivery_attempts = db.scalars(select(DeliveryAttempt).where(
         DeliveryAttempt.remediation_id == record.id).order_by(DeliveryAttempt.id.desc())).all()
+    from .status_contracts import remediation_status
+    # Baseline for the lightweight status poll: the client refetches this
+    # detail only when the status revision moves past the one rendered here.
+    light = remediation_status(db, service_key, job_key, DeliveryAttempt)
     return templates.TemplateResponse(request, "remediation_report.html", page_context(auth, job=record, service=record.service,
-        remediation_enabled=remediation_enabled(db), oci_destinations=_remediation_destinations(db, record.service_id)))
+        remediation_enabled=remediation_enabled(db), oci_destinations=_remediation_destinations(db, record.service_id),
+        status_revision=light["revision"] if light else None))
 
 
 @app.post("/services/{service_key}/remediations/{job_key}/retry")
@@ -6663,6 +6677,57 @@ def remediation_job_status(service_key: str, job_key: str, db: Session = Depends
             "delivery_attempts": [attempt_dto(row) for row in db.scalars(select(DeliveryAttempt).where(
                 DeliveryAttempt.remediation_id == record.id).order_by(DeliveryAttempt.id))],
             "download_url": f"/services/{service_key}/remediations/{job_key}/candidate.zip" if record.artifact_path else None}
+
+
+@app.get("/api/v1/services/{service_key}/remediations/{job_key}/status")
+def remediation_job_light_status(service_key: str, job_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    """Polling contract: scalar lifecycle state and a detail revision only."""
+    from .status_contracts import remediation_status
+    result = remediation_status(db, service_key, job_key, DeliveryAttempt)
+    if result is None:
+        raise HTTPException(404)
+    return JSONResponse(jsonable_encoder(result), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/services/{service_key}/deployment-validations/{run_key}/status")
+def deployment_validation_light_status(service_key: str, run_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    """Polling contract: RUNNING / outcome / cleanup without execution evidence."""
+    from .status_contracts import validation_status
+    result = validation_status(db, service_key, run_key, VALIDATION_TERMINAL_STATUSES)
+    if result is None:
+        raise HTTPException(404)
+    return JSONResponse(jsonable_encoder(result), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/v1/services/{service_key}/dependencies/status")
+def dependency_projection_status(service_key: str, request: Request, execution_id: int,
+    db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    """In-place preparation status for the Dependencies workspace.
+
+    Same lifecycle semantics as the Dependencies page GET: a pending build
+    that could not be scheduled earlier (projection slots full) is scheduled
+    again after the response, so polling here preserves recovery.
+    """
+    from .dependency_queries import request_current_projection, schedule_projection
+    from .status_contracts import revision
+    execution = db.scalar(select(Execution).options(defer(Execution.raw_payload)).join(Service).where(
+        Service.service_key == service_key, Execution.id == execution_id))
+    if execution is None:
+        raise HTTPException(404)
+    state = request_current_projection(db, execution, risk_metadata,
+                                       retry=request.query_params.get("retry") == "true")
+    body = {"kind": "dependency_projection", "execution_id": execution.id, "status": state["status"],
+            "ready": state["status"] == "ready", "terminal": state["status"] in {"ready", "failed"},
+            "error": state["error"], "revision": revision(state["status"], state["error"], state["build_token"])}
+    response = JSONResponse(body, headers={"Cache-Control": "no-store"})
+    if state["status"] == "pending":
+        from starlette.background import BackgroundTask
+        response.background = BackgroundTask(schedule_projection, db.get_bind(), execution.id,
+                                              state["build_token"], risk_metadata)
+    return response
 
 
 @app.post("/services/{service_key}/deployment-validations")

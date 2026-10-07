@@ -270,7 +270,10 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
             data["views"].append(row)
     if name.startswith("service") and request.query_params.get("saved") == "1":
         data["saved"] = True
-    return {"schemaVersion": 1, "page": name.removesuffix(".html"), "data": data}
+    # Client page-cache partition: session + user + authorization revision.
+    # Pages without an authenticated context are never cached by the client.
+    return {"schemaVersion": 1, "page": name.removesuffix(".html"), "data": data,
+            "cacheScope": str(context.get("cache_scope") or "")}
 
 
 def _wants_page_json(accept):

@@ -121,3 +121,12 @@ def test_failure_restores_context_and_sink_cannot_break_response():
             raise ValueError("private-sink-error")
         await PerformanceMiddleware(app, enabled=True, sink=broken_sink)({"type": "http"}, noop, noop)
     asyncio.run(run())
+
+
+def test_application_registers_one_measuring_middleware():
+    from app.main import app
+    from starlette.middleware.gzip import GZipMiddleware
+    classes = [entry.cls for entry in app.user_middleware]
+    assert classes.count(PerformanceMiddleware) == 1
+    # Inside GZip, so recorded bytes are the uncompressed payload budget.
+    assert classes.index(GZipMiddleware) < classes.index(PerformanceMiddleware)

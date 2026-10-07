@@ -98,6 +98,7 @@ def project_remediations(data, name, context, can, formatters):
     data["remediation_jobs"] = [job(item) for item in context.get("remediation_jobs", [])]
     if name == "remediation_report.html":
         data["job"] = job(context.get("job"), True)
+        data["status_revision"] = context.get("status_revision")
     if name == "requests.html":
         data["workflows"] = []
         for item in context.get("workflows", []):

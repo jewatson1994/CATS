@@ -73,6 +73,9 @@ cpu memory pids overall configured_limit pods deployments statefulsets daemonset
 cleanup_failure kind_delete network_delete validation_infrastructure ingress_provider load_balancer_provider workload_evidence sandbox_preflight policy_violations classification_summary provisioned provisioner storage_classes ingress_class ingress_classes load_balancer_class ip addresses hostname controller service_name service_namespace external_ips endpoints ingress runtime generated source_file reference yaml_path parent_chart parent_chart_name chart_name chart_version discovery_source_file discovery_source confidence label classifications provenance api_version generic flow_rank network primary style points label_position label_lines node_ids positions bounds x y width height rank schema_version incomplete summary relationships ports unresolved warnings node_id chart_provenance""".split())
 EVIDENCE_KEYS.update("statuses required_count verified_count available_count failed_count unexercised_count rows provisioned_by_cats dependency_rows dependency_total dependency_available dependency_kind dependency_name required_by optional source_resource provider_id bootstrap_status readiness_status reconciliation_result verification_method item chart node declared runtime_verified differences".split())
 
+# Lifecycle digest shared with the lightweight status contract (opaque, no evidence).
+EVIDENCE_KEYS.update({"revision", "terminal", "cleanup_terminal"})
+
 
 def safe_evidence(value):
     """Known evidence fields only, even inside a nominally safe engine DTO."""
