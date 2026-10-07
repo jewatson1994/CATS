@@ -44,7 +44,26 @@ const loaders: Record<string, () => Promise<any>> = {
   './features/validators': () => import('./features/validators'),
   './features/workflow_policy': () => import('./features/workflow_policy'),
 };
-const lazyPage = (module: string, name: string) => lazy(() => loaders[module]().then(loaded => ({default: loaded[name] as ComponentType<{data: PageData}>})));
+// Modules whose chunk has finished loading. React.lazy suspends on its first
+// render even when the import already resolved, and React then throttles the
+// reveal (~300 ms); a page whose chunk is loaded renders synchronously instead.
+const loadedModules: Record<string, Record<string, unknown>> = {};
+const load = (module: string, loader = loaders[module]) =>
+  loader().then(loaded => {loadedModules[module] = loaded; return loaded;});
+export function lazyComponent<P extends object>(module: string, name: string,
+    loader: () => Promise<Record<string, unknown>> = loaders[module]): ComponentType<P> {
+  const Lazy = lazy(() => load(module, loader).then(loaded => ({default: loaded[name] as ComponentType<P>})));
+  function Page(props: P) {
+    // Chosen once per mount: switching types later would remount the page
+    // and discard its state.
+    const [Loaded] = useState(() => loadedModules[module]?.[name] as ComponentType<P> | undefined);
+    return Loaded ? <Loaded {...props}/> : <Lazy {...props}/>;
+  }
+  lazyModules.set(Page as ComponentType<any>, () => load(module, loader));
+  return Page;
+}
+const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
+const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
 const Patch = lazyPage('./features/patch', 'Page');
 const SelfService = lazyPage('./features/self_service', 'Page');
 const PublicResults = lazyPage('./features/public_results', 'Page');
@@ -74,7 +93,15 @@ const Compliance = lazyPage('./features/compliance', 'Page');
 const ComplianceFrameworks = lazyPage('./features/compliance_frameworks', 'Page');
 const DependencyWatchlist = lazyPage('./features/dependency_watchlist', 'Page');
 /** Fetch every lazy chunk once the browser is idle, so later navigation never waits on one. */
-export function preloadPages() {for (const load of Object.values(loaders)) void load().catch(() => {});}
+/** Load the chunk of the page a document was served with (before first render). */
+export function preparePage(envelope: PageEnvelope | null | undefined): Promise<unknown> {
+  const component = envelope ? pages[envelope.page] : undefined;
+  const loadModule = component ? lazyModules.get(component) : undefined;
+  return loadModule ? loadModule().catch(() => undefined) : Promise.resolve();
+}
+export function preloadPages() {
+  return Promise.all(Object.keys(loaders).map(module => load(module).catch(() => undefined)));
+}
 
 const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
   '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',

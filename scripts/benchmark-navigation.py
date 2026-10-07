@@ -271,7 +271,7 @@ def measure(client, label, user):
                 profiler.disable()
                 import pstats
                 print(f"--- profile {label} {name}")
-                pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
+                pstats.Stats(profiler).sort_stats("cumulative").print_stats(os.getenv("BENCH_PROFILE_FILTER", ""), 30)
             elapsed = (time.perf_counter() - started) * 1000
             record = RECORDS[before] if len(RECORDS) > before else {}
             samples.append({"status": response.status_code, "client_ms": round(elapsed, 1),

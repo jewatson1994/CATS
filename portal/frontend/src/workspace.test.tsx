@@ -97,3 +97,29 @@ it('prefetches a deliberately hovered service tab once, without navigating', asy
   expect(screen.getByText('Page A')).toBeInTheDocument();
   link.remove();
 });
+
+it('renders an already-loaded lazy page synchronously, without the Suspense fallback', async () => {
+  const {lazyComponent} = await import('./App');
+  const {Suspense} = await import('react');
+  let resolve: (module: Record<string, unknown>) => void = () => {};
+  const loader = () => new Promise<Record<string, unknown>>(done => {resolve = done;});
+  const Page = lazyComponent<{label: string}>('./test-module', 'Page', loader);
+  const first = render(<Suspense fallback={<p>Loading page…</p>}><Page label="one"/></Suspense>);
+  expect(screen.getByText('Loading page…')).toBeInTheDocument();
+  await act(async () => {resolve({Page: ({label}: {label: string}) => <p>Ready {label}</p>});});
+  await screen.findByText('Ready one');
+  first.unmount();
+  render(<Suspense fallback={<p>Loading page…</p>}><Page label="two"/></Suspense>);
+  // Same tick: no fallback, no throttled reveal.
+  expect(screen.getByText('Ready two')).toBeInTheDocument();
+  expect(screen.queryByText('Loading page…')).toBeNull();
+});
+
+it('prepares the chunk of the initially served page before the first render', async () => {
+  const {preparePage} = await import('./App');
+  await expect(preparePage(null)).resolves.toBeUndefined();
+  await expect(preparePage({schemaVersion: 1, page: 'request_error', data: {}} as any)).resolves.toBeUndefined();
+  // A lazily split page: its module is loaded, so the first render cannot suspend.
+  const loaded = await preparePage({schemaVersion: 1, page: 'audit', data: {}} as any) as Record<string, unknown>;
+  expect(typeof loaded.Page).toBe('function');
+});
