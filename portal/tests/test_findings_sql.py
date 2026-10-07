@@ -26,14 +26,15 @@ def test_actual_raw_page_statements_compile_for_sqlite_and_postgresql():
         event.listen(db.get_bind(), "before_cursor_execute", capture)
         get_raw_finding_page(db, 1, {}, NOW, page=1)
         event.remove(db.get_bind(), "before_cursor_execute", capture)
-        assert len(statements) >= 4
+        assert len(statements) >= 3
         for dialect in (sqlite.dialect(), postgresql.dialect()):
             sql = [str(statement.compile(dialect=dialect)) for statement in statements]
+            # One statement pages the candidates and counts them (window total).
             assert "UNION ALL" in sql[0]
             assert "EXISTS" in sql[0]
             assert "revoked_at IS NULL" in sql[0]
             assert "service_id" in sql[0]
-            assert "ORDER BY" in sql[1] and "LIMIT" in sql[1] and "OFFSET" in sql[1]
+            assert "ORDER BY" in sql[0] and "LIMIT" in sql[0] and "OFFSET" in sql[0] and "OVER ()" in sql[0]
             assert "finding_observations" not in " ".join(sql)
 
 
@@ -70,8 +71,15 @@ def test_count_pagination_and_hydration_are_bounded():
         assert (result["total_items"], result["total_pages"], result["page"]) == (116, 3, 3)
         assert len(result["findings"]) == 15
         assert len(result["policy_findings"]) == 1
-        assert len(statements) == 6
+        # Past the end: empty page, count, clamped page, then hydration.
+        assert len(statements) == 7
         assert sum(isinstance(item, Finding) for item in db.identity_map.values()) == 15
+        statements.clear()
+        db.expunge_all()
+        in_range = get_raw_finding_page(db, 1, {}, NOW, page=2)
+        assert (in_range["total_items"], in_range["total_pages"], in_range["page"]) == (116, 3, 2)
+        assert len(in_range["findings"]) == 50 and not in_range["policy_findings"]
+        assert len(statements) == 3  # page with window total, findings, their current exceptions
         assert not any("FROM finding_observations" in sql for sql in statements)
 
 

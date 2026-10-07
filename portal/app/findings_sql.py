@@ -1,4 +1,4 @@
-"""Count and page authorized service findings before loading ORM objects."""
+from sqlalchemy import case, exists, func, literal, or_, select, union_all
 from sqlalchemy import case, exists, func, literal, select, union_all
 from sqlalchemy.orm import selectinload
 
@@ -74,23 +74,41 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
                 aggregate = (func.group_concat(recent.c.text_value, ' ') if dialect == 'sqlite'
                              else func.string_agg(recent.c.text_value, ' '))
                 history = select(aggregate).select_from(recent).where(recent.c.text_value != '').scalar_subquery()
-                folded = model.search_folded + case((func.coalesce(history, '') != '', literal(' ') + history), else_='')
+                # Same text as "search_folded + (' ' + history if history else '')",
+                # with the correlated history subquery evaluated once, and only
+                # for findings whose own text does not already match.
+                folded = model.search_folded + func.coalesce(literal(' ') + func.nullif(history, ''), '')
+                match = lambda text: or_(model.search_folded.contains(text, autoescape=True),
+                                         folded.contains(text, autoescape=True))
             else:
-                folded = model.search_folded
+                match = lambda text: model.search_folded.contains(text, autoescape=True)
             if needle:
-                clauses.append(folded.contains(needle, autoescape=True))
+                clauses.append(match(needle))
             if resource_needle:
-                clauses.append(folded.contains(resource_needle, autoescape=True))
+                clauses.append(match(resource_needle))
         queries.append(select(literal(kind).label("kind"), model.id.label("id"),
                               model.episode_started.label("episode"),
                               (model.cve if kind == 0 else model.finding).label("name")).where(*clauses))
     candidates = union_all(*queries).subquery()
-    total_items = db.scalar(select(func.count()).select_from(candidates)) or 0
+
+    def page_rows(number):
+        # The total is a window over the same candidate set, so the filters
+        # (including text search) are evaluated once for both.
+        return db.execute(select(candidates.c.kind, candidates.c.id, func.count().over().label("total")).order_by(
+            candidates.c.kind, candidates.c.episode, candidates.c.name, candidates.c.id
+        ).offset((max(1, number) - 1) * page_size).limit(page_size)).all()
+    rows = page_rows(page)
+    if rows:
+        total_items = int(rows[0].total)
+        page = max(1, page)
+    else:
+        # Empty set, or a page past the end: clamp exactly as before.
+        total_items = db.scalar(select(func.count()).select_from(candidates)) or 0
+        total_pages = max(1, (total_items + page_size - 1) // page_size)
+        clamped = max(1, min(page, total_pages))
+        rows = page_rows(clamped) if total_items and clamped != page else []
+        page = clamped
     total_pages = max(1, (total_items + page_size - 1) // page_size)
-    page = max(1, min(page, total_pages))
-    rows = db.execute(select(candidates.c.kind, candidates.c.id).order_by(
-        candidates.c.kind, candidates.c.episode, candidates.c.name, candidates.c.id
-    ).offset((page - 1) * page_size).limit(page_size)).all()
     loaded = {}
     for kind, model, exception, fk in (
         (0, Finding, ExceptionRecord, ExceptionRecord.finding_id),
