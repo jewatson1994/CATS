@@ -950,18 +950,32 @@ def test_active_services_are_alphabetical_without_compliance_explainer():
 
 
 def test_services_overview_query_count_is_constant_as_services_grow():
+    # The Services page now carries its rows (no data-URL waterfall). Its
+    # query count must not grow with the portfolio, whether posture rows are
+    # being (re)built or served from the Service Posture read model.
     client = new_client()
+
+    def measure():
+        calls = []
+        listener = lambda *args: calls.append(args[2])
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            response = client.get("/")
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        assert response.status_code == 200
+        return len(calls)
+
     for index in range(20):
         assert ingest(client, execution=f"overview-scale-{index}", service_id=f"overview-service-{index}").status_code == 201
-    calls = []
-    listener = lambda *args: calls.append(args[2])
-    event.listen(engine, "before_cursor_execute", listener)
-    try:
-        response = client.get("/")
-    finally:
-        event.remove(engine, "before_cursor_execute", listener)
-    assert response.status_code == 200
-    assert len(calls) <= 20
+    cold, warm = measure(), measure()
+    for index in range(20, 40):
+        assert ingest(client, execution=f"overview-scale-{index}", service_id=f"overview-service-{index}").status_code == 201
+    # Twice the services: the same statements (the pre-existing summary
+    # loader may add one fallback read for summaries still being prepared).
+    assert measure() - cold <= 1
+    assert measure() == warm
+    assert warm <= 20
 
 
 def test_configuration_policy_findings_render_as_generic_active_findings():

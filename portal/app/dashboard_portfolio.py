@@ -12,22 +12,19 @@ from .models import (DependencyWatchlistMatch, DeploymentValidationRun, Exceptio
                      PolicyFinding, Service, ServiceImage, utcnow)
 
 
-def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50):
-    from . import main as m
-    try:
-        since_date = datetime.fromisoformat(since).date() if since else None
-    except ValueError as exc:
-        raise HTTPException(422, detail="Invalid since date") from exc
-    page_size = max(1, min(int(page_size), 200))
-    page = max(1, int(page))
-    now = utcnow()
-    configuration = m.get_global_configuration(db)
-    services, configs = m._overview_services_and_configurations(db, auth, configuration)
-    services = [service for service in services if service.lifecycle_status == "active"]
-    ids = [service.id for service in services]
-    configs = {sid: configs[sid] for sid in ids}
-    warning_policy = m.parse_json(configuration.get("cyber_warning_policy"), {})
+def compute_rows(db, services, configs, configuration, now):
+    """Per-service Cybersecurity posture rows (without the service object).
 
+    The exact historical portfolio computation, restricted to ``services``;
+    the Service Posture projection stores its output and recomputes only
+    services whose evidence, intelligence, configuration or time window
+    changed.
+    """
+    from . import main as m
+    ids = [service.id for service in services]
+    if not ids:
+        return {}
+    warning_policy = m.parse_json(configuration.get("cyber_warning_policy"), {})
     def latest_scans(current=False):
         query = select(Execution.id.label("id"), Execution.service_id.label("service_id"),
                        func.row_number().over(partition_by=Execution.service_id,
@@ -122,6 +119,46 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     watches = {sid: count for sid, count in db.execute(select(DependencyWatchlistMatch.service_id, func.count()).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).group_by(DependencyWatchlistMatch.service_id))} if ids else {}
     ranked_validations = select(DeploymentValidationRun.service_id, DeploymentValidationRun.status, func.row_number().over(partition_by=DeploymentValidationRun.service_id, order_by=(DeploymentValidationRun.created_at.desc(), DeploymentValidationRun.id.desc())).label("rank")).where(member_of(DeploymentValidationRun.service_id, ids, numeric=True)).subquery()
     validations = dict(db.execute(select(ranked_validations.c.service_id, ranked_validations.c.status).where(ranked_validations.c.rank == 1)).all()) if ids else {}
+    rows = {}
+    failed_statuses = {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}
+    for service in services:
+        row = {key: int(counts.get(service.id, {}).get(key, 0) or 0) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "noncompliant", "warning")}
+        scan, ev, poam = scans.get(service.id), evidence.get(service.id), poams.get(service.id)
+        missing = bool(ev and (not ev.complete or m.normalize_overview(ev.overview or {}, skipped_images=ev.images or [], skipped_charts=ev.charts or [], incomplete=not ev.complete)["missing_evidence"]))
+        row.update(service_id=service.id, watchlist=int(watches.get(service.id, 0)), poam=int(poam.count if poam else 0), poam_overdue=int(poam.overdue or 0) if poam else 0, missing=missing, sbom=bool(scan and scan.sbom_images), kind=validations.get(service.id, "NOT_ATTEMPTED"), last_scan=scan.scanned_at if scan else None)
+        kind_failed = row["kind"] in failed_statuses
+        warning = row["warning"] or missing or any(warning_policy.get(key, True) and value for key, value in (("critical_high", row["critical"] + row["high"]), ("kev", row["kev"]), ("watchlist", row["watchlist"]), ("poam", row["poam"]), ("kind", kind_failed), ("missing_evidence", missing)))
+        compliant = not row["noncompliant"] and not policy_fails.get(service.id) and not (missing and configs[service.id].get("incomplete_noncompliant") == "true")
+        row["status"] = "RED" if not compliant else "YELLOW" if warning else "GREEN"
+        row["attention"] = row["critical"] + row["high"] + row["kev"] + row["watchlist"] + row["poam"] + int(missing) + int(kind_failed)
+        rows[service.id] = row
+    return rows
+
+
+def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50):
+    from . import main as m
+    try:
+        since_date = datetime.fromisoformat(since).date() if since else None
+    except ValueError as exc:
+        raise HTTPException(422, detail="Invalid since date") from exc
+    page_size = max(1, min(int(page_size), 200))
+    page = max(1, int(page))
+    now = utcnow()
+    configuration = m.get_global_configuration(db)
+    services, configs = m._overview_services_and_configurations(db, auth, configuration, projected=True)
+    services = [service for service in services if service.lifecycle_status == "active"]
+    ids = [service.id for service in services]
+    configs = {sid: configs[sid] for sid in ids}
+
+    from .service_posture import cyber_rows
+    rows_by_id, posture = cyber_rows(db, services, configs, configuration, now)
+    rows = [{**rows_by_id[service.id], "service": service} for service in services]
+    latest = select(Execution.id.label("id"), Execution.service_id.label("service_id"),
+                    func.row_number().over(partition_by=Execution.service_id,
+                        order_by=(Execution.scanned_at.desc(), Execution.id.desc())).label("rank")).where(member_of(Execution.service_id, ids, numeric=True)).subquery()
+    severity_lower = func.lower(Finding.severity)
+    levels = ("critical", "high", "medium", "low")
+    failed_statuses = {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}
     component_ids = None
     if component and ids:
         needle = component.casefold()
@@ -129,19 +166,6 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         component_ids.update(db.scalars(select(ServiceImage.service_id).where(member_of(ServiceImage.service_id, ids, numeric=True), func.lower(ServiceImage.image_reference).contains(needle, autoescape=True)).distinct()))
         component_ids.update(db.scalars(select(DependencyWatchlistMatch.service_id).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).where(or_(func.lower(DependencyWatchlistMatch.component_name).contains(needle, autoescape=True), func.lower(DependencyWatchlistMatch.image).contains(needle, autoescape=True))).distinct()))
     severity_ids = set(db.scalars(select(Finding.service_id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True), severity_lower == severity.casefold()).distinct())) if severity != "all" and ids else None
-    rows = []
-    failed_statuses = {"FAILED", "COULD_NOT_VALIDATE", "ERROR"}
-    for service in services:
-        row = {key: int(counts.get(service.id, {}).get(key, 0) or 0) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "noncompliant", "warning")}
-        scan, ev, poam = scans.get(service.id), evidence.get(service.id), poams.get(service.id)
-        missing = bool(ev and (not ev.complete or m.normalize_overview(ev.overview or {}, skipped_images=ev.images or [], skipped_charts=ev.charts or [], incomplete=not ev.complete)["missing_evidence"]))
-        row.update(service=service, watchlist=int(watches.get(service.id, 0)), poam=int(poam.count if poam else 0), poam_overdue=int(poam.overdue or 0) if poam else 0, missing=missing, sbom=bool(scan and scan.sbom_images), kind=validations.get(service.id, "NOT_ATTEMPTED"), last_scan=scan.scanned_at if scan else None)
-        kind_failed = row["kind"] in failed_statuses
-        warning = row["warning"] or missing or any(warning_policy.get(key, True) and value for key, value in (("critical_high", row["critical"] + row["high"]), ("kev", row["kev"]), ("watchlist", row["watchlist"]), ("poam", row["poam"]), ("kind", kind_failed), ("missing_evidence", missing)))
-        compliant = not row["noncompliant"] and not policy_fails.get(service.id) and not (missing and configs[service.id].get("incomplete_noncompliant") == "true")
-        row["status"] = "RED" if not compliant else "YELLOW" if warning else "GREEN"
-        row["attention"] = row["critical"] + row["high"] + row["kev"] + row["watchlist"] + row["poam"] + int(missing) + int(kind_failed)
-        rows.append(row)
     metrics = {key: sum(row[key] for row in rows) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "watchlist", "poam", "poam_overdue", "missing", "attention")}
     metrics.update(services=len(rows), scanned=sum(row["last_scan"] is not None for row in rows), critical_high=metrics["critical"] + metrics["high"], sbom_coverage=sum(row["sbom"] for row in rows), kind_failed=sum(row["kind"] in failed_statuses for row in rows))
     metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
@@ -153,4 +177,5 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     data.pop("history", None)
     data["services"] = [{"service_key": service.service_key, "name": service.name} for service in services]
     data["pagination"] = {"page": page, "page_size": page_size, "total": total, "pages": pages, "has_previous": page > 1, "has_next": page < pages}
+    data["posture_refreshing"] = posture["refreshing"]
     return data

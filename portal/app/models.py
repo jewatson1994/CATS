@@ -838,3 +838,43 @@ class ExecutionSummary(Base):
     summary_version: Mapped[int] = mapped_column(Integer)
     source_complete: Mapped[bool] = mapped_column(Boolean)
     data: Mapped[dict] = mapped_column(JSON)
+
+
+class ServicePosture(Base):
+    """Rebuildable per-service posture read model (never authoritative).
+
+    Holds the outputs of the Services and Cybersecurity posture computations
+    for one service, each with the provenance needed to know whether it is
+    still current: the generation of the service's data it was built from
+    (``data_generation`` is bumped in the same transaction as any
+    posture-relevant write), the intelligence catalog token, the resolved
+    configuration digest, the posture epoch and the next time boundary
+    (``*_valid_until``) at which a count changes by time alone. Each page's
+    row is built independently, only when that page needs it.
+    No foreign key: a deleted service must never be blocked by its cache row.
+    """
+    __tablename__ = "service_posture"
+    service_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    data_generation: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    services_built_generation: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
+    services_algorithm: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    services_epoch: Mapped[str | None] = mapped_column(String(40))
+    services_token: Mapped[str | None] = mapped_column(String(80))
+    services_config_digest: Mapped[str | None] = mapped_column(String(64))
+    services_row: Mapped[dict | None] = mapped_column(JSON)
+    services_valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    services_calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cyber_built_generation: Mapped[int] = mapped_column(Integer, default=-1, nullable=False)
+    cyber_algorithm: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cyber_epoch: Mapped[str | None] = mapped_column(String(40))
+    cyber_token: Mapped[str | None] = mapped_column(String(80))
+    cyber_config_digest: Mapped[str | None] = mapped_column(String(64))
+    cyber_row: Mapped[dict | None] = mapped_column(JSON)
+    cyber_valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cyber_calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# Read-model invalidation listeners must be active for every session that can
+# write these tables, whichever module happens to be imported first.
+from . import authorization_revision as _authorization_revision  # noqa: E402,F401
+from . import service_posture as _service_posture  # noqa: E402,F401

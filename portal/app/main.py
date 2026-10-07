@@ -52,6 +52,7 @@ from .database import Base, engine, get_db, SessionLocal
 from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
 from .authorization_revision import cache_scope, current_revision as current_authorization_revision
 from .status_contracts import validation_revision
+from . import service_posture as posture
 from .execution_summaries import install_execution_summary_hooks
 install_sqlalchemy_diagnostics(engine, SessionLocal.class_)
 install_execution_summary_hooks(SessionLocal.class_)
@@ -127,6 +128,7 @@ with migration_transaction(engine) as connection:
     upgrade_validators(connection)
     upgrade_projection(connection)
     dependency_queries.upgrade_dependency_schema(connection)
+    posture.ensure_rows(connection)
     if "payload_digest" not in {column["name"] for column in inspect(connection).get_columns("executions")}:
         connection.execute(text("ALTER TABLE executions ADD COLUMN payload_digest VARCHAR(64)"))
     if "current_version_id" not in {column["name"] for column in inspect(connection).get_columns("services")}:
@@ -346,6 +348,12 @@ def _start_read_model_maintenance():
                 log.info("Rebuilt %s execution summaries", refreshed)
         except Exception:
             log.exception("Execution summary backfill failed; readers continue with payload fallback")
+        try:
+            warmed = posture.warm(engine)
+            if warmed:
+                log.info("Prepared service posture for %s services", warmed)
+        except Exception:
+            log.exception("Service posture warm-up failed; readers compute on demand")
     thread = threading.Thread(target=run, name="cats-read-model-maintenance", daemon=True)
     thread.start()
     return thread
@@ -3028,6 +3036,10 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         db.flush()
         return {"accepted": True, "duplicate": False, "execution_id": execution_id}
     db.commit()
+    if posture.background_enabled(engine):
+        # Warm the posture row so the first portfolio view after a scan is
+        # already current; readers recompute on demand if this has not run.
+        posture.schedule(engine, [service_id])
     validation_run_id = None
     schedule_validation = False
     if should_record_validation:
@@ -6857,12 +6869,16 @@ def architecture_evidence_result(
 
 @app.get("/cybersecurity", response_class=HTMLResponse)
 def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
-    severity: str = "all", component: str = "", since: str = "",
+    severity: str = "all", component: str = "", since: str = "", page: int = 1, page_size: int = 50,
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     if auth.accessible_service_ids("service.view") == set():
         raise HTTPException(403, detail="Permission denied")
-    return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth,
-        dashboard_url="/api/dashboard/cybersecurity" + ("?" + str(request.query_params) if request.query_params else "")))
+    from .dashboard_portfolio import portfolio
+    # Posture rows come from the Service Posture read model, so the page
+    # carries the portfolio directly instead of a data-URL waterfall.
+    data = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
+                     component=component, since=since, page=page, page_size=page_size)
+    return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth, cyber_portfolio=data))
 
 
 @app.get("/api/dashboard/cybersecurity")
@@ -6886,13 +6902,15 @@ def dashboard(request: Request, archived: bool = False, lifecycle: str = "active
             "current_user": None, "csrf_token": "", "can": lambda _permission: False,
             "themes": THEMES, "pending_request_count": 0, "pending_poam_count": 0,
         })
-    return templates.TemplateResponse(request, "dashboard.html", page_context(auth,
-        dashboard_url="/api/dashboard/services" + ("?" + str(request.query_params) if request.query_params else "")))
+    # Rows are served from the Service Posture read model, so the page carries
+    # them directly: one request, no envelope -> data-URL waterfall.
+    return templates.TemplateResponse(request, "dashboard.html", _services_dashboard_context(
+        request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort, page=page, page_size=page_size))
 
 
-@app.get("/api/dashboard/services")
-def dashboard_services_data(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
-                            page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+def _services_dashboard_context(request: Request, db: Session, auth: AuthContext, *, archived: bool, lifecycle: str,
+                                q: str, sort: str, page: int, page_size: int) -> dict:
+    """Services page context from the Service Posture read model."""
     request_started = time.perf_counter()
     stage_timings = {}
     now = utcnow()
@@ -6902,7 +6920,7 @@ def dashboard_services_data(request: Request, archived: bool = False, lifecycle:
     now_display = configured_time(now, include_time=True, configuration=configuration)
     stage_started = time.perf_counter()
     services, configurations = _overview_services_and_configurations(db, auth, configuration, projected=True)
-    views, poam_counts = service_overview_rows_aggregated(db, auth, now, configuration, services, configurations)
+    views, poam_counts, posture_meta = posture.services_rows(db, services, configurations, configuration, now)
     stage_timings["overview_aggregation_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_started = time.perf_counter()
     if archived:
@@ -6935,10 +6953,20 @@ def dashboard_services_data(request: Request, archived: bool = False, lifecycle:
         poam_pending_count=sum(item["pending"] for item in visible_poam),
         poam_overdue_count=sum(item["overdue"] for item in visible_poam),
         stage_groups=stage_groups if lifecycle == "active" else [],
+        posture_refreshing=posture_meta["refreshing"],
     )
     stage_timings["page_context_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_timings["route_ms"] = round((time.perf_counter() - request_started) * 1000, 2)
+    stage_timings["posture"] = posture_meta
     request.state.snapshot_timings = stage_timings
+    return context
+
+
+@app.get("/api/dashboard/services")
+def dashboard_services_data(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
+                            page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    context = _services_dashboard_context(request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort,
+                                          page=page, page_size=page_size)
     from .frontend import page_data
     return JSONResponse(page_data(request, "dashboard.html", context)["data"], headers={"Cache-Control": "no-store"})
 
