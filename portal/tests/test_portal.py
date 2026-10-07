@@ -19,7 +19,7 @@ os.environ["CATS_DEPLOYMENT_VALIDATION_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import event, select
+from sqlalchemy import delete, event, select
 
 from app.auth import AuthContext, hash_password, seed_auth, token_hash
 from app.database import Base, SessionLocal, engine
@@ -174,6 +174,28 @@ def test_delayed_incomplete_release_does_not_replace_newer_incomplete_release():
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
         assert service.current_version.version == "release-2"
         assert {f.cve: f.active for f in db.scalars(select(Finding))} == {"CVE-NEW": True, "CVE-OLD": False}
+
+
+def test_legacy_policy_backfill_runs_once_and_is_not_import_work():
+    from app.main import LEGACY_POLICY_BACKFILL_KEY, backfill_policy_findings
+    from app.models import PolicyFinding, PortalSetting
+    client = new_client()
+    body = payload("legacy-policy", datetime.now(timezone.utc), [])
+    body["policy_findings"] = [{"finding": "KSV-LEGACY", "target": "Deployment/api"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:  # earlier releases stored these only in the payload
+        db.execute(delete(PolicyFinding)); db.commit()
+    backfill_policy_findings()
+    with SessionLocal() as db:
+        assert [row.finding for row in db.scalars(select(PolicyFinding))] == ["KSV-LEGACY"]
+        assert db.scalar(select(PortalSetting).where(PortalSetting.key == LEGACY_POLICY_BACKFILL_KEY)) is not None
+        db.execute(delete(PolicyFinding)); db.commit()
+    backfill_policy_findings()  # recorded as done: no repeated portfolio scan
+    with SessionLocal() as db:
+        assert db.scalar(select(PolicyFinding)) is None
+    backfill_policy_findings(force=True)
+    with SessionLocal() as db:
+        assert db.scalar(select(PolicyFinding)) is not None
 
 
 def test_startup_backfill_surfaces_findings_hidden_by_earlier_incomplete_scans():

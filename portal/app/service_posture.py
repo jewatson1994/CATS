@@ -180,7 +180,8 @@ def current_epoch(db) -> str:
 # ---------------------------------------------------------------- provenance
 
 def config_digest(configuration: dict) -> str:
-    relevant = {str(key): str(value) for key, value in configuration.items() if key not in _CONFIG_EXCLUDED}
+    relevant = {str(key): str(value) for key, value in configuration.items()
+                if key not in _CONFIG_EXCLUDED and not str(key).startswith("maintenance:")}
     return sha256(json.dumps(relevant, sort_keys=True).encode("utf-8")).hexdigest()
 
 

@@ -348,6 +348,13 @@ def _start_read_model_maintenance():
                 log.info("Rebuilt %s execution summaries", refreshed)
         except Exception:
             log.exception("Execution summary backfill failed; readers continue with payload fallback")
+        for backfill in (backfill_policy_findings, backfill_incomplete_scan_findings):
+            # One-time/idempotent upgrade backfills: bounded background work,
+            # never part of module import or request serving.
+            try:
+                backfill()
+            except Exception:
+                log.exception("Startup backfill %s failed; it is retried on the next start", backfill.__name__)
         try:
             warmed = posture.warm(engine)
             if warmed:
@@ -1031,26 +1038,33 @@ def sync_policy_findings(db: Session, service: Service, items, scanned_at: datet
                 finding.resolved_at = scanned_at
 
 
-def backfill_policy_findings() -> None:
-    """Materialize the latest legacy JSON policy findings without changing evidence."""
+LEGACY_POLICY_BACKFILL_KEY = "maintenance:legacy_policy_findings_v1"
+
+
+def backfill_policy_findings(*, force: bool = False) -> None:
+    """Materialize the latest legacy JSON policy findings without changing evidence.
+
+    A one-time upgrade step (recorded in portal settings), run by background
+    maintenance rather than at import. Only the ``policy_findings`` element of
+    each latest payload is read, never the full retained evidence.
+    """
     with SessionLocal() as db:
+        if not force and db.scalar(select(PortalSetting.id).where(PortalSetting.key == LEGACY_POLICY_BACKFILL_KEY)):
+            return
         latest_id = select(Execution.id).where(Execution.service_id == Service.id).order_by(
             Execution.scanned_at.desc(), Execution.id.desc()).limit(1).correlate(Service).scalar_subquery()
         services = db.execute(select(Service.id, latest_id.label("execution_id"))).all()
-        changed = False
         for offset in range(0, len(services), 32):
             ids = [row.execution_id for row in services[offset:offset + 32] if row.execution_id]
-            for latest in db.scalars(select(Execution).where(Execution.id.in_(ids))):
-                items = latest.raw_payload.get("policy_findings", []) if isinstance(latest.raw_payload, dict) else []
+            for latest in db.execute(select(Execution.service_id, Execution.scanned_at,
+                                            Execution.raw_payload["policy_findings"].label("items")).where(Execution.id.in_(ids))):
+                items = latest.items if isinstance(latest.items, list) else []
                 if items:
                     sync_policy_findings(db, SimpleNamespace(id=latest.service_id), items, latest.scanned_at, complete=False)
-                    changed = True
-            db.flush()
-        if changed:
             db.commit()
-
-
-backfill_policy_findings()
+        if db.scalar(select(PortalSetting.id).where(PortalSetting.key == LEGACY_POLICY_BACKFILL_KEY)) is None:
+            db.add(PortalSetting(key=LEGACY_POLICY_BACKFILL_KEY, value=utcnow().isoformat()))
+            db.commit()
 
 
 def restore_generated_staging_name(service: Service) -> bool:
@@ -2771,8 +2785,6 @@ def backfill_incomplete_scan_findings() -> None:
         if changed:
             db.commit()
 
-
-backfill_incomplete_scan_findings()
 
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
