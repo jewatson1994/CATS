@@ -57,6 +57,7 @@ EPOCH_KEY = "service_posture_epoch"
 # Settings that never affect posture (they change for unrelated reasons).
 _CONFIG_EXCLUDED = frozenset({"authorization_revision", EPOCH_KEY})
 _FLAG = "cats_posture_bulk_change"
+_PENDING = "cats_posture_bulk_services"
 _SERVICE_TABLES = (Finding, PolicyFinding, Execution, PoamEntry, ServiceArchiveEvent, DeploymentValidationRun,
                    DependencyWatchlistMatch, ServiceGroup)
 _BULK_TABLES = frozenset(model.__table__.name for model in (
@@ -66,10 +67,17 @@ _SERVICES_ROW_COUNTS = ("active", "noncompliant", "policy_noncompliant", "except
 
 
 def sync_limit() -> int:
+    """Most stale rows a page read refreshes inline before serving stale rows.
+
+    Measured on PostgreSQL with 10,000 findings per service, one service's
+    Cybersecurity row takes ~0.15 s to rebuild, so 25 keeps the worst inline
+    refresh to a couple of seconds; portfolio-wide invalidations (catalog or
+    configuration changes) are refreshed in the background instead.
+    """
     try:
-        return max(1, int(os.getenv("CATS_POSTURE_SYNC_LIMIT", "250")))
+        return max(1, int(os.getenv("CATS_POSTURE_SYNC_LIMIT", "25")))
     except ValueError:
-        return 250
+        return 25
 
 
 def shadow_enabled() -> bool:
@@ -82,6 +90,14 @@ def _chunks(values, size=500):
     values = list(values)
     for start in range(0, len(values), size):
         yield values[start:start + size]
+
+
+def _bump(connection, service_ids):
+    """Invalidate posture rows in the caller's transaction."""
+    ids = sorted({int(value) for value in service_ids if value is not None})
+    for chunk in _chunks(ids):
+        connection.execute(update(ServicePosture.__table__).where(member_of(ServicePosture.service_id, chunk, numeric=True))
+                           .values(data_generation=ServicePosture.data_generation + 1))
 
 
 @event.listens_for(Session, "after_flush")
@@ -129,13 +145,53 @@ def _mark_changed_services(session, _context):
         service_ids.update(connection.execute(select(PolicyFinding.service_id).where(member_of(PolicyFinding.id, chunk, numeric=True))).scalars())
     for chunk in _chunks(execution_ids):
         service_ids.update(connection.execute(select(Execution.service_id).where(member_of(Execution.id, chunk, numeric=True))).scalars())
-    service_ids.discard(None)
-    for chunk in _chunks(service_ids - new_services):
-        connection.execute(update(ServicePosture.__table__).where(member_of(ServicePosture.service_id, chunk, numeric=True))
-                           .values(data_generation=ServicePosture.data_generation + 1))
+    _bump(connection, service_ids - new_services)
     for service_id in new_services:
         # A row exists from creation onward, so no later write can miss it.
         connection.execute(insert(ServicePosture.__table__).values(service_id=service_id, data_generation=1))
+
+
+# How a bulk statement's rows identify their services: column name on the
+# statement's table -> model whose ``service_id`` it resolves through
+# (``None``: the column is the service id itself).
+def _bulk_keys(table_name):
+    keys = {"service_id": None}
+    owners = {Finding.__table__.name: Finding, PolicyFinding.__table__.name: PolicyFinding,
+              Execution.__table__.name: Execution}
+    if table_name == Service.__table__.name:
+        keys = {"id": None}
+    elif table_name in owners:
+        keys["id"] = owners[table_name]
+    keys.update(execution_id=Execution, finding_id=Finding, policy_finding_id=PolicyFinding)
+    return keys
+
+
+def _narrowing_values(statement, keys):
+    """Values of one top-level ``AND`` predicate ``key = :v`` / ``key IN (...)``.
+
+    Every affected row satisfies that predicate, so its values bound the set
+    of services touched. Returns ``(column name, values)`` or ``None``.
+    """
+    from sqlalchemy.sql import operators
+    from sqlalchemy.sql.elements import BinaryExpression, BindParameter, BooleanClauseList
+    where = getattr(statement, "whereclause", None)
+    if where is None:
+        return None
+    clauses = list(where.clauses) if isinstance(where, BooleanClauseList) and where.operator is operators.and_ else [where]
+    table = statement.table
+    for clause in clauses:
+        if not (isinstance(clause, BinaryExpression) and isinstance(clause.right, BindParameter)):
+            continue
+        column = clause.left
+        # ORM statements carry annotated copies of the table's columns.
+        if getattr(getattr(column, "table", None), "name", None) != table.name or column.name not in keys:
+            continue
+        value = clause.right.effective_value
+        if clause.operator is operators.eq and value is not None:
+            return column.name, [value]
+        if clause.operator is operators.in_op and isinstance(value, (list, tuple)):
+            return column.name, list(value)
+    return None
 
 
 @event.listens_for(Session, "do_orm_execute")
@@ -143,8 +199,44 @@ def _detect_bulk_changes(state):
     if not (state.is_delete or state.is_update or state.is_insert):
         return
     table = getattr(state.statement, "table", None)
-    if getattr(table, "name", None) in _BULK_TABLES:
+    if getattr(table, "name", None) not in _BULK_TABLES:
+        return
+    keys = _bulk_keys(table.name)
+    narrowed = None if state.is_insert else _narrowing_values(state.statement, keys)
+    if narrowed is None:
+        # Statements that name no service: replace the epoch at commit so
+        # every row is treated as stale (rare: service deletion, maintenance).
         state.session.info[_FLAG] = True
+        return
+    name, values = narrowed
+    owner = keys[name]
+    pending = state.session.info.setdefault(_PENDING, {})
+    if owner is None:
+        pending.setdefault(None, set()).update(values)
+    elif owner.__table__.name == table.name:
+        # The statement changes the rows that name the service: resolve now,
+        # before a delete removes them.
+        connection = state.session.connection()
+        for chunk in _chunks(values):
+            pending.setdefault(None, set()).update(connection.execute(select(owner.service_id).where(
+                member_of(owner.id, chunk, numeric=True))).scalars())
+    else:
+        # Resolved through another table in one batch at commit.
+        pending.setdefault(owner, set()).update(values)
+
+
+@event.listens_for(Session, "before_commit")
+def _publish_bulk_services(session):
+    pending = session.info.pop(_PENDING, None)
+    if not pending:
+        return
+    service_ids = set(pending.pop(None, set()))
+    connection = session.connection()
+    for owner, values in pending.items():
+        for chunk in _chunks(values):
+            service_ids.update(connection.execute(select(owner.service_id).where(
+                member_of(owner.id, chunk, numeric=True))).scalars())
+    _bump(connection, service_ids)
 
 
 @event.listens_for(Session, "before_commit")
@@ -163,6 +255,7 @@ def _publish_epoch(session):
 @event.listens_for(Session, "after_rollback")
 def _discard(session):
     session.info.pop(_FLAG, None)
+    session.info.pop(_PENDING, None)
 
 
 def ensure_rows(connection):
@@ -442,7 +535,8 @@ def _load(db, kind, service_ids, configurations, now):
                   and row.token == token and row.digest == config_digest(configurations[sid])
                   and (row.until is None or _aware(row.until) > now)):
             stale.append(sid)
-    refreshing = len(missing) + len(stale) > sync_limit()
+    # In-memory SQLite has one shared connection: no background refresh there.
+    refreshing = len(missing) + len(stale) > sync_limit() and background_enabled(db.get_bind())
     synchronous = missing if refreshing else missing + stale
     if refreshing:
         # Portfolio-wide invalidation (e.g. catalog refresh): keep the GET

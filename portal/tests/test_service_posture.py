@@ -171,6 +171,7 @@ def test_portfolio_wide_invalidation_is_bounded_and_served_stale(shadow, monkeyp
         ingest(client, f"bulk-{index}", ["CVE-2024-4000"])
     services(client)
     monkeypatch.setenv("CATS_POSTURE_SYNC_LIMIT", "3")
+    monkeypatch.setattr(service_posture, "background_enabled", lambda bind: True)
     scheduled = []
     monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds=service_posture.KINDS: scheduled.append((set(ids), kinds)))
     with SessionLocal() as db:  # a bulk statement names no service: the epoch is replaced
@@ -206,3 +207,66 @@ def test_idempotent_writes_do_not_invalidate_but_real_changes_do():
         finding.severity = "Low"
         db.commit()
     assert posture_row("zeta").data_generation == before + 1
+
+
+def test_cybersecurity_evidence_flags_match_with_and_without_current_summaries():
+    """SBOM presence and missing evidence read from execution summaries must
+    equal the retained-payload reading they replace (used when a summary is
+    missing, outdated or lacks the field)."""
+    from app.dashboard_portfolio import compute_rows
+    from app.models import ExecutionSummary
+    client = new_client()
+    with_sbom = payload("sbom-run", datetime.now(timezone.utc), ["CVE-2024-6000"], service_id="with-sbom")
+    with_sbom["sbom_images"] = ["registry.example/app:1"]
+    assert client.post("/api/v1/pipeline-results", json=with_sbom, headers=pipeline_headers).status_code == 201
+    skipped = payload("skipped-run", datetime.now(timezone.utc), [], service_id="skipped")
+    skipped["skipped_images"] = ["registry.example/private:1"]
+    assert client.post("/api/v1/pipeline-results", json=skipped, headers=pipeline_headers).status_code == 201
+    ingest(client, "partial", ["CVE-2024-6001"], complete=False)
+    ingest(client, "plain", [])
+
+    def rows():
+        with SessionLocal() as db:
+            found = db.scalars(select(Service)).all()
+            base = main.get_global_configuration(db)
+            configurations = service_posture.resolve_configurations(db, [s.id for s in found], base)
+            computed = compute_rows(db, found, configurations, base, utcnow())
+            return {s.service_key: (computed[s.id]["sbom"], computed[s.id]["missing"], computed[s.id]["status"]) for s in found}
+
+    from_summaries = rows()
+    assert from_summaries["with-sbom"][0] is True and from_summaries["plain"][0] is False
+    assert from_summaries["partial"][1] is True and from_summaries["plain"][1] is False
+    for change in ({"summary_version": -1}, {"data": {"legacy": True}}):
+        with SessionLocal() as db:
+            db.execute(update(ExecutionSummary).values(**change)); db.commit()
+        assert rows() == from_summaries
+
+
+def test_bulk_statements_invalidate_only_the_services_they_name():
+    """An ingest's bulk reconciliation (DELETE ... WHERE execution_id = :id)
+    must invalidate that service only, not the whole portfolio."""
+    from app.models import DependencyWatchlistMatch
+    client = new_client()
+    ingest(client, "bulk-a", ["CVE-2024-8000"])
+    ingest(client, "bulk-b", ["CVE-2024-8001"])
+    services(client)
+    with SessionLocal() as db:
+        epoch = service_posture.current_epoch(db)
+        a, b = (db.scalar(select(Service.id).where(Service.service_key == key)) for key in ("bulk-a", "bulk-b"))
+        before = {sid: db.get(ServicePosture, sid).data_generation for sid in (a, b)}
+    ingest(client, "bulk-a", ["CVE-2024-8000"], scan="again")
+    with SessionLocal() as db:
+        assert service_posture.current_epoch(db) == epoch
+        assert db.get(ServicePosture, b).data_generation == before[b]
+        assert db.get(ServicePosture, a).data_generation > before[a]
+        execution = db.scalar(select(Execution.id).where(Execution.service_id == b))
+        db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.execution_id == execution))
+        db.execute(update(Finding).where(Finding.service_id == a).values(severity="Low"))
+        db.commit()
+        assert db.get(ServicePosture, b).data_generation == before[b] + 1
+        db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.execution_id == execution))
+        db.rollback()  # nothing published
+        assert db.get(ServicePosture, b).data_generation == before[b] + 1
+        assert service_posture.current_epoch(db) == epoch
+        db.execute(delete(DependencyWatchlistMatch)); db.commit()  # names no service
+        assert service_posture.current_epoch(db) != epoch
