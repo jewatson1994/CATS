@@ -42,6 +42,9 @@ def parse_args():
     parser.add_argument("--repeat", type=int, default=5)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--remediation-row", type=Path, help="JSON of a real remediation_executions row to replay")
+    parser.add_argument("--profile", help="cProfile the cold request of scenarios containing this text")
+    parser.add_argument("--only", help="run only scenarios containing this text")
+    parser.add_argument("--explain", help="print the slowest SQL statements (EXPLAIN ANALYZE of the slowest) of the last request of scenarios containing this text")
     return parser.parse_args()
 
 
@@ -179,6 +182,14 @@ def login(username):
     return client
 
 
+def latest_execution_id(service_key):
+    from sqlalchemy import select
+    from app.models import Execution, Service
+    with SessionLocal() as db:
+        return db.scalar(select(Execution.id).join(Service).where(Service.service_key == service_key)
+                         .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+
+
 def scenarios(service_key):
     root = f"/services/{service_key}"
     return [
@@ -198,17 +209,69 @@ def scenarios(service_key):
         ("service: artifacts", f"{root}?artifacts=true", PAGE),
         ("poll: remediation report", f"{root}/remediations/R-BENCH-ACTIVE", PAGE),
         ("poll: deployment validation", f"/api/v1/services/{service_key}/deployment-validations/DV-BENCH-RUNNING", {}),
+        # Lightweight status contracts (404 on releases that predate them).
+        ("poll: remediation status", f"/api/v1/services/{service_key}/remediations/R-BENCH-ACTIVE/status", {}),
+        ("poll: validation status", f"/api/v1/services/{service_key}/deployment-validations/DV-BENCH-RUNNING/status", {}),
+        ("poll: dependencies status", f"/api/v1/services/{service_key}/dependencies/status?execution_id={latest_execution_id(service_key)}", {}),
     ]
+
+
+STATEMENTS: list = []
+
+
+def capture_statements():
+    from sqlalchemy import event
+    from app.database import engine
+
+    @event.listens_for(engine, "before_cursor_execute")
+    def _before(conn, cursor, statement, params, context, executemany):
+        conn.info["bench_started"] = time.perf_counter()
+
+    @event.listens_for(engine, "after_cursor_execute")
+    def _after(conn, cursor, statement, params, context, executemany):
+        STATEMENTS.append((time.perf_counter() - conn.info.pop("bench_started", time.perf_counter()), statement, params))
+
+
+def explain(label, name):
+    from app.database import engine
+    ranked = sorted(STATEMENTS, key=lambda item: -item[0])
+    print(f"--- slowest statements {label} {name}")
+    for elapsed, statement, _ in ranked[:5]:
+        print(f"{elapsed * 1000:9.1f}ms  {' '.join(statement.split())[:400]}")
+    if ranked:
+        raw = engine.raw_connection()
+        try:
+            cursor = raw.cursor()
+            cursor.execute("EXPLAIN (ANALYZE, BUFFERS) " + ranked[0][1], ranked[0][2])
+            for row in cursor.fetchall():
+                print("   ", row[0])
+        finally:
+            raw.close()
 
 
 def measure(client, label, user):
     results = []
     for name, url, headers in scenarios("perf-0001"):
+        if ARGS.only and ARGS.only not in name:
+            continue
         samples = []
         for attempt in range(ARGS.repeat):
             before = len(RECORDS)
+            profiler = None
+            if ARGS.profile and ARGS.profile in name and attempt == 0:
+                import cProfile
+                profiler = cProfile.Profile()
+                profiler.enable()
+            STATEMENTS.clear()
             started = time.perf_counter()
             response = client.get(url, headers=headers)
+            if ARGS.explain and ARGS.explain in name and attempt == ARGS.repeat - 1:
+                explain(label, name)
+            if profiler:
+                profiler.disable()
+                import pstats
+                print(f"--- profile {label} {name}")
+                pstats.Stats(profiler).sort_stats("cumulative").print_stats(30)
             elapsed = (time.perf_counter() - started) * 1000
             record = RECORDS[before] if len(RECORDS) > before else {}
             samples.append({"status": response.status_code, "client_ms": round(elapsed, 1),
@@ -230,6 +293,8 @@ def measure(client, label, user):
 
 
 def main_run():
+    if ARGS.explain:
+        capture_statements()
     if ARGS.reset:
         seed()
     results = measure(login("admin"), "admin", "admin") + measure(login("restricted"), "restricted", "restricted")
