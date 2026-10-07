@@ -1,4 +1,4 @@
-import {useCallback, useEffect, useMemo, useRef, useState, type ComponentType} from 'react';
+import {lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType} from 'react';
 import {PageControlContext, type PageControl} from './pageControl';
 import {ApiError, onMutation, type PageEnvelope, type PageData} from './api';
 import {digestText, pageStore, type PageStore} from './pageStore';
@@ -10,36 +10,71 @@ import {Page as Login} from './features/login';
 import {Page as Dashboard} from './features/dashboard';
 import {Page as Password} from './features/password';
 import {Page as Appearance} from './features/appearance';
-import {Page as SelfService} from './features/self_service';
-import {Page as Patch} from './features/patch';
 import {Page as Cybersecurity} from './features/cybersecurity';
 import {Page as Service} from './features/service';
-import {Page as PublicResults} from './features/public_results';
-import {Page as PatchResults} from './features/patch_results';
 import {Page as Finding, Watchlist} from './features/finding';
-import {Page as Poam, Service as ServicePoam, Entry as PoamEntry} from './features/poam';
 import {Page as ServiceOverview} from './features/service_overview';
 import {Page as ServiceActivity} from './features/service_activity';
-import {Page as ServiceHistory} from './features/service_history';
 import {Page as ServiceDependencies} from './features/service-dependencies';
 import {Page as ServiceArtifacts} from './features/service-artifacts';
-import {Page as ServiceValidation} from './features/service-validation';
-import {Page as ServiceDefinitions} from './features/service_definitions';
-import {Page as Exchange} from './features/exchange';
-import {Page as PurposeExportTemplate} from './features/purpose_export_template';
-import {Page as Remediations, Service as ServiceRemediations, Report as RemediationReport, Requests} from './features/remediations';
-import {Page as ServiceArchitecture} from './features/service-architecture';
-import {Page as Admin} from './features/admin';
-import {Page as Staging} from './features/staging';
-import {Page as Configuration} from './features/configuration';
-import {Page as Validators} from './features/validators';
-import {Page as Audit} from './features/audit';
-import {Page as GeneralPolicy} from './features/general_policy';
-import {Page as EvidencePolicy} from './features/evidence_policy';
-import {Page as WorkflowPolicy} from './features/workflow_policy';
-import {Page as Compliance} from './features/compliance';
-import {Page as ComplianceFrameworks} from './features/compliance_frameworks';
-import {Page as DependencyWatchlist} from './features/dependency_watchlist';
+
+/** Infrequent or administrative pages load as separate local chunks. */
+const loaders: Record<string, () => Promise<any>> = {
+  './features/admin': () => import('./features/admin'),
+  './features/audit': () => import('./features/audit'),
+  './features/compliance': () => import('./features/compliance'),
+  './features/compliance_frameworks': () => import('./features/compliance_frameworks'),
+  './features/configuration': () => import('./features/configuration'),
+  './features/dependency_watchlist': () => import('./features/dependency_watchlist'),
+  './features/evidence_policy': () => import('./features/evidence_policy'),
+  './features/exchange': () => import('./features/exchange'),
+  './features/general_policy': () => import('./features/general_policy'),
+  './features/patch': () => import('./features/patch'),
+  './features/patch_results': () => import('./features/patch_results'),
+  './features/poam': () => import('./features/poam'),
+  './features/public_results': () => import('./features/public_results'),
+  './features/purpose_export_template': () => import('./features/purpose_export_template'),
+  './features/remediations': () => import('./features/remediations'),
+  './features/self_service': () => import('./features/self_service'),
+  './features/service-architecture': () => import('./features/service-architecture'),
+  './features/service-validation': () => import('./features/service-validation'),
+  './features/service_definitions': () => import('./features/service_definitions'),
+  './features/service_history': () => import('./features/service_history'),
+  './features/staging': () => import('./features/staging'),
+  './features/validators': () => import('./features/validators'),
+  './features/workflow_policy': () => import('./features/workflow_policy'),
+};
+const lazyPage = (module: string, name: string) => lazy(() => loaders[module]().then(loaded => ({default: loaded[name] as ComponentType<{data: PageData}>})));
+const Patch = lazyPage('./features/patch', 'Page');
+const SelfService = lazyPage('./features/self_service', 'Page');
+const PublicResults = lazyPage('./features/public_results', 'Page');
+const PatchResults = lazyPage('./features/patch_results', 'Page');
+const Poam = lazyPage('./features/poam', 'Page');
+const ServicePoam = lazyPage('./features/poam', 'Service');
+const PoamEntry = lazyPage('./features/poam', 'Entry');
+const ServiceHistory = lazyPage('./features/service_history', 'Page');
+const ServiceValidation = lazyPage('./features/service-validation', 'Page');
+const ServiceDefinitions = lazyPage('./features/service_definitions', 'Page');
+const Exchange = lazyPage('./features/exchange', 'Page');
+const PurposeExportTemplate = lazyPage('./features/purpose_export_template', 'Page');
+const Remediations = lazyPage('./features/remediations', 'Page');
+const ServiceRemediations = lazyPage('./features/remediations', 'Service');
+const RemediationReport = lazyPage('./features/remediations', 'Report');
+const Requests = lazyPage('./features/remediations', 'Requests');
+const ServiceArchitecture = lazyPage('./features/service-architecture', 'Page');
+const Admin = lazyPage('./features/admin', 'Page');
+const Staging = lazyPage('./features/staging', 'Page');
+const Configuration = lazyPage('./features/configuration', 'Page');
+const Validators = lazyPage('./features/validators', 'Page');
+const Audit = lazyPage('./features/audit', 'Page');
+const GeneralPolicy = lazyPage('./features/general_policy', 'Page');
+const EvidencePolicy = lazyPage('./features/evidence_policy', 'Page');
+const WorkflowPolicy = lazyPage('./features/workflow_policy', 'Page');
+const Compliance = lazyPage('./features/compliance', 'Page');
+const ComplianceFrameworks = lazyPage('./features/compliance_frameworks', 'Page');
+const DependencyWatchlist = lazyPage('./features/dependency_watchlist', 'Page');
+/** Fetch every lazy chunk once the browser is idle, so later navigation never waits on one. */
+export function preloadPages() {for (const load of Object.values(loaders)) void load().catch(() => {});}
 
 const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
   '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
@@ -109,12 +144,16 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
 
   useEffect(() => {
     installPerformanceTools();
+    const idle = (window as any).requestIdleCallback as ((callback: () => void, options?: {timeout: number}) => number) | undefined;
+    const preload = () => preloadPages();
+    const handle = idle ? idle(preload, {timeout: 4000}) : window.setTimeout(preload, 1500);
     if ('scrollRestoration' in window.history) window.history.scrollRestoration = 'manual';
     if (initial) {
       const text = JSON.stringify(initial);
       store.put(location, {envelope: initial, bytes: text.length, digest: digestText(text), fetchedAt: Date.now()});
     }
-    return onMutation(() => store.invalidate());
+    const stop = onMutation(() => store.invalidate());
+    return () => {stop(); if (idle) (window as any).cancelIdleCallback?.(handle); else window.clearTimeout(handle);};
     // Bootstrap is read once per document.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -243,7 +282,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       {shown && Page && !failed ? <div className={previous ? 'page-navigating' : undefined} aria-busy={previous ? true : undefined}
         inert={previous ? true : undefined}>
         {previous && <p className="sr-only" role="status">Loading page…</p>}
-        <ErrorBoundary key={`${shown.location}#${shown.generation}`}><Page data={shown.envelope.data}/></ErrorBoundary>
+        <ErrorBoundary key={`${shown.location}#${shown.generation}`}><Suspense fallback={<section className="panel padded" aria-busy="true"><p role="status">Loading page…</p></section>}><Page data={shown.envelope.data}/></Suspense></ErrorBoundary>
       </div> : <section className="panel padded" aria-busy={!failed}>
         {failed ? <div role="alert"><h1>Unable to load page</h1><p>{failed}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></div>
           : <p role="status">Loading page…</p>}
