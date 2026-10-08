@@ -249,31 +249,28 @@ def _due_days(configuration, severity):
 DUE_FORMAT = 'YYYY-MM-DD HH24:MI:SS.US'
 
 
-def _due_expression(dialect, configuration, severity, started):
-    """The display due date text, exactly as the live group page formats it."""
-    from sqlalchemy import String, cast, text
-    days = _due_days(configuration, severity)
-    if dialect == 'postgresql':
-        return func.to_char(started + days * text("INTERVAL '1 day'"), DUE_FORMAT)
-    return cast(func.datetime(started, literal('+') + cast(days, String) + literal(' days')), String) + func.substr(cast(started, String), 20, 7)
+def _due_instant_postgresql(started, days):
+    """``episode_started + days`` as a UTC timestamp (without time zone).
 
-
-def _session_is_utc(db) -> bool:
-    """True when this connection formats timestamps in UTC.
-
-    In UTC, ``to_char`` is order-preserving, so the earliest due text is the
-    text of the earliest due instant. Elsewhere a daylight-saving repeated
-    hour breaks that, and each member's due text is formatted instead.
-    Remembered per pooled connection (``Connection.info``), so per-role or
-    per-database time zone settings are respected.
+    The due date is the episode start plus whole 24-hour days in UTC, as
+    ``service_view`` computes it (``aware(started) + timedelta(days=...)``),
+    and the page reads the formatted text as UTC. Converting to UTC *before*
+    adding days and formatting keeps both independent of the session's
+    TimeZone: ``timestamptz + interval '1 day'`` steps local calendar days
+    (23 or 25 hours across a daylight-saving change) and ``to_char`` of a
+    ``timestamptz`` prints local time.
     """
     from sqlalchemy import text
-    info = db.connection().info
-    if 'cats_session_utc' not in info:
-        zone = str(db.execute(text('SHOW TimeZone')).scalar() or '')
-        info['cats_session_utc'] = zone.upper() in {'UTC', 'ETC/UTC', 'GMT', 'ETC/GMT', 'UCT', 'ETC/UCT', 'ZULU',
-                                                    'ETC/ZULU', 'UNIVERSAL', 'ETC/UNIVERSAL', 'Z'}
-    return info['cats_session_utc']
+    return func.timezone('UTC', started) + days * text("INTERVAL '1 day'")
+
+
+def _due_expression(dialect, configuration, severity, started):
+    """The display due date text: UTC, whatever the session time zone."""
+    from sqlalchemy import String, cast
+    days = _due_days(configuration, severity)
+    if dialect == 'postgresql':
+        return func.to_char(_due_instant_postgresql(started, days), DUE_FORMAT)
+    return cast(func.datetime(started, literal('+') + cast(days, String) + literal(' days')), String) + func.substr(cast(started, String), 20, 7)
 
 
 SEVERITY_KEY_BASE = 10 ** 15  # above any finding id
@@ -299,9 +296,11 @@ def _classified_group_page(db, service, latest, now, configuration, *, page=1, p
     dialect = db.get_bind().dialect.name
     cve = members.c.cve_normalized
     severity_key = cast(5 - members.c.rank, BigInteger) * literal(SEVERITY_KEY_BASE, BigInteger) + members.c.id
-    instants = dialect == 'postgresql' and _session_is_utc(db)
+    # PostgreSQL: the earliest due instant, formatted once per group. The
+    # instants are UTC timestamps, whose text order is their time order.
+    instants = dialect == 'postgresql'
     if instants:
-        due = members.c.started + _due_days(configuration, members.c.severity) * text("INTERVAL '1 day'")
+        due = _due_instant_postgresql(members.c.started, _due_days(configuration, members.c.severity))
     else:
         due = _due_expression(dialect, configuration, members.c.severity, members.c.started)
     # Two hash aggregations instead of a sorted COUNT(DISTINCT): first one row
@@ -413,7 +412,7 @@ def group_page(db, service, latest, now, configuration, *, page=1, page_size=50,
                    for severity, value in due_by_severity.items()], else_=default_days)
             if configuration.get('compliance_mode') == 'raw' and due_by_severity else literal(default_days))
     if dialect == 'postgresql':
-        due = func.to_char(members.c.started + days * text("INTERVAL '1 day'"), 'YYYY-MM-DD HH24:MI:SS.US')
+        due = func.to_char(_due_instant_postgresql(members.c.started, days), DUE_FORMAT)
         identity = func.lpad(cast(members.c.id, String), 20, '0')
     else:
         due = cast(func.datetime(members.c.started, literal('+') + cast(days, String) + literal(' days')), String) + func.substr(cast(members.c.started, String), 20, 7)

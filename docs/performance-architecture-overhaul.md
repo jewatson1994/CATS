@@ -536,20 +536,77 @@ or per-database time zone settings are respected.
   findings), and a one-time preparation after upgrade (67 s for the LARGE
   database). Readers stay correct, on the live queries, until it finishes.
 
-### Pre-existing defects found (not changed)
+### Pre-existing defects found, then fixed (correctness follow-up)
 
-* **Cybersecurity fails on PostgreSQL for non-boolean KEV evidence.** Its
-  own KEV test casts the evidence text to a boolean, so a scanner value
-  such as `"kev": ""`, `[]` or `2` makes `/api/dashboard/cybersecurity`
-  return 500, and the posture rebuild fails.
+**Cybersecurity returned 500 on PostgreSQL for unusual KEV or EPSS evidence.**
+* *Root cause.* Its counts cast the evidence text directly:
+  `CAST(evidence ->> 'kev' AS boolean)` and `CAST(evidence ->> 'epss' AS
+  double precision)`. PostgreSQL raises on any text that is not a literal of
+  the type, which fails the endpoint and the posture rebuild.
+  * KEV values that raised: `""`, `[1]`, `2`, `{}`, `"maybe"`.
+  * EPSS values that raised (risk-based EPSS mode only): `"junk"`, `""`,
+    booleans, out-of-range numbers.
   * Reproduced on `e20f906`; the same expression is on `main`.
-  * Cybersecurity's formulas differ from Services' by design, so changing
-    them is a product decision. The minimal fix would be the
-    JSON-truthiness expression Services already uses.
-* **Simplified due dates in non-UTC database sessions.** The due date is
-  formatted in the session's time zone but labelled UTC. Correct with the
-  default container, shifted by the offset otherwise. The behavior is
-  preserved here, not fixed.
+* *Fix* (`risk_sql.evidence_key_boolean` / `evidence_key_float`):
+  * Cybersecurity's coalescing order and compliance formulas are unchanged.
+  * A missing or JSON-null key is NULL, as before.
+  * Text that cast before keeps exactly the cast's result. Validity is
+    tested with `pg_input_is_valid` on PostgreSQL 16 (the shipped
+    database), with an explicit literal test on older servers.
+  * Only the values that raised use Services' existing normalization:
+    Python truthiness of the JSON value for KEV, and Python `float()`
+    parsing for EPSS.
+  * SQLite compiles exactly as before.
+  * JSON `true`/`false` take a single-extraction fast path.
+  * Under an EPSS policy, the EPSS value is computed once per observation
+    instead of once per rule.
+* *Verified.*
+  * Every value in a 48-value matrix equals PostgreSQL's own cast where
+    that succeeds, and Services' value where it raised, on both the
+    PostgreSQL 16 and older-server paths.
+  * Cybersecurity loads in raw and risk-based KEV/EPSS modes.
+  * The tests fail on the earlier code.
+  * The posture rebuild for 1,001 services and 1.05 M active findings, run
+    interleaved old and new (medians of 9 runs; ±10% run-to-run here):
+    * raw mode: 10.2 → 10.5 s;
+    * risk-based KEV/EPSS: 16.8 → 14.4 s;
+    * identical counts in both.
+  * The Cybersecurity pages are served from posture rows and are unchanged.
+
+**Simplified due dates depended on the PostgreSQL session time zone.**
+* *Root cause.* The group due date was `to_char(episode_started + N *
+  interval '1 day')`. That has two time-zone effects:
+  * `to_char` of a `timestamptz` prints session-local time, which the page
+    then reads as UTC.
+  * `timestamptz + interval '1 day'` steps local calendar days, so it is
+    off by an hour across a daylight-saving change.
+* *Fix* (`simplified_queries._due_instant_postgresql`): add the days to, and
+  format, the UTC timestamp: `timezone('UTC', episode_started) + N days`.
+  * This is the episode start plus whole 24-hour days in UTC, as
+    `service_view` computes it in the shipped UTC configuration and as the
+    overdue predicates compare it.
+  * UTC sessions produce identical output.
+  * The classified fast path (the earliest due instant, formatted once) is
+    now valid in every session, so the per-connection time zone check was
+    removed.
+* *Verified.*
+  * Live and classified Simplified paths, in UTC, America/New_York (with a
+    daylight-saving change between start and due), Asia/Kolkata and
+    Australia/Lord_Howe sessions, all equal the UTC rule and `service_view`.
+    The non-UTC cases fail on the earlier code.
+  * On the LARGE database, all 102 pages of the parity set are identical
+    to the pre-fix output in a UTC session.
+  * In a New York session, every Simplified page now equals the UTC
+    output. The 21 Simplified pages that differed before no longer do.
+  * Simplified on the dense service: about 173 ms in UTC (unchanged) and
+    163 ms in New York, which previously used the slower per-member
+    formatting.
+* *Not changed.* Outside Simplified, Python-side values derived from
+  session-local timestamps still follow the session time zone. These are
+  Raw "episode age in days" and timestamp offsets in validation details,
+  the same 11 pages before and after. With the shipped UTC database they
+  are correct. Pinning CATS's own connections to UTC would remove them;
+  that is a separate change.
 
 ## Review findings and what was done
 

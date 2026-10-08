@@ -53,15 +53,19 @@ def _truth_sqlite(element, compiler, **kw):
             f"WHEN 'object' THEN {value} <> '{{}}' ELSE COALESCE({value} <> 0, 0) END)" )
 
 
-@compiles(EvidenceTruth, "postgresql")
-def _truth_postgres(element, compiler, **kw):
-    column = compiler.process(list(element.clauses)[0], **kw)
-    key = _selected(column, "kev", "known_exploited", "postgresql")
-    value = f"(CAST({column} AS jsonb) -> ({key}))"
+def _truth_postgres_value(value):
+    """Python truthiness of one jsonb value (Services' KEV normalization)."""
     return (f"(CASE jsonb_typeof({value}) WHEN 'null' THEN false "
             f"WHEN 'boolean' THEN {value} = 'true'::jsonb WHEN 'string' THEN {value} <> '\"\"'::jsonb "
             f"WHEN 'array' THEN jsonb_array_length({value}) > 0 WHEN 'object' THEN {value} <> '{{}}'::jsonb "
             f"WHEN 'number' THEN CAST({value} AS numeric) <> 0 ELSE false END)")
+
+
+@compiles(EvidenceTruth, "postgresql")
+def _truth_postgres(element, compiler, **kw):
+    column = compiler.process(list(element.clauses)[0], **kw)
+    key = _selected(column, "kev", "known_exploited", "postgresql")
+    return _truth_postgres_value(f"(CAST({column} AS jsonb) -> ({key}))")
 
 
 @compiles(EvidenceScore, "sqlite")
@@ -107,7 +111,11 @@ def _score_sqlite(element, compiler, **kw):
 def _score_postgres(element, compiler, **kw):
     column = compiler.process(list(element.clauses)[0], **kw)
     key = _selected(column, "epss", "epss_score", "postgresql")
-    value = f"(CAST({column} AS jsonb) -> ({key}))"
+    return _score_postgres_value(f"(CAST({column} AS jsonb) -> ({key}))")
+
+
+def _score_postgres_value(value):
+    """Python ``float()`` of one jsonb value (Services' EPSS normalization)."""
     # Numeric first avoids double-precision overflow/underflow exceptions. Huge
     # exponents saturate like Python float; numeric never receives that exponent.
     pattern = r"^[+-]?([0-9](_?[0-9])*(\.([0-9](_?[0-9])*)?)?|\.[0-9](_?[0-9])*)(e[+-]?[0-9](_?[0-9])*)?$"
@@ -132,6 +140,101 @@ def _score_postgres(element, compiler, **kw):
           lower(btrim({value} #>> '{{}}', E' \\t\\n\\r\\f\\v')) AS s) input)"""
 
 
+class EvidenceKeyBoolean(FunctionElement):
+    """``evidence[key]`` as a boolean, never raising on PostgreSQL.
+
+    The Cybersecurity read model historically used ``evidence[key].as_boolean()``,
+    which on PostgreSQL is ``CAST(evidence ->> key AS boolean)``: a missing or
+    JSON-null key is NULL, a valid boolean literal ('true', 'yes', '1', ...) is
+    its value, and any other text (``""``, ``[1]``, ``2``, ...) raised an error
+    and failed the whole page. Here every value that cast before keeps exactly
+    that result, and only the values that raised use Services' normalization
+    (Python truthiness of the JSON value). SQLite compiles exactly as before.
+    """
+    type = Boolean()
+    inherit_cache = False
+
+    def __init__(self, evidence, key):
+        if key not in {"kev", "known_exploited"}:
+            raise ValueError("Unsupported risk key")
+        self.key = key
+        super().__init__(evidence)
+
+
+class EvidenceKeyFloat(FunctionElement):
+    """``evidence[key]`` as a float, never raising on PostgreSQL.
+
+    As ``EvidenceKeyBoolean`` for ``as_float()``: valid double precision text
+    keeps its cast; text that raised (``"junk"``, ``""``, booleans, arrays,
+    out-of-range numbers) uses Services' EPSS parsing instead.
+    """
+    type = Float()
+    inherit_cache = False
+
+    def __init__(self, evidence, key):
+        if key not in {"epss", "epss_score"}:
+            raise ValueError("Unsupported risk key")
+        self.key = key
+        super().__init__(evidence)
+
+
+@compiles(EvidenceKeyBoolean)
+def _key_boolean_default(element, compiler, **kw):
+    return compiler.process(list(element.clauses)[0][element.key].as_boolean(), **kw)
+
+
+@compiles(EvidenceKeyFloat)
+def _key_float_default(element, compiler, **kw):
+    return compiler.process(list(element.clauses)[0][element.key].as_float(), **kw)
+
+
+_PG_SPACE = r"E' \t\n\r\v\f'"
+_PG_BOOLEAN_LITERALS = ("t", "tr", "tru", "true", "y", "ye", "yes", "on", "1",
+                        "f", "fa", "fal", "fals", "false", "n", "no", "of", "off", "0")
+_PG_FLOAT_PATTERN = r"^[+-]?(([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?|nan|inf|infinity)$"
+
+
+def _valid_input(compiler, text, type_name):
+    """Would ``CAST(text AS type)`` succeed? Exact on PostgreSQL 16+
+    (``pg_input_is_valid``, the shipped database). Older servers use an
+    explicit literal test: exact for booleans; for floats, decimal, NaN and
+    infinity text in range (hexadecimal text, which the C parser also
+    accepts, then gets Services' value instead of its cast)."""
+    version = getattr(compiler.dialect, "server_version_info", None) or (16,)
+    if version >= (16,):
+        return f"pg_input_is_valid({text}, '{type_name}')"
+    trimmed = f"lower(btrim({text}, {_PG_SPACE}))"
+    if type_name == "boolean":
+        literals = ", ".join(f"'{value}'" for value in _PG_BOOLEAN_LITERALS)
+        return f"({trimmed} IN ({literals}))"
+    return (f"({trimmed} ~ '{_PG_FLOAT_PATTERN}' AND ({trimmed} IN ('nan', 'inf', 'infinity', '+inf', '-inf', "
+            f"'+infinity', '-infinity') OR CAST({trimmed} AS numeric) = 0 OR abs(CAST({trimmed} AS numeric)) "
+            f"BETWEEN 2.2250738585072014e-308 AND 1.7976931348623157e308))")
+
+
+@compiles(EvidenceKeyBoolean, "postgresql")
+def _key_boolean_postgres(element, compiler, **kw):
+    column = compiler.process(list(element.clauses)[0], **kw)
+    text = f"(CAST({column} AS json) ->> '{element.key}')"
+    value = f"(CAST({column} AS jsonb) -> '{element.key}')"
+    guarded = (f"(CASE WHEN {text} IS NULL THEN NULL WHEN {_valid_input(compiler, text, 'boolean')} "
+               f"THEN CAST({text} AS boolean) ELSE {_truth_postgres_value(value)} END)")
+    # JSON booleans (the common case) read as 'true'/'false': a simple CASE
+    # extracts the text once and returns the cast's own result directly.
+    return f"(CASE {text} WHEN 'true' THEN true WHEN 'false' THEN false ELSE {guarded} END)"
+
+
+@compiles(EvidenceKeyFloat, "postgresql")
+def _key_float_postgres(element, compiler, **kw):
+    column = compiler.process(list(element.clauses)[0], **kw)
+    text = f"(CAST({column} AS json) ->> '{element.key}')"
+    value = f"(CAST({column} AS jsonb) -> '{element.key}')"
+    return (f"(CASE WHEN {text} IS NULL THEN NULL WHEN {_valid_input(compiler, text, 'double precision')} "
+            f"THEN CAST({text} AS double precision) ELSE {_score_postgres_value(value)} END)")
+
+
 key_present = EvidencePresent
 evidence_truth = EvidenceTruth
 evidence_score = EvidenceScore
+evidence_key_boolean = EvidenceKeyBoolean
+evidence_key_float = EvidenceKeyFloat

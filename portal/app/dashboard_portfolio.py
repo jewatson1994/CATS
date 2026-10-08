@@ -3,7 +3,7 @@ from datetime import datetime, timedelta
 from math import ceil
 
 from fastapi import HTTPException
-from sqlalchemy import and_, case, false, func, or_, select
+from sqlalchemy import and_, case, false, func, or_, select, true
 
 from .frontend_portfolio import cybersecurity_data
 from .sql_sets import catalog_subset, member_of
@@ -81,10 +81,26 @@ def compute_rows(db, services, configs, configuration, now):
     exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
         ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
     catalog_kev = m.kev_cves()
-    kev = or_(member_of(Finding.cve, catalog_kev) if catalog_kev else false(),
-        func.coalesce(FindingObservation.evidence["kev"].as_boolean(), FindingObservation.evidence["known_exploited"].as_boolean(), False))
+    # The same coalescing as before; each key's cast no longer raises on
+    # evidence that is not a boolean/number literal (see risk_sql).
+    from .risk_sql import evidence_key_boolean, evidence_key_float
+    evidence_kev = func.coalesce(evidence_key_boolean(FindingObservation.evidence, "kev"),
+                                 evidence_key_boolean(FindingObservation.evidence, "known_exploited"), False)
+    evidence_epss = func.coalesce(evidence_key_float(FindingObservation.evidence, "epss"),
+                                  evidence_key_float(FindingObservation.evidence, "epss_score"))
+    evidence_values = None
+    uses_epss = any(cfg.get("compliance_mode", "risk_based") != "raw" and cfg.get("epss_enabled") == "true"
+                    for cfg in configs.values())
+    if uses_epss and db.get_bind().dialect.name == "postgresql":
+        # Every EPSS rule reads the value twice: compute it once per
+        # observation (OFFSET 0 keeps the lateral from being flattened back
+        # into each reference). KEV stays inline: its common JSON-boolean case
+        # is a single extraction already, and the lateral has its own cost.
+        evidence_values = select(evidence_epss.label("epss")).correlate(FindingObservation).offset(0).lateral("evidence_values")
+        evidence_epss = evidence_values.c.epss
+    kev = or_(member_of(Finding.cve, catalog_kev) if catalog_kev else false(), evidence_kev)
     catalog_epss = m.epss_scores()
-    epss = func.coalesce(FindingObservation.evidence["epss"].as_float(), FindingObservation.evidence["epss_score"].as_float())
+    epss = evidence_epss
     noncompliant_parts, warning_parts = [], []
     def raw_overdue(cfg, when):
         default_days = max(1, int(cfg.get("overdue_days", "90")))
@@ -144,7 +160,10 @@ def compute_rows(db, services, configs, configuration, now):
         func.sum(case((and_(FindingObservation.fixed_version.is_not(None), FindingObservation.fixed_version != ""), 1), else_=0)).label("patchable"),
         func.sum(case((or_(*noncompliant_parts), 1), else_=0)).label("noncompliant"),
         func.sum(case((or_(*warning_parts), 1), else_=0)).label("warning")]
-    counts = {row.service_id: row._mapping for row in db.execute(select(Finding.service_id, *columns).outerjoin(observation_ids, observation_ids.c.finding_id == Finding.id).outerjoin(FindingObservation, FindingObservation.id == observation_ids.c.id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id))} if ids else {}
+    counts_query = select(Finding.service_id, *columns).outerjoin(observation_ids, observation_ids.c.finding_id == Finding.id).outerjoin(FindingObservation, FindingObservation.id == observation_ids.c.id)
+    if evidence_values is not None:
+        counts_query = counts_query.outerjoin(evidence_values, true())
+    counts = {row.service_id: row._mapping for row in db.execute(counts_query.where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id))} if ids else {}
     policy_exception = select(PolicyExceptionRecord.id).where(PolicyExceptionRecord.policy_finding_id == PolicyFinding.id, PolicyExceptionRecord.revoked_at.is_(None), PolicyExceptionRecord.starts_at <= now, PolicyExceptionRecord.expires_at > now).exists()
     policy_fails = {sid: int(count) for sid, count in db.execute(select(PolicyFinding.service_id, func.count()).where(member_of(PolicyFinding.service_id, ids, numeric=True), PolicyFinding.active.is_(True), m._hardening_overdue_expression(configs, now), ~policy_exception).group_by(PolicyFinding.service_id))} if ids else {}
     poams = {row.service_id: row for row in db.execute(select(PoamEntry.service_id, func.count().label("count"), func.sum(case((PoamEntry.due_date < now, 1), else_=0)).label("overdue")).where(member_of(PoamEntry.service_id, ids, numeric=True), PoamEntry.status == "active").group_by(PoamEntry.service_id))} if ids else {}
