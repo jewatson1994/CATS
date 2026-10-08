@@ -55,16 +55,19 @@
   font-size: var(--text-xs); font-weight: 600; text-transform: capitalize; white-space: nowrap;
   color: var(--neutral); border-color: color-mix(in srgb, var(--neutral) 35%, transparent); background: color-mix(in srgb, var(--neutral) 12%, transparent);
 }
-.execution-summary [data-status=success]::before, .execution-summary [data-status=complete]::before, .execution-summary [data-status=completed]::before { border-color: var(--success); background: var(--success); }
-.execution-summary [data-status=success]::after, .execution-summary [data-status=complete]::after, .execution-summary [data-status=completed]::after { background: var(--success) !important; }
-.execution-summary [data-status=success] .stage-status, .execution-summary [data-status=complete] .stage-status, .execution-summary [data-status=completed] .stage-status { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 12%, transparent); }
-.execution-summary [data-status=partial]::before { border-color: var(--warning); background: linear-gradient(90deg, var(--warning) 50%, var(--surface) 50%); }
-.execution-summary [data-status=partial] .stage-status { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); }
-.execution-summary [data-status=failed]::before { border-color: var(--danger); background: var(--danger); border-radius: 4px; }
-.execution-summary [data-status=failed] .stage-status { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
-.execution-summary [data-status=running]::before { border-color: var(--info); border-style: dashed; animation: cats-spin 2s linear infinite; }
-.execution-summary [data-status=running] .stage-status { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
-@media (prefers-reduced-motion: reduce) { .execution-summary [data-status=running]::before { animation: none; } }
+/* Status selectors include ".remediation-steps li" so they outrank the base marker rule above. */
+.execution-summary .remediation-steps li:is([data-status=success],[data-status=complete],[data-status=completed],[data-status=verified],[data-status=passed])::before { border-color: var(--success); background: var(--success); }
+.execution-summary .remediation-steps li:is([data-status=success],[data-status=complete],[data-status=completed],[data-status=verified],[data-status=passed]):not(:last-child)::after { background: var(--success); }
+.execution-summary .remediation-steps li:is([data-status=success],[data-status=complete],[data-status=completed],[data-status=verified],[data-status=passed]) .stage-status { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, transparent); background: color-mix(in srgb, var(--success) 12%, transparent); }
+.execution-summary .remediation-steps li[data-status=partial]::before { border-color: var(--warning); background: linear-gradient(90deg, var(--warning) 50%, var(--surface) 50%); }
+.execution-summary .remediation-steps li:is([data-status=warning],[data-status=blocked],[data-status=unavailable],[data-status=not_verified])::before { border-color: var(--warning); background: var(--warning); }
+.execution-summary .remediation-steps li:is([data-status=partial],[data-status=warning],[data-status=blocked],[data-status=unavailable],[data-status=not_verified]) .stage-status { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+.execution-summary .remediation-steps li:is([data-status=failed],[data-status=error])::before { border-color: var(--danger); background: var(--danger); border-radius: 4px; }
+.execution-summary .remediation-steps li:is([data-status=failed],[data-status=error]) .stage-status { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+.execution-summary .remediation-steps li[data-status=skipped]::before { border-color: var(--neutral); background: color-mix(in srgb, var(--neutral) 35%, var(--surface)); }
+.execution-summary .remediation-steps li[data-status=running]::before { border-color: var(--info); border-style: dashed; animation: cats-spin 2s linear infinite; }
+.execution-summary .remediation-steps li[data-status=running] .stage-status { color: var(--info); border-color: color-mix(in srgb, var(--info) 40%, transparent); background: color-mix(in srgb, var(--info) 12%, transparent); }
+@media (prefers-reduced-motion: reduce) { .execution-summary .remediation-steps li[data-status=running]::before { animation: none; } }
 
 /* Before / After report */
 .remediation-report > .detail-grid { margin-top: var(--space-5); }
