@@ -166,7 +166,9 @@ def _status(artifact_id, run_id, index, status, reason=None, **detail):
         components = [dict(item) for item in meta.get("components", [])]
         if index >= len(components):
             return
-        if components[index].get("status") in {"complete", "render_failed", "scan_failed"} and status == "scanning":
+        if (components[index].get("status") == "scanning" and status == "queued") or (
+            components[index].get("status") == "acquisition_failed" and status != "acquisition_failed") or (
+            components[index].get("status") in {"complete", "render_failed", "scan_failed"} and status in {"scanning", "queued"}):
             components[index].update(**detail)
         else:
             components[index].update(status=status, reason=reason, **detail)
@@ -224,9 +226,8 @@ def acquire_component(component, certificates):
 
 def _chart_app_version(files):
     """Retain chart application version separately from the Helm chart version."""
-    markers = [(name, data) for name, data in files.items()
-               if name.split("/")[-1] == "Chart.yaml" and
-               len(name.replace("\\", "/").strip("/").split("/")) <= 2]
+    from .definition_acquisition import _primary_chart_markers
+    markers = [(name, files[name]) for name in _primary_chart_markers(files)]
     if len(markers) != 1:
         return None
     try:
@@ -237,7 +238,7 @@ def _chart_app_version(files):
 
 
 def process_definition(artifact_id, user_id):
-    """Acquire each declared chart independently; all network I/O uses existing Helm helpers."""
+    """Queue normalized declarations for acquisition by the dedicated worker."""
     from . import main
     with SessionLocal() as db:
         artifact = db.get(ServiceArtifact, artifact_id)
@@ -247,72 +248,77 @@ def process_definition(artifact_id, user_id):
         run_id = meta.get("run_id")
         components = list(meta.get("components") or [])
         service_key = artifact.service.service_key
-        service_id = artifact.service_id
+        service_version = ((artifact.service.current_version.version if artifact.service.current_version else None)
+                           or artifact.service.manual_version or "")
+        configuration = main.get_global_configuration(db)
+        certificates = main.parse_json(configuration.get("trusted_ca_certificates"), [])
+        certificates = certificates if isinstance(certificates, list) else []
     for index, component in enumerate(components):
         if component.get("status") != "normalized":
             continue
-        _status(artifact_id, run_id, index, "acquiring")
-        archives = []
         try:
-            with SessionLocal() as db:
-                configuration = main.get_global_configuration(db)
-                certificates = main.parse_json(configuration.get("trusted_ca_certificates"), [])
-                certificates = certificates if isinstance(certificates, list) else []
-            source_url, files, actual_name, actual_version, archives = acquire_component(component, certificates)
-            app_version = _chart_app_version(files)
-            with SessionLocal() as db:
-                definition = db.get(ServiceArtifact, artifact_id)
-                if (definition.source_metadata or {}).get("run_id") != run_id:
-                    return
-                service = db.get(Service, service_id)
-                chart = ServiceArtifact(service_id=service_id, artifact_type="helm_chart",
-                    artifact_name=f"definition-{artifact_id}-{index}-{uuid.uuid4().hex[:8]}",
-                    source_type="repository" if component["source_type"] == "helm" else "oci",
-                    source_reference=component["reference"], chart_name=actual_name,
-                    chart_version=actual_version,
-                    source_metadata={"definition_artifact_id": artifact_id,
-                        "definition_revision": definition.revisions[0].revision_number,
-                        "component_index": index, "logical_name": component["logical_name"],
-                        "declared_chart_name": component["chart_name"],
-                        "declared_version": component["version"],
-                        "resolved_version": actual_version, "chart_yaml_version": actual_version,
-                        "chart_app_version": app_version, "run_id": run_id})
-                db.add(chart); db.flush()
-                db.add(main._artifact_revision(files, artifact_id=chart.id, number=1,
-                    label="ORIGINAL", user_id=user_id, source_metadata=chart.source_metadata))
-                user = db.get(User, user_id)
-                if user:
-                    class _AuditAuth:
-                        def __init__(self, user): self.user = user
-                    record_audit(db, _AuditAuth(user), "definition.chart_acquired", "service_artifact", chart.id,
-                                 service_id=service.id, definition_id=artifact_id,
-                                 component_index=index, chart_version=actual_version)
-                chart_id = chart.id
-                db.commit()
-            _status(artifact_id, run_id, index, "scanning", chart_artifact_id=chart_id,
-                    resolved_version=actual_version, chart_yaml_version=actual_version,
-                    chart_app_version=app_version)
-            for archive, _ in archives:
-                if hasattr(archive, "seek"):
-                    archive.seek(0)
-            job_id = main._start_public_scan("", chart_archives=archives,
-                ingest_service_id=service_key, trusted_ca_certificates=certificates,
+            job_id = main._start_public_scan("", definition_component=component,
+                ingest_service_id=service_key, ingest_service_version=service_version,
+                trusted_ca_certificates=certificates, owner_user_id=user_id,
                 definition_context={"artifact_id": artifact_id, "run_id": run_id,
-                                    "index": index, "chart_artifact_id": chart_id})
-            _status(artifact_id, run_id, index, "scanning", chart_artifact_id=chart_id, scan_job_id=job_id)
-        except Exception as exc:
-            # Only fixed, classified text reaches retained metadata or the UI.
-            if isinstance(exc, OciPullFailure):
-                _status(artifact_id, run_id, index, "acquisition_failed", exc.detail,
-                        acquisition_diagnostic=exc.diagnostic)
-            else:
-                reason = (str(exc) if isinstance(exc, ValueError) and
-                          str(exc).startswith(("Requested chart", "Retrieved chart")) else
-                          "Chart acquisition failed")
-                _status(artifact_id, run_id, index, "acquisition_failed", reason,
-                        acquisition_diagnostic={
-                            "attempted_reference": component.get("reference"),
-                            "acquisition_stage": "chart_acquisition",
-                            "failure_category": "unknown_acquisition_failure"})
-        finally:
-            close_downloads(archives)
+                                    "index": index, "user_id": user_id})
+            _status(artifact_id, run_id, index, "queued", scan_job_id=job_id)
+        except Exception:
+            _status(artifact_id, run_id, index, "scan_failed", "Scan could not be queued")
+
+
+def finalize_definition_result(job_id, job, files, resolution):
+    """Persist a verified chart snapshot once, before authoritative local ingest."""
+    from . import main
+    from .definition_acquisition import _chart_identity
+    context = job.get("definition_context") or {}
+    if not context:
+        return
+    actual_name, actual_version = _chart_identity(files)
+    with _status_lock, SessionLocal() as db:
+        definition = db.get(ServiceArtifact, context["artifact_id"])
+        if definition is None or (definition.source_metadata or {}).get("run_id") != context["run_id"]:
+            raise ValueError("Definition run no longer matches this scan")
+        meta = dict(definition.source_metadata or {})
+        components = [dict(item) for item in meta.get("components", [])]
+        component = components[context["index"]]
+        if (actual_name != component["chart_name"] or actual_version != resolution.get("actual_version") or
+                (component["version"] != "latest" and actual_version != component["version"])):
+            raise ValueError("Retrieved chart identity or exact version did not match the declaration")
+        artifact_name = f"definition-{definition.id}-{context['run_id']}-{context['index']}"
+        chart = db.scalar(select(ServiceArtifact).where(
+            ServiceArtifact.service_id == definition.service_id,
+            ServiceArtifact.artifact_name == artifact_name,
+            ServiceArtifact.artifact_type == "helm_chart"))
+        app_version = _chart_app_version(files)
+        if chart is None:
+            chart = ServiceArtifact(service_id=definition.service_id, artifact_type="helm_chart",
+                artifact_name=artifact_name,
+                source_type="repository" if component["source_type"] == "helm" else "oci",
+                source_reference=component["reference"], chart_name=actual_name, chart_version=actual_version,
+                source_metadata={"definition_artifact_id": definition.id,
+                    "definition_revision": definition.revisions[0].revision_number,
+                    "component_index": context["index"], "logical_name": component["logical_name"],
+                    "declared_chart_name": component["chart_name"], "declared_version": component["version"],
+                    "resolved_version": actual_version, "chart_yaml_version": actual_version,
+                    "chart_app_version": app_version, "run_id": context["run_id"]})
+            db.add(chart)
+            db.flush()
+            db.add(main._artifact_revision(files, artifact_id=chart.id, number=1,
+                label="ORIGINAL", user_id=context["user_id"], source_metadata=chart.source_metadata))
+            user = db.get(User, context["user_id"])
+            if user:
+                class AuditAuth:
+                    def __init__(self, user): self.user = user
+                record_audit(db, AuditAuth(user), "definition.chart_acquired", "service_artifact", chart.id,
+                    service_id=definition.service_id, definition_id=definition.id,
+                    component_index=context["index"], chart_version=actual_version)
+        context["chart_artifact_id"] = chart.id
+        job["definition_context"] = context
+        component.update(status="scanning", reason=None, chart_artifact_id=chart.id, scan_job_id=job_id,
+                         resolved_version=actual_version, chart_yaml_version=actual_version,
+                         chart_app_version=app_version)
+        meta["components"] = components
+        definition.source_metadata = meta
+        definition.updated_at = datetime.now(timezone.utc)
+        db.commit()

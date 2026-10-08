@@ -12,3 +12,4 @@ certifi==2025.7.14
 cryptography==45.0.6
 paramiko==3.5.1
 tzdata==2025.2
+requests==2.32.5
