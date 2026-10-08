@@ -29,8 +29,15 @@ cannot collide with real CVEs. Service ids start with --prefix (default
 
 Usage (standard library only; no installs needed):
 
-    python scripts/load-test-portfolio.py --url https://cats.example.local \\
-        --token "$PIPELINE_API_TOKEN"
+    Local Docker Compose CATS (reads CATS_PORT and PIPELINE_API_TOKEN from the
+    repository's .env; on Windows you can also double-click load-test.bat):
+
+        python scripts/load-test-portfolio.py
+
+    Another instance:
+
+        python scripts/load-test-portfolio.py --url https://cats.example.local \\
+            --token "$PIPELINE_API_TOKEN"
 
     # see what would be sent, without contacting CATS:
     python scripts/load-test-portfolio.py --dry-run --out ./load-payloads
@@ -40,8 +47,8 @@ Usage (standard library only; no installs needed):
         --services 20 --max-findings 2000 --scans 2
 
 Options worth knowing:
-  --token       The pipeline API token configured in CATS (PIPELINE_API_TOKEN).
-                Also read from the CATS_PIPELINE_TOKEN environment variable.
+  --url/--token Default to http://127.0.0.1:<CATS_PORT or 8080> and
+                PIPELINE_API_TOKEN from the repository's .env (--env-file).
   --ca-file     PEM bundle to trust for HTTPS (e.g. your internal CA).
   --insecure    Skip TLS verification (lab use only).
   --max-findings  Upper bound for the largest tier (default 20000). Very large
@@ -130,8 +137,11 @@ CONFIG_CHECKS = [  # Trivy Kubernetes misconfiguration checks (real identifiers)
 
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--url", help="CATS base URL, e.g. https://cats.example.local")
-    parser.add_argument("--token", default=os.getenv("CATS_PIPELINE_TOKEN"), help="pipeline API token (or CATS_PIPELINE_TOKEN)")
+    parser.add_argument("--url", help="CATS base URL (default: http://127.0.0.1:<CATS_PORT from .env, or 8080>)")
+    parser.add_argument("--token", default=os.getenv("CATS_PIPELINE_TOKEN"),
+                        help="pipeline API token (default: CATS_PIPELINE_TOKEN, else PIPELINE_API_TOKEN from .env)")
+    parser.add_argument("--env-file", type=Path, default=Path(__file__).resolve().parents[1] / ".env",
+                        help="local CATS .env read for the defaults (default: the repository's .env)")
     parser.add_argument("--services", type=int, default=100)
     parser.add_argument("--scans", type=int, default=3, help="scans of history per service (default 3)")
     parser.add_argument("--max-findings", type=int, default=20000, help="largest vulnerability count for one scan")
@@ -146,11 +156,55 @@ def parse_args():
     parser.add_argument("--dry-run", action="store_true", help="build payloads without sending them")
     parser.add_argument("--out", type=Path, help="also write each payload as JSON into this folder")
     args = parser.parse_args()
-    if not args.dry_run and (not args.url or not args.token):
-        parser.error("--url and --token are required unless --dry-run is given")
+    if not args.dry_run:
+        env = read_env(args.env_file)
+        args.url = args.url or f"http://127.0.0.1:{env.get('CATS_PORT') or '8080'}"
+        args.token = args.token or env.get("PIPELINE_API_TOKEN")
+        if not args.token:
+            parser.error(f"no pipeline token: pass --token, or set PIPELINE_API_TOKEN in {args.env_file}")
     if args.services < 1 or args.scans < 1 or args.max_findings < 0:
         parser.error("--services and --scans must be at least 1; --max-findings must not be negative")
     return args
+
+
+def read_env(path):
+    """KEY=VALUE pairs from a Docker Compose .env file (missing file: empty)."""
+    values = {}
+    try:
+        for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                value = value[1:-1]
+            key = key.strip()
+            if key.startswith("export "):
+                key = key[len("export "):].strip()
+            values[key] = value
+    except OSError:
+        pass
+    return values
+
+
+def check_reachable(args):
+    """Fail fast with a clear message if CATS is not answering."""
+    context = None
+    if args.url.lower().startswith("https"):
+        context = ssl.create_default_context(cafile=args.ca_file) if args.ca_file else ssl.create_default_context()
+        if args.insecure:
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+    try:
+        with urllib.request.urlopen(args.url.rstrip("/") + "/health", timeout=10, context=context) as response:
+            return response.status == 200
+    except urllib.error.HTTPError as error:
+        return error.code < 500
+    except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as error:
+        print(f"CATS is not reachable at {args.url} ({error}).\n"
+              "Start it first (for example: docker compose up -d), or pass --url.", file=sys.stderr)
+        sys.exit(2)
 
 
 def weighted(rng, items):
@@ -436,8 +490,13 @@ def main():
              for number, (profile, tier) in enumerate(zip(profiles, tiers), start=1)]
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        check_reachable(args)
+        print(f"Loading {args.services} services ({args.scans} scans each) into {args.url}", flush=True)
     send = None if args.dry_run else sender(args)
-    now = datetime.now(timezone.utc).replace(microsecond=0)
+    # Anchored to the start of the day, so a same-day re-run sends identical
+    # evidence (accepted as duplicates) instead of conflicting scan times.
+    now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     summary = {"services": 0, "scans": 0, "vulnerabilities": 0, "configuration": 0, "failed": 0, "trimmed": 0}
     started = time.time()
     print(f"{'#':>4}  {'service':<28} {'profile':<12} {'tier':<10} {'scan':>4}  {'vulns':>6} {'config':>6}  result", flush=True)
