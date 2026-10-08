@@ -42,7 +42,7 @@ from time import perf_counter
 from types import SimpleNamespace
 from uuid import uuid4
 
-from sqlalchemy import bindparam, case, event, func, insert, select, update
+from sqlalchemy import bindparam, case, delete, event, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -107,6 +107,7 @@ def _mark_changed_services(session, _context):
     finding_ids: set[int] = set()
     policy_ids: set[int] = set()
     execution_ids: set[int] = set()
+    deleted_services: set[int] = set()
     for instance in chain(session.new, session.dirty, session.deleted):
         if isinstance(instance, ServicePosture):
             continue
@@ -117,7 +118,10 @@ def _mark_changed_services(session, _context):
                 service_ids.add(instance.service_id)
         elif isinstance(instance, Service):
             if instance.id is not None:
-                (new_services if instance in session.new else service_ids).add(instance.id)
+                if instance in session.deleted:
+                    deleted_services.add(instance.id)
+                else:
+                    (new_services if instance in session.new else service_ids).add(instance.id)
         elif isinstance(instance, FindingObservation):
             finding = instance.__dict__.get("finding")
             if finding is not None and finding.service_id is not None:
@@ -136,18 +140,25 @@ def _mark_changed_services(session, _context):
         elif isinstance(instance, ExecutionSummary):
             if instance.execution_id is not None:
                 execution_ids.add(instance.execution_id)
-    if not (service_ids or new_services or finding_ids or policy_ids or execution_ids):
+    if not (service_ids or new_services or finding_ids or policy_ids or execution_ids or deleted_services):
         return
     connection = session.connection()
+    for chunk in _chunks(deleted_services):
+        # Deleted with its service, in the same transaction (no foreign key,
+        # so a cache row can never block the deletion).
+        connection.execute(delete(ServicePosture.__table__).where(member_of(ServicePosture.service_id, chunk, numeric=True)))
     for chunk in _chunks(finding_ids):
         service_ids.update(connection.execute(select(Finding.service_id).where(member_of(Finding.id, chunk, numeric=True))).scalars())
     for chunk in _chunks(policy_ids):
         service_ids.update(connection.execute(select(PolicyFinding.service_id).where(member_of(PolicyFinding.id, chunk, numeric=True))).scalars())
     for chunk in _chunks(execution_ids):
         service_ids.update(connection.execute(select(Execution.service_id).where(member_of(Execution.id, chunk, numeric=True))).scalars())
-    _bump(connection, service_ids - new_services)
+    _bump(connection, service_ids - new_services - deleted_services)
     for service_id in new_services:
         # A row exists from creation onward, so no later write can miss it.
+        # SQLite can reuse a deleted service's id: replace any leftover row
+        # (written by an earlier release that did not delete it).
+        connection.execute(delete(ServicePosture.__table__).where(ServicePosture.service_id == service_id))
         connection.execute(insert(ServicePosture.__table__).values(service_id=service_id, data_generation=1))
 
 
@@ -210,6 +221,11 @@ def _detect_bulk_changes(state):
         return
     name, values = narrowed
     owner = keys[name]
+    if state.is_delete and table.name == Service.__table__.name:
+        connection = state.session.connection()
+        for chunk in _chunks(values):
+            connection.execute(delete(ServicePosture.__table__).where(member_of(ServicePosture.service_id, chunk, numeric=True)))
+        return
     pending = state.session.info.setdefault(_PENDING, {})
     if owner is None:
         pending.setdefault(None, set()).update(values)
@@ -259,7 +275,9 @@ def _discard(session):
 
 
 def ensure_rows(connection):
-    """Startup migration: every service has a posture row to invalidate."""
+    """Startup migration: every service has a posture row to invalidate, and
+    no row outlives its service (earlier releases left rows behind)."""
+    connection.execute(delete(ServicePosture.__table__).where(ServicePosture.service_id.not_in(select(Service.id))))
     existing = select(ServicePosture.service_id)
     missing = [row[0] for row in connection.execute(select(Service.id).where(Service.id.not_in(existing)))]
     for chunk in _chunks(missing, 100):
@@ -360,10 +378,12 @@ def valid_until(db, ids, configurations, now) -> dict[int, datetime | None]:
         gather(PolicyFinding, policy_offsets or {90})
         exceptions(ExceptionRecord, Finding, ExceptionRecord.finding_id)
         exceptions(PolicyExceptionRecord, PolicyFinding, PolicyExceptionRecord.policy_finding_id)
+        # Overdue means due_date < now (strict), so an entry due exactly now
+        # becomes overdue immediately after: the boundary is due_date + 1 µs.
         for row in db.execute(select(PoamEntry.service_id, func.min(PoamEntry.due_date)).where(
-                member_of(PoamEntry.service_id, ids, numeric=True), PoamEntry.status == "active", PoamEntry.due_date > now).group_by(PoamEntry.service_id)):
+                member_of(PoamEntry.service_id, ids, numeric=True), PoamEntry.status == "active", PoamEntry.due_date >= now).group_by(PoamEntry.service_id)):
             if row[1] is not None:
-                boundaries[row[0]].append(_aware(row[1]))
+                boundaries[row[0]].append(_aware(row[1]) + timedelta(microseconds=1))
     return {sid: min((value for value in values if value > now), default=None) for sid, values in boundaries.items()}
 
 
@@ -514,11 +534,10 @@ def schedule(bind, service_ids, kinds=KINDS):
 
 # ---------------------------------------------------------------- reading
 
-def _load(db, kind, service_ids, configurations, now):
-    token, epoch = _intelligence_token(), current_epoch(db)
+def _read(db, kind, ids):
     row_column = _column(kind, "row")
     rows = {}
-    for chunk in _chunks(service_ids):
+    for chunk in _chunks(ids):
         for row in db.execute(select(
                 ServicePosture.service_id, ServicePosture.data_generation,
                 _column(kind, "built_generation").label("built"), _column(kind, "algorithm").label("algorithm"),
@@ -526,6 +545,12 @@ def _load(db, kind, service_ids, configurations, now):
                 _column(kind, "config_digest").label("digest"), _column(kind, "valid_until").label("until"),
                 row_column.label("row")).where(member_of(ServicePosture.service_id, chunk, numeric=True))):
             rows[row.service_id] = row
+    return rows
+
+
+def _classify(db, rows, service_ids, configurations, now):
+    """(stale, missing) service ids against the current provenance."""
+    token, epoch = _intelligence_token(), current_epoch(db)
     stale, missing = [], []
     for sid in service_ids:
         row = rows.get(sid)
@@ -535,20 +560,44 @@ def _load(db, kind, service_ids, configurations, now):
                   and row.token == token and row.digest == config_digest(configurations[sid])
                   and (row.until is None or _aware(row.until) > now)):
             stale.append(sid)
-    # In-memory SQLite has one shared connection: no background refresh there.
-    refreshing = len(missing) + len(stale) > sync_limit() and background_enabled(db.get_bind())
-    synchronous = missing if refreshing else missing + stale
-    if refreshing:
-        # Portfolio-wide invalidation (e.g. catalog refresh): keep the GET
-        # bounded, serve the previous rows and refresh in the background.
-        schedule(db.get_bind(), stale, kinds=(kind,))
-    for chunk in _chunks(synchronous, 250):
-        rebuild(db.get_bind(), kind, chunk, now=now)
-    for chunk in _chunks(synchronous):
-        for row in db.execute(select(ServicePosture.service_id, row_column.label("row")).where(member_of(ServicePosture.service_id, chunk, numeric=True))):
-            rows[row.service_id] = row
+    return stale, missing
+
+
+def _load(db, kind, service_ids, configurations, now):
+    rows = _read(db, kind, service_ids)
+    stale, missing = _classify(db, rows, service_ids, configurations, now)
+    background = background_enabled(db.get_bind())
+    limit = sync_limit()
+    # Bounded inline work. Above the bound (portfolio-wide invalidation, or a
+    # first start before preparation finished), previous rows are served as
+    # stale, services without any row yet are reported as preparing, and the
+    # rest is rebuilt in the background. In-memory SQLite has one shared
+    # connection and no background work, so everything is inline there.
+    if background and len(missing) + len(stale) > limit:
+        synchronous = missing[:limit]
+        deferred = missing[limit:] + stale
+        schedule(db.get_bind(), deferred, kinds=(kind,))
+    else:
+        synchronous, deferred = missing + stale, []
+    if synchronous:
+        for chunk in _chunks(synchronous, 250):
+            rebuild(db.get_bind(), kind, chunk, now=now)
+        # Each statement sees committed rows (READ COMMITTED / SQLite default).
+        rows.update(_read(db, kind, synchronous))
+        # A write that raced the rebuild leaves its row stale: rebuild once more,
+        # then report whatever is still not current as refreshing.
+        raced, _ = _classify(db, rows, synchronous, configurations, now)
+        if raced:
+            rebuild(db.get_bind(), kind, raced, now=now)
+            rows.update(_read(db, kind, raced))
+            raced, _ = _classify(db, rows, raced, configurations, now)
+            if raced and background:
+                schedule(db.get_bind(), raced, kinds=(kind,))
+        deferred = deferred + raced
+    preparing = [sid for sid in service_ids if sid not in rows or rows[sid].row is None]
     meta = {"services": len(service_ids), "stale": len(stale), "missing": len(missing),
-            "recomputed": len(synchronous), "refreshing": refreshing}
+            "recomputed": len(synchronous), "refreshing": bool(deferred) or bool(preparing),
+            "preparing": len(preparing)}
     return {sid: rows[sid].row for sid in service_ids if sid in rows and rows[sid].row is not None}, meta
 
 
@@ -560,7 +609,9 @@ def services_rows(db, services, configurations, configuration, now):
     stored, meta = _load(db, "services", ids, configurations, now)
     rows, poam_counts = [], {}
     for service in services:
-        value = stored[service.id]
+        value = stored.get(service.id)
+        if value is None:
+            continue  # still being prepared: reported in meta["preparing"], never shown with invented values
         row = {key: CountOnly(int(value[key])) for key in _SERVICES_ROW_COUNTS}
         row.update({key: value[key] for key in ("compliant", "version", "evidence_state", "oldest_age", "archive")})
         row.update(service=service, policy_findings=[], poam=dict(value["poam"]))
@@ -608,7 +659,8 @@ def warm(bind, chunk_size=200, max_chunks=1000) -> int:
         for _ in range(max_chunks):
             with Session(bind=bind) as db:
                 epoch = current_epoch(db)
-                ids = list(db.scalars(select(ServicePosture.service_id).where(
+                ids = list(db.scalars(select(ServicePosture.service_id).join(
+                    Service, Service.id == ServicePosture.service_id).where(
                     (_column(kind, "built_generation") != ServicePosture.data_generation)
                     | (_column(kind, "algorithm") != ALGORITHM_VERSION)
                     | _column(kind, "token").is_distinct_from(token)

@@ -184,7 +184,9 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
 
     from .service_posture import cyber_rows
     rows_by_id, posture = cyber_rows(db, services, configs, configuration, now)
-    rows = [{**rows_by_id[service.id], "service": service} for service in services]
+    # Services whose posture is still being prepared are not listed (no
+    # invented values); the page states how many and that totals exclude them.
+    rows = [{**rows_by_id[service.id], "service": service} for service in services if service.id in rows_by_id]
     latest = select(Execution.id.label("id"), Execution.service_id.label("service_id"),
                     func.row_number().over(partition_by=Execution.service_id,
                         order_by=(Execution.scanned_at.desc(), Execution.id.desc())).label("rank")).where(member_of(Execution.service_id, ids, numeric=True)).subquery()
@@ -210,4 +212,5 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     data["services"] = [{"service_key": service.service_key, "name": service.name} for service in services]
     data["pagination"] = {"page": page, "page_size": page_size, "total": total, "pages": pages, "has_previous": page > 1, "has_next": page < pages}
     data["posture_refreshing"] = posture["refreshing"]
+    data["posture_preparing"] = posture.get("preparing", 0)
     return data

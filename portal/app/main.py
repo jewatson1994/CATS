@@ -7053,6 +7053,7 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
         poam_overdue_count=sum(item["overdue"] for item in visible_poam),
         stage_groups=stage_groups if lifecycle == "active" else [],
         posture_refreshing=posture_meta["refreshing"],
+        posture_preparing=posture_meta.get("preparing", 0),
     )
     stage_timings["page_context_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_timings["route_ms"] = round((time.perf_counter() - request_started) * 1000, 2)

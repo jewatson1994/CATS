@@ -270,3 +270,117 @@ def test_bulk_statements_invalidate_only_the_services_they_name():
         assert service_posture.current_epoch(db) == epoch
         db.execute(delete(DependencyWatchlistMatch)); db.commit()  # names no service
         assert service_posture.current_epoch(db) != epoch
+
+
+def test_service_deletion_removes_posture_and_a_reused_id_starts_fresh(monkeypatch):
+    """Deleting the newest service and creating another must work on SQLite,
+    which can reuse the deleted id (review P1)."""
+    from test_portal import csrf
+    client = new_client()
+    ingest(client, "doomed", ["CVE-2024-9100"])
+    services(client)
+    with SessionLocal() as db:
+        doomed_id = db.scalar(select(Service.id).where(Service.service_key == "doomed"))
+        assert db.get(ServicePosture, doomed_id) is not None
+    from app.models import ServiceArchiveEvent
+    with SessionLocal() as db:
+        db.add(ServiceArchiveEvent(service_id=doomed_id, action="archive", reason="test", performed_by="admin")); db.commit()
+    monkeypatch.setenv("ALLOW_SERVICE_DELETE", "true")
+    response = client.post("/services/doomed/delete", data={"confirmation": "doomed", "reason": "test", "csrf_token": csrf(client)},
+                           follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        assert db.get(ServicePosture, doomed_id) is None
+        # An orphan left by an earlier release must not block a new service with the same id.
+        db.execute(ServicePosture.__table__.insert().values(service_id=doomed_id, data_generation=7,
+                                                             services_built_generation=7, services_algorithm=1,
+                                                             services_row={"stale": True}))
+        db.commit()
+    ingest(client, "reborn", ["CVE-2024-9101"])
+    with SessionLocal() as db:
+        reborn_id = db.scalar(select(Service.id).where(Service.service_key == "reborn"))
+        row = db.get(ServicePosture, reborn_id)
+        assert row is not None and row.services_row != {"stale": True}
+    assert services(client)["reborn"]["active_count"] + services(client)["reborn"]["noncompliant_count"] >= 0
+    with SessionLocal() as db:  # startup migration removes orphans of services deleted by bulk statements
+        db.execute(ServicePosture.__table__.insert().values(service_id=987654, data_generation=1))
+        db.commit()
+        service_posture.ensure_rows(db.connection())
+        db.commit()
+        assert db.get(ServicePosture, 987654) is None
+
+
+def test_a_write_that_races_the_inline_rebuild_is_never_served_as_current(shadow, monkeypatch):
+    """After an inline rebuild the reader re-checks provenance (review P2)."""
+    client = new_client()
+    ingest(client, "racy", ["CVE-2024-9200"])
+    services(client)
+    with SessionLocal() as db:
+        sid = db.scalar(select(Service.id).where(Service.service_key == "racy"))
+        db.execute(update(ServicePosture).where(ServicePosture.service_id == sid)
+                   .values(data_generation=ServicePosture.data_generation + 1)); db.commit()
+    original = service_posture.rebuild
+    calls = []
+
+    def racing_rebuild(bind, kind, ids, now=None):
+        result = original(bind, kind, ids, now=now)
+        if kind == "services" and not calls:
+            # A writer commits right after the rebuild published its rows.
+            with SessionLocal() as writer:
+                writer.execute(update(ServicePosture).where(ServicePosture.service_id == sid)
+                               .values(data_generation=ServicePosture.data_generation + 1)); writer.commit()
+        calls.append(kind)
+        return result
+    monkeypatch.setattr(service_posture, "rebuild", racing_rebuild)
+    services(client)
+    assert calls.count("services") == 2  # rebuilt again because the first result was already stale
+    row = posture_row("racy")
+    assert row.services_built_generation == row.data_generation
+
+    def always_raced(bind, kind, ids, now=None):
+        result = original(bind, kind, ids, now=now)
+        with SessionLocal() as writer:
+            writer.execute(update(ServicePosture).where(ServicePosture.service_id == sid)
+                           .values(data_generation=ServicePosture.data_generation + 1)); writer.commit()
+        return result
+    monkeypatch.setattr(service_posture, "rebuild", always_raced)
+    with SessionLocal() as db:  # make the row stale again so the read rebuilds it
+        db.execute(update(ServicePosture).where(ServicePosture.service_id == sid)
+                   .values(data_generation=ServicePosture.data_generation + 1)); db.commit()
+    shadow.clear()
+    response = client.get("/api/dashboard/services?page_size=200")
+    # Still not current after the retry: reported as refreshing, not as current.
+    assert response.status_code == 200 and response.json()["posture_refreshing"] is True
+
+
+def test_poam_due_exactly_now_sets_a_boundary_just_after():
+    from app.models import PoamEntry
+    now = utcnow()
+    client = new_client()
+    ingest(client, "due-now", ["CVE-2024-9300"])
+    with SessionLocal() as db:
+        sid = db.scalar(select(Service.id).where(Service.service_key == "due-now"))
+        admin_id = db.scalar(select(User.id).where(User.username == "admin"))
+        db.add(PoamEntry(service_id=sid, item_type="vulnerability", title="due", description="d", remediation="r",
+                         status="active", due_date=now, created_by_id=admin_id))
+        db.commit()
+        boundary = service_posture.valid_until(db, [sid], [main.get_configuration(db)], now)[sid]
+    assert boundary is not None and service_posture._aware(boundary) <= service_posture._aware(now) + timedelta(milliseconds=1)
+
+
+def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(monkeypatch):
+    client = new_client()
+    for index in range(4):
+        ingest(client, f"prep-{index}", ["CVE-2024-9400"])
+    with SessionLocal() as db:
+        db.execute(update(ServicePosture).values(services_row=None, cyber_row=None)); db.commit()
+    monkeypatch.setenv("CATS_POSTURE_SYNC_LIMIT", "1")
+    monkeypatch.setattr(service_posture, "background_enabled", lambda bind: True)
+    scheduled = []
+    monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds=service_posture.KINDS: scheduled.append(set(ids)))
+    body = client.get("/api/dashboard/services?page_size=200").json()
+    assert body["posture_preparing"] == 3 and body["posture_refreshing"] is True
+    assert len(body["views"]) == 1  # no invented rows for services not yet prepared
+    assert scheduled and len(scheduled[0]) == 3
+    cyber_body = client.get("/api/dashboard/cybersecurity?page_size=200").json()
+    assert cyber_body["posture_preparing"] == 3 and cyber_body["metrics"]["services"] == 1
