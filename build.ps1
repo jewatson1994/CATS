@@ -135,14 +135,14 @@ try {
         -d `
         --force-recreate `
         --wait `
-        portal patch-worker
+        portal patch-worker scan-worker
 
     if ($LASTEXITCODE -ne 0) {
         throw "Docker Compose recreation failed."
     }
 
     Write-Host ""
-    Write-Host "Portal and patch-worker recreated successfully." -ForegroundColor Green
+    Write-Host "Portal, patch-worker, and scan-worker recreated successfully." -ForegroundColor Green
     Write-Host ""
 
     # ---------------------------------------------------------
@@ -164,6 +164,15 @@ try {
         throw "Could not locate the patch-worker container."
     }
 
+    $scanWorkerContainer = docker @composeArgs ps -q scan-worker
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($scanWorkerContainer)) {
+        throw "Could not locate the scan-worker container."
+    }
+    $scanWorkerImage = docker inspect $scanWorkerContainer --format "{{.Config.Image}}"
+    if ($LASTEXITCODE -ne 0 -or $scanWorkerImage -ne $expectedImage) {
+        throw "Scan-worker image mismatch or inspection failed. Expected '$expectedImage'."
+    }
+
     $portalImage = docker inspect $portalContainer --format "{{.Config.Image}}"
 
     if ($LASTEXITCODE -ne 0) {
@@ -181,6 +190,7 @@ try {
     Write-Host "Expected:     $expectedImage"
     Write-Host "Portal:       $portalImage"
     Write-Host "Patch Worker: $workerImage"
+    Write-Host "Scan Worker:  $scanWorkerImage"
     Write-Host "----------------------------------------"
     Write-Host ""
 
@@ -192,7 +202,7 @@ try {
         throw "Patch-worker image mismatch. Expected '$expectedImage' but found '$workerImage'."
     }
 
-    foreach ($container in @($portalContainer, $workerContainer)) {
+    foreach ($container in @($portalContainer, $workerContainer, $scanWorkerContainer)) {
         $deployedImageId = docker inspect $container --format "{{.Image}}"
         if ($LASTEXITCODE -ne 0) {
             throw "Could not inspect the deployed image for container '$container'."
