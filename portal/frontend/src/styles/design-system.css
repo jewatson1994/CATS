@@ -184,6 +184,18 @@ main > .panel + .panel, main > .panel + section.panel { margin-top: var(--space-
   font-size: var(--text-sm); font-weight: 500 !important; text-decoration: none !important; white-space: nowrap; cursor: pointer; box-shadow: none !important;
 }
 .secondary-button:hover, .button-secondary:hover, summary.secondary-button:hover { background: var(--surface-raised) !important; border-color: var(--text-muted) !important; }
+/* Administration actions share the OCI registry outline treatment. */
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"]),
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) a.button-secondary,
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) a.secondary-button {
+  border: 1px solid var(--border) !important; background: var(--surface) !important; color: var(--accent) !important;
+  border-radius: var(--radius-md); font-weight: 600 !important; box-shadow: none !important;
+}
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"]):hover,
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) a.button-secondary:hover,
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) a.secondary-button:hover {
+  background: var(--surface-raised) !important; border-color: var(--accent) !important; filter: none;
+}
 .danger-button, button.danger-button, .danger-zone .danger-button {
   display: inline-flex; align-items: center; justify-content: center; min-height: var(--control-height); padding: 0 var(--space-4);
   border: 1px solid var(--danger) !important; border-radius: var(--radius-md); background: transparent !important; color: var(--danger) !important; font-weight: 600;
@@ -567,3 +579,12 @@ td > dl dd { margin: 0; font-weight: 600; text-transform: capitalize; }
 @keyframes cats-page-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
 @media (prefers-reduced-motion: reduce) { .page-navigating::before { animation: none; width: 100%; opacity: .6; } .page-navigating { transition: none; } }
 .page-refresh-notice { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--muted); font-size: var(--text-sm); }
+
+.image-signing-form { display: grid; gap: var(--space-4); }
+.image-signing-form .config-grid { align-items: start; }
+.image-signing-form .checkbox-label { display: flex; align-items: center; gap: var(--space-2); }
+.image-signing-form input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; flex: 0 0 16px; }
+.image-signing-form input[type="file"] { width: 100%; min-width: 0; }
+.image-signing-form .config-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.warning-policy { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.warning-policy .policy-check { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }

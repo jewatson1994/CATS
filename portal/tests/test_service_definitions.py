@@ -34,6 +34,7 @@ def test_examples_and_exact_oci():
     assert result['counts']['normalized'] == 5
     assert result['components'][2]['chart_name'] == 'dex-k8s-authenticator'
     assert result['components'][3]['reference'].endswith('/postgresql:15.5.38')
+    assert result['components'][3]['chart_name'] == 'postgresql'
     json.dumps(result)
 
 
@@ -136,3 +137,30 @@ def test_alias_expansion_budget(monkeypatch):
     text = 'a: &a [1, 2, 3, 4]\nb: &b [*a, *a, *a, *a]\nc: [*b, *b, *b, *b, *b]\nservices: {}'
     with pytest.raises(DefinitionError):
         parse_definition(text, 'singularity')
+
+
+@pytest.mark.parametrize('embedded_tag', [False, True])
+def test_oci_release_aliases_preserve_chart_identity(embedded_tag):
+    url = 'oci://registry-1.docker.io/bitnamicharts/postgresql'
+    if embedded_tag:
+        url += ':15.5.38'
+    body = 'services:\n' + ''.join(
+        f'  {alias}-postgres:\n'
+        f'    enabled: false\n'
+        f'    sourceType: oci\n'
+        f'    ociRepo: {{repoName: {alias}-postgresql, url: "{url}", tag: "15.5.38"}}\n'
+        for alias in ('confluence', 'jira')
+    )
+    components = parse_definition(body)['components']
+    assert [c['logical_name'] for c in components] == ['confluence-postgres', 'jira-postgres']
+    assert all(c['status'] == 'normalized' and c['chart_name'] == 'postgresql' for c in components)
+    assert all(c['reference'] == 'oci://registry-1.docker.io/bitnamicharts/postgresql:15.5.38' for c in components)
+
+
+def test_oci_embedded_version_conflict_is_rejected():
+    result = parse_definition("""services:
+  db:
+    sourceType: oci
+    ociRepo: {repoName: db-release, url: "oci://registry.example/charts/postgresql:15.5.37", tag: "15.5.38"}
+""")
+    assert result['components'][0]['status'] == 'unresolved'

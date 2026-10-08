@@ -93,3 +93,17 @@ describe('native administration workflows', () => {
     expect(container.querySelector('form[action="/admin/configuration/repositories"] input[name="verify_tls"][type="hidden"]')).toHaveValue('false');
   });
 });
+
+it('maps named scopes to IDs without displaying an ID directory', () => {
+ window.history.replaceState({}, '', '/admin/configuration#identity-access');
+ const {container}=render(<Settings data={{...permissions,oidc_groups:[{id:4,name:'Security team'}],oidc_services:[{id:9,name:'Portal'}],oidc_roles:[{id:2,name:'Reviewer'}]}}/>);
+ fireEvent.click(screen.getByRole('button',{name:'Add mapping'}));
+ fireEvent.change(screen.getByLabelText('Scope'),{target:{value:'group'}});
+ fireEvent.change(screen.getByLabelText('Group'),{target:{value:'4'}});
+ const form=container.querySelector('form[action="/admin/configuration/oidc-mappings"]') as HTMLFormElement;
+ expect(new FormData(form).get('scope_id')).toBe('4');
+ fireEvent.change(screen.getByLabelText('Scope'),{target:{value:'service'}});
+ fireEvent.change(screen.getByLabelText('Service'),{target:{value:'9'}});
+ expect(new FormData(form).get('scope_id')).toBe('9');
+ expect(screen.queryByText(/Group IDs:/)).not.toBeInTheDocument();
+});

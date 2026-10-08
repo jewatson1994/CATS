@@ -1,0 +1,21 @@
+import {cleanup, fireEvent, render, screen} from '@testing-library/react';
+import {afterEach, expect, it, vi} from 'vitest';
+import {Page} from './cybersecurity';
+afterEach(() => {cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks();});
+it('loads severity contributors on demand and exposes both combined coverage metrics', async () => {
+  Object.defineProperty(HTMLDialogElement.prototype, 'showModal', {configurable:true, value:function (this: HTMLDialogElement) {this.setAttribute('open', '');}});
+  Object.defineProperty(HTMLDialogElement.prototype, 'close', {configurable:true, value:function (this: HTMLDialogElement) {this.removeAttribute('open'); this.dispatchEvent(new Event('close'));}});
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({title:'Critical active findings',description:'Current active critical findings.',services:[{service_key:'api',name:'API',count:2}],cves:[{cve:'CVE-2026-1',count:2}],packages:[{package:'openssl',count:2}]}), {headers:{'content-type':'application/json'}}));
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{metrics:{critical:2,kev:1,watchlist:3,poam:4,poam_overdue:2},rows:[]}}/>);
+  expect(fetch).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', {name:'Watchlist'})).toBeInTheDocument();
+  expect(screen.getByRole('button', {name:'Overdue POA&M'})).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name:'Critical 2'}));
+  expect(await screen.findByText('CVE-2026-1')).toBeInTheDocument();
+  expect(screen.getByText('openssl')).toBeInTheDocument();
+  expect(screen.getByRole('link', {name:'API'})).toHaveAttribute('href','/services/api');
+  expect(fetch.mock.calls[0][0]).toContain('/api/dashboard/cybersecurity/metrics/critical');
+  fireEvent.click(screen.getByRole('button', {name:'Close'}));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+});

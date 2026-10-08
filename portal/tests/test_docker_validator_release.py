@@ -3,6 +3,8 @@ import hashlib
 import io
 import json
 import tarfile
+import importlib.util
+from pathlib import Path
 
 import pytest
 
@@ -59,6 +61,28 @@ def test_release_verifies_real_image_archives(tmp_path, containerd):
         'selftest': {'file': 'selftest.zip', 'sha256': file_digest(tmp_path / 'selftest.zip'), 'image_reference': cats_reference}}
     (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
     assert load_release(tmp_path)['cats_image']['image_id'] == cats_id
+    specification = importlib.util.spec_from_file_location('docker_release_preparation', Path(__file__).resolve().parents[2] / 'scripts/prepare-docker-validator-release.py')
+    preparation = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(preparation)
+    env_file = tmp_path / '.env'
+    env_file.write_text("DATABASE_PASSWORD='keep-me'\nCATS_MANAGED_VALIDATOR_RELEASE_SOURCE=old\n")
+    preparation.activate_release(tmp_path, env_file)
+    assert env_file.read_text() == "DATABASE_PASSWORD='keep-me'\nCATS_MANAGED_VALIDATOR_RELEASE_SOURCE='" + tmp_path.resolve().as_posix() + "'\n"
+    cats_path.write_bytes(b'corrupt')
+    with pytest.raises(ValueError, match='digest mismatch'):
+        preparation.activate_release(tmp_path, env_file)
+    assert "DATABASE_PASSWORD='keep-me'" in env_file.read_text()
+
+
+def test_release_activation_preserves_windows_env_encoding(tmp_path, monkeypatch):
+    specification = importlib.util.spec_from_file_location('docker_release_activation', Path(__file__).resolve().parents[2] / 'scripts/prepare-docker-validator-release.py')
+    preparation = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(preparation)
+    monkeypatch.setattr(preparation, 'load_release', lambda source: {})
+    env_file = tmp_path / '.env'
+    env_file.write_bytes(b"\xef\xbb\xbf# configuration\r\nPASSWORD='unchanged'\r\n")
+    preparation.activate_release(tmp_path, env_file)
+    assert env_file.read_bytes() == b"\xef\xbb\xbf# configuration\r\nPASSWORD='unchanged'\r\n" + ("CATS_MANAGED_VALIDATOR_RELEASE_SOURCE='" + tmp_path.as_posix() + "'\r\n").encode()
 
 
 @pytest.mark.parametrize('containerd', [False, True])

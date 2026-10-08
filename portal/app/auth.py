@@ -327,7 +327,7 @@ PERMISSIONS = {
     "audit.view": "View CATS audit history",
     "user.manage": "Create, disable, and reset user accounts",
     "role.manage": "Create roles and manage role assignments",
-    "service.delete": "Permanently delete archived services",
+    "service.delete": "Permanently delete services and all related data",
     "config.manage": "Manage CATS operational configuration",
     "scan.ingest": "Ingest completed scans into scoped services",
     "evidence.remove": "Remove current missing-evidence observations",

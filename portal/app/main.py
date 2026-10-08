@@ -7063,7 +7063,8 @@ def cybersecurity_portfolio_data(request: Request, q: str = "", status: str = "a
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
-              page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+              page: int = 1, page_size: int = 50, status: str = "all", attention: str = "all",
+              severity: str = "all", component: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
     if not auth:
         return templates.TemplateResponse(request, "home.html", {
             "current_user": None, "csrf_token": "", "can": lambda _permission: False,
@@ -7072,11 +7073,13 @@ def dashboard(request: Request, archived: bool = False, lifecycle: str = "active
     # Rows are served from the Service Posture read model, so the page carries
     # them directly: one request, no envelope -> data-URL waterfall.
     return templates.TemplateResponse(request, "dashboard.html", _services_dashboard_context(
-        request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort, page=page, page_size=page_size))
+        request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort, page=page, page_size=page_size,
+        status=status, attention=attention, severity=severity, component=component, since=since))
 
 
 def _services_dashboard_context(request: Request, db: Session, auth: AuthContext, *, archived: bool, lifecycle: str,
-                                q: str, sort: str, page: int, page_size: int) -> dict:
+                                q: str, sort: str, page: int, page_size: int, status: str = "all", attention: str = "all",
+                                severity: str = "all", component: str = "", since: str = "") -> dict:
     """Services page context from the Service Posture read model."""
     request_started = time.perf_counter()
     stage_timings = {}
@@ -7094,12 +7097,23 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
         lifecycle = "archived"
     if lifecycle not in {"active", "staged", "archived"}:
         raise HTTPException(422, detail="Unknown service lifecycle")
-    from .dashboard_paging import dashboard_page
-    views, visible_all, lifecycle_counts, sort, page, page_size, total_pages = dashboard_page(
-        db, views, lifecycle=lifecycle, query=q, sort=sort,
-        descending=request.query_params.get("direction") == "desc", page=page, page_size=page_size)
-    total_count = len(visible_all)
-    dashboard_params = [("lifecycle", lifecycle), ("q", q), ("sort", sort), ("page_size", page_size)]
+    def row_lifecycle(view):
+        return "archived" if view.get("archive") else view["service"].lifecycle_status or "active"
+    lifecycle_counts = {value: sum(row_lifecycle(view) == value for view in views)
+                        for value in ("active", "staged", "archived")}
+    visible_all = [view for view in views if row_lifecycle(view) == lifecycle]
+    from .dashboard_portfolio import portfolio
+    selected_services = [view["service"] for view in visible_all]
+    # Lifecycle selection has already used the archive projection, including legacy records.
+    matrix = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
+                       component=component, since=since, page=page, page_size=page_size,
+                       lifecycle=None, source=(selected_services, configurations, configuration, now))
+    pagination = matrix["pagination"]
+    page, page_size, total_count, total_pages = (pagination[key] for key in ("page", "page_size", "total", "pages"))
+    views_by_key = {view["service"].service_key: view for view in visible_all}
+    views = [views_by_key[row["service"]["service_key"]] for row in matrix["rows"]]
+    dashboard_params = [("lifecycle", lifecycle), ("q", q), ("status", status), ("attention", attention),
+                        ("severity", severity), ("component", component), ("since", since), ("page_size", page_size)]
     pagination_base = "/?" + urllib.parse.urlencode([(key, value) for key, value in dashboard_params if value not in (None, "")])
     visible_ids = [view["service"].id for view in visible_all]
     visible_poam = [poam_counts.get(service_id, {"active": 0, "pending": 0, "overdue": 0}) for service_id in visible_ids]
@@ -7109,7 +7123,8 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
     stage_timings["authorization_groups_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_started = time.perf_counter()
     context = page_context(auth,
-        views=views, now=now, now_display=now_display,
+        views=views, rows=matrix["rows"], q=q, status=status, attention=attention, severity=severity,
+        component=component, since=since, now=now, now_display=now_display,
         compliant_count=sum(v["compliant"] for v in visible_all),
         noncompliant_count=sum(not v["compliant"] for v in visible_all),
         showing_archived=lifecycle == "archived", lifecycle=lifecycle, lifecycle_counts=lifecycle_counts,
@@ -7120,8 +7135,8 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
         poam_pending_count=sum(item["pending"] for item in visible_poam),
         poam_overdue_count=sum(item["overdue"] for item in visible_poam),
         stage_groups=stage_groups if lifecycle == "active" else [],
-        posture_refreshing=posture_meta["refreshing"],
-        posture_preparing=posture_meta.get("preparing", 0),
+        posture_refreshing=posture_meta["refreshing"] or matrix["posture_refreshing"],
+        posture_preparing=max(posture_meta.get("preparing", 0), matrix["posture_preparing"]),
     )
     stage_timings["page_context_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_timings["route_ms"] = round((time.perf_counter() - request_started) * 1000, 2)
@@ -7132,11 +7147,19 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
 
 @app.get("/api/dashboard/services")
 def dashboard_services_data(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
-                            page: int = 1, page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+                            page: int = 1, page_size: int = 50, status: str = "all", attention: str = "all",
+                            severity: str = "all", component: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     context = _services_dashboard_context(request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort,
-                                          page=page, page_size=page_size)
+                                          page=page, page_size=page_size, status=status, attention=attention,
+                                          severity=severity, component=component, since=since)
     from .frontend import page_data
     return JSONResponse(page_data(request, "dashboard.html", context)["data"], headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/dashboard/cybersecurity/metrics/{metric_key}")
+def cybersecurity_metric_details(metric_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from .dashboard_metric_details import metric_details
+    return JSONResponse(metric_details(db, auth, metric_key), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/dashboard/cybersecurity/services/{service_key}/history")
@@ -9799,17 +9822,31 @@ def delete_service(
     auth: AuthContext = Depends(require_permission("service.delete", scoped=True)),
 ):
     check_csrf(auth, csrf_token)
-    if os.getenv("ALLOW_SERVICE_DELETE", "false").lower() != "true":
-        raise HTTPException(403, detail="Permanent service deletion is disabled")
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(
         selectinload(Service.archive_events)
     ))
     if not service:
         raise HTTPException(404)
-    if not archive_state(service):
-        raise HTTPException(409, detail="Archive the service before permanently deleting it")
-    if confirmation != service.service_key:
-        raise HTTPException(422, detail="Service ID confirmation did not match")
+    if confirmation != f"delete {service.name}":
+        raise HTTPException(422, detail="Type delete followed by the exact service name to confirm")
+    patch_jobs = db.scalars(select(PatchExecution).where(PatchExecution.service_id == service.id)).all()
+    remediation_jobs = db.scalars(select(RemediationExecution).where(RemediationExecution.service_id == service.id)).all()
+    remediation_ids = [job.id for job in remediation_jobs]
+    if any(job.status in {"queued", "running"} or getattr(job, "verification_status", "") in {"queued", "running"} for job in [*patch_jobs, *remediation_jobs]) or (remediation_ids and db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id.in_(remediation_ids), DeliveryAttempt.status.in_(["queued", "running"])))):
+        raise HTTPException(409, detail="Wait for active patch, remediation and delivery jobs to finish before deleting this service")
+    if db.scalar(select(DeploymentValidationRun.id).where(DeploymentValidationRun.service_id == service.id, DeploymentValidationRun.status.in_(["QUEUED", "RUNNING"]))) or db.scalar(select(ServiceImage.id).where(ServiceImage.service_id == service.id, ServiceImage.scan_status.in_(["queued", "scanning"]))):
+        raise HTTPException(409, detail="Wait for active service scans and validation to finish before deletion")
+    job_directories = [(PATCH_JOB_ROOT, job.job_key) for job in patch_jobs] + [(REMEDIATION_JOB_ROOT, job.job_key) for job in remediation_jobs]
+    for root, key in job_directories:
+        target = (root / key).resolve()
+        if target.parent != root.resolve() or (root / key).is_symlink():
+            raise HTTPException(409, detail="Unsafe stored job path; service was not deleted")
+    from .models import (BundlePreview, DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture)
+    db.execute(delete(BundlePreview).where(BundlePreview.target_key == service.service_key))
+    if remediation_ids:
+        db.execute(delete(DeliveryAttempt).where(DeliveryAttempt.remediation_id.in_(remediation_ids)))
+    for model in (DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture):
+        db.execute(delete(model).where(model.service_id == service.id))
     finding_ids = list(db.scalars(select(Finding.id).where(Finding.service_id == service.id)))
     policy_finding_ids = list(db.scalars(select(PolicyFinding.id).where(PolicyFinding.service_id == service.id)))
     poam_ids = list(db.scalars(select(PoamEntry.id).where(PoamEntry.service_id == service.id)))
@@ -9849,9 +9886,14 @@ def delete_service(
     db.add(ServiceDeletionAudit(service_key=service.service_key, service_name=service.name,
                                 reason=reason, deleted_by=auth.user.username))
     record_audit(db, auth, "service.deleted", "service", service.id, service_key=service.service_key, reason=reason)
+    # Remove retained local outputs before committing; errors roll back database deletion.
+    for root, key in job_directories:
+        target = root / key
+        if target.exists():
+            shutil.rmtree(target)
     db.delete(service)
     db.commit()
-    return RedirectResponse("/?archived=true", status_code=303)
+    return RedirectResponse("/?deleted=1", status_code=303)
 
 
 @app.get("/requests", response_class=HTMLResponse)
@@ -10080,7 +10122,8 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
                            "mode": purpose_template_policy(db, kind, selected_group_id)[2],
                            "enabled_count": sum(c["enabled"] for c in purpose_template_policy(db, kind, selected_group_id)[0])}
                           for kind in PURPOSE_CATALOG],
-        configuration=configuration, saved=request.query_params.get("saved") == "1",
+        configuration=configuration, cyber_warning_policy=parse_json(get_global_configuration(db).get("cyber_warning_policy"), {}),
+        saved=request.query_params.get("saved") == "1",
         retained_count=retained_count, shown_count=len(events),
     ))
 
@@ -10501,6 +10544,7 @@ def workflow_policy_page(request: Request, group_id: str = "", db: Session = Dep
     selected_group_id = requested_group_scope(group_id or (str(groups[0].id) if groups else None), db, auth)
     return templates.TemplateResponse(request, "workflow_policy.html", page_context(
         auth, configuration=get_configuration(db, selected_group_id),
+        cyber_warning_policy=parse_json(get_global_configuration(db).get("cyber_warning_policy"), {}),
         saved=request.query_params.get("saved") == "1", groups=groups,
         selected_group_id=selected_group_id,
     ))
@@ -10765,7 +10809,7 @@ def save_cyber_warning_policy(csrf_token: str = Form(), conditions: list[str] = 
     _set_config_value(db, auth, "cyber_warning_policy", json.dumps(policy), None)
     record_audit(db, auth, "cyber_warning_policy.updated", "portal", "global", conditions=policy)
     db.commit()
-    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+    return RedirectResponse("/admin/general-policy?saved=1", status_code=303)
 
 
 @app.post("/admin/configuration/validator")

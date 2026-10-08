@@ -98,6 +98,8 @@ def job_material(settings: dict, output_mode: str) -> tuple[dict, dict]:
     value = configuration(settings)
     if value.get("enabled") is not True:
         return {}, {}
+    if not value.get("private_key"):
+        raise ValueError("Upload a Cosign private key and its password before enabling image signing. The public key is optional and can be derived automatically.")
     try:
         private = decrypt_secret(value["private_key"])
         pem, fingerprint = public_key(value["public_key"].encode())
@@ -105,7 +107,7 @@ def job_material(settings: dict, output_mode: str) -> tuple[dict, dict]:
             raise ValueError()
         password = decrypt_secret(value["password"]) if value.get("password") else ""
     except Exception as exc:
-        raise ValueError("Signing keys could not be loaded. An administrator must repair Configuration before publishing.") from exc
+        raise ValueError("Signing keys could not be loaded. Check that CATS_CONFIG_ENCRYPTION_KEY is configured and matches the key used when saving them, or upload the signing private key and password again to repair Configuration.") from exc
     return {"signing_enabled": True, "signing_public_key": pem, "signing_fingerprint": fingerprint}, {
         SECRET_ENV[0]: private, SECRET_ENV[1]: password}
 

@@ -26,3 +26,10 @@
 .cyber-matrix .cyber-filters button { padding: 0 var(--space-5) !important; }
 .cyber-version-bar .cyber-previous { background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgb(0 0 0 / 35%) 3px 5px); }
 .cyber-trend { position: relative; max-width: 100%; }
+
+.cyber-detail-trigger{color:inherit;font:inherit;background:transparent;border:0;padding:0;cursor:pointer;text-align:inherit;min-height:0}
+.cyber-detail-trigger:hover{color:var(--accent)}
+.cyber-detail-trigger:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+.cyber-bars button.cyber-bar-row{width:100%;display:grid}
+.cyber-detail-dialog{width:min(760px,calc(100vw - 40px));max-height:85vh;overflow:auto}
+.cyber-detail-dialog ol{padding-left:24px}.cyber-detail-dialog li{padding:10px 4px;border-bottom:1px solid var(--border);overflow-wrap:anywhere}.cyber-detail-dialog li strong{float:right;margin-left:16px}

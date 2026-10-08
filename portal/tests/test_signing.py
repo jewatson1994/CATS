@@ -340,3 +340,16 @@ def test_real_cosign_key_upload_and_wrong_password(monkeypatch, tmp_path):
     assert saved["public_key"].encode() == public
     with pytest.raises(ValueError, match="Unable to unlock"):
         signing.store_keys(private, public, "incorrect", True)
+
+
+def test_enabling_without_saved_key_explains_upload_requirement():
+    with pytest.raises(ValueError, match="Upload a Cosign private key"):
+        signing.job_material({"image_signing": json.dumps({"enabled": True})}, "push")
+
+
+def test_saved_key_with_changed_encryption_key_explains_repair(keys, monkeypatch):
+    saved = signing.store_keys(PRIVATE, keys, "key-password", True)
+    monkeypatch.setenv("CATS_CONFIG_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    with pytest.raises(ValueError, match="CATS_CONFIG_ENCRYPTION_KEY") as error:
+        signing.job_material({"image_signing": json.dumps(saved)}, "push")
+    assert "TEST-PRIVATE" not in str(error.value) and "key-password" not in str(error.value)

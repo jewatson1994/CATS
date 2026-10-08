@@ -27,3 +27,10 @@
 @media(max-width:850px){.validators-workspace .validator-layout{grid-template-columns:1fr}.validators-workspace .validator-layout>section:first-child{position:static}.validators-workspace .validator-checks{grid-template-columns:1fr}.validators-workspace .panel.padded{padding:18px}}
 
 .validators-workspace .validator-progress{margin:var(--space-3) 0}.validators-workspace .validator-progress>p{margin:0 0 var(--space-3);color:var(--text-muted);font-size:var(--text-sm)}
+.validators-workspace .validator-layout>section,.validators-workspace .validator-grid>*{min-width:0}
+.validators-workspace .validator-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+.validators-workspace .validator-layout>section:first-child .validator-grid{grid-template-columns:1fr;gap:0}
+.validators-workspace input:not([type=checkbox]),.validators-workspace select,.validators-workspace textarea{min-width:0;max-width:100%}
+.validators-workspace .validator-choice{box-sizing:border-box;overflow-wrap:anywhere}
+.validators-workspace .validator-title{flex-wrap:wrap}
+@media(max-width:850px){.validators-workspace .validator-grid{grid-template-columns:1fr}}

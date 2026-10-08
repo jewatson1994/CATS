@@ -92,3 +92,25 @@ def test_counts_use_latest_observation_and_query_count_does_not_grow(portfolio_d
         assert larger["pagination"]["total"] == 11
     finally:
         event.remove(db.bind, "before_cursor_execute", collect)
+
+
+def test_matrix_lifecycle_filters_and_bounded_total(portfolio_db):
+    db = portfolio_db
+    active = add_service(db, "active", 1)
+    staged = add_service(db, "staged")
+    staged.lifecycle_status = "staged"
+    archived = add_service(db, "archived", 1)
+    archived.lifecycle_status = "archived"
+    for index in range(3):
+        add_service(db, f"active-{index}", 1)
+    db.commit()
+    active_data = portfolio(db, auth(), page_size=1)
+    assert len(active_data["rows"]) == 1
+    assert active_data["pagination"]["total"] == 4
+    assert active_data["pagination"]["pages"] == 4
+    staged_data = portfolio(db, auth(), lifecycle="staged")
+    assert [row["service"]["service_key"] for row in staged_data["rows"]] == ["staged"]
+    archived_data = portfolio(db, auth(), lifecycle="archived", q="archived")
+    assert [row["service"]["service_key"] for row in archived_data["rows"]] == ["archived"]
+    scoped = portfolio(db, auth({active.id}), lifecycle="archived")
+    assert scoped["pagination"]["total"] == 0

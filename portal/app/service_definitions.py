@@ -200,6 +200,12 @@ def _component(name, entry, adapter):
                     raise ValueError()
             if chart_from_sibling and normalized.rsplit('/', 1)[-1] != chart:
                 normalized = normalize_chart_reference(normalized + '/' + chart)
+            # OCI URLs identify the chart; nested repoName may be a release
+            # alias (e.g. confluence-postgresql). Sibling fields above retain
+            # the existing repository-base + chart-name shorthand.
+            chart = urlsplit(normalized).path.rstrip('/').rsplit('/', 1)[-1]
+            if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,239}', chart):
+                raise ValueError()
             reference = normalize_chart_reference(normalized + ':' + version)
     except ValueError:
         output['reason'] = 'Invalid repository reference or conflicting version; credentials are not allowed'

@@ -34,3 +34,13 @@ it('retains evidence, workflow and hardening field names and bounds',()=>{
  rerender(<PolicyPage data={{...data,configuration:{hardening_overdue_days:'90',hardening_noncompliant:'false'}}} kind="hardening"/>);
  expect(screen.getByLabelText('Overdue hardening treatment')).toHaveValue('false');expect(container.querySelector('form[method=post]')).toHaveAttribute('action','/admin/compliance-frameworks?group_id=2');
 });
+
+it('keeps global warning selections in Workflow independently of group scope',()=>{
+ const {container}=render(<PolicyPage kind="general" data={{...data,cyber_warning_policy:{kev:false,critical_high:true}}}/>);
+ expect(screen.getByLabelText('KEV')).not.toBeChecked();
+ expect(screen.getByLabelText('Critical / High findings')).toBeChecked();
+ const form=container.querySelector('form[action="/admin/configuration/cyber-warning-policy"]') as HTMLFormElement;
+ expect(new FormData(form).getAll('conditions')).not.toContain('kev');
+ expect(form.closest('.panel')?.querySelector('h2')).toHaveTextContent('Workflow');
+ expect(new FormData(form).get('group_id')).toBeNull();
+});

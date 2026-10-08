@@ -286,7 +286,7 @@ def test_service_deletion_removes_posture_and_a_reused_id_starts_fresh(monkeypat
     with SessionLocal() as db:
         db.add(ServiceArchiveEvent(service_id=doomed_id, action="archive", reason="test", performed_by="admin")); db.commit()
     monkeypatch.setenv("ALLOW_SERVICE_DELETE", "true")
-    response = client.post("/services/doomed/delete", data={"confirmation": "doomed", "reason": "test", "csrf_token": csrf(client)},
+    response = client.post("/services/doomed/delete", data={"confirmation": "delete Doomed", "reason": "test", "csrf_token": csrf(client)},
                            follow_redirects=False)
     assert response.status_code == 303
     with SessionLocal() as db:
@@ -384,3 +384,24 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
     assert scheduled and len(scheduled[0]) == 3
     cyber_body = client.get("/api/dashboard/cybersecurity?page_size=200").json()
     assert cyber_body["posture_preparing"] == 3 and cyber_body["metrics"]["services"] == 1
+
+
+def test_services_matrix_filters_paging_and_lifecycle():
+    client = new_client()
+    ingest(client, "matrix-alpha", ["CVE-2024-0001"])
+    ingest(client, "matrix-beta", [])
+    with SessionLocal() as db:
+        staged = Service(service_key="matrix-staged", name="Matrix staged", lifecycle_status="staged")
+        db.add(staged)
+        db.commit()
+    body = client.get("/api/dashboard/services?page_size=1").json()
+    assert body["total_count"] == 2
+    assert len(body["rows"]) == len(body["views"]) == 1
+    filtered = client.get("/api/dashboard/services?q=matrix-alpha&severity=High&page_size=1").json()
+    assert filtered["total_count"] == 1
+    assert filtered["rows"][0]["service"]["service_key"] == "matrix-alpha"
+    assert "severity=High" in filtered["pagination_base"]
+    staged_body = client.get("/api/dashboard/services?lifecycle=staged").json()
+    assert staged_body["total_count"] == 1
+    assert staged_body["rows"][0]["service"]["service_key"] == "matrix-staged"
+    assert staged_body["lifecycle_counts"]["active"] == 2

@@ -53,7 +53,8 @@ def main():
             subprocess.run(['docker', 'pull', node], check=True)
         output = args.cache_dir.resolve() / uuid.uuid4().hex
         subprocess.run([sys.executable, str(ROOT / 'scripts/prepare-docker-validator-release.py'),
-                        '--output', str(output), '--cats-image', args.tag or 'cats:' + args.cats_version], check=True)
+                        '--output', str(output), '--cats-image', args.tag or 'cats:' + args.cats_version,
+                        '--activate-env', str(ROOT / '.env')], check=True)
         print('Set CATS_MANAGED_VALIDATOR_RELEASE_SOURCE=' + str(output))
     subprocess.run(['docker', 'image', 'inspect', args.tag or 'cats:' + args.cats_version,
                     '--format', '{{.Id}} {{.Size}}'], check=True)

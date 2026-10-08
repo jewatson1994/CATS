@@ -186,7 +186,7 @@ def compute_rows(db, services, configs, configuration, now):
     return rows
 
 
-def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50):
+def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50, *, lifecycle="active", source=None):
     from . import main as m
     try:
         since_date = datetime.fromisoformat(since).date() if since else None
@@ -194,10 +194,13 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         raise HTTPException(422, detail="Invalid since date") from exc
     page_size = max(1, min(int(page_size), 200))
     page = max(1, int(page))
-    now = utcnow()
-    configuration = m.get_global_configuration(db)
-    services, configs = m._overview_services_and_configurations(db, auth, configuration, projected=True)
-    services = [service for service in services if service.lifecycle_status == "active"]
+    if source is None:
+        now = utcnow()
+        configuration = m.get_global_configuration(db)
+        services, configs = m._overview_services_and_configurations(db, auth, configuration, projected=True)
+    else:
+        services, configs, configuration, now = source
+    services = [service for service in services if lifecycle is None or service.lifecycle_status == lifecycle]
     ids = [service.id for service in services]
     configs = {sid: configs[sid] for sid in ids}
 

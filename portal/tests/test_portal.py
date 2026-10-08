@@ -3001,7 +3001,7 @@ def test_service_deletion_removes_deployment_validation_rows(monkeypatch):
         db.add(ServiceArchiveEvent(service_id=service.id, action="archive", reason="test", performed_by="admin"))
         db.commit()
     monkeypatch.setenv("ALLOW_SERVICE_DELETE", "true")
-    response = client.post("/services/payments-service/delete", data={"confirmation": "payments-service", "reason": "Remove test service", "csrf_token": csrf(client)}, follow_redirects=False)
+    response = client.post("/services/payments-service/delete", data={"confirmation": "delete Payments Service", "reason": "Remove test service", "csrf_token": csrf(client)}, follow_redirects=False)
     assert response.status_code == 303
     with SessionLocal() as db:
         assert db.scalar(select(DeploymentValidationRun)) is None

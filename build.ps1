@@ -115,7 +115,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Could not acquire the pinned Kind image." }
     }
     $releaseDirectory = Join-Path $PSScriptRoot ('.release-cache/managed-validator/' + [guid]::NewGuid().ToString('N'))
-    & $releasePython @pythonArgs (Join-Path $PSScriptRoot 'scripts/prepare-docker-validator-release.py') --cats-image $expectedImage --output $releaseDirectory
+    & $releasePython @pythonArgs (Join-Path $PSScriptRoot 'scripts/prepare-docker-validator-release.py') --cats-image $expectedImage --output $releaseDirectory --activate-env (Join-Path $PSScriptRoot '.env')
     if ($LASTEXITCODE -ne 0) { throw "Validator release preparation failed." }
     $env:CATS_MANAGED_VALIDATOR_RELEASE_SOURCE = $releaseDirectory
 

@@ -122,10 +122,40 @@ spec:
     return manifest
 
 
+def activate_release(output, env_file):
+    """Persist the verified mount source for subsequent Compose recreations."""
+    source = Path(output).resolve()
+    load_release(source)
+    path = Path(env_file)
+    existing_bytes = path.read_bytes() if path.exists() else b""
+    encoding = "utf-8-sig" if existing_bytes.startswith(b"\xef\xbb\xbf") else "utf-8"
+    existing = existing_bytes.decode(encoding)
+    newline = "\r\n" if "\r\n" in existing else "\n"
+    key = "CATS_MANAGED_VALIDATOR_RELEASE_SOURCE"
+    # Single quotes prevent Compose interpolation of dollar signs in paths.
+    source_text = source.as_posix()
+    if any(character in source_text for character in ("'", "\n", "\r")):
+        raise ValueError("Release path cannot be represented safely in a Compose environment file")
+    lines = [line for line in existing.splitlines() if not re.match(r"^\s*(?:export\s+)?" + key + r"\s*=", line)]
+    lines.append(key + "='" + source_text + "'")
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=path.name + ".validator-release-", suffix=".tmp", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write((newline.join(lines) + newline).encode(encoding))
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True)
     parser.add_argument("--cats-image", required=True, help="Already-built local exact CATS image")
+    parser.add_argument("--activate-env", help="Persist the verified release source in this Compose environment file")
     args = parser.parse_args()
     prepare(args.output, args.cats_image)
+    if args.activate_env:
+        activate_release(args.output, args.activate_env)
     print("Verified Docker-host release prepared: " + str(Path(args.output).resolve()))

@@ -220,3 +220,26 @@ def test_oci_failure_reaches_retained_evidence_and_ui_without_stopping_sibling()
     assert "OCI registry authentication required or denied" in page.text
     assert page_data(page)["definitions"][0]["source_metadata"]["components"][1]["chart_app_version"] == "9.8.7"
     assert "secret-value" not in page.text
+
+
+def test_oci_release_alias_acquisition_checks_actual_chart_identity():
+    import pytest
+    from app.definition_routes import acquire_component
+    from app.service_definitions import parse_definition
+
+    component = parse_definition("""services:
+  confluence-postgres:
+    enabled: false
+    sourceType: oci
+    ociRepo: {repoName: confluence-postgresql, url: "oci://registry-1.docker.io/bitnamicharts/postgresql", tag: "15.5.38"}
+""")['components'][0]
+    with patch.object(main, '_download_public_chart', return_value=[]) as download, \
+         patch.object(main, '_retained_helm_sources', return_value=({'Chart.yaml': 'chart'}, 1)), \
+         patch.object(main, '_chart_identity', return_value=('postgresql', '15.5.38')) as identity:
+        acquired = acquire_component(component, [])
+        assert acquired[2:4] == ('postgresql', '15.5.38')
+        download.assert_called_once_with(component['reference'], [])
+        for actual in [('other-chart', '15.5.38'), ('postgresql', '15.5.37')]:
+            identity.return_value = actual
+            with pytest.raises(ValueError, match='identity or exact version'):
+                acquire_component(component, [])

@@ -62,7 +62,7 @@ def readiness():
             value = {"ready": True, "image_reference": release["cats_image"]["reference"],
                      "image_id": release["cats_image"]["image_id"]}
         except (ValueError, OSError):
-            value = {"ready": False, "reason": "Configure a verified local Docker-host release before provisioning."}
+            value = {"ready": False, "reason": "The local Docker-host release is unavailable or invalid. Build a release, set CATS_MANAGED_VALIDATOR_RELEASE_SOURCE to its prepared directory, and redeploy HQ with that directory mounted read-only. Then refresh this page. Provisioning verifies archive digests and image identities before transfer."}
         READINESS_CACHE.update(expires=time.monotonic() + 30, value=value)
         return dict(value)
 
