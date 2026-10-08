@@ -123,3 +123,63 @@ it('prepares the chunk of the initially served page before the first render', as
   const loaded = await preparePage({schemaVersion: 1, page: 'audit', data: {}} as any) as Record<string, unknown>;
   expect(typeof loaded.Page).toBe('function');
 });
+
+it('forgets every saved page when a refresh reports the session ended', async () => {
+  const store = new PageStore();
+  const fetch = vi.fn().mockResolvedValueOnce(respond(envelope('Page B')));
+  await visitTwoPages(fetch, store);
+  expect(store.size).toBe(2);
+  fetch.mockResolvedValueOnce(respond({detail: 'Your session has expired.'}, 401));
+  const realNow = Date.now;
+  vi.spyOn(Date, 'now').mockImplementation(() => realNow() + FRESH_MS + 1);
+  navigate('/home');
+  await screen.findByText('Your session has expired.');
+  expect(screen.queryByText('Page A')).toBeNull();
+  // Page B (and everything else) is gone too, not only the page that failed.
+  expect(store.size).toBe(0);
+  expect(store.peek('/scan')).toBeUndefined();
+});
+
+it('hides and reloads when another tab changes the session', async () => {
+  const channels: any[] = [];
+  class FakeChannel {
+    onmessage: ((event: MessageEvent) => void) | null = null;
+    posted: unknown[] = [];
+    constructor(readonly name: string) {channels.push(this);}
+    postMessage(message: unknown) {this.posted.push(message);}
+    close() {}
+  }
+  vi.stubGlobal('BroadcastChannel', FakeChannel);
+  const store = new PageStore();
+  const fetch = vi.fn().mockResolvedValueOnce(respond(envelope('Page B')));
+  await visitTwoPages(fetch, store);
+  const channel = channels.find(item => item.name === 'cats-session');
+  expect(channel.posted).toContainEqual({type: 'scope', scope: 'scope-1'});
+  // A tab that started with the same scope changes nothing.
+  act(() => channel.onmessage({data: {type: 'scope', scope: 'scope-1'}} as MessageEvent));
+  expect(screen.getByText('Page B')).toBeInTheDocument();
+  let finish: (response: Response) => void = () => {};
+  fetch.mockImplementationOnce(() => new Promise<Response>(resolve => {finish = resolve;}));
+  // Another tab signed out (or in as someone else).
+  act(() => channel.onmessage({data: {type: 'session-changed'}} as MessageEvent));
+  expect(store.size).toBe(0);
+  expect(screen.queryByText('Page B')).toBeNull();  // nothing from the old session stays visible
+  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+  await act(async () => {finish(respond(envelope('Page B as the new session', 'scope-2')));});
+  await screen.findByText('Page B as the new session');
+});
+
+it('forgets saved pages and tells other tabs when signing out', async () => {
+  const channels: any[] = [];
+  vi.stubGlobal('BroadcastChannel', class {
+    onmessage = null; posted: unknown[] = [];
+    constructor(readonly name: string) {channels.push(this);}
+    postMessage(message: unknown) {this.posted.push(message);}
+    close() {}
+  });
+  const store = new PageStore();
+  await visitTwoPages(vi.fn().mockResolvedValueOnce(respond(envelope('Page B'))), store);
+  act(() => {window.dispatchEvent(new Event('cats:session-ending'));});
+  expect(store.size).toBe(0);
+  expect(channels[0].posted).toContainEqual({type: 'session-changed'});
+});

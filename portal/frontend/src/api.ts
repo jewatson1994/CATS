@@ -6,11 +6,18 @@ export class ApiError extends Error {
 
 type MutationListener = () => void;
 const mutationListeners = new Set<MutationListener>();
-/** Notified after every answered non-GET request, so cached reads can be discarded. */
+/** Notified after every non-GET request (answered or not), so cached reads can be discarded. */
 export function onMutation(listener: MutationListener): () => void {
   mutationListeners.add(listener);
   return () => {mutationListeners.delete(listener);};
 }
+const sessionListeners = new Set<() => void>();
+/** Notified when the server reports that the session has ended (401 or redirect to sign-in). */
+export function onSessionEnded(listener: () => void): () => void {
+  sessionListeners.add(listener);
+  return () => {sessionListeners.delete(listener);};
+}
+export function sessionEnded() {for (const listener of [...sessionListeners]) listener();}
 
 /** Cookies stay HttpOnly. FormData preserves backend-owned validation and CSRF. */
 export async function requestJson<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -18,16 +25,24 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
   if (target.origin !== window.location.origin) throw new ApiError('External API URLs are not allowed.', 0);
   const headers = new Headers(options.headers);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
-  const response = await fetch(target.href, {
-    ...options, credentials: 'same-origin', cache: 'no-store',
-    headers,
-  });
-  // Any answered mutation may have changed server state: discard cached reads.
-  if ((options.method || 'GET').toUpperCase() !== 'GET') for (const listener of mutationListeners) listener();
+  const mutation = (options.method || 'GET').toUpperCase() !== 'GET';
+  let response: Response;
+  try {
+    response = await fetch(target.href, {
+      ...options, credentials: 'same-origin', cache: 'no-store',
+      headers,
+    });
+  } finally {
+    // Any mutation may have changed server state, including one whose
+    // response was lost: discard cached reads either way.
+    if (mutation) for (const listener of mutationListeners) listener();
+  }
   if (response.redirected && new URL(response.url).pathname === '/login') {
+    sessionEnded();
     window.location.assign(response.url);
     throw new ApiError('Your session has expired. Please sign in again.', 401);
   }
+  if (response.status === 401) sessionEnded();
   if (!response.headers.get('content-type')?.includes('json')) {
     throw new ApiError('The server returned an unexpected response.', response.status);
   }

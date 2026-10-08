@@ -1,5 +1,6 @@
 import {describe, expect, it, vi} from 'vitest';
-import {LIMITS, PageStore, digestText, type CachedPage} from './pageStore';
+import {ApiError} from './api';
+import {LIMITS, MAX_DISPLAY_AGE_MS, PageStore, digestText, type CachedPage} from './pageStore';
 
 const page = (scope: string | undefined, label = 'x', bytes = 10): CachedPage => ({
   envelope: {schemaVersion: 1, page: 'home', data: {label}, cacheScope: scope}, bytes, digest: digestText(label), fetchedAt: Date.now(),
@@ -61,15 +62,71 @@ describe('PageStore', () => {
     expect(signal?.aborted).toBe(true);
   });
 
-  it('never stores reads that were in flight across a mutation', async () => {
-    let resolve: (value: CachedPage) => void = () => {};
-    const store = new PageStore(() => new Promise<CachedPage>(done => {resolve = done;}));
+  it('never stores or delivers a read that was in flight across a mutation', async () => {
+    const resolvers: ((value: CachedPage) => void)[] = [];
+    const loader = vi.fn(() => new Promise<CachedPage>(done => {resolvers.push(done);}));
+    const store = new PageStore(loader);
     store.put('/cached', page('s', 'cached'));
     const pending = store.load('/x');
     store.invalidate();
     expect(store.peek('/cached')).toBeUndefined();
-    resolve(page('s', 'pre-mutation'));
-    expect((await pending).envelope.data.label).toBe('pre-mutation'); // the consumer still gets it
-    expect(store.peek('/x')).toBeUndefined(); // but it is not reused
+    resolvers[0](page('s', 'pre-mutation'));  // the old response arrives late
+    await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
+    resolvers[1](page('s', 'post-mutation'));
+    // The consumer receives a fresh read, never the pre-mutation one.
+    expect((await pending).envelope.data.label).toBe('post-mutation');
+    expect(store.peek('/x')?.envelope.data.label).toBe('post-mutation');
+  });
+
+  it('never delivers or stores a response from an earlier authorization scope', async () => {
+    const resolvers = new Map<string, ((value: CachedPage) => void)[]>();
+    const loader = vi.fn((location: string) => new Promise<CachedPage>(done => {
+      resolvers.set(location, [...(resolvers.get(location) || []), done]);
+    }));
+    const store = new PageStore(loader);
+    store.put('/old', page('admin-scope', 'admin data'));
+    const oldRead = store.load('/report');      // requested while still admin
+    const newRead = store.load('/services');
+    // The newer response arrives first and establishes the restricted scope.
+    resolvers.get('/services')![0](page('restricted-scope', 'restricted services'));
+    expect((await newRead).envelope.data.label).toBe('restricted services');
+    expect(store.peek('/old')).toBeUndefined();
+    // The admin-scope response that arrives afterwards is discarded and re-read.
+    resolvers.get('/report')![0](page('admin-scope', 'admin report'));
+    await vi.waitFor(() => expect(resolvers.get('/report')!.length).toBe(2));
+    resolvers.get('/report')![1](page('restricted-scope', 'restricted report'));
+    expect((await oldRead).envelope.data.label).toBe('restricted report');
+    expect(store.peek('/report')?.envelope.cacheScope).toBe('restricted-scope');
+  });
+
+  it('forgets every saved page when the session ends', async () => {
+    const store = new PageStore(() => Promise.reject(new ApiError('Your session has expired.', 401)));
+    store.put('/a', page('s', 'a'));
+    store.put('/b', page('s', 'b'));
+    await expect(store.load('/c')).rejects.toThrow('expired');
+    expect(store.size).toBe(0);
+    expect(store.currentScope).toBe('');
+  });
+
+  it('does not show a saved page older than the display limit', () => {
+    let time = 1_000_000;
+    const store = new PageStore(undefined, () => time);
+    store.put('/a', {...page('s', 'a'), fetchedAt: time});
+    time += MAX_DISPLAY_AGE_MS - 1;
+    expect(store.get('/a')).toBeDefined();
+    time += 2;
+    expect(store.get('/a')).toBeUndefined();
+    expect(store.size).toBe(0);
+  });
+
+  it('announces a change between two non-empty scopes only', () => {
+    const store = new PageStore();
+    const seen: string[] = [];
+    store.onScopeChange((scope, previous) => seen.push(`${previous}->${scope}`));
+    store.put('/a', page('one', 'a'));
+    store.put('/b', page('two', 'b'));
+    store.put('/login', page(undefined, 'login'));
+    store.put('/c', page('three', 'c'));
+    expect(seen).toEqual(['one->two']);
   });
 });

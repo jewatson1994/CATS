@@ -1,6 +1,6 @@
 import {lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType} from 'react';
 import {PageControlContext, type PageControl} from './pageControl';
-import {ApiError, onMutation, type PageEnvelope, type PageData} from './api';
+import {ApiError, onMutation, onSessionEnded, type PageEnvelope, type PageData} from './api';
 import {digestText, pageStore, type PageStore} from './pageStore';
 import {afterPaint, installPerformanceTools, recordTiming} from './perf';
 import {Shell} from './components/Shell';
@@ -146,6 +146,9 @@ export function readBootstrap(): PageEnvelope | null {
 
 /** Cached pages younger than this render without a background refresh. */
 export const FRESH_MS = 2000;
+export const SESSION_CHANNEL = 'cats-session';
+/** Dispatched on window just before a sign-out form submits. */
+export const SESSION_ENDING_EVENT = 'cats:session-ending';
 /** Hover/focus intent before a deliberate prefetch (never on page load). */
 const PREFETCH_DELAY_MS = 120;
 const PREFETCH_FRESH_MS = 30000;
@@ -161,7 +164,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
   const [location, setLocation] = useState(currentLocation);
   const generation = useRef(0);
   const [view, setView] = useState<View | null>(initial ? {location, envelope: initial, generation: 0} : null);
-  const [error, setError] = useState<{location: string; message: string} | null>(null);
+  const [error, setError] = useState<{location: string; message: string; signIn?: boolean} | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const locationRef = useRef(location);
@@ -180,7 +183,42 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       store.put(location, {envelope: initial, bytes: text.length, digest: digestText(text), fetchedAt: Date.now()});
     }
     const stop = onMutation(() => store.invalidate());
-    return () => {stop(); if (idle) (window as any).cancelIdleCallback?.(handle); else window.clearTimeout(handle);};
+    // Session boundaries. Another tab in this browser announces sign-out,
+    // sign-in or an authorization change; this tab then forgets every saved
+    // page, hides what it shows and reloads the current page from the server
+    // (which redirects to sign-in if the session has ended).
+    const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(SESSION_CHANNEL) : null;
+    const announce = () => {try {channel?.postMessage({type: 'session-changed'});} catch { /* closed */ }};
+    const forget = () => {
+      store.clear();
+      generation.current += 1;
+      setView(null);
+      setAttempt(value => value + 1);
+    };
+    if (channel) channel.onmessage = (event: MessageEvent) => {
+      // A tab that started with the same scope needs nothing; anything else
+      // (sign-in or sign-out elsewhere, a changed authorization) does.
+      if (event.data?.type === 'scope' && event.data.scope && event.data.scope === store.currentScope) return;
+      forget();
+    };
+    if (initial?.cacheScope) {try {channel?.postMessage({type: 'scope', scope: initial.cacheScope});} catch { /* closed */ }}
+    const stopScope = store.onScopeChange(() => announce());
+    // This tab learned the session ended (any request answered 401 or
+    // redirected to sign-in): forget and hide everything. Not re-announced:
+    // other tabs learn it from their own next request, and announcing here
+    // would make tabs that reload on an announcement echo it back and forth.
+    const stopSession = onSessionEnded(() => {
+      store.clear();
+      generation.current += 1;
+      setView(null);
+      setError({location: locationRef.current, message: 'Your session has ended. Please sign in again.', signIn: true});
+    });
+    const ending = () => {store.clear(); announce();};
+    window.addEventListener(SESSION_ENDING_EVENT, ending);
+    return () => {
+      stop(); stopScope(); stopSession(); window.removeEventListener(SESSION_ENDING_EVENT, ending); channel?.close();
+      if (idle) (window as any).cancelIdleCallback?.(handle); else window.clearTimeout(handle);
+    };
     // Bootstrap is read once per document.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -260,8 +298,12 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
         recordTiming({location, source: 'revalidate', started: refreshStarted, usefulMs: null, fetchMs: now() - refreshStarted, bytes: page.bytes, changed});
       }).catch(cause => {
         if (controller.signal.aborted) return;
-        if (cause instanceof ApiError && ACCESS_ERRORS.has(cause.status)) {
-          // Access changed: never keep showing the saved copy.
+        if (cause instanceof ApiError && cause.status === 401) {
+          // The session ended: the store has already forgotten every page.
+          setView(null);
+          setError({location, message: cause.message, signIn: true});
+        } else if (cause instanceof ApiError && ACCESS_ERRORS.has(cause.status)) {
+          // Access to this page changed: never keep showing the saved copy.
           store.delete(location);
           setView(null);
           setError({location, message: cause.message});
@@ -277,7 +319,12 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       show(location, page.envelope);
       afterPaint(() => {placeScroll(); recordTiming({location, source: 'network', started, usefulMs: now() - started, fetchMs: null, bytes: page.bytes});});
     }).catch(cause => {
-      if (!controller.signal.aborted) setError({location, message: cause instanceof Error ? cause.message : 'Unable to load the page.'});
+      if (controller.signal.aborted) return;
+      // A failed uncached navigation must not leave the previous page on screen
+      // when the session ended.
+      const ended = cause instanceof ApiError && cause.status === 401;
+      if (ended) setView(null);
+      setError({location, message: cause instanceof Error ? cause.message : 'Unable to load the page.', signIn: ended});
     });
     return () => controller.abort();
     // The page result must not restart its own request.
@@ -296,6 +343,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
 
   const current = view?.location === location ? view.envelope : null;
   const failed = error?.location === location ? error.message : null;
+  const signIn = error?.location === location && error.signIn;
   // An uncached navigation keeps the previous page on screen (inert, dimmed)
   // until the new one arrives, instead of blanking the workspace.
   const previous = !current && !failed && view ? view : null;
@@ -311,7 +359,9 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
         {previous && <p className="sr-only" role="status">Loading page…</p>}
         <ErrorBoundary key={`${shown.location}#${shown.generation}`}><Suspense fallback={<section className="panel padded" aria-busy="true"><p role="status">Loading page…</p></section>}><Page data={shown.envelope.data}/></Suspense></ErrorBoundary>
       </div> : <section className="panel padded" aria-busy={!failed}>
-        {failed ? <div role="alert"><h1>Unable to load page</h1><p>{failed}</p><button onClick={() => setAttempt(value => value + 1)}>Retry</button></div>
+        {failed ? <div role="alert"><h1>Unable to load page</h1><p>{failed}</p>{signIn
+          ? <a className="button" href={`/login?next=${encodeURIComponent(location)}`}>Sign in</a>
+          : <button onClick={() => setAttempt(value => value + 1)}>Retry</button>}</div>
           : <p role="status">Loading page…</p>}
       </section>}
     </PageControlContext.Provider>

@@ -49,7 +49,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
           <div className="appearance-theme-grid">{Object.entries(data.themes || {}).map(([key, label]) =>
             <label key={key} className={`theme-option theme-preview-${key}`}><input type="radio" name="theme" value={key} defaultChecked={theme === key}/>
               <span><strong>{label}</strong></span></label>)}</div><button className="appearance-apply">Apply theme</button>
-        </form></details><a href="/account/password">Change password</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value={data.csrf_token}/>
+        </form></details><a href="/account/password">Change password</a><form method="post" action="/logout" onSubmit={() => window.dispatchEvent(new Event('cats:session-ending'))}><input type="hidden" name="csrf_token" value={data.csrf_token}/>
           <button className="link-button">Sign out</button></form>
       </div></details>
     </nav> : <nav className="public-nav" aria-label="Primary navigation">{publicNav.map(([href, label]) =>
