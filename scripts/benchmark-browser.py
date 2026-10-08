@@ -23,8 +23,8 @@ SVC = "/services/perf-0001"
 def has(selector, text):
     return f"[...document.querySelectorAll({json.dumps(selector)})].some(e => {text}.test(e.textContent))"
 PAGES = [
-    ("Services", "/", None, has("main table tbody td", "/Performance 1/")),
-    ("Cybersecurity", "/cybersecurity", None, has("main table tbody td", "/Performance 1/") + " && /Active vulnerabilities/.test(document.querySelector('main').textContent)"),
+    ("Services", "/", None, has("main table tbody td", "/Performance [0-9]+/")),
+    ("Cybersecurity", "/cybersecurity", None, has("main table tbody td", "/Performance [0-9]+/") + " && /Active vulnerabilities/.test(document.querySelector('main').textContent)"),
     ("Service Overview", SVC + "?overview=true", "Overview", "/Active Fixable\\s*[0-9]/.test(document.querySelector('main').textContent) && /Declared resources\\s*[0-9]/.test(document.querySelector('main').textContent)"),
     ("Findings", SVC + "?findings=true", "Findings", has("main table tbody td", "/CVE-/")),
     ("Architecture", SVC + "?architecture=true", "Architecture", has("main svg text, main svg *", "/ConfigMap/") + " || " + has("main [class*=node]", "/ConfigMap/")),

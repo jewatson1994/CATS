@@ -1,0 +1,704 @@
+{
+  "base": "http://127.0.0.1:8132",
+  "full_loads": [
+    {
+      "page": "Services",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 2170.8,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 2075,
+          "api_body_bytes": 15960,
+          "all_transfer_bytes": 721167,
+          "unknown_size_requests": 1,
+          "urls": [
+            "",
+            "api/dashboard/services"
+          ]
+        },
+        {
+          "ms": 2075.5,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 2078,
+          "api_body_bytes": 15960,
+          "all_transfer_bytes": 721170,
+          "unknown_size_requests": 1,
+          "urls": [
+            "",
+            "api/dashboard/services"
+          ]
+        },
+        {
+          "ms": 1946.9,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 2071,
+          "api_body_bytes": 15960,
+          "all_transfer_bytes": 721163,
+          "unknown_size_requests": 1,
+          "urls": [
+            "",
+            "api/dashboard/services"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Cybersecurity",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 14001.3,
+          "requests": 8,
+          "api_requests": 3,
+          "api_transfer_bytes": 3211,
+          "api_body_bytes": 25191,
+          "all_transfer_bytes": 722303,
+          "unknown_size_requests": 1,
+          "urls": [
+            "cybersecurity",
+            "api/dashboard/cybersecurity",
+            "api/dashboard/cybersecurity/services/perf-0001/history"
+          ]
+        },
+        {
+          "ms": 13742.3,
+          "requests": 8,
+          "api_requests": 3,
+          "api_transfer_bytes": 3213,
+          "api_body_bytes": 25191,
+          "all_transfer_bytes": 722305,
+          "unknown_size_requests": 1,
+          "urls": [
+            "cybersecurity",
+            "api/dashboard/cybersecurity",
+            "api/dashboard/cybersecurity/services/perf-0001/history"
+          ]
+        },
+        {
+          "ms": 12235.8,
+          "requests": 8,
+          "api_requests": 3,
+          "api_transfer_bytes": 3210,
+          "api_body_bytes": 25191,
+          "all_transfer_bytes": 722302,
+          "unknown_size_requests": 1,
+          "urls": [
+            "cybersecurity",
+            "api/dashboard/cybersecurity",
+            "api/dashboard/cybersecurity/services/perf-0001/history"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Service Overview",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 745.4,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2479,
+          "api_body_bytes": 10447,
+          "all_transfer_bytes": 721571,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?overview=true"
+          ]
+        },
+        {
+          "ms": 245.3,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2478,
+          "api_body_bytes": 10447,
+          "all_transfer_bytes": 721570,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?overview=true"
+          ]
+        },
+        {
+          "ms": 244,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2478,
+          "api_body_bytes": 10447,
+          "all_transfer_bytes": 721570,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?overview=true"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Findings",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 348.7,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 4417,
+          "api_body_bytes": 22619,
+          "all_transfer_bytes": 723509,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?findings=true"
+          ]
+        },
+        {
+          "ms": 328,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 4415,
+          "api_body_bytes": 22619,
+          "all_transfer_bytes": 723507,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?findings=true"
+          ]
+        },
+        {
+          "ms": 340.1,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 4416,
+          "api_body_bytes": 22619,
+          "all_transfer_bytes": 723508,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?findings=true"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Architecture",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 208.8,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 12671,
+          "api_body_bytes": 144508,
+          "all_transfer_bytes": 731763,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?architecture=true",
+            "services/perf-0001?architecture=true&layout_width=1200"
+          ]
+        },
+        {
+          "ms": 151.9,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 12673,
+          "api_body_bytes": 144508,
+          "all_transfer_bytes": 731765,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?architecture=true",
+            "services/perf-0001?architecture=true&layout_width=1200"
+          ]
+        },
+        {
+          "ms": 155.2,
+          "requests": 7,
+          "api_requests": 2,
+          "api_transfer_bytes": 12675,
+          "api_body_bytes": 144508,
+          "all_transfer_bytes": 731767,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?architecture=true",
+            "services/perf-0001?architecture=true&layout_width=1200"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Dependencies",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 208.4,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 18854,
+          "api_body_bytes": 231720,
+          "all_transfer_bytes": 737946,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?dependencies=true"
+          ]
+        },
+        {
+          "ms": 236.6,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 18854,
+          "api_body_bytes": 231720,
+          "all_transfer_bytes": 737946,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?dependencies=true"
+          ]
+        },
+        {
+          "ms": 197.9,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 18851,
+          "api_body_bytes": 231720,
+          "all_transfer_bytes": 737943,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?dependencies=true"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 175.8,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2617,
+          "api_body_bytes": 33762,
+          "all_transfer_bytes": 721709,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?validation=true"
+          ]
+        },
+        {
+          "ms": 183.6,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2614,
+          "api_body_bytes": 33762,
+          "all_transfer_bytes": 721706,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?validation=true"
+          ]
+        },
+        {
+          "ms": 166.7,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 2615,
+          "api_body_bytes": 33762,
+          "all_transfer_bytes": 721707,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?validation=true"
+          ]
+        }
+      ]
+    },
+    {
+      "page": "Remediation",
+      "kind": "full load",
+      "samples": [
+        {
+          "ms": 703,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 1759,
+          "api_body_bytes": 4385,
+          "all_transfer_bytes": 720851,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?remediations=true&tab=pipeline"
+          ]
+        },
+        {
+          "ms": 145.8,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 1761,
+          "api_body_bytes": 4385,
+          "all_transfer_bytes": 720853,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?remediations=true&tab=pipeline"
+          ]
+        },
+        {
+          "ms": 142.4,
+          "requests": 6,
+          "api_requests": 1,
+          "api_transfer_bytes": 1762,
+          "api_body_bytes": 4385,
+          "all_transfer_bytes": 720854,
+          "unknown_size_requests": 1,
+          "urls": [
+            "services/perf-0001?remediations=true&tab=pipeline"
+          ]
+        }
+      ]
+    }
+  ],
+  "in_app": [
+    {
+      "page": "Service Overview",
+      "kind": "navigate from Services",
+      "ms": 156.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2107,
+      "api_body_bytes": 9097,
+      "all_transfer_bytes": 2107,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?overview=true"
+      ]
+    },
+    {
+      "page": "Findings",
+      "kind": "first tab visit",
+      "ms": 246.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 4005,
+      "api_body_bytes": 20730,
+      "all_transfer_bytes": 4005,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?findings=true&findings_view=simplified"
+      ]
+    },
+    {
+      "page": "Architecture",
+      "kind": "first tab visit",
+      "ms": 68.9,
+      "requests": 3,
+      "api_requests": 2,
+      "api_transfer_bytes": 12190,
+      "api_body_bytes": 138563,
+      "all_transfer_bytes": 12190,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?architecture=true",
+        "services/perf-0001?architecture=true&layout_width=1200"
+      ]
+    },
+    {
+      "page": "Dependencies",
+      "kind": "first tab visit",
+      "ms": 120.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 17805,
+      "api_body_bytes": 211385,
+      "all_transfer_bytes": 17805,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?dependencies=true"
+      ]
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "first tab visit",
+      "ms": 79,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2272,
+      "api_body_bytes": 31436,
+      "all_transfer_bytes": 2272,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?validation=true"
+      ]
+    },
+    {
+      "page": "Remediation",
+      "kind": "first tab visit",
+      "ms": 87.7,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 1397,
+      "api_body_bytes": 3404,
+      "all_transfer_bytes": 1397,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?remediations=true&tab=pipeline"
+      ]
+    },
+    {
+      "page": "Service Overview",
+      "kind": "first tab visit",
+      "ms": 134.9,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2107,
+      "api_body_bytes": 9097,
+      "all_transfer_bytes": 2107,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?overview=true"
+      ]
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 237.3,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 4005,
+      "api_body_bytes": 20730,
+      "all_transfer_bytes": 4005,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?findings=true&findings_view=simplified"
+      ]
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 63.7,
+      "requests": 3,
+      "api_requests": 2,
+      "api_transfer_bytes": 12190,
+      "api_body_bytes": 138563,
+      "all_transfer_bytes": 12190,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?architecture=true",
+        "services/perf-0001?architecture=true&layout_width=1200"
+      ]
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 125.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 17805,
+      "api_body_bytes": 211385,
+      "all_transfer_bytes": 17805,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?dependencies=true"
+      ]
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 64.8,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2272,
+      "api_body_bytes": 31436,
+      "all_transfer_bytes": 2272,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?validation=true"
+      ]
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 75.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 1397,
+      "api_body_bytes": 3404,
+      "all_transfer_bytes": 1397,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?remediations=true&tab=pipeline"
+      ]
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 128.2,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2107,
+      "api_body_bytes": 9097,
+      "all_transfer_bytes": 2107,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?overview=true"
+      ]
+    },
+    {
+      "page": "Findings",
+      "kind": "repeat tab visit",
+      "ms": 230,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 4005,
+      "api_body_bytes": 20730,
+      "all_transfer_bytes": 4005,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?findings=true&findings_view=simplified"
+      ]
+    },
+    {
+      "page": "Architecture",
+      "kind": "repeat tab visit",
+      "ms": 93.2,
+      "requests": 3,
+      "api_requests": 2,
+      "api_transfer_bytes": 12190,
+      "api_body_bytes": 138563,
+      "all_transfer_bytes": 12190,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?architecture=true",
+        "services/perf-0001?architecture=true&layout_width=1200"
+      ]
+    },
+    {
+      "page": "Dependencies",
+      "kind": "repeat tab visit",
+      "ms": 109.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 17805,
+      "api_body_bytes": 211385,
+      "all_transfer_bytes": 17805,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?dependencies=true"
+      ]
+    },
+    {
+      "page": "Deployment Validation",
+      "kind": "repeat tab visit",
+      "ms": 66.5,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2272,
+      "api_body_bytes": 31436,
+      "all_transfer_bytes": 2272,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?validation=true"
+      ]
+    },
+    {
+      "page": "Remediation",
+      "kind": "repeat tab visit",
+      "ms": 60.1,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 1397,
+      "api_body_bytes": 3404,
+      "all_transfer_bytes": 1397,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?remediations=true&tab=pipeline"
+      ]
+    },
+    {
+      "page": "Service Overview",
+      "kind": "repeat tab visit",
+      "ms": 125.4,
+      "requests": 2,
+      "api_requests": 1,
+      "api_transfer_bytes": 2107,
+      "api_body_bytes": 9097,
+      "all_transfer_bytes": 2107,
+      "unknown_size_requests": 1,
+      "urls": [
+        "services/perf-0001?overview=true"
+      ]
+    },
+    {
+      "page": "Services",
+      "kind": "navigate back to Services",
+      "ms": 1707.3,
+      "requests": 3,
+      "api_requests": 2,
+      "api_transfer_bytes": 1750,
+      "api_body_bytes": 15199,
+      "all_transfer_bytes": 1750,
+      "unknown_size_requests": 1,
+      "urls": [
+        "",
+        "api/dashboard/services"
+      ]
+    },
+    {
+      "page": "Cybersecurity",
+      "kind": "navigate",
+      "ms": 13200.4,
+      "requests": 4,
+      "api_requests": 3,
+      "api_transfer_bytes": 2873,
+      "api_body_bytes": 24414,
+      "all_transfer_bytes": 2873,
+      "unknown_size_requests": 1,
+      "urls": [
+        "cybersecurity",
+        "api/dashboard/cybersecurity",
+        "api/dashboard/cybersecurity/services/perf-0001/history"
+      ]
+    },
+    {
+      "page": "Services",
+      "kind": "browser back",
+      "ms": 1835.4,
+      "requests": 3,
+      "api_requests": 2,
+      "api_transfer_bytes": 1750,
+      "api_body_bytes": 15199,
+      "all_transfer_bytes": 1750,
+      "unknown_size_requests": 1,
+      "urls": [
+        "",
+        "api/dashboard/services"
+      ]
+    }
+  ],
+  "polling": [
+    {
+      "page": "/services/perf-0001/remediations/R-BENCH-ACTIVE",
+      "kind": "polling over 15s",
+      "requests": 9,
+      "api_requests": 9,
+      "api_transfer_bytes": 95472,
+      "api_body_bytes": 2526471,
+      "all_transfer_bytes": 95472,
+      "unknown_size_requests": 0,
+      "urls": [
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE",
+        "services/perf-0001/remediations/R-BENCH-ACTIVE"
+      ]
+    },
+    {
+      "page": "/services/perf-0001?validation=true",
+      "kind": "polling over 15s",
+      "requests": 0,
+      "api_requests": 0,
+      "api_transfer_bytes": 0,
+      "api_body_bytes": 0,
+      "all_transfer_bytes": 0,
+      "unknown_size_requests": 0,
+      "urls": []
+    }
+  ]
+}

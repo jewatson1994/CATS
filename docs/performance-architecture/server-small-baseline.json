@@ -2,359 +2,2862 @@
   "services": 10,
   "findings_per_service": 1000,
   "history": 2,
-  "repeat": 4,
+  "repeat": 5,
+  "metadata": {
+    "started_at": "2026-10-08T01:57:33.667531+00:00",
+    "python": "3.13.16",
+    "args": {
+      "services": "10",
+      "findings": "1000",
+      "images": "8",
+      "history": "2",
+      "template": "/tmp/claude-0/-home-claude/add5d4be-93a1-5050-89bd-395ca703b21c/scratchpad/e2e/out2/portal-result.json",
+      "reset": "False",
+      "repeat": "5",
+      "output": "/tmp/claude-0/-home-claude/add5d4be-93a1-5050-89bd-395ca703b21c/scratchpad/bench/r2-small-base.json",
+      "remediation_row": "None",
+      "profile": "None",
+      "only": "None",
+      "explain": "None",
+      "dense_findings": "0",
+      "resume_seed": "False",
+      "service": "perf-0001",
+      "isolated_first": "True",
+      "single": "None",
+      "single_user": "admin"
+    },
+    "git_revision": "f56bbf8963d72fabe9c8060fe5e6868d1d3564b7",
+    "git_dirty": false,
+    "database": "PostgreSQL 16.15 (Ubuntu 16.15-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit",
+    "jit": "on",
+    "dataset": {
+      "services": 10,
+      "executions": 20,
+      "findings": 10500,
+      "active_findings": 10000
+    },
+    "preparation": {
+      "posture_rows": 10,
+      "posture_services_built": 10,
+      "posture_cyber_built": 10,
+      "stored_overviews": 10,
+      "execution_summaries": 20
+    }
+  },
   "results": [
     {
       "user": "admin",
       "scenario": "services: page",
       "status": 200,
-      "cold_ms": 16.44,
-      "warm_median_ms": 8.381,
-      "warm_p95_ms": 16.44,
-      "query_ms_median": 2.549,
+      "first_in_process_ms": 23.217,
+      "first_query_ms": 5.758,
+      "first_queries": 5,
+      "warm_samples": 4,
+      "warm_median_ms": 8.3165,
+      "warm_p95_ms": 10.568,
+      "warm_query_ms_median": 1.834,
       "queries": 5,
-      "bytes": 1050
+      "bytes": 1050,
+      "orm": 4,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 26.3,
+          "duration_ms": 23.217,
+          "query_ms": 5.758,
+          "query_count": 5,
+          "response_bytes": 1050,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 13.2,
+          "duration_ms": 10.568,
+          "query_ms": 3.114,
+          "query_count": 5,
+          "response_bytes": 1050,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 10.0,
+          "duration_ms": 7.648,
+          "query_ms": 1.565,
+          "query_count": 5,
+          "response_bytes": 1050,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 11.3,
+          "duration_ms": 8.648,
+          "query_ms": 1.834,
+          "query_count": 5,
+          "response_bytes": 1050,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 10.4,
+          "duration_ms": 7.985,
+          "query_ms": 1.768,
+          "query_count": 5,
+          "response_bytes": 1050,
+          "orm": 4
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "services: rows",
       "status": 200,
-      "cold_ms": 55.187,
-      "warm_median_ms": 37.71,
-      "warm_p95_ms": 55.187,
-      "query_ms_median": 20.088,
+      "first_in_process_ms": 93.687,
+      "first_query_ms": 57.786,
+      "first_queries": 20,
+      "warm_samples": 4,
+      "warm_median_ms": 53.4685,
+      "warm_p95_ms": 70.6,
+      "warm_query_ms_median": 33.141,
       "queries": 20,
-      "bytes": 3903
+      "bytes": 3903,
+      "orm": 26,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 96.2,
+          "duration_ms": 93.687,
+          "query_ms": 57.786,
+          "query_count": 20,
+          "response_bytes": 3903,
+          "orm": 26
+        },
+        {
+          "status": 200,
+          "client_ms": 73.4,
+          "duration_ms": 70.6,
+          "query_ms": 51.075,
+          "query_count": 20,
+          "response_bytes": 3903,
+          "orm": 26
+        },
+        {
+          "status": 200,
+          "client_ms": 57.9,
+          "duration_ms": 54.934,
+          "query_ms": 33.141,
+          "query_count": 20,
+          "response_bytes": 3903,
+          "orm": 26
+        },
+        {
+          "status": 200,
+          "client_ms": 54.4,
+          "duration_ms": 51.506,
+          "query_ms": 31.97,
+          "query_count": 20,
+          "response_bytes": 3903,
+          "orm": 26
+        },
+        {
+          "status": 200,
+          "client_ms": 54.9,
+          "duration_ms": 52.003,
+          "query_ms": 32.78,
+          "query_count": 20,
+          "response_bytes": 3903,
+          "orm": 26
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "cybersecurity: page",
       "status": 200,
-      "cold_ms": 7.875,
-      "warm_median_ms": 8.364,
-      "warm_p95_ms": 8.394,
-      "query_ms_median": 1.733,
+      "first_in_process_ms": 8.935,
+      "first_query_ms": 1.907,
+      "first_queries": 5,
+      "warm_samples": 4,
+      "warm_median_ms": 9.875499999999999,
+      "warm_p95_ms": 10.545,
+      "warm_query_ms_median": 2.393,
       "queries": 5,
-      "bytes": 1046
+      "bytes": 1046,
+      "orm": 4,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 11.9,
+          "duration_ms": 8.935,
+          "query_ms": 1.907,
+          "query_count": 5,
+          "response_bytes": 1046,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 12.8,
+          "duration_ms": 10.119,
+          "query_ms": 2.612,
+          "query_count": 5,
+          "response_bytes": 1046,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 13.3,
+          "duration_ms": 10.545,
+          "query_ms": 2.393,
+          "query_count": 5,
+          "response_bytes": 1046,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 12.2,
+          "duration_ms": 9.632,
+          "query_ms": 1.837,
+          "query_count": 5,
+          "response_bytes": 1046,
+          "orm": 4
+        },
+        {
+          "status": 200,
+          "client_ms": 10.7,
+          "duration_ms": 8.076,
+          "query_ms": 1.597,
+          "query_count": 5,
+          "response_bytes": 1046,
+          "orm": 4
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "cybersecurity: data",
       "status": 200,
-      "cold_ms": 280.803,
-      "warm_median_ms": 274.468,
-      "warm_p95_ms": 280.803,
-      "query_ms_median": 246.4,
+      "first_in_process_ms": 378.576,
+      "first_query_ms": 335.388,
+      "first_queries": 15,
+      "warm_samples": 4,
+      "warm_median_ms": 334.103,
+      "warm_p95_ms": 354.312,
+      "warm_query_ms_median": 310.914,
       "queries": 15,
-      "bytes": 4327
+      "bytes": 4338,
+      "orm": 16,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 381.2,
+          "duration_ms": 378.576,
+          "query_ms": 335.388,
+          "query_count": 15,
+          "response_bytes": 4338,
+          "orm": 16
+        },
+        {
+          "status": 200,
+          "client_ms": 357.0,
+          "duration_ms": 354.312,
+          "query_ms": 326.995,
+          "query_count": 15,
+          "response_bytes": 4338,
+          "orm": 16
+        },
+        {
+          "status": 200,
+          "client_ms": 338.9,
+          "duration_ms": 336.236,
+          "query_ms": 310.914,
+          "query_count": 15,
+          "response_bytes": 4337,
+          "orm": 16
+        },
+        {
+          "status": 200,
+          "client_ms": 327.6,
+          "duration_ms": 324.842,
+          "query_ms": 299.695,
+          "query_count": 15,
+          "response_bytes": 4338,
+          "orm": 16
+        },
+        {
+          "status": 200,
+          "client_ms": 334.7,
+          "duration_ms": 331.97,
+          "query_ms": 306.39,
+          "query_count": 15,
+          "response_bytes": 4338,
+          "orm": 16
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: overview",
       "status": 200,
-      "cold_ms": 185.531,
-      "warm_median_ms": 50.748,
-      "warm_p95_ms": 185.531,
-      "query_ms_median": 20.632,
+      "first_in_process_ms": 189.403,
+      "first_query_ms": 101.263,
+      "first_queries": 38,
+      "warm_samples": 4,
+      "warm_median_ms": 47.2145,
+      "warm_p95_ms": 52.403,
+      "warm_query_ms_median": 16.401,
       "queries": 35,
-      "bytes": 9027
+      "bytes": 9095,
+      "orm": 38,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 192.3,
+          "duration_ms": 189.403,
+          "query_ms": 101.263,
+          "query_count": 38,
+          "response_bytes": 9095,
+          "orm": 38
+        },
+        {
+          "status": 200,
+          "client_ms": 55.3,
+          "duration_ms": 52.403,
+          "query_ms": 18.153,
+          "query_count": 35,
+          "response_bytes": 9095,
+          "orm": 38
+        },
+        {
+          "status": 200,
+          "client_ms": 50.7,
+          "duration_ms": 47.989,
+          "query_ms": 16.401,
+          "query_count": 35,
+          "response_bytes": 9095,
+          "orm": 38
+        },
+        {
+          "status": 200,
+          "client_ms": 49.4,
+          "duration_ms": 46.44,
+          "query_ms": 15.662,
+          "query_count": 35,
+          "response_bytes": 9095,
+          "orm": 38
+        },
+        {
+          "status": 200,
+          "client_ms": 47.9,
+          "duration_ms": 45.021,
+          "query_ms": 15.344,
+          "query_count": 35,
+          "response_bytes": 9095,
+          "orm": 38
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: findings simplified",
       "status": 200,
-      "cold_ms": 68.568,
-      "warm_median_ms": 50.256,
-      "warm_p95_ms": 68.568,
-      "query_ms_median": 24.74,
+      "first_in_process_ms": 67.028,
+      "first_query_ms": 32.89,
+      "first_queries": 23,
+      "warm_samples": 4,
+      "warm_median_ms": 55.29900000000001,
+      "warm_p95_ms": 57.624,
+      "warm_query_ms_median": 29.917,
       "queries": 23,
-      "bytes": 20272
+      "bytes": 20272,
+      "orm": 19,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 69.9,
+          "duration_ms": 67.028,
+          "query_ms": 32.89,
+          "query_count": 23,
+          "response_bytes": 20272,
+          "orm": 19
+        },
+        {
+          "status": 200,
+          "client_ms": 58.3,
+          "duration_ms": 55.194,
+          "query_ms": 29.652,
+          "query_count": 23,
+          "response_bytes": 20272,
+          "orm": 19
+        },
+        {
+          "status": 200,
+          "client_ms": 58.2,
+          "duration_ms": 55.404,
+          "query_ms": 30.493,
+          "query_count": 23,
+          "response_bytes": 20272,
+          "orm": 19
+        },
+        {
+          "status": 200,
+          "client_ms": 60.3,
+          "duration_ms": 57.624,
+          "query_ms": 29.917,
+          "query_count": 23,
+          "response_bytes": 20272,
+          "orm": 19
+        },
+        {
+          "status": 200,
+          "client_ms": 56.9,
+          "duration_ms": 54.111,
+          "query_ms": 29.734,
+          "query_count": 23,
+          "response_bytes": 20272,
+          "orm": 19
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: findings raw",
       "status": 200,
-      "cold_ms": 155.537,
-      "warm_median_ms": 54.589,
-      "warm_p95_ms": 155.537,
-      "query_ms_median": 22.745,
+      "first_in_process_ms": 63.498,
+      "first_query_ms": 21.557,
+      "first_queries": 36,
+      "warm_samples": 4,
+      "warm_median_ms": 51.97,
+      "warm_p95_ms": 53.747,
+      "warm_query_ms_median": 19.652,
       "queries": 36,
-      "bytes": 14517
+      "bytes": 14517,
+      "orm": 71,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 66.2,
+          "duration_ms": 63.498,
+          "query_ms": 21.557,
+          "query_count": 36,
+          "response_bytes": 14517,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 55.5,
+          "duration_ms": 52.78,
+          "query_ms": 18.782,
+          "query_count": 36,
+          "response_bytes": 14517,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 53.8,
+          "duration_ms": 51.16,
+          "query_ms": 19.652,
+          "query_count": 36,
+          "response_bytes": 14517,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 53.2,
+          "duration_ms": 50.653,
+          "query_ms": 18.699,
+          "query_count": 36,
+          "response_bytes": 14517,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 57.1,
+          "duration_ms": 53.747,
+          "query_ms": 20.401,
+          "query_count": 36,
+          "response_bytes": 14517,
+          "orm": 71
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: findings search",
       "status": 200,
-      "cold_ms": 79.033,
-      "warm_median_ms": 75.035,
-      "warm_p95_ms": 79.033,
-      "query_ms_median": 41.231,
+      "first_in_process_ms": 76.001,
+      "first_query_ms": 34.693,
+      "first_queries": 36,
+      "warm_samples": 4,
+      "warm_median_ms": 69.2855,
+      "warm_p95_ms": 71.677,
+      "warm_query_ms_median": 34.546,
       "queries": 36,
-      "bytes": 14557
+      "bytes": 14557,
+      "orm": 71,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 79.1,
+          "duration_ms": 76.001,
+          "query_ms": 34.693,
+          "query_count": 36,
+          "response_bytes": 14557,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 74.8,
+          "duration_ms": 71.677,
+          "query_ms": 34.142,
+          "query_count": 36,
+          "response_bytes": 14557,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 71.6,
+          "duration_ms": 68.926,
+          "query_ms": 34.546,
+          "query_count": 36,
+          "response_bytes": 14557,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 69.1,
+          "duration_ms": 66.349,
+          "query_ms": 33.993,
+          "query_count": 36,
+          "response_bytes": 14557,
+          "orm": 71
+        },
+        {
+          "status": 200,
+          "client_ms": 72.5,
+          "duration_ms": 69.645,
+          "query_ms": 36.435,
+          "query_count": 36,
+          "response_bytes": 14557,
+          "orm": 71
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: architecture",
       "status": 200,
-      "cold_ms": 63.338,
-      "warm_median_ms": 35.049,
-      "warm_p95_ms": 63.338,
-      "query_ms_median": 9.225,
+      "first_in_process_ms": 68.862,
+      "first_query_ms": 12.089,
+      "first_queries": 25,
+      "warm_samples": 4,
+      "warm_median_ms": 36.2155,
+      "warm_p95_ms": 38.81,
+      "warm_query_ms_median": 9.579,
       "queries": 24,
-      "bytes": 70675
+      "bytes": 70676,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 71.8,
+          "duration_ms": 68.862,
+          "query_ms": 12.089,
+          "query_count": 25,
+          "response_bytes": 70676,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 41.7,
+          "duration_ms": 38.81,
+          "query_ms": 9.579,
+          "query_count": 24,
+          "response_bytes": 70676,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 40.2,
+          "duration_ms": 37.284,
+          "query_ms": 10.223,
+          "query_count": 24,
+          "response_bytes": 70676,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 37.8,
+          "duration_ms": 35.147,
+          "query_ms": 9.019,
+          "query_count": 24,
+          "response_bytes": 70676,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 36.3,
+          "duration_ms": 33.631,
+          "query_ms": 8.779,
+          "query_count": 24,
+          "response_bytes": 70676,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: dependencies",
       "status": 200,
-      "cold_ms": 30.973,
-      "warm_median_ms": 54.935,
-      "warm_p95_ms": 109.37,
-      "query_ms_median": 20.339,
+      "first_in_process_ms": 50.113,
+      "first_query_ms": 17.184,
+      "first_queries": 36,
+      "warm_samples": 4,
+      "warm_median_ms": 39.287,
+      "warm_p95_ms": 39.638,
+      "warm_query_ms_median": 12.796,
       "queries": 36,
-      "bytes": 49872
+      "bytes": 49872,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 52.8,
+          "duration_ms": 50.113,
+          "query_ms": 17.184,
+          "query_count": 36,
+          "response_bytes": 49872,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 42.2,
+          "duration_ms": 39.638,
+          "query_ms": 13.051,
+          "query_count": 36,
+          "response_bytes": 49872,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 40.9,
+          "duration_ms": 38.136,
+          "query_ms": 11.855,
+          "query_count": 36,
+          "response_bytes": 49872,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 42.0,
+          "duration_ms": 39.277,
+          "query_ms": 12.796,
+          "query_count": 36,
+          "response_bytes": 49872,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 41.8,
+          "duration_ms": 39.297,
+          "query_ms": 11.923,
+          "query_count": 36,
+          "response_bytes": 49872,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: validation",
       "status": 200,
-      "cold_ms": 30.867,
-      "warm_median_ms": 27.882,
-      "warm_p95_ms": 32.285,
-      "query_ms_median": 9.622,
+      "first_in_process_ms": 30.396,
+      "first_query_ms": 8.986,
+      "first_queries": 24,
+      "warm_samples": 4,
+      "warm_median_ms": 28.381,
+      "warm_p95_ms": 30.821,
+      "warm_query_ms_median": 8.916,
       "queries": 24,
-      "bytes": 31217
+      "bytes": 31435,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 33.0,
+          "duration_ms": 30.396,
+          "query_ms": 8.986,
+          "query_count": 24,
+          "response_bytes": 31435,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 30.0,
+          "duration_ms": 27.303,
+          "query_ms": 8.05,
+          "query_count": 24,
+          "response_bytes": 31435,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 30.2,
+          "duration_ms": 27.341,
+          "query_ms": 7.994,
+          "query_count": 24,
+          "response_bytes": 31435,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 33.4,
+          "duration_ms": 30.821,
+          "query_ms": 10.214,
+          "query_count": 24,
+          "response_bytes": 31435,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 31.9,
+          "duration_ms": 29.421,
+          "query_ms": 8.916,
+          "query_count": 24,
+          "response_bytes": 31435,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: remediations",
       "status": 200,
-      "cold_ms": 355.229,
-      "warm_median_ms": 37.265,
-      "warm_p95_ms": 355.229,
-      "query_ms_median": 14.518,
+      "first_in_process_ms": 343.256,
+      "first_query_ms": 18.1,
+      "first_queries": 32,
+      "warm_samples": 4,
+      "warm_median_ms": 40.397499999999994,
+      "warm_p95_ms": 42.77,
+      "warm_query_ms_median": 12.257,
       "queries": 31,
-      "bytes": 3404
+      "bytes": 3404,
+      "orm": 18,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 346.1,
+          "duration_ms": 343.256,
+          "query_ms": 18.1,
+          "query_count": 32,
+          "response_bytes": 3404,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 45.5,
+          "duration_ms": 42.77,
+          "query_ms": 13.032,
+          "query_count": 31,
+          "response_bytes": 3404,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 43.7,
+          "duration_ms": 40.885,
+          "query_ms": 12.038,
+          "query_count": 31,
+          "response_bytes": 3404,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 42.6,
+          "duration_ms": 39.91,
+          "query_ms": 12.257,
+          "query_count": 31,
+          "response_bytes": 3404,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 41.3,
+          "duration_ms": 38.603,
+          "query_ms": 12.1,
+          "query_count": 31,
+          "response_bytes": 3404,
+          "orm": 18
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: activity",
       "status": 200,
-      "cold_ms": 31.021,
-      "warm_median_ms": 28.602,
-      "warm_p95_ms": 31.021,
-      "query_ms_median": 9.489,
+      "first_in_process_ms": 31.328,
+      "first_query_ms": 9.31,
+      "first_queries": 23,
+      "warm_samples": 4,
+      "warm_median_ms": 27.826999999999998,
+      "warm_p95_ms": 112.92,
+      "warm_query_ms_median": 8.713,
       "queries": 23,
-      "bytes": 6664
+      "bytes": 6883,
+      "orm": 35,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 34.0,
+          "duration_ms": 31.328,
+          "query_ms": 9.31,
+          "query_count": 23,
+          "response_bytes": 6883,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 30.4,
+          "duration_ms": 27.829,
+          "query_ms": 8.713,
+          "query_count": 23,
+          "response_bytes": 6883,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 30.4,
+          "duration_ms": 27.825,
+          "query_ms": 8.587,
+          "query_count": 23,
+          "response_bytes": 6883,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 28.5,
+          "duration_ms": 26.078,
+          "query_ms": 7.804,
+          "query_count": 23,
+          "response_bytes": 6883,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 115.4,
+          "duration_ms": 112.92,
+          "query_ms": 9.108,
+          "query_count": 23,
+          "response_bytes": 6883,
+          "orm": 35
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "service: artifacts",
       "status": 200,
-      "cold_ms": 31.475,
-      "warm_median_ms": 26.5,
-      "warm_p95_ms": 31.475,
-      "query_ms_median": 9.966,
+      "first_in_process_ms": 30.644,
+      "first_query_ms": 8.782,
+      "first_queries": 23,
+      "warm_samples": 4,
+      "warm_median_ms": 26.4235,
+      "warm_p95_ms": 27.608,
+      "warm_query_ms_median": 8.893,
       "queries": 23,
-      "bytes": 6660
+      "bytes": 6660,
+      "orm": 27,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 33.2,
+          "duration_ms": 30.644,
+          "query_ms": 8.782,
+          "query_count": 23,
+          "response_bytes": 6660,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 30.1,
+          "duration_ms": 27.608,
+          "query_ms": 9.153,
+          "query_count": 23,
+          "response_bytes": 6660,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 28.1,
+          "duration_ms": 25.558,
+          "query_ms": 8.708,
+          "query_count": 23,
+          "response_bytes": 6660,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 28.9,
+          "duration_ms": 26.35,
+          "query_ms": 8.507,
+          "query_count": 23,
+          "response_bytes": 6660,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 29.0,
+          "duration_ms": 26.497,
+          "query_ms": 8.893,
+          "query_count": 23,
+          "response_bytes": 6660,
+          "orm": 27
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "poll: remediation report",
       "status": 200,
-      "cold_ms": 42.364,
-      "warm_median_ms": 38.735,
-      "warm_p95_ms": 42.364,
-      "query_ms_median": 7.315,
+      "first_in_process_ms": 47.869,
+      "first_query_ms": 11.138,
+      "first_queries": 14,
+      "warm_samples": 4,
+      "warm_median_ms": 35.775999999999996,
+      "warm_p95_ms": 36.951,
+      "warm_query_ms_median": 8.007,
       "queries": 14,
-      "bytes": 280719
+      "bytes": 280719,
+      "orm": 13,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 50.8,
+          "duration_ms": 47.869,
+          "query_ms": 11.138,
+          "query_count": 14,
+          "response_bytes": 280719,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 38.3,
+          "duration_ms": 35.503,
+          "query_ms": 8.034,
+          "query_count": 14,
+          "response_bytes": 280719,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 38.7,
+          "duration_ms": 35.404,
+          "query_ms": 8.007,
+          "query_count": 14,
+          "response_bytes": 280719,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 39.3,
+          "duration_ms": 36.049,
+          "query_ms": 7.769,
+          "query_count": 14,
+          "response_bytes": 280719,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 40.2,
+          "duration_ms": 36.951,
+          "query_ms": 7.891,
+          "query_count": 14,
+          "response_bytes": 280719,
+          "orm": 13
+        }
+      ]
     },
     {
       "user": "admin",
       "scenario": "poll: deployment validation",
       "status": 200,
-      "cold_ms": 46.36,
-      "warm_median_ms": 39.569,
-      "warm_p95_ms": 46.36,
-      "query_ms_median": 4.847,
+      "first_in_process_ms": 49.876,
+      "first_query_ms": 4.513,
+      "first_queries": 7,
+      "warm_samples": 4,
+      "warm_median_ms": 44.328500000000005,
+      "warm_p95_ms": 44.853,
+      "warm_query_ms_median": 5.302,
       "queries": 7,
-      "bytes": 96722
+      "bytes": 96899,
+      "orm": 6,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 53.1,
+          "duration_ms": 49.876,
+          "query_ms": 4.513,
+          "query_count": 7,
+          "response_bytes": 96899,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 47.9,
+          "duration_ms": 44.853,
+          "query_ms": 5.932,
+          "query_count": 7,
+          "response_bytes": 96899,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 46.8,
+          "duration_ms": 44.17,
+          "query_ms": 4.502,
+          "query_count": 7,
+          "response_bytes": 96899,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 46.8,
+          "duration_ms": 44.487,
+          "query_ms": 5.302,
+          "query_count": 7,
+          "response_bytes": 96899,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 45.6,
+          "duration_ms": 42.638,
+          "query_ms": 5.222,
+          "query_count": 7,
+          "response_bytes": 96899,
+          "orm": 6
+        }
+      ]
+    },
+    {
+      "user": "admin",
+      "scenario": "poll: remediation status",
+      "status": 404,
+      "first_in_process_ms": 0.616,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 3.0,
+          "duration_ms": 0.616,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.8,
+          "duration_ms": 0.519,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.8,
+          "duration_ms": 0.494,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.465,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 3.7,
+          "duration_ms": 0.433,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
+    },
+    {
+      "user": "admin",
+      "scenario": "poll: validation status",
+      "status": 404,
+      "first_in_process_ms": 0.435,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 2.9,
+          "duration_ms": 0.435,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.6,
+          "duration_ms": 0.512,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.5,
+          "duration_ms": 0.453,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.7,
+          "duration_ms": 0.518,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.555,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
+    },
+    {
+      "user": "admin",
+      "scenario": "poll: dependencies status",
+      "status": 404,
+      "first_in_process_ms": 0.426,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.426,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 3.0,
+          "duration_ms": 0.537,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.5,
+          "duration_ms": 0.499,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.5,
+          "duration_ms": 0.409,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.8,
+          "duration_ms": 0.517,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "services: page",
       "status": 200,
-      "cold_ms": 18.64,
-      "warm_median_ms": 11.551,
-      "warm_p95_ms": 18.64,
-      "query_ms_median": 2.941,
+      "first_in_process_ms": 19.681,
+      "first_query_ms": 4.409,
+      "first_queries": 8,
+      "warm_samples": 4,
+      "warm_median_ms": 11.465,
+      "warm_p95_ms": 13.198,
+      "warm_query_ms_median": 3.075,
       "queries": 8,
-      "bytes": 1048
+      "bytes": 1048,
+      "orm": 6,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 22.4,
+          "duration_ms": 19.681,
+          "query_ms": 4.409,
+          "query_count": 8,
+          "response_bytes": 1048,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 15.7,
+          "duration_ms": 13.198,
+          "query_ms": 3.435,
+          "query_count": 8,
+          "response_bytes": 1048,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 14.1,
+          "duration_ms": 11.687,
+          "query_ms": 3.075,
+          "query_count": 8,
+          "response_bytes": 1048,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 13.7,
+          "duration_ms": 11.243,
+          "query_ms": 2.736,
+          "query_count": 8,
+          "response_bytes": 1048,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 13.5,
+          "duration_ms": 11.198,
+          "query_ms": 2.815,
+          "query_count": 8,
+          "response_bytes": 1048,
+          "orm": 6
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "services: rows",
       "status": 200,
-      "cold_ms": 29.201,
-      "warm_median_ms": 29.783,
-      "warm_p95_ms": 31.139,
-      "query_ms_median": 10.933,
+      "first_in_process_ms": 28.559,
+      "first_query_ms": 9.729,
+      "first_queries": 22,
+      "warm_samples": 4,
+      "warm_median_ms": 27.485,
+      "warm_p95_ms": 27.882,
+      "warm_query_ms_median": 9.716,
       "queries": 22,
-      "bytes": 1299
+      "bytes": 1299,
+      "orm": 8,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 31.1,
+          "duration_ms": 28.559,
+          "query_ms": 9.729,
+          "query_count": 22,
+          "response_bytes": 1299,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 30.6,
+          "duration_ms": 27.882,
+          "query_ms": 9.907,
+          "query_count": 22,
+          "response_bytes": 1299,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 30.2,
+          "duration_ms": 27.777,
+          "query_ms": 9.716,
+          "query_count": 22,
+          "response_bytes": 1299,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 28.5,
+          "duration_ms": 26.106,
+          "query_ms": 9.266,
+          "query_count": 22,
+          "response_bytes": 1299,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 29.5,
+          "duration_ms": 27.193,
+          "query_ms": 9.318,
+          "query_count": 22,
+          "response_bytes": 1299,
+          "orm": 8
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "cybersecurity: page",
       "status": 200,
-      "cold_ms": 12.237,
-      "warm_median_ms": 13.688,
-      "warm_p95_ms": 13.724,
-      "query_ms_median": 3.445,
+      "first_in_process_ms": 11.057,
+      "first_query_ms": 2.648,
+      "first_queries": 8,
+      "warm_samples": 4,
+      "warm_median_ms": 11.179,
+      "warm_p95_ms": 12.487,
+      "warm_query_ms_median": 2.833,
       "queries": 8,
-      "bytes": 1044
+      "bytes": 1044,
+      "orm": 6,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 13.4,
+          "duration_ms": 11.057,
+          "query_ms": 2.648,
+          "query_count": 8,
+          "response_bytes": 1044,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 15.0,
+          "duration_ms": 12.487,
+          "query_ms": 3.07,
+          "query_count": 8,
+          "response_bytes": 1044,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 13.8,
+          "duration_ms": 11.3,
+          "query_ms": 2.833,
+          "query_count": 8,
+          "response_bytes": 1044,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 13.4,
+          "duration_ms": 11.058,
+          "query_ms": 2.535,
+          "query_count": 8,
+          "response_bytes": 1044,
+          "orm": 6
+        },
+        {
+          "status": 200,
+          "client_ms": 12.3,
+          "duration_ms": 10.002,
+          "query_ms": 2.284,
+          "query_count": 8,
+          "response_bytes": 1044,
+          "orm": 6
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "cybersecurity: data",
       "status": 200,
-      "cold_ms": 60.155,
-      "warm_median_ms": 56.664,
-      "warm_p95_ms": 60.754,
-      "query_ms_median": 36.608,
+      "first_in_process_ms": 59.648,
+      "first_query_ms": 40.695,
+      "first_queries": 18,
+      "warm_samples": 4,
+      "warm_median_ms": 59.274,
+      "warm_p95_ms": 62.441,
+      "warm_query_ms_median": 40.918,
       "queries": 18,
-      "bytes": 907
+      "bytes": 918,
+      "orm": 8,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 62.1,
+          "duration_ms": 59.648,
+          "query_ms": 40.695,
+          "query_count": 18,
+          "response_bytes": 918,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 60.6,
+          "duration_ms": 58.108,
+          "query_ms": 39.257,
+          "query_count": 18,
+          "response_bytes": 918,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 62.8,
+          "duration_ms": 60.44,
+          "query_ms": 40.918,
+          "query_count": 18,
+          "response_bytes": 918,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 60.0,
+          "duration_ms": 57.362,
+          "query_ms": 37.537,
+          "query_count": 18,
+          "response_bytes": 918,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 65.0,
+          "duration_ms": 62.441,
+          "query_ms": 42.635,
+          "query_count": 18,
+          "response_bytes": 918,
+          "orm": 8
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: overview",
       "status": 200,
-      "cold_ms": 59.711,
-      "warm_median_ms": 53.889,
-      "warm_p95_ms": 65.107,
-      "query_ms_median": 20.904,
+      "first_in_process_ms": 50.715,
+      "first_query_ms": 17.479,
+      "first_queries": 37,
+      "warm_samples": 4,
+      "warm_median_ms": 50.0095,
+      "warm_p95_ms": 51.784,
+      "warm_query_ms_median": 17.609,
       "queries": 37,
-      "bytes": 9034
+      "bytes": 9102,
+      "orm": 37,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 53.5,
+          "duration_ms": 50.715,
+          "query_ms": 17.479,
+          "query_count": 37,
+          "response_bytes": 9102,
+          "orm": 37
+        },
+        {
+          "status": 200,
+          "client_ms": 52.9,
+          "duration_ms": 50.256,
+          "query_ms": 16.475,
+          "query_count": 37,
+          "response_bytes": 9102,
+          "orm": 37
+        },
+        {
+          "status": 200,
+          "client_ms": 52.6,
+          "duration_ms": 49.763,
+          "query_ms": 17.609,
+          "query_count": 37,
+          "response_bytes": 9102,
+          "orm": 37
+        },
+        {
+          "status": 200,
+          "client_ms": 50.7,
+          "duration_ms": 47.919,
+          "query_ms": 15.98,
+          "query_count": 37,
+          "response_bytes": 9102,
+          "orm": 37
+        },
+        {
+          "status": 200,
+          "client_ms": 54.3,
+          "duration_ms": 51.784,
+          "query_ms": 18.379,
+          "query_count": 37,
+          "response_bytes": 9102,
+          "orm": 37
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: findings simplified",
       "status": 200,
-      "cold_ms": 56.176,
-      "warm_median_ms": 52.464,
-      "warm_p95_ms": 57.378,
-      "query_ms_median": 26.197,
+      "first_in_process_ms": 56.915,
+      "first_query_ms": 30.123,
+      "first_queries": 25,
+      "warm_samples": 4,
+      "warm_median_ms": 57.828,
+      "warm_p95_ms": 60.088,
+      "warm_query_ms_median": 31.844,
       "queries": 25,
-      "bytes": 20278
+      "bytes": 20278,
+      "orm": 18,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 59.7,
+          "duration_ms": 56.915,
+          "query_ms": 30.123,
+          "query_count": 25,
+          "response_bytes": 20278,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 59.9,
+          "duration_ms": 57.229,
+          "query_ms": 31.844,
+          "query_count": 25,
+          "response_bytes": 20278,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 60.7,
+          "duration_ms": 57.927,
+          "query_ms": 31.408,
+          "query_count": 25,
+          "response_bytes": 20278,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 62.9,
+          "duration_ms": 60.088,
+          "query_ms": 32.923,
+          "query_count": 25,
+          "response_bytes": 20278,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 60.4,
+          "duration_ms": 57.729,
+          "query_ms": 30.2,
+          "query_count": 25,
+          "response_bytes": 20278,
+          "orm": 18
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: findings raw",
       "status": 200,
-      "cold_ms": 63.505,
-      "warm_median_ms": 68.781,
-      "warm_p95_ms": 72.281,
-      "query_ms_median": 26.287,
+      "first_in_process_ms": 54.987,
+      "first_query_ms": 19.997,
+      "first_queries": 38,
+      "warm_samples": 4,
+      "warm_median_ms": 56.1665,
+      "warm_p95_ms": 60.619,
+      "warm_query_ms_median": 20.11,
       "queries": 38,
-      "bytes": 14523
+      "bytes": 14523,
+      "orm": 70,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 57.7,
+          "duration_ms": 54.987,
+          "query_ms": 19.997,
+          "query_count": 38,
+          "response_bytes": 14523,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 63.4,
+          "duration_ms": 60.619,
+          "query_ms": 22.524,
+          "query_count": 38,
+          "response_bytes": 14523,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 58.2,
+          "duration_ms": 55.297,
+          "query_ms": 19.742,
+          "query_count": 38,
+          "response_bytes": 14523,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 59.6,
+          "duration_ms": 56.979,
+          "query_ms": 19.633,
+          "query_count": 38,
+          "response_bytes": 14523,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 57.6,
+          "duration_ms": 55.354,
+          "query_ms": 20.11,
+          "query_count": 38,
+          "response_bytes": 14523,
+          "orm": 70
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: findings search",
       "status": 200,
-      "cold_ms": 92.909,
-      "warm_median_ms": 85.453,
-      "warm_p95_ms": 92.909,
-      "query_ms_median": 46.916,
+      "first_in_process_ms": 67.845,
+      "first_query_ms": 32.137,
+      "first_queries": 38,
+      "warm_samples": 4,
+      "warm_median_ms": 70.8755,
+      "warm_p95_ms": 74.058,
+      "warm_query_ms_median": 36.133,
       "queries": 38,
-      "bytes": 14563
+      "bytes": 14563,
+      "orm": 70,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 69.9,
+          "duration_ms": 67.845,
+          "query_ms": 32.137,
+          "query_count": 38,
+          "response_bytes": 14563,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 72.4,
+          "duration_ms": 69.846,
+          "query_ms": 35.26,
+          "query_count": 38,
+          "response_bytes": 14563,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 74.3,
+          "duration_ms": 71.905,
+          "query_ms": 36.211,
+          "query_count": 38,
+          "response_bytes": 14563,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 70.9,
+          "duration_ms": 67.919,
+          "query_ms": 32.78,
+          "query_count": 38,
+          "response_bytes": 14563,
+          "orm": 70
+        },
+        {
+          "status": 200,
+          "client_ms": 77.0,
+          "duration_ms": 74.058,
+          "query_ms": 36.133,
+          "query_count": 38,
+          "response_bytes": 14563,
+          "orm": 70
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: architecture",
       "status": 200,
-      "cold_ms": 48.287,
-      "warm_median_ms": 42.038,
-      "warm_p95_ms": 48.287,
-      "query_ms_median": 12.031,
+      "first_in_process_ms": 40.461,
+      "first_query_ms": 10.788,
+      "first_queries": 26,
+      "warm_samples": 4,
+      "warm_median_ms": 37.256,
+      "warm_p95_ms": 38.607,
+      "warm_query_ms_median": 9.689,
       "queries": 26,
-      "bytes": 70681
+      "bytes": 70682,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 43.4,
+          "duration_ms": 40.461,
+          "query_ms": 10.788,
+          "query_count": 26,
+          "response_bytes": 70682,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 40.2,
+          "duration_ms": 37.559,
+          "query_ms": 9.689,
+          "query_count": 26,
+          "response_bytes": 70682,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 38.9,
+          "duration_ms": 36.221,
+          "query_ms": 9.123,
+          "query_count": 26,
+          "response_bytes": 70682,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 39.6,
+          "duration_ms": 36.953,
+          "query_ms": 9.142,
+          "query_count": 26,
+          "response_bytes": 70682,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 41.3,
+          "duration_ms": 38.607,
+          "query_ms": 10.462,
+          "query_count": 26,
+          "response_bytes": 70682,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: dependencies",
       "status": 200,
-      "cold_ms": 49.843,
-      "warm_median_ms": 44.806,
-      "warm_p95_ms": 49.843,
-      "query_ms_median": 14.994,
+      "first_in_process_ms": 43.643,
+      "first_query_ms": 14.127,
+      "first_queries": 38,
+      "warm_samples": 4,
+      "warm_median_ms": 43.533500000000004,
+      "warm_p95_ms": 44.177,
+      "warm_query_ms_median": 14.223,
       "queries": 38,
-      "bytes": 49878
+      "bytes": 49878,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 46.4,
+          "duration_ms": 43.643,
+          "query_ms": 14.127,
+          "query_count": 38,
+          "response_bytes": 49878,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 44.9,
+          "duration_ms": 42.281,
+          "query_ms": 13.846,
+          "query_count": 38,
+          "response_bytes": 49878,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 46.9,
+          "duration_ms": 44.037,
+          "query_ms": 14.407,
+          "query_count": 38,
+          "response_bytes": 49878,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 45.7,
+          "duration_ms": 43.03,
+          "query_ms": 14.223,
+          "query_count": 38,
+          "response_bytes": 49878,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 47.0,
+          "duration_ms": 44.177,
+          "query_ms": 13.917,
+          "query_count": 38,
+          "response_bytes": 49878,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: validation",
       "status": 200,
-      "cold_ms": 30.713,
-      "warm_median_ms": 32.014,
-      "warm_p95_ms": 34.393,
-      "query_ms_median": 9.838,
+      "first_in_process_ms": 30.237,
+      "first_query_ms": 9.196,
+      "first_queries": 26,
+      "warm_samples": 4,
+      "warm_median_ms": 31.063499999999998,
+      "warm_p95_ms": 32.564,
+      "warm_query_ms_median": 9.715,
       "queries": 26,
-      "bytes": 31223
+      "bytes": 31441,
+      "orm": 12,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 32.9,
+          "duration_ms": 30.237,
+          "query_ms": 9.196,
+          "query_count": 26,
+          "response_bytes": 31441,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 34.0,
+          "duration_ms": 31.243,
+          "query_ms": 9.398,
+          "query_count": 26,
+          "response_bytes": 31441,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 35.1,
+          "duration_ms": 32.564,
+          "query_ms": 10.528,
+          "query_count": 26,
+          "response_bytes": 31441,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 37.9,
+          "duration_ms": 30.884,
+          "query_ms": 9.715,
+          "query_count": 26,
+          "response_bytes": 31441,
+          "orm": 12
+        },
+        {
+          "status": 200,
+          "client_ms": 32.4,
+          "duration_ms": 29.845,
+          "query_ms": 9.037,
+          "query_count": 26,
+          "response_bytes": 31441,
+          "orm": 12
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: remediations",
       "status": 200,
-      "cold_ms": 53.68,
-      "warm_median_ms": 45.607,
-      "warm_p95_ms": 53.68,
-      "query_ms_median": 14.948,
+      "first_in_process_ms": 41.022,
+      "first_query_ms": 12.481,
+      "first_queries": 33,
+      "warm_samples": 4,
+      "warm_median_ms": 40.0995,
+      "warm_p95_ms": 42.779,
+      "warm_query_ms_median": 12.399,
       "queries": 33,
-      "bytes": 3412
+      "bytes": 3412,
+      "orm": 18,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 43.6,
+          "duration_ms": 41.022,
+          "query_ms": 12.481,
+          "query_count": 33,
+          "response_bytes": 3412,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 43.0,
+          "duration_ms": 40.199,
+          "query_ms": 12.399,
+          "query_count": 33,
+          "response_bytes": 3412,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 42.7,
+          "duration_ms": 40.0,
+          "query_ms": 11.954,
+          "query_count": 33,
+          "response_bytes": 3412,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 47.0,
+          "duration_ms": 42.779,
+          "query_ms": 13.474,
+          "query_count": 33,
+          "response_bytes": 3412,
+          "orm": 18
+        },
+        {
+          "status": 200,
+          "client_ms": 42.7,
+          "duration_ms": 39.904,
+          "query_ms": 11.982,
+          "query_count": 33,
+          "response_bytes": 3412,
+          "orm": 18
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: activity",
       "status": 200,
-      "cold_ms": 32.664,
-      "warm_median_ms": 32.306,
-      "warm_p95_ms": 121.038,
-      "query_ms_median": 10.779,
+      "first_in_process_ms": 29.675,
+      "first_query_ms": 8.712,
+      "first_queries": 25,
+      "warm_samples": 4,
+      "warm_median_ms": 29.351,
+      "warm_p95_ms": 30.377,
+      "warm_query_ms_median": 8.989,
       "queries": 25,
-      "bytes": 6670
+      "bytes": 6889,
+      "orm": 35,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 32.4,
+          "duration_ms": 29.675,
+          "query_ms": 8.712,
+          "query_count": 25,
+          "response_bytes": 6889,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 32.0,
+          "duration_ms": 29.509,
+          "query_ms": 8.739,
+          "query_count": 25,
+          "response_bytes": 6889,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 33.0,
+          "duration_ms": 30.377,
+          "query_ms": 9.047,
+          "query_count": 25,
+          "response_bytes": 6889,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 30.7,
+          "duration_ms": 28.291,
+          "query_ms": 8.492,
+          "query_count": 25,
+          "response_bytes": 6889,
+          "orm": 35
+        },
+        {
+          "status": 200,
+          "client_ms": 31.7,
+          "duration_ms": 29.193,
+          "query_ms": 8.989,
+          "query_count": 25,
+          "response_bytes": 6889,
+          "orm": 35
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "service: artifacts",
       "status": 200,
-      "cold_ms": 30.939,
-      "warm_median_ms": 32.554,
-      "warm_p95_ms": 33.828,
-      "query_ms_median": 11.808,
+      "first_in_process_ms": 28.416,
+      "first_query_ms": 9.016,
+      "first_queries": 25,
+      "warm_samples": 4,
+      "warm_median_ms": 29.0735,
+      "warm_p95_ms": 30.519,
+      "warm_query_ms_median": 9.952,
       "queries": 25,
-      "bytes": 6668
+      "bytes": 6668,
+      "orm": 27,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 30.8,
+          "duration_ms": 28.416,
+          "query_ms": 9.016,
+          "query_count": 25,
+          "response_bytes": 6668,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 28.8,
+          "duration_ms": 26.434,
+          "query_ms": 8.446,
+          "query_count": 25,
+          "response_bytes": 6668,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 33.2,
+          "duration_ms": 30.519,
+          "query_ms": 9.743,
+          "query_count": 25,
+          "response_bytes": 6668,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 31.7,
+          "duration_ms": 28.903,
+          "query_ms": 9.963,
+          "query_count": 25,
+          "response_bytes": 6668,
+          "orm": 27
+        },
+        {
+          "status": 200,
+          "client_ms": 32.0,
+          "duration_ms": 29.244,
+          "query_ms": 9.952,
+          "query_count": 25,
+          "response_bytes": 6668,
+          "orm": 27
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "poll: remediation report",
       "status": 200,
-      "cold_ms": 42.791,
-      "warm_median_ms": 41.379,
-      "warm_p95_ms": 42.791,
-      "query_ms_median": 8.641,
+      "first_in_process_ms": 47.568,
+      "first_query_ms": 9.301,
+      "first_queries": 16,
+      "warm_samples": 4,
+      "warm_median_ms": 38.697,
+      "warm_p95_ms": 52.361,
+      "warm_query_ms_median": 8.282,
       "queries": 16,
-      "bytes": 280720
+      "bytes": 280720,
+      "orm": 13,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 50.7,
+          "duration_ms": 47.568,
+          "query_ms": 9.301,
+          "query_count": 16,
+          "response_bytes": 280720,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 40.5,
+          "duration_ms": 37.717,
+          "query_ms": 8.282,
+          "query_count": 16,
+          "response_bytes": 280720,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 39.6,
+          "duration_ms": 36.53,
+          "query_ms": 8.009,
+          "query_count": 16,
+          "response_bytes": 280720,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 43.1,
+          "duration_ms": 39.677,
+          "query_ms": 7.562,
+          "query_count": 16,
+          "response_bytes": 280720,
+          "orm": 13
+        },
+        {
+          "status": 200,
+          "client_ms": 55.9,
+          "duration_ms": 52.361,
+          "query_ms": 9.089,
+          "query_count": 16,
+          "response_bytes": 280720,
+          "orm": 13
+        }
+      ]
     },
     {
       "user": "restricted",
       "scenario": "poll: deployment validation",
       "status": 200,
-      "cold_ms": 43.526,
-      "warm_median_ms": 44.527,
-      "warm_p95_ms": 45.625,
-      "query_ms_median": 5.607,
+      "first_in_process_ms": 49.336,
+      "first_query_ms": 6.777,
+      "first_queries": 10,
+      "warm_samples": 4,
+      "warm_median_ms": 46.305,
+      "warm_p95_ms": 131.105,
+      "warm_query_ms_median": 6.59,
       "queries": 10,
-      "bytes": 96722
+      "bytes": 96899,
+      "orm": 8,
+      "samples": [
+        {
+          "status": 200,
+          "client_ms": 52.2,
+          "duration_ms": 49.336,
+          "query_ms": 6.777,
+          "query_count": 10,
+          "response_bytes": 96899,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 48.8,
+          "duration_ms": 45.964,
+          "query_ms": 6.895,
+          "query_count": 10,
+          "response_bytes": 96899,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 133.8,
+          "duration_ms": 131.105,
+          "query_ms": 6.269,
+          "query_count": 10,
+          "response_bytes": 96899,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 49.4,
+          "duration_ms": 46.646,
+          "query_ms": 6.411,
+          "query_count": 10,
+          "response_bytes": 96899,
+          "orm": 8
+        },
+        {
+          "status": 200,
+          "client_ms": 47.4,
+          "duration_ms": 44.788,
+          "query_ms": 6.59,
+          "query_count": 10,
+          "response_bytes": 96899,
+          "orm": 8
+        }
+      ]
+    },
+    {
+      "user": "restricted",
+      "scenario": "poll: remediation status",
+      "status": 404,
+      "first_in_process_ms": 0.547,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 2.9,
+          "duration_ms": 0.547,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.6,
+          "duration_ms": 0.452,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.435,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 3.0,
+          "duration_ms": 0.633,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.6,
+          "duration_ms": 0.427,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
+    },
+    {
+      "user": "restricted",
+      "scenario": "poll: validation status",
+      "status": 404,
+      "first_in_process_ms": 0.514,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 2.6,
+          "duration_ms": 0.514,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.8,
+          "duration_ms": 0.434,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.5,
+          "duration_ms": 0.415,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.7,
+          "duration_ms": 0.447,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.422,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
+    },
+    {
+      "user": "restricted",
+      "scenario": "poll: dependencies status",
+      "status": 404,
+      "first_in_process_ms": 0.492,
+      "first_query_ms": 0.0,
+      "first_queries": 0,
+      "warm_samples": 0,
+      "warm_median_ms": null,
+      "warm_p95_ms": null,
+      "warm_query_ms_median": null,
+      "queries": 0,
+      "bytes": 22,
+      "orm": 0,
+      "samples": [
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.492,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.4,
+          "duration_ms": 0.42,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 4.4,
+          "duration_ms": 0.472,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.8,
+          "duration_ms": 0.449,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        },
+        {
+          "status": 404,
+          "client_ms": 2.7,
+          "duration_ms": 0.569,
+          "query_ms": 0.0,
+          "query_count": 0,
+          "response_bytes": 22,
+          "orm": 0
+        }
+      ]
+    }
+  ],
+  "isolated_first": [
+    {
+      "status": 200,
+      "client_ms": 23.7,
+      "duration_ms": 20.644,
+      "query_ms": 3.985,
+      "query_count": 5,
+      "response_bytes": 1050,
+      "orm": 4,
+      "process_ready_ms": 2346.6,
+      "user": "admin",
+      "scenario": "services: page"
+    },
+    {
+      "status": 200,
+      "client_ms": 107.7,
+      "duration_ms": 104.089,
+      "query_ms": 54.368,
+      "query_count": 20,
+      "response_bytes": 3903,
+      "orm": 26,
+      "process_ready_ms": 2341.9,
+      "user": "admin",
+      "scenario": "services: rows"
+    },
+    {
+      "status": 200,
+      "client_ms": 24.0,
+      "duration_ms": 20.874,
+      "query_ms": 3.969,
+      "query_count": 5,
+      "response_bytes": 1046,
+      "orm": 4,
+      "process_ready_ms": 2246.0,
+      "user": "admin",
+      "scenario": "cybersecurity: page"
+    },
+    {
+      "status": 200,
+      "client_ms": 381.1,
+      "duration_ms": 377.801,
+      "query_ms": 329.426,
+      "query_count": 15,
+      "response_bytes": 4338,
+      "orm": 16,
+      "process_ready_ms": 2353.1,
+      "user": "admin",
+      "scenario": "cybersecurity: data"
+    },
+    {
+      "status": 200,
+      "client_ms": 212.9,
+      "duration_ms": 209.851,
+      "query_ms": 101.952,
+      "query_count": 38,
+      "response_bytes": 9095,
+      "orm": 38,
+      "process_ready_ms": 2272.2,
+      "user": "admin",
+      "scenario": "service: overview"
+    },
+    {
+      "status": 200,
+      "client_ms": 108.6,
+      "duration_ms": 105.38,
+      "query_ms": 42.676,
+      "query_count": 23,
+      "response_bytes": 20272,
+      "orm": 19,
+      "process_ready_ms": 2319.8,
+      "user": "admin",
+      "scenario": "service: findings simplified"
+    },
+    {
+      "status": 200,
+      "client_ms": 105.8,
+      "duration_ms": 102.451,
+      "query_ms": 26.467,
+      "query_count": 36,
+      "response_bytes": 14517,
+      "orm": 71,
+      "process_ready_ms": 2417.7,
+      "user": "admin",
+      "scenario": "service: findings raw"
+    },
+    {
+      "status": 200,
+      "client_ms": 124.6,
+      "duration_ms": 121.472,
+      "query_ms": 41.019,
+      "query_count": 36,
+      "response_bytes": 14557,
+      "orm": 71,
+      "process_ready_ms": 2202.2,
+      "user": "admin",
+      "scenario": "service: findings search"
+    },
+    {
+      "status": 200,
+      "client_ms": 110.8,
+      "duration_ms": 107.468,
+      "query_ms": 20.946,
+      "query_count": 25,
+      "response_bytes": 70676,
+      "orm": 12,
+      "process_ready_ms": 2300.8,
+      "user": "admin",
+      "scenario": "service: architecture"
+    },
+    {
+      "status": 200,
+      "client_ms": 88.1,
+      "duration_ms": 84.694,
+      "query_ms": 19.913,
+      "query_count": 36,
+      "response_bytes": 49872,
+      "orm": 12,
+      "process_ready_ms": 2276.0,
+      "user": "admin",
+      "scenario": "service: dependencies"
+    },
+    {
+      "status": 200,
+      "client_ms": 68.0,
+      "duration_ms": 64.857,
+      "query_ms": 13.648,
+      "query_count": 24,
+      "response_bytes": 31435,
+      "orm": 12,
+      "process_ready_ms": 2305.1,
+      "user": "admin",
+      "scenario": "service: validation"
+    },
+    {
+      "status": 200,
+      "client_ms": 368.0,
+      "duration_ms": 364.718,
+      "query_ms": 24.004,
+      "query_count": 32,
+      "response_bytes": 3404,
+      "orm": 18,
+      "process_ready_ms": 2278.3,
+      "user": "admin",
+      "scenario": "service: remediations"
+    },
+    {
+      "status": 200,
+      "client_ms": 71.1,
+      "duration_ms": 67.845,
+      "query_ms": 14.86,
+      "query_count": 23,
+      "response_bytes": 6883,
+      "orm": 35,
+      "process_ready_ms": 2268.3,
+      "user": "admin",
+      "scenario": "service: activity"
+    },
+    {
+      "status": 200,
+      "client_ms": 68.4,
+      "duration_ms": 65.449,
+      "query_ms": 15.44,
+      "query_count": 23,
+      "response_bytes": 6660,
+      "orm": 27,
+      "process_ready_ms": 2365.0,
+      "user": "admin",
+      "scenario": "service: artifacts"
+    },
+    {
+      "status": 200,
+      "client_ms": 70.2,
+      "duration_ms": 66.629,
+      "query_ms": 16.455,
+      "query_count": 14,
+      "response_bytes": 280719,
+      "orm": 13,
+      "process_ready_ms": 2282.8,
+      "user": "admin",
+      "scenario": "poll: remediation report"
+    },
+    {
+      "status": 200,
+      "client_ms": 56.9,
+      "duration_ms": 53.902,
+      "query_ms": 7.405,
+      "query_count": 7,
+      "response_bytes": 96899,
+      "orm": 6,
+      "process_ready_ms": 2246.5,
+      "user": "admin",
+      "scenario": "poll: deployment validation"
+    },
+    {
+      "status": 404,
+      "client_ms": 3.2,
+      "duration_ms": 0.655,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2214.7,
+      "user": "admin",
+      "scenario": "poll: remediation status"
+    },
+    {
+      "status": 404,
+      "client_ms": 3.5,
+      "duration_ms": 0.692,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2227.5,
+      "user": "admin",
+      "scenario": "poll: validation status"
+    },
+    {
+      "status": 404,
+      "client_ms": 3.3,
+      "duration_ms": 0.598,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2258.6,
+      "user": "admin",
+      "scenario": "poll: dependencies status"
+    },
+    {
+      "status": 200,
+      "client_ms": 33.6,
+      "duration_ms": 30.696,
+      "query_ms": 5.217,
+      "query_count": 8,
+      "response_bytes": 1048,
+      "orm": 6,
+      "process_ready_ms": 2265.4,
+      "user": "restricted",
+      "scenario": "services: page"
+    },
+    {
+      "status": 200,
+      "client_ms": 66.0,
+      "duration_ms": 63.058,
+      "query_ms": 14.404,
+      "query_count": 22,
+      "response_bytes": 1299,
+      "orm": 8,
+      "process_ready_ms": 2190.4,
+      "user": "restricted",
+      "scenario": "services: rows"
+    },
+    {
+      "status": 200,
+      "client_ms": 32.8,
+      "duration_ms": 29.852,
+      "query_ms": 5.852,
+      "query_count": 8,
+      "response_bytes": 1044,
+      "orm": 6,
+      "process_ready_ms": 2251.6,
+      "user": "restricted",
+      "scenario": "cybersecurity: page"
+    },
+    {
+      "status": 200,
+      "client_ms": 98.8,
+      "duration_ms": 95.872,
+      "query_ms": 48.766,
+      "query_count": 18,
+      "response_bytes": 917,
+      "orm": 8,
+      "process_ready_ms": 2224.0,
+      "user": "restricted",
+      "scenario": "cybersecurity: data"
+    },
+    {
+      "status": 200,
+      "client_ms": 232.2,
+      "duration_ms": 228.899,
+      "query_ms": 120.931,
+      "query_count": 40,
+      "response_bytes": 9102,
+      "orm": 37,
+      "process_ready_ms": 2271.4,
+      "user": "restricted",
+      "scenario": "service: overview"
+    },
+    {
+      "status": 200,
+      "client_ms": 116.7,
+      "duration_ms": 113.409,
+      "query_ms": 44.943,
+      "query_count": 25,
+      "response_bytes": 20278,
+      "orm": 18,
+      "process_ready_ms": 2208.5,
+      "user": "restricted",
+      "scenario": "service: findings simplified"
+    },
+    {
+      "status": 200,
+      "client_ms": 108.2,
+      "duration_ms": 105.052,
+      "query_ms": 26.388,
+      "query_count": 38,
+      "response_bytes": 14523,
+      "orm": 70,
+      "process_ready_ms": 2275.2,
+      "user": "restricted",
+      "scenario": "service: findings raw"
+    },
+    {
+      "status": 200,
+      "client_ms": 128.6,
+      "duration_ms": 125.533,
+      "query_ms": 40.729,
+      "query_count": 38,
+      "response_bytes": 14563,
+      "orm": 70,
+      "process_ready_ms": 2213.0,
+      "user": "restricted",
+      "scenario": "service: findings search"
+    },
+    {
+      "status": 200,
+      "client_ms": 133.8,
+      "duration_ms": 130.559,
+      "query_ms": 22.375,
+      "query_count": 27,
+      "response_bytes": 70682,
+      "orm": 12,
+      "process_ready_ms": 2258.0,
+      "user": "restricted",
+      "scenario": "service: architecture"
+    },
+    {
+      "status": 200,
+      "client_ms": 103.1,
+      "duration_ms": 99.953,
+      "query_ms": 21.218,
+      "query_count": 38,
+      "response_bytes": 49878,
+      "orm": 12,
+      "process_ready_ms": 2251.7,
+      "user": "restricted",
+      "scenario": "service: dependencies"
+    },
+    {
+      "status": 200,
+      "client_ms": 74.2,
+      "duration_ms": 71.045,
+      "query_ms": 14.84,
+      "query_count": 26,
+      "response_bytes": 31441,
+      "orm": 12,
+      "process_ready_ms": 2337.7,
+      "user": "restricted",
+      "scenario": "service: validation"
+    },
+    {
+      "status": 200,
+      "client_ms": 367.6,
+      "duration_ms": 364.366,
+      "query_ms": 24.961,
+      "query_count": 34,
+      "response_bytes": 3412,
+      "orm": 18,
+      "process_ready_ms": 2225.8,
+      "user": "restricted",
+      "scenario": "service: remediations"
+    },
+    {
+      "status": 200,
+      "client_ms": 71.7,
+      "duration_ms": 68.906,
+      "query_ms": 14.92,
+      "query_count": 25,
+      "response_bytes": 6889,
+      "orm": 35,
+      "process_ready_ms": 2249.5,
+      "user": "restricted",
+      "scenario": "service: activity"
+    },
+    {
+      "status": 200,
+      "client_ms": 71.3,
+      "duration_ms": 67.994,
+      "query_ms": 15.047,
+      "query_count": 25,
+      "response_bytes": 6668,
+      "orm": 27,
+      "process_ready_ms": 2192.3,
+      "user": "restricted",
+      "scenario": "service: artifacts"
+    },
+    {
+      "status": 200,
+      "client_ms": 70.3,
+      "duration_ms": 67.116,
+      "query_ms": 15.167,
+      "query_count": 16,
+      "response_bytes": 280720,
+      "orm": 13,
+      "process_ready_ms": 2233.4,
+      "user": "restricted",
+      "scenario": "poll: remediation report"
+    },
+    {
+      "status": 200,
+      "client_ms": 73.8,
+      "duration_ms": 70.537,
+      "query_ms": 9.821,
+      "query_count": 10,
+      "response_bytes": 96899,
+      "orm": 8,
+      "process_ready_ms": 2218.3,
+      "user": "restricted",
+      "scenario": "poll: deployment validation"
+    },
+    {
+      "status": 404,
+      "client_ms": 4.5,
+      "duration_ms": 0.753,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2252.1,
+      "user": "restricted",
+      "scenario": "poll: remediation status"
+    },
+    {
+      "status": 404,
+      "client_ms": 3.8,
+      "duration_ms": 0.684,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2322.8,
+      "user": "restricted",
+      "scenario": "poll: validation status"
+    },
+    {
+      "status": 404,
+      "client_ms": 3.3,
+      "duration_ms": 0.649,
+      "query_ms": 0.0,
+      "query_count": 0,
+      "response_bytes": 22,
+      "orm": 0,
+      "process_ready_ms": 2234.2,
+      "user": "restricted",
+      "scenario": "poll: dependencies status"
     }
   ]
 }

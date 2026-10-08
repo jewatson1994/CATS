@@ -1,0 +1,31 @@
+2026-10-07 21:41:38,263 cats.maintenance maintenance_step {"step": "intelligence", "ms": 0, "result": null}
+2026-10-07 21:41:38,321 cats.performance request_performance {"cursor_reported_rows": 0, "cursor_unknown_rowcount_queries": 0, "duration_ms": 6.19, "orm_instances_loaded": 0, "query_count": 1, "query_ms": 0.349, "response_bytes": 1240, "response_completed": true, "route": "/login", "stage_ms": {"serialization": 0.032, "transformation": 0.04}, "status": 200}
+2026-10-07 21:41:38,614 cats.performance request_performance {"cursor_reported_rows": 4, "cursor_unknown_rowcount_queries": 0, "duration_ms": 280.242, "orm_instances_loaded": 1, "query_count": 5, "query_ms": 52.757, "response_bytes": 0, "response_completed": true, "route": "/login", "stage_ms": {}, "status": 303}
+2026-10-07 21:41:39,486 cats.posture service_posture_rebuilt {"kind": "services", "services": 25, "ms": 513.4}
+2026-10-07 21:41:39,626 cats.performance request_performance {"cursor_reported_rows": 3369, "cursor_unknown_rowcount_queries": 0, "duration_ms": 978.227, "orm_instances_loaded": 39, "query_count": 41, "query_ms": 531.063, "response_bytes": 7817, "response_completed": true, "route": "/api/dashboard/services", "stage_ms": {}, "status": 200}
+2026-10-07 21:41:40,258 cats.posture service_posture_rebuilt {"kind": "services", "services": 250, "ms": 1296.3}
+2026-10-07 21:41:40,668 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 25, "ms": 595.8}
+2026-10-07 21:41:40,699 cats.performance request_performance {"cursor_reported_rows": 3309, "cursor_unknown_rowcount_queries": 0, "duration_ms": 827.263, "orm_instances_loaded": 5, "query_count": 34, "query_ms": 636.505, "response_bytes": 61765, "response_completed": true, "route": "/api/dashboard/cybersecurity", "stage_ms": {}, "status": 200}
+2026-10-07 21:41:42,066 cats.posture service_posture_rebuilt {"kind": "services", "services": 250, "ms": 1807.8}
+2026-10-07 21:41:43,972 cats.posture service_posture_rebuilt {"kind": "services", "services": 250, "ms": 1905.5}
+2026-10-07 21:41:45,963 cats.posture service_posture_rebuilt {"kind": "services", "services": 226, "ms": 1990.0}
+2026-10-07 21:41:50,523 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 250, "ms": 4557.5}
+2026-10-07 21:41:54,541 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 250, "ms": 4017.2}
+2026-10-07 21:41:58,677 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 250, "ms": 4136.1}
+2026-10-07 21:42:02,861 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 226, "ms": 4183.6}
+2026-10-07 21:43:37,826 cats.maintenance maintenance_step {"step": "execution_summaries", "ms": 119546, "result": 2002}
+2026-10-07 21:47:16,456 cats.maintenance maintenance_step {"step": "legacy_policy_findings", "ms": 218629, "result": null}
+2026-10-07 21:47:17,697 cats.maintenance maintenance_step {"step": "incomplete_scan_findings", "ms": 1241, "result": null}
+2026-10-07 21:47:18,163 cats.posture service_posture_rebuilt {"kind": "services", "services": 200, "ms": 461.4}
+2026-10-07 21:47:18,617 cats.posture service_posture_rebuilt {"kind": "services", "services": 200, "ms": 450.7}
+2026-10-07 21:47:19,066 cats.posture service_posture_rebuilt {"kind": "services", "services": 200, "ms": 443.7}
+2026-10-07 21:47:19,509 cats.posture service_posture_rebuilt {"kind": "services", "services": 200, "ms": 438.4}
+2026-10-07 21:47:20,018 cats.posture service_posture_rebuilt {"kind": "services", "services": 200, "ms": 504.0}
+2026-10-07 21:47:20,127 cats.posture service_posture_rebuilt {"kind": "services", "services": 1, "ms": 103.9}
+2026-10-07 21:47:21,561 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 200, "ms": 1426.9}
+2026-10-07 21:47:23,084 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 200, "ms": 1519.3}
+2026-10-07 21:47:24,715 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 200, "ms": 1626.0}
+2026-10-07 21:47:26,440 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 200, "ms": 1720.0}
+2026-10-07 21:47:28,558 cats.posture service_posture_rebuilt {"kind": "cyber", "services": 157, "ms": 2111.8}
+2026-10-07 21:47:28,563 cats.maintenance maintenance_step {"step": "service_posture", "ms": 10867, "result": 1958}
+2026-10-07 21:48:44,164 cats.maintenance maintenance_step {"step": "service_overviews", "ms": 75600, "result": 1001}
