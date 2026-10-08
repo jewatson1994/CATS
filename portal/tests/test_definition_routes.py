@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from app import main
+from app import main, definition_routes, definition_acquisition
 from app.definition_routes import process_definition
 from app.oci_diagnostics import OciPullFailure
 from app.models import Service, ServiceArtifact, ServiceArtifactRevision
@@ -81,24 +81,20 @@ def test_definition_processing_isolates_failed_sibling_and_preserves_terminal_sc
         artifact_id = definition.id
         user_id = definition.revisions[0].created_by_id
 
-    def catalog(url, certificates):
-        return {"charts": [{"name": "demo", "versions": [{"version": "1.2.3", "url": "https://charts.example.invalid/demo-1.2.3.tgz"}]}]}
-
-    def download(url, certificates):
-        if str(url).startswith("oci://"):
-            raise ValueError("registry unavailable")
-        return [(b"chart", "demo.tgz")]
-
     def start(*args, **kwargs):
-        from app.definition_routes import complete_scan
-        complete_scan("instant-job", {"definition_context": kwargs["definition_context"], "status": "complete"})
+        context = kwargs["definition_context"]
+        component = kwargs["definition_component"]
+        if component["source_type"] == "oci":
+            definition_routes._status(artifact_id, context["run_id"], context["index"], "acquisition_failed", "registry denied")
+        else:
+            job = {"definition_context": context, "status": "complete"}
+            definition_routes.finalize_definition_result("instant-job", job,
+                {"demo/Chart.yaml": "name: demo\nversion: 1.2.3\n"}, {"actual_version": "1.2.3"})
+            definition_routes.complete_scan("instant-job", job)
         return "instant-job"
 
-    with patch.object(main, "_discover_helm_repository", side_effect=catalog), \
-         patch.object(main, "_download_public_chart", side_effect=download), \
-         patch.object(main, "_retained_helm_sources", return_value=({"Chart.yaml": "name: demo\nversion: 1.2.3\n"}, 1)), \
-         patch.object(main, "_chart_identity", return_value=("demo", "1.2.3")), \
-         patch.object(main, "_start_public_scan", side_effect=start):
+    with patch.object(main, "_start_public_scan", side_effect=start), \
+         patch.object(definition_routes, "acquire_component", side_effect=AssertionError("portal must not acquire")):
         process_definition(artifact_id, user_id)
     with SessionLocal() as db:
         definition = db.get(ServiceArtifact, artifact_id)
@@ -149,8 +145,15 @@ def test_latest_reprocess_keeps_each_resolved_version_and_chart_artifact():
         return {"demo/Chart.yaml": f"name: demo\nversion: {current['version']}\n"}, 1
 
     def scan(*args, **kwargs):
-        from app.definition_routes import complete_scan
-        complete_scan("completed-job", {"definition_context": kwargs["definition_context"], "status": "complete"})
+        if kwargs["definition_component"]["source_type"] == "oci":
+            context = kwargs["definition_context"]
+            definition_routes._status(artifact_id, context["run_id"], context["index"], "acquisition_failed", "registry unavailable")
+        else:
+            job = {"definition_context": kwargs["definition_context"], "status": "complete"}
+            files, _ = retained()
+            definition_routes.finalize_definition_result("completed-job", job, files, {"actual_version": current["version"]})
+            definition_routes.finalize_definition_result("completed-job", job, files, {"actual_version": current["version"]})
+            definition_routes.complete_scan("completed-job", job)
         return "completed-job"
 
     with patch.object(main, "_discover_helm_repository", side_effect=catalog), \
@@ -193,16 +196,20 @@ def test_oci_failure_reaches_retained_evidence_and_ui_without_stopping_sibling()
         definition = db.scalar(select(ServiceArtifact).where(ServiceArtifact.artifact_type == "service_definition"))
         artifact_id, user_id = definition.id, definition.revisions[0].created_by_id
 
-    def download(reference, _):
-        if reference.startswith("oci://"):
-            raise OciPullFailure(reference, exit_code=1, stderr="unauthorized; password=secret-value")
-        return [(b"chart", "demo.tgz")]
+    def scan(*args, **kwargs):
+        context = kwargs["definition_context"]
+        component = kwargs["definition_component"]
+        if component["source_type"] == "oci":
+            failure = OciPullFailure(component["reference"], exit_code=1, stderr="unauthorized; password=secret-value")
+            definition_routes._status(artifact_id, context["run_id"], context["index"], "acquisition_failed",
+                str(failure), acquisition_diagnostic=failure.diagnostic)
+        else:
+            definition_routes.finalize_definition_result("evidence-job", {"definition_context": context},
+                {"demo/Chart.yaml": "name: demo\nversion: 1.2.3\nappVersion: 9.8.7\n",
+                 "demo/values.yaml": "image:\n  tag: latest\n"}, {"actual_version": "1.2.3"})
+        return "evidence-job"
 
-    with patch.object(main, "_discover_helm_repository", return_value={"charts": [{"name": "demo", "versions": [{"version": "1.2.3", "url": "https://charts.example.invalid/demo.tgz"}]}]}), \
-         patch.object(main, "_download_public_chart", side_effect=download), \
-         patch.object(main, "_retained_helm_sources", return_value=({"demo/Chart.yaml": "name: demo\nversion: 1.2.3\nappVersion: 9.8.7\n", "demo/values.yaml": "image:\n  tag: latest\n"}, 1)), \
-         patch.object(main, "_chart_identity", return_value=("demo", "1.2.3")), \
-         patch.object(main, "_start_public_scan", return_value="evidence-job"):
+    with patch.object(main, "_start_public_scan", side_effect=scan):
         process_definition(artifact_id, user_id)
     with SessionLocal() as db:
         definition = db.get(ServiceArtifact, artifact_id)
@@ -224,7 +231,7 @@ def test_oci_failure_reaches_retained_evidence_and_ui_without_stopping_sibling()
 
 def test_oci_release_alias_acquisition_checks_actual_chart_identity():
     import pytest
-    from app.definition_routes import acquire_component
+    from app.definition_acquisition import acquire_component
     from app.service_definitions import parse_definition
 
     component = parse_definition("""services:
@@ -233,9 +240,9 @@ def test_oci_release_alias_acquisition_checks_actual_chart_identity():
     sourceType: oci
     ociRepo: {repoName: confluence-postgresql, url: "oci://registry-1.docker.io/bitnamicharts/postgresql", tag: "15.5.38"}
 """)['components'][0]
-    with patch.object(main, '_download_public_chart', return_value=[]) as download, \
-         patch.object(main, '_retained_helm_sources', return_value=({'Chart.yaml': 'chart'}, 1)), \
-         patch.object(main, '_chart_identity', return_value=('postgresql', '15.5.38')) as identity:
+    with patch.object(definition_acquisition, '_download_public_chart', return_value=[]) as download, \
+         patch.object(definition_acquisition, '_retained_helm_sources', return_value=({'Chart.yaml': 'chart'}, 1)), \
+         patch.object(definition_acquisition, '_chart_identity', return_value=('postgresql', '15.5.38')) as identity:
         acquired = acquire_component(component, [])
         assert acquired[2:4] == ('postgresql', '15.5.38')
         download.assert_called_once_with(component['reference'], [])

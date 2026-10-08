@@ -204,6 +204,7 @@ def test_portal_fatal_scan_preserves_diagnostics_and_blocks_ingest(monkeypatch, 
     from fastapi import HTTPException
     from app import main
 
+    monkeypatch.setenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", "true")
     job_id = "fatal-shell-test"
     output = tmp_path / job_id / "output"
     trust = tmp_path / job_id / "input" / ".cats-trust"
@@ -234,3 +235,11 @@ def test_portal_fatal_scan_preserves_diagnostics_and_blocks_ingest(monkeypatch, 
         main.ingest_public_scan(job_id, "service", None,
                                 SimpleNamespace(accessible_service_ids=lambda _: None))
     assert exc.value.status_code == 409
+
+
+def test_portal_scanner_execution_is_disabled_by_default(monkeypatch):
+    from app import main
+    monkeypatch.delenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", raising=False)
+    monkeypatch.setattr(main.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("portal launched scanner"))
+    with pytest.raises(RuntimeError, match="dedicated scan-worker"):
+        main._run_public_scan("disabled-job", "")

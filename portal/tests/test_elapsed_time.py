@@ -15,6 +15,22 @@ from app.frontend import PAGE_MEDIA_TYPE
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.fixture(autouse=True)
+def isolated_scan_history(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app import scan_coordination
+    engine = create_engine(f"sqlite:///{(tmp_path / 'elapsed.db').as_posix()}")
+    scan_coordination.ScanJob.__table__.create(engine)
+    scan_coordination.ScanAttempt.__table__.create(engine)
+    from app.models import ServiceImage
+    ServiceImage.__table__.create(engine)
+    monkeypatch.setattr(scan_coordination, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False))
+    monkeypatch.setattr(portal_main, "PUBLIC_JOBS", scan_coordination.DurableJobs())
+    yield
+    engine.dispose()
+
+
 def _clock(monkeypatch, *values):
     moments = iter(values)
     monkeypatch.setattr(portal_main, "utcnow", lambda: next(moments))
@@ -41,17 +57,14 @@ def test_scan_timestamps_continue_across_stages_and_freeze(monkeypatch):
     _clock(monkeypatch, start, start + timedelta(seconds=10), start + timedelta(seconds=41), start + timedelta(seconds=50))
     job_id = "scan-elapsed-test"
     portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": "scan", "status": "queued", "phase": "queued"}
-    try:
-        portal_main._public_job_update(job_id, status="running", phase="prepare_inputs")
-        started_at = portal_main.PUBLIC_JOBS[job_id]["started_at"]
-        portal_main._public_job_update(job_id, status="running", phase="generate_sboms")
-        assert portal_main.PUBLIC_JOBS[job_id]["started_at"] == started_at
-        portal_main._public_job_update(job_id, status="complete", phase="report_results")
-        finished_at = portal_main.PUBLIC_JOBS[job_id]["finished_at"]
-        portal_main._public_job_update(job_id, summary={"results": 1})
-        assert portal_main.PUBLIC_JOBS[job_id]["finished_at"] == finished_at
-    finally:
-        portal_main.PUBLIC_JOBS.pop(job_id, None)
+    portal_main._public_job_update(job_id, status="running", phase="prepare_inputs")
+    started_at = portal_main.PUBLIC_JOBS[job_id]["started_at"]
+    portal_main._public_job_update(job_id, status="running", phase="generate_sboms")
+    assert portal_main.PUBLIC_JOBS[job_id]["started_at"] == started_at
+    portal_main._public_job_update(job_id, status="complete", phase="report_results")
+    finished_at = portal_main.PUBLIC_JOBS[job_id]["finished_at"]
+    portal_main._public_job_update(job_id, summary={"results": 1})
+    assert portal_main.PUBLIC_JOBS[job_id]["finished_at"] == finished_at
 
 def test_standalone_sbom_and_scan_cancellation_expose_terminal_timestamps(monkeypatch):
     start = datetime(2026, 9, 15, 13, 0, tzinfo=timezone.utc)
@@ -60,19 +73,15 @@ def test_standalone_sbom_and_scan_cancellation_expose_terminal_timestamps(monkey
     scan_id = "cancel-elapsed-test"
     portal_main.PUBLIC_JOBS[sbom_id] = {"job_id": sbom_id, "job_kind": "sbom", "status": "queued", "phase": "queued"}
     portal_main.PUBLIC_JOBS[scan_id] = {"job_id": scan_id, "job_kind": "scan", "status": "queued", "phase": "queued"}
-    try:
-        portal_main._public_job_update(sbom_id, status="running", phase="prepare_inputs")
-        portal_main._public_job_update(sbom_id, status="error", phase="worker")
-        portal_main._public_job_update(scan_id, status="running", phase="scan_sboms")
-        response = TestClient(app).post(f"/api/public/jobs/{scan_id}/cancel")
-        assert response.status_code == 200
-        for job_id in (sbom_id, scan_id):
-            state = TestClient(app).get(f"/api/public/jobs/{job_id}").json()
-            assert state["started_at"]
-            assert state["finished_at"]
-    finally:
-        portal_main.PUBLIC_JOBS.pop(sbom_id, None)
-        portal_main.PUBLIC_JOBS.pop(scan_id, None)
+    portal_main._public_job_update(sbom_id, status="running", phase="prepare_inputs")
+    portal_main._public_job_update(sbom_id, status="error", phase="worker")
+    portal_main._public_job_update(scan_id, status="running", phase="scan_sboms")
+    response = TestClient(app).post(f"/api/public/jobs/{scan_id}/cancel")
+    assert response.status_code == 200
+    for job_id in (sbom_id, scan_id):
+        state = TestClient(app).get(f"/api/public/jobs/{job_id}").json()
+        assert state["started_at"]
+        assert state["finished_at"]
 
 
 def test_patch_timestamps_survive_refresh_and_phase_changes(monkeypatch, tmp_path):
@@ -105,13 +114,10 @@ def test_timer_page_exposes_job_scope_and_timestamp_contract(monkeypatch):
         "job_id": job_id, "job_kind": "scan", "status": "running", "phase": "generate_sboms",
         "started_at": "2026-09-15T12:00:00+00:00",
     }
-    try:
-        scan = TestClient(app).get(f"/scan?job_id={job_id}", headers={"Accept": PAGE_MEDIA_TYPE})
-        assert scan.status_code == 200
-        data = scan.json()["data"]
-        assert data["job_id"] == job_id
-        assert data["job"]["started_at"] == "2026-09-15T12:00:00+00:00"
-        assert data["job"]["status"] == "running"
-        assert data["job"]["phase"] == "generate_sboms"
-    finally:
-        portal_main.PUBLIC_JOBS.pop(job_id, None)
+    scan = TestClient(app).get(f"/scan?job_id={job_id}", headers={"Accept": PAGE_MEDIA_TYPE})
+    assert scan.status_code == 200
+    data = scan.json()["data"]
+    assert data["job_id"] == job_id
+    assert data["job"]["started_at"] == "2026-09-15T12:00:00+00:00"
+    assert data["job"]["status"] == "running"
+    assert data["job"]["phase"] == "generate_sboms"

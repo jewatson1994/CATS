@@ -1,3 +1,5 @@
+from app import definition_acquisition
+from app import scan_acquisition
 from io import BytesIO
 import tarfile
 
@@ -5,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from app import main
-from app.definition_routes import acquire_component
+from app.definition_acquisition import acquire_component
 from app.helm_sources import normalize_chart_reference, oci_pull_arguments
 from app.helm_archives import extract_chart
 from app.helm_downloads import copy_bounded
@@ -80,7 +82,7 @@ def test_url_and_upload_use_same_archive_reader(tmp_path, monkeypatch):
         ("test-chart/values.yaml", b"replicas: 1\n"),
         ("test-chart/templates/deployment.yaml", b"kind: Deployment\n"),
     ]).getvalue())
-    monkeypatch.setattr(main, "_fetch_public_stream", lambda *_: (
+    monkeypatch.setattr(scan_acquisition, "_fetch_public_stream", lambda *_: (
         copy_bounded(BytesIO(archive), len(archive)), "https://charts.example.test/download"))
     [(download, filename)] = main._download_public_chart("https://charts.example.test/download")
     assert filename == "download"
@@ -109,7 +111,7 @@ def test_definition_acquires_oci_chart_with_embedded_dependency(monkeypatch):
         ("nginx/Chart.yaml", b"name: nginx\nversion: 25.1.1\n"),
         ("nginx/charts/common/Chart.yaml", b"name: common\nversion: 2.0.0\n"),
     ])
-    monkeypatch.setattr(main, "_download_public_chart", lambda *_: [(archive, "nginx.tgz")])
+    monkeypatch.setattr(definition_acquisition, "_download_public_chart", lambda *_: [(archive, "nginx.tgz")])
     reference = "oci://registry-1.docker.io/bitnamicharts/nginx:25.1.1"
     component = {"source_type": "oci", "reference": reference, "chart_name": "nginx", "version": "25.1.1"}
     source_url, source, name, version, archives = acquire_component(component, [])
@@ -122,9 +124,9 @@ def test_definition_acquires_oci_chart_with_embedded_dependency(monkeypatch):
 def test_definition_latest_helm_resolves_catalog_and_checks_identity(monkeypatch):
     archive = package([("app/Chart.yaml", b"name: app\nversion: 2.1.0\n")])
     chosen = []
-    monkeypatch.setattr(main, "_discover_helm_repository", lambda *_: {
+    monkeypatch.setattr(definition_acquisition, "_discover_helm_repository", lambda *_: {
         "charts": [{"name": "app", "latest": {"version": "2.1.0", "url": "https://charts.example.test/app-2.1.0.tgz"}}]})
-    monkeypatch.setattr(main, "_download_public_chart", lambda url, _: chosen.append(url) or [(archive, "app.tgz")])
+    monkeypatch.setattr(definition_acquisition, "_download_public_chart", lambda url, _: chosen.append(url) or [(archive, "app.tgz")])
     component = {"source_type": "helm", "repository": "https://charts.example.test", "chart_name": "app", "version": "latest"}
     _, _, name, version, archives = acquire_component(component, [])
     assert chosen == ["https://charts.example.test/app-2.1.0.tgz"]
@@ -134,7 +136,7 @@ def test_definition_latest_helm_resolves_catalog_and_checks_identity(monkeypatch
 
 def test_definition_latest_oci_uses_chart_identity(monkeypatch):
     archive = package([("app/Chart.yaml", b"name: app\nversion: 3.4.5\n")])
-    monkeypatch.setattr(main, "_download_public_chart", lambda *_: [(archive, "app.tgz")])
+    monkeypatch.setattr(definition_acquisition, "_download_public_chart", lambda *_: [(archive, "app.tgz")])
     component = {"source_type": "oci", "reference": "oci://registry.example.test/charts/app:latest", "chart_name": "app", "version": "latest"}
     assert acquire_component(component, [])[3] == "3.4.5"
 

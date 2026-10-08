@@ -1,3 +1,4 @@
+from app import scan_acquisition
 import io
 import subprocess
 from pathlib import Path
@@ -106,7 +107,7 @@ def test_repository_failure_closes_previously_downloaded_archives(monkeypatch):
         if url.endswith("first.tgz"):
             return package, url
         raise HTTPException(400, detail="unreachable")
-    monkeypatch.setattr(main, "_fetch_public_stream", fetch)
+    monkeypatch.setattr(scan_acquisition, "_fetch_public_stream", fetch)
     with pytest.raises(HTTPException):
         main._download_public_chart("https://example.test/index.yaml")
     assert index.closed and package.closed
@@ -119,3 +120,29 @@ def test_retained_staging_failure_closes_all_owned_downloads(monkeypatch):
     with pytest.raises(HTTPException):
         main._retained_helm_sources([(first, "first.tgz"), (second, "second.tgz")])
     assert first.closed and second.closed
+
+
+def test_helm_subprocess_excludes_worker_control_credentials(monkeypatch):
+    from types import SimpleNamespace
+    from app import scan_acquisition
+    for name in ("CATS_SCAN_WORKER_TOKEN", "CATS_SCAN_PORTAL_URL", "CATS_PORTAL_API_TOKEN",
+                 "DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY"):
+        monkeypatch.setenv(name, "private-value")
+    monkeypatch.setenv("PATH", "tool-path")
+    monkeypatch.setattr(scan_acquisition.shutil, "which", lambda _: "/fake/helm")
+    environments = []
+    def run(command, **kwargs):
+        environments.append(kwargs["env"])
+        destination = Path(command[command.index("--destination") + 1])
+        (destination / "chart.tgz").write_bytes(b"chart")
+        return SimpleNamespace(returncode=0, stderr="", stdout="")
+    monkeypatch.setattr(scan_acquisition.subprocess, "run", run)
+    archives = scan_acquisition._download_oci_chart("oci://example.test/chart:1")
+    try:
+        assert environments[0]["PATH"] == "tool-path"
+        assert not any(key.startswith(("CATS_SCAN_", "CATS_PORTAL_")) for key in environments[0])
+        assert "DATABASE_URL" not in environments[0]
+        assert "CATS_CONFIG_ENCRYPTION_KEY" not in environments[0]
+        assert archives[0][0].read() == b"chart"
+    finally:
+        downloads.close_downloads(archives)

@@ -10,7 +10,7 @@ def test_scan_submission_failure_preserves_scoped_targets(monkeypatch):
     permitted = SimpleNamespace(id=1, service_key="allowed", current_version_id=None, manual_version="1")
     other = SimpleNamespace(id=2, service_key="other")
     db = SimpleNamespace(scalar=lambda query: permitted, scalars=lambda query: [permitted, other])
-    auth = SimpleNamespace(accessible_service_ids=lambda permission: {1}, has=lambda *args: True)
+    auth = SimpleNamespace(user=SimpleNamespace(id=1), accessible_service_ids=lambda permission: {1}, has=lambda *args: True)
 
     async def form():
         return SimpleNamespace(getlist=lambda key: [], get=lambda key: None)

@@ -6,8 +6,8 @@ import urllib.error
 import pytest
 from fastapi import HTTPException
 
-from app import main
-from app.definition_routes import acquire_component
+from app import main, scan_acquisition, definition_acquisition
+from app.definition_acquisition import acquire_component
 from app.helm_downloads import copy_bounded, close_downloads
 
 
@@ -39,8 +39,8 @@ def test_declared_repository_requests_index_first(monkeypatch, repository, index
         if url != index:
             raise HTTPException(400, "root returns HTTP 403")
         return INDEX, url
-    monkeypatch.setattr(main, "_fetch_public_url", fetch)
-    catalog = main._discover_helm_repository(repository, [])
+    monkeypatch.setattr(definition_acquisition, "_fetch_public_url", fetch)
+    catalog = definition_acquisition._discover_helm_repository(repository, [])
     assert requests == [index]
     assert catalog["charts"][0]["latest"]["url"] == index.rsplit("/", 1)[0] + "/charts/cert-manager-v1.20.2.tgz"
 
@@ -63,7 +63,7 @@ def test_declared_cert_manager_flow_never_requires_root(monkeypatch):
         else:
             raise HTTPException(400, "HTTP 403")
         return copy_bounded(io.BytesIO(content), len(content)), url
-    monkeypatch.setattr(main, "_fetch_public_stream", fetch)
+    monkeypatch.setattr(scan_acquisition, "_fetch_public_stream", fetch)
     result = acquire_component({"source_type": "helm", "repository": "https://charts.jetstack.io",
                                 "chart_name": "cert-manager", "version": "v1.20.2"}, [])
     try:
@@ -74,18 +74,18 @@ def test_declared_cert_manager_flow_never_requires_root(monkeypatch):
 
 
 def test_redirected_index_resolves_relative_and_absolute_packages(monkeypatch):
-    monkeypatch.setattr(main, "_fetch_public_url", lambda *_: (
+    monkeypatch.setattr(definition_acquisition, "_fetch_public_url", lambda *_: (
         b"entries:\n  demo:\n    - version: '1'\n      urls: [demo.tgz]\n    - version: '2'\n      urls: [https://cdn.example.test/demo.tgz]\n",
         "https://cdn.example.test/repository/index.yaml"))
-    versions = main._discover_helm_repository("https://example.test/helm")["charts"][0]["versions"]
+    versions = definition_acquisition._discover_helm_repository("https://example.test/helm")["charts"][0]["versions"]
     assert [v["url"] for v in versions] == ["https://cdn.example.test/repository/demo.tgz", "https://cdn.example.test/demo.tgz"]
 
 
 @pytest.mark.parametrize("content", [b"<html>forbidden</html>", b"entries: []", b"entries: [", b"\xff"])
 def test_malformed_index_diagnostic(monkeypatch, content):
-    monkeypatch.setattr(main, "_fetch_public_url", lambda *_: (content, "https://example.test/index.yaml"))
+    monkeypatch.setattr(definition_acquisition, "_fetch_public_url", lambda *_: (content, "https://example.test/index.yaml"))
     with pytest.raises(HTTPException) as error:
-        main._discover_helm_repository("https://example.test")
+        definition_acquisition._discover_helm_repository("https://example.test")
     assert "Malformed Helm index" in error.value.detail
     assert "stage=repository index retrieval" in error.value.detail
 
@@ -93,7 +93,7 @@ def test_malformed_index_diagnostic(monkeypatch, content):
 @pytest.mark.parametrize("name,version,expected", [("missing", "v1.20.2", "Requested chart missing"),
                                                    ("cert-manager", "missing", "Requested chart version missing")])
 def test_chart_selection_distinguishes_missing_chart_and_version(monkeypatch, name, version, expected):
-    monkeypatch.setattr(main, "_fetch_public_url", lambda *_: (INDEX, "https://example.test/index.yaml"))
+    monkeypatch.setattr(definition_acquisition, "_fetch_public_url", lambda *_: (INDEX, "https://example.test/index.yaml"))
     with pytest.raises(ValueError, match=expected):
         acquire_component({"source_type": "helm", "repository": "https://example.test",
                            "chart_name": name, "version": version}, [])
@@ -158,7 +158,7 @@ def test_generic_repository_download_is_index_first(monkeypatch, source, expecte
         requests.append(url)
         content = INDEX if url == expected else b"archive"
         return copy_bounded(io.BytesIO(content), len(content)), url
-    monkeypatch.setattr(main, "_fetch_public_stream", fetch)
+    monkeypatch.setattr(scan_acquisition, "_fetch_public_stream", fetch)
     archives = main._download_public_chart(source)
     close_downloads(archives)
     assert requests[0] == expected
@@ -175,11 +175,11 @@ def test_standard_redirect_policy_is_preserved():
 
 
 def test_malformed_entry_url_type_is_not_treated_as_character(monkeypatch):
-    monkeypatch.setattr(main, "_fetch_public_url", lambda *_: (
+    monkeypatch.setattr(definition_acquisition, "_fetch_public_url", lambda *_: (
         b"entries:\n  demo:\n    - version: '1'\n      urls: https://secret.example.test/chart.tgz\n",
         "https://example.test/index.yaml"))
     with pytest.raises(HTTPException, match="no chart versions"):
-        main._discover_helm_repository("https://example.test")
+        definition_acquisition._discover_helm_repository("https://example.test")
 
 
 def test_invalid_ca_material_is_not_exposed(monkeypatch):
