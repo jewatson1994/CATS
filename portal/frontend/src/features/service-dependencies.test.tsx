@@ -74,3 +74,25 @@ it('Refresh assessment after polling gave up refreshes in place and restarts the
     vi.unstubAllGlobals(); vi.useRealTimers();
   }
 });
+
+it('shows summary counts in the listing and loads vulnerability detail when a row is opened', async () => {
+  const {vi} = await import('vitest');
+  const {act, fireEvent} = await import('@testing-library/react');
+  const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({vulnerabilities: ['CVE-1', 'CVE-2'],
+    risk: [{cve: 'CVE-1', severity: 'High', scanner: 'trivy', kev: true, epss: 0.5, fixed_version: '1.1'}]}), {headers: {'content-type': 'application/json'}})));
+  vi.stubGlobal('fetch', fetch);
+  try {
+    const row = {name: 'openssl', version: '1.0', image: 'app', vulnerability_count: 2, severity: 'High', position: 7, detail_on_demand: true, risk: []};
+    render(<Page data={{...data, dependency_projection_status: 'ready', dependency_all_total: 1, dependency_total: 1, dependency_page: 1, dependency_pages: 1,
+      dependency_selected_execution: {id: 42}, dependency_rows: [row]} as any}/>);
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(fetch).not.toHaveBeenCalled();  // nothing fetched until a row is opened
+    const details = screen.getByText('View').closest('details')!;
+    details.open = true;
+    await act(async () => {fireEvent(details, new Event('toggle'));});
+    expect(String((fetch.mock.calls[0] as any[])[0])).toContain('/api/v1/services/sample/dependencies/42/components/7');
+    expect(await screen.findByText('CVE-1')).toBeInTheDocument();
+    await act(async () => {fireEvent(details, new Event('toggle'));});
+    expect(fetch).toHaveBeenCalledTimes(1);  // kept once loaded
+  } finally {vi.unstubAllGlobals();}
+});

@@ -115,22 +115,32 @@ def public_reference(value):
     return value
 
 
+DEPENDENCY_ROW_NAMES = ("name", "version", "type", "license_expression", "license_declared", "license_detected", "image",
+    "vulnerabilities", "vulnerability_count", "severity", "kev", "epss", "fixed_versions", "watchlisted", "purl", "cpe",
+    "supplier", "author", "architecture", "hashes", "copyright", "license_source", "image_digest", "sbom", "location",
+    "origin", "severity_counts", "risk", "dependency_parents", "dependency_children", "position", "detail_on_demand")
+
+
+def dependency_row(item):
+    """Allow-listed dependency component (listing row or on-demand detail)."""
+    row = {name: scalar_values(field(item, name)) for name in DEPENDENCY_ROW_NAMES}
+    row["risk"] = [fields(risk, ("cve", "severity", "scanner", "kev", "epss", "fixed_version")) for risk in field(item, "risk", []) or []]
+    if row["vulnerability_count"] is None:
+        row["vulnerability_count"] = len(row["vulnerabilities"] or [])
+    row["hashes"] = fields(field(item, "hashes", {}), ("MD5", "SHA1", "SHA256", "SHA512", "SHA-1", "SHA-256", "SHA-512")) if isinstance(field(item, "hashes"), Mapping) else scalar_values(field(item, "hashes"))
+    if isinstance(row["hashes"], dict):
+        row["hashes"] = {key: value for key, value in row["hashes"].items() if value is not None}
+    row["severity_counts"] = {key: json_evidence(field(field(item, "severity_counts", {}), key)) for key in ("Critical", "High", "Medium", "Low", "Unknown", "CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN") if field(field(item, "severity_counts", {}), key) is not None}
+    return row
+
+
 def project_service_operations(template_name, context):
     data = {}
     if template_name == "service_dependencies.html":
         keys = ("dependency_projection_status", "dependency_projection_error", "dependency_rows", "dependency_total", "dependency_all_total", "dependency_page", "dependency_pages", "dependency_page_url", "dependency_types", "dependency_images", "dependency_query", "dependency_artifacts", "vulnerable_components", "critical_components", "kev_components", "fixed_components", "license_unknown_components", "watchlisted_components", "history_versions")
         data.update(fields(context, keys))
-        row_names = ("name", "version", "type", "license_expression", "license_declared", "license_detected", "image", "vulnerabilities", "severity", "kev", "epss", "fixed_versions", "watchlisted", "purl", "cpe", "supplier", "author", "architecture", "hashes", "copyright", "license_source", "image_digest", "sbom", "location", "origin", "severity_counts", "risk", "dependency_parents", "dependency_children")
         data["dependency_query"] = fields(context.get("dependency_query", {}), ("q", "type", "image", "license", "filter", "epss"))
-        data["dependency_rows"] = []
-        for item in context.get("dependency_rows", []):
-            row = {name: scalar_values(field(item, name)) for name in row_names}
-            row["risk"] = [fields(risk, ("cve", "severity", "scanner", "kev", "epss", "fixed_version")) for risk in field(item, "risk", []) or []]
-            row["hashes"] = fields(field(item, "hashes", {}), ("MD5", "SHA1", "SHA256", "SHA512", "SHA-1", "SHA-256", "SHA-512")) if isinstance(field(item, "hashes"), Mapping) else scalar_values(field(item, "hashes"))
-            if isinstance(row["hashes"], dict):
-                row["hashes"] = {key: value for key, value in row["hashes"].items() if value is not None}
-            row["severity_counts"] = {key: json_evidence(field(field(item, "severity_counts", {}), key)) for key in ("Critical", "High", "Medium", "Low", "Unknown", "CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN") if field(field(item, "severity_counts", {}), key) is not None}
-            data["dependency_rows"].append(row)
+        data["dependency_rows"] = [dependency_row(item) for item in context.get("dependency_rows", [])]
         names = ("id", "scanned_at", "execution_key")
         data["dependency_executions"] = [fields(item, names) for item in context.get("dependency_executions", [])]
         selected = context.get("dependency_selected_execution")

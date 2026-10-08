@@ -6801,6 +6801,21 @@ def remediation_job_light_status(service_key: str, job_key: str, db: Session = D
     return JSONResponse(jsonable_encoder(result), headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/v1/services/{service_key}/dependencies/{execution_id}/components/{position}")
+def dependency_component_detail(service_key: str, execution_id: int, position: int, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    """One component's vulnerability and risk detail, loaded when its row is opened."""
+    from .dependency_queries import component_detail
+    from .frontend_service_operations import dependency_row
+    owned = db.scalar(select(Execution.id).join(Service).where(Service.service_key == service_key, Execution.id == execution_id))
+    if owned is None:
+        raise HTTPException(404)
+    detail = component_detail(db, execution_id, position)
+    if detail is None:
+        raise HTTPException(404)
+    return JSONResponse(jsonable_encoder(dependency_row(detail)), headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/v1/services/{service_key}/remediation-preview")
 def service_remediation_preview(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True))):

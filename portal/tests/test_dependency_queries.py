@@ -37,12 +37,22 @@ def test_projection_sql_paging_filters_and_invalidation():
                      statements.append(statement))
         result = dependency_page(db, 1, q="STRASSE%_", page=2, page_size=10)
         canonical = dependency_rows(execution, [], findings, risk)
-        assert result["dependency_rows"] == canonical[10:20]
+        # Listings omit per-vulnerability detail; each row's detail is the exact canonical row.
+        from app.dependency_queries import LISTING_OMITS, component_detail
+        listed = result["dependency_rows"]
+        assert len(statements) == 3  # page with window total, one aggregate of all counts, distinct type/image pairs
+        assert [{k: v for k, v in row.items() if k not in ("vulnerability_count", "position", "detail_on_demand")} for row in listed] == \
+            [{k: v for k, v in row.items() if k not in LISTING_OMITS} for row in canonical[10:20]]
+        assert [row["vulnerability_count"] for row in listed] == [len(row["vulnerabilities"]) for row in canonical[10:20]]
+        assert [component_detail(db, 1, row["position"]) for row in listed] == canonical[10:20]
         assert result["dependency_total"] == 125
         assert result["critical_components"] == result["kev_components"] == result["fixed_components"] == 1
         assert result["dependency_types"] == ["npm"]
         assert result["dependency_images"] == ["app"]
         assert any("dependency_projection_rows.data" in sql and "LIMIT" in sql for sql in statements)
+        statements.clear()
+        past = dependency_page(db, 1, q="STRASSE%_", page=99, page_size=10)
+        assert (past["dependency_page"], past["dependency_pages"], len(past["dependency_rows"])) == (13, 13, 5)
         assert dependency_page(db, 1, filter="kev", epss=.7)["dependency_total"] == 1
         assert dependency_page(db, 1, license="mit")["dependency_total"] == 62
         assert dependency_page(db, 1, filter="license_unknown")["dependency_total"] == 63

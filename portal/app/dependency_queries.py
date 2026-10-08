@@ -7,7 +7,7 @@ header explicitly. Arbitrary risk callables without a token use scalar fallback.
 Cache writes use a separate transaction when possible, otherwise the caller
 owns the commit.
 """
-from sqlalchemy import delete, func, insert, select
+from sqlalchemy import case, delete, func, insert, select
 
 from .dependency_view import dependency_rows
 from .execution_summaries import payload_digest
@@ -129,25 +129,62 @@ def dependency_page(db, execution_id, *, q="", component_type="", image="", lice
         conditions.append(flags[filter].is_(True) if filter in flags else row.severity == filter.lower())
     if epss is not None:
         conditions.append(row.epss >= epss)
-    total = db.scalar(select(func.count()).select_from(row).where(*conditions))
     size = max(10, min(page_size, 100))
+
+    def page_rows(number):
+        # The filtered total is a window over the same rows (one statement).
+        return db.execute(select(row.position, row.data, func.count().over().label("total")).where(*conditions)
+                          .order_by(row.position).offset((number - 1) * size).limit(size)).all()
+    rows = page_rows(max(1, page))
+    if rows:
+        total, current = int(rows[0].total), max(1, page)
+    else:
+        # Empty selection, or a page past the end: clamp exactly as before.
+        total = db.scalar(select(func.count()).select_from(row).where(*conditions)) or 0
+        current = min(max(1, page), max(1, (total + size - 1) // size))
+        rows = page_rows(current) if total and current != max(1, page) else []
     pages = max(1, (total + size - 1) // size)
-    current = min(max(1, page), pages)
-    data = db.scalars(select(row.data).where(*conditions).order_by(row.position)
-                      .offset((current - 1) * size).limit(size)).all()
-    counts = {"dependency_all_total": db.scalar(select(func.count()).select_from(row).where(base))}
-    for name, condition in {"vulnerable_components": row.vulnerable.is_(True),
-            "critical_components": row.severity == "critical", "kev_components": row.kev.is_(True),
-            "fixed_components": row.fixed.is_(True), "license_unknown_components": row.license_unknown.is_(True),
-            "watchlisted_components": row.watchlisted.is_(True)}.items():
-        counts[name] = db.scalar(select(func.count()).select_from(row).where(base, condition))
-    types = sorted(db.scalars(select(row.component_type).where(base, row.component_type != "").distinct()).all())
-    images = sorted(db.scalars(select(row.image).where(base).distinct()).all())
+    # All summary counts in one aggregate over the selected evidence.
+    flag = lambda condition: func.coalesce(func.sum(case((condition, 1), else_=0)), 0)
+    summary = db.execute(select(
+        func.count().label("dependency_all_total"),
+        flag(row.vulnerable.is_(True)).label("vulnerable_components"),
+        flag(row.severity == "critical").label("critical_components"),
+        flag(row.kev.is_(True)).label("kev_components"),
+        flag(row.fixed.is_(True)).label("fixed_components"),
+        flag(row.license_unknown.is_(True)).label("license_unknown_components"),
+        flag(row.watchlisted.is_(True)).label("watchlisted_components")).where(base)).one()
+    counts = {key: int(value or 0) for key, value in summary._mapping.items()}
+    pairs = db.execute(select(row.component_type, row.image).where(base).distinct()).all()
+    types = sorted({component_type for component_type, _ in pairs if component_type != ""})
+    images = sorted({image for _, image in pairs})
     return {**counts, "dependency_projection_status": "ready", "dependency_projection_error": None,
-        "dependency_rows": data, "dependency_total": total,
+        "dependency_rows": [listing_row(data, position) for position, data, _ in rows], "dependency_total": total,
             "dependency_page": current, "dependency_pages": pages,
             "dependency_types": types, "dependency_images": [value for value in images if value],
             "dependency_artifacts": len(images)}
+
+
+# Per-vulnerability detail grows with vulnerabilities per component, which
+# pagination does not bound: listings carry counts and summary risk only, and
+# the detail is served on demand (component_detail) when a row is opened.
+LISTING_OMITS = ("risk", "vulnerabilities")
+
+
+def listing_row(data, position):
+    data = data if isinstance(data, dict) else {}
+    light = {key: value for key, value in data.items() if key not in LISTING_OMITS}
+    light["vulnerability_count"] = len(data.get("vulnerabilities") or [])
+    light["position"] = position
+    light["detail_on_demand"] = True
+    return light
+
+
+def component_detail(db, execution_id, position):
+    """One component's full projected row (vulnerability list and risk detail)."""
+    value = db.scalar(select(DependencyProjectionRow.data).where(
+        DependencyProjectionRow.execution_id == execution_id, DependencyProjectionRow.position == position))
+    return value if isinstance(value, dict) else None
 
 
 def persist_current_projection(db, execution, risk_metadata, *, expected_token=None):
