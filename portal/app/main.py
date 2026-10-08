@@ -48,13 +48,16 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 import yaml
 
-from .database import Base, engine, get_db, SessionLocal
+from .database import Base, background_engine, engine, get_db, SessionLocal
 from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
 from .authorization_revision import cache_scope, current_revision as current_authorization_revision
 from .status_contracts import validation_revision
 from . import service_posture as posture
 from .execution_summaries import install_execution_summary_hooks
 install_sqlalchemy_diagnostics(engine, SessionLocal.class_)
+# Background-pool statements issued while serving a request (inline posture
+# rebuilds, scheduling) are attributed to that request too.
+install_sqlalchemy_diagnostics(background_engine, SessionLocal.class_)
 install_execution_summary_hooks(SessionLocal.class_)
 from .simplified_queries import upgrade_projection
 from . import dependency_queries
@@ -324,6 +327,9 @@ with migration_transaction(engine) as connection:
 seed_auth()
 
 
+MAINTENANCE_LOCK_KEY = 0x43415453  # "CATS"
+
+
 def _start_read_model_maintenance():
     """Restore derived read models after an upgrade without blocking startup.
 
@@ -337,38 +343,46 @@ def _start_read_model_maintenance():
         return None
     def run():
         log = logging.getLogger("cats.maintenance")
-        try:
-            intelligence_status()
-        except Exception:
-            log.exception("Risk intelligence warm-up failed")
+
+        def step(name, work):
+            started = time.perf_counter()
+            try:
+                result = work()
+            except Exception:
+                log.exception("Maintenance step %s failed; readers fall back to authoritative evidence", name)
+                result = None
+            log.info("maintenance_step %s", json.dumps({"step": name, "ms": round((time.perf_counter() - started) * 1000),
+                                                        "result": result if isinstance(result, (int, type(None))) else None}))
+            return result
+
+        # Per process: the risk-intelligence catalogs this process serves from.
+        step("intelligence", intelligence_status)
+        from .database import background_bind
+        lock = None
+        if engine.dialect.name == "postgresql":
+            # Shared, idempotent preparation runs in one process at a time;
+            # other processes serve immediately and rely on reader fallbacks.
+            lock = background_bind(engine).connect()
+            if not lock.execute(text("select pg_try_advisory_lock(:key)"), {"key": MAINTENANCE_LOCK_KEY}).scalar():
+                lock.close()
+                log.info("maintenance_step %s", json.dumps({"step": "shared", "skipped": "another process holds the maintenance lock"}))
+                return
         try:
             from .execution_summaries import backfill_stale_summaries
-            refreshed = backfill_stale_summaries(SessionLocal)
-            if refreshed:
-                log.info("Rebuilt %s execution summaries", refreshed)
-        except Exception:
-            log.exception("Execution summary backfill failed; readers continue with payload fallback")
-        for backfill in (backfill_policy_findings, backfill_incomplete_scan_findings):
+            from .evidence_reads import warm_overviews
+            step("execution_summaries", lambda: backfill_stale_summaries(SessionLocal))
             # One-time/idempotent upgrade backfills: bounded background work,
             # never part of module import or request serving.
-            try:
-                backfill()
-            except Exception:
-                log.exception("Startup backfill %s failed; it is retried on the next start", backfill.__name__)
-        try:
-            from .database import background_bind
-            warmed = posture.warm(background_bind(engine))
-            if warmed:
-                log.info("Prepared service posture for %s services", warmed)
-        except Exception:
-            log.exception("Service posture warm-up failed; readers compute on demand")
-        try:
-            from .evidence_reads import warm_overviews
-            prepared = warm_overviews(background_bind(engine))
-            if prepared:
-                log.info("Prepared service overviews for %s scans", prepared)
-        except Exception:
-            log.exception("Service overview preparation failed; readers compute on demand")
+            step("legacy_policy_findings", backfill_policy_findings)
+            step("incomplete_scan_findings", backfill_incomplete_scan_findings)
+            step("service_posture", lambda: posture.warm(background_bind(engine)))
+            step("service_overviews", lambda: warm_overviews(background_bind(engine)))
+        finally:
+            if lock is not None:
+                try:
+                    lock.execute(text("select pg_advisory_unlock(:key)"), {"key": MAINTENANCE_LOCK_KEY})
+                finally:
+                    lock.close()
     thread = threading.Thread(target=run, name="cats-read-model-maintenance", daemon=True)
     thread.start()
     return thread
@@ -2804,13 +2818,15 @@ def backfill_incomplete_scan_findings() -> None:
                 Execution.scan_scope == "service",
             ).order_by(Execution.scanned_at.desc()).limit(1)) if service.current_version_id else None
             scopes = ("service",) if service.current_version_id else ("service", "image")
-            newest = db.scalar(select(Execution).where(
+            # Evidence is deferred: detection reads scalar columns only, and a
+            # payload is loaded only for the rare release that needs repair.
+            newest = db.scalar(select(Execution).options(defer(Execution.raw_payload)).where(
                 Execution.service_id == service.id, Execution.scan_scope.in_(scopes),
                 Execution.service_version_id.is_not(None),
             ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
             if newest is None or newest.service_version_id == service.current_version_id:
                 continue
-            version_executions = db.scalars(select(Execution).where(
+            version_executions = db.scalars(select(Execution).options(defer(Execution.raw_payload)).where(
                 Execution.service_id == service.id,
                 Execution.service_version_id == newest.service_version_id,
             ).order_by(Execution.scanned_at, Execution.id)).all()

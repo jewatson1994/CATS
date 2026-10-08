@@ -47,8 +47,14 @@ def _int(name, default, minimum=0):
 def _pool(prefix, size, overflow, timeout):
     if "poolclass" in engine_options:
         return {}
-    return {"pool_size": _int(f"{prefix}_POOL_SIZE", size, 1), "max_overflow": _int(f"{prefix}_MAX_OVERFLOW", overflow),
-            "pool_timeout": _int(f"{prefix}_POOL_TIMEOUT", timeout, 1)}
+    options = {"pool_size": _int(f"{prefix}_POOL_SIZE", size, 1), "max_overflow": _int(f"{prefix}_MAX_OVERFLOW", overflow),
+               "pool_timeout": _int(f"{prefix}_POOL_TIMEOUT", timeout, 1)}
+    # Optional age limit for pooled connections (firewalls/proxies that drop
+    # idle connections); pool_pre_ping already replaces dead ones on checkout.
+    recycle = _int(f"{prefix}_POOL_RECYCLE", 0)
+    if recycle:
+        options["pool_recycle"] = recycle
+    return options
 
 
 # Interactive requests and background work (scans, remediation, validation

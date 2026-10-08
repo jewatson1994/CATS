@@ -33,6 +33,9 @@ def test_pool_sizes_are_configurable_and_bounded(monkeypatch):
     monkeypatch.setenv("CATS_DB_BACKGROUND_MAX_OVERFLOW", "not-a-number")
     assert database._pool("CATS_DB", 10, 10, 15) == {"pool_size": 7, "max_overflow": 10, "pool_timeout": 15}
     assert database._pool("CATS_DB_BACKGROUND", 4, 4, 60)["max_overflow"] == 4
+    assert "pool_recycle" not in database._pool("CATS_DB", 10, 10, 15)
+    monkeypatch.setenv("CATS_DB_POOL_RECYCLE", "1800")
+    assert database._pool("CATS_DB", 10, 10, 15)["pool_recycle"] == 1800
 
 
 def test_postgresql_connections_disable_jit_unless_configured(monkeypatch):

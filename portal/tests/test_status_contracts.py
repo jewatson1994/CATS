@@ -124,3 +124,52 @@ def test_dependency_status_reports_preparation_and_schedules_pending_work(monkey
         assert scheduled == [execution_id]
     assert json.dumps(body).count("build_token") == 0
     assert client.get(f"/api/v1/services/payments-service/dependencies/status?execution_id=999999").status_code == 404
+
+
+def test_status_contracts_never_select_evidence_columns():
+    """The status queries themselves must not read heavy evidence columns,
+    not only omit them from the response."""
+    from sqlalchemy import event
+    from app.database import engine
+    client = new_client()
+    service_id, execution_id = _service_and_execution(client)
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        db.add(RemediationExecution(job_key="R-COLS", service_id=service_id, requested_by_id=admin.id, status="running",
+                                    phase="patch_images", source_execution_id=execution_id, logs=BIG,
+                                    validation_results={"checks": {"a": {"detail": "x"}}}))
+        db.add(DeploymentValidationRun(run_key="DV-COLS", service_id=service_id, execution_id=execution_id, status="RUNNING",
+                                       phase="INSTALLING", cleanup_status="PENDING", events=[{"m": line} for line in BIG],
+                                       diagnostics={"logs": BIG}))
+        db.commit()
+    heavy = {
+        "remediation_executions": ("validation_results", "before_snapshot", "after_snapshot", "logs", "patched_images",
+                                   "configuration_changes", "changed_artifacts"),
+        "deployment_validation_runs": ("events", "observed_topology", "comparison", "diagnostics"),
+        "executions": ("raw_payload",),
+    }
+    for url in ("/api/v1/services/payments-service/remediations/R-COLS/status",
+                "/api/v1/services/payments-service/deployment-validations/DV-COLS/status",
+                f"/api/v1/services/payments-service/dependencies/status?execution_id={execution_id}"):
+        statements = []
+        listener = lambda conn, cursor, sql, params, context, many: statements.append(" ".join(sql.split()))
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            assert client.get(url).status_code == 200, url
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        selects = [sql for sql in statements if sql.upper().startswith("SELECT")]
+        for table, columns in heavy.items():
+            for column in columns:
+                assert not any(f"{table}.{column}" in sql for sql in selects), (url, f"{table}.{column}")
+    # The check is meaningful: the full detail routes do read those columns.
+    for url, column in (("/api/v1/services/payments-service/remediations/R-COLS", "remediation_executions.validation_results"),
+                        ("/api/v1/services/payments-service/deployment-validations/DV-COLS", "deployment_validation_runs.events")):
+        statements = []
+        listener = lambda conn, cursor, sql, params, context, many: statements.append(" ".join(sql.split()))
+        event.listen(engine, "before_cursor_execute", listener)
+        try:
+            assert client.get(url).status_code == 200, url
+        finally:
+            event.remove(engine, "before_cursor_execute", listener)
+        assert any(column in sql for sql in statements), (url, column)

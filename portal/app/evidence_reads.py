@@ -250,7 +250,12 @@ def normalized_overview(db, execution) -> tuple[dict, dict]:
         if key in _OVERVIEW_CACHE:
             _OVERVIEW_CACHE.move_to_end(key)
             return deepcopy(_OVERVIEW_CACHE[key])
-    value = _stored_overview(db, *key) or _build_overview(db, execution.id, execution.complete)
+    value = _stored_overview(db, *key)
+    if value is None:
+        # Computed from the evidence for this response (the GET never writes);
+        # the stored copy is prepared in the background for later visits.
+        value = _build_overview(db, execution.id, execution.complete)
+        _prepare_later(db, execution.id)
     with _OVERVIEW_LOCK:
         _OVERVIEW_CACHE[key] = value
         while len(_OVERVIEW_CACHE) > 32:
@@ -327,17 +332,33 @@ def store_overview(bind, execution_id) -> bool:
 
 _overview_executor = None
 _overview_lock = threading.Lock()
+_overview_pending: set = set()
+# Bounded: beyond this many queued scans, further requests are dropped (a
+# later read recomputes from the evidence and asks again).
+OVERVIEW_QUEUE_LIMIT = 256
+
+
+def _prepare_later(db, execution_id):
+    from .database import background_bind
+    from .service_posture import background_enabled
+    bind = db.get_bind()
+    if background_enabled(bind):
+        schedule_overview(background_bind(bind), [execution_id])
 
 
 def schedule_overview(bind, execution_ids) -> None:
-    """Prepare stored overviews off the request path (single worker)."""
+    """Prepare stored overviews off the request path (single worker,
+    deduplicated, bounded queue)."""
     global _overview_executor
     from concurrent.futures import ThreadPoolExecutor
     import logging
-    ids = [identifier for identifier in dict.fromkeys(execution_ids) if identifier is not None]
-    if not ids:
-        return None
     with _overview_lock:
+        ids = [identifier for identifier in dict.fromkeys(execution_ids)
+               if identifier is not None and identifier not in _overview_pending]
+        ids = ids[:max(0, OVERVIEW_QUEUE_LIMIT - len(_overview_pending))]
+        if not ids:
+            return None
+        _overview_pending.update(ids)
         if _overview_executor is None:
             _overview_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cats-overview")
 
@@ -347,11 +368,25 @@ def schedule_overview(bind, execution_ids) -> None:
                 store_overview(bind, identifier)
             except Exception:
                 logging.getLogger("cats.evidence").exception("Overview preparation failed; readers recompute on demand")
+            finally:
+                with _overview_lock:
+                    _overview_pending.discard(identifier)
     return _overview_executor.submit(run)
 
 
-def warm_overviews(bind, limit=500) -> int:
-    """Bounded startup preparation for each service's newest scan."""
+def warm_overviews(bind, limit=200, max_batches=500) -> int:
+    """Startup preparation for each service's newest scan, in bounded batches
+    until none is left (or ``max_batches``); each scan commits on its own."""
+    total = 0
+    for _ in range(max_batches):
+        prepared, remaining = _warm_overview_batch(bind, limit)
+        total += prepared
+        if remaining < limit or not prepared:
+            break
+    return total
+
+
+def _warm_overview_batch(bind, limit):
     from sqlalchemy import func
     from sqlalchemy.orm import Session
     from .models import ExecutionOverview
@@ -364,4 +399,4 @@ def warm_overviews(bind, limit=500) -> int:
             (ExecutionOverview.execution_id.is_(None)) | (ExecutionOverview.payload_digest != ranked.c.digest)
             | (ExecutionOverview.complete != ranked.c.complete) | (ExecutionOverview.algorithm != OVERVIEW_ALGORITHM))
             .order_by(ranked.c.id).limit(limit)))
-    return sum(bool(store_overview(bind, identifier)) for identifier in ids)
+    return sum(bool(store_overview(bind, identifier)) for identifier in ids), len(ids)
