@@ -1,5 +1,6 @@
 import {useEffect, useRef, useState} from 'react';
 import {can, requestJson, type PageData} from '../api';
+import {usePoll, type PollStatus} from '../hooks/usePoll';
 import {AdminTabs, Heading} from './admin_shared';
 import {StageProgress, type Stage, type StageState} from '../components/ui';
 import './validators.css';
@@ -35,7 +36,22 @@ export function Page({data}: {data: PageData}) {
   const replace = (record: RecordData) => setRows(previous => previous.some(row => String(row.id) === String(record.id)) ? previous.map(row => String(row.id) === String(record.id) ? record : row) : [...previous, record]);
   async function refresh() {const token = revision.current; try {const result = await requestJson<{validators: RecordData[]}>(base); if (token === revision.current) setRows(result.validators);} catch (cause) {setError(String(cause instanceof Error ? cause.message : cause));}}
   useEffect(() => {confirm(false);dedicate(false);acknowledge(false);removing(false);setCredentials({password:'',private_key:'',passphrase:'',sudo_password:''});}, [selected]);
-  useEffect(() => {if (busy || !current || !active.has(current.status) && !current.active_operation_id) return; let disposed = false; const timer = window.setInterval(() => {if (document.visibilityState === 'hidden') return; const token = revision.current; requestJson<{validator:RecordData}>(`${base}/${encodeURIComponent(current.id)}`).then(result => {if (!disposed && token === revision.current) replace(result.validator);}).catch(() => {});}, 3000); return () => {disposed = true;window.clearInterval(timer);};}, [current?.id,current?.status,current?.active_operation_id,busy]);
+  // While an operation runs: one request at a time, cancelled on change or
+  // unmount, paused while hidden, backoff on errors, stop when it settles.
+  const operating = Boolean(!busy && current && (active.has(current.status) || current.active_operation_id));
+  const settled = (record: RecordData) => !active.has(record.status) && !record.active_operation_id;
+  const validatorPoll = usePoll<{validator: RecordData} & PollStatus>({
+    url: operating && current ? `${base}/${encodeURIComponent(current.id)}?operation=${encodeURIComponent(String(current.active_operation_id || current.status))}` : null,
+    intervalMs: 3000, maxIntervalMs: 15000,
+    load: async (url, signal) => {
+      const token = revision.current;
+      const result = await requestJson<{validator: RecordData} & PollStatus>(url.split('?')[0], {signal});
+      return {...result, token};
+    },
+    isTerminal: result => settled(result.validator),
+    // A result fetched before one of this page's own actions finished is ignored.
+    onStatus: result => {if (result.token === revision.current) replace(result.validator);},
+  });
   async function submit(action: string, form?: HTMLFormElement) {
     const body = form ? new FormData(form) : new FormData(); body.set('csrf_token',data.csrf_token || '');
     if (['preflight','provision','rotate','remove'].includes(action)) {body.set('auth_method',method);Object.entries(credentials).forEach(([key,value]) => body.set(key,value));}
@@ -54,7 +70,7 @@ export function Page({data}: {data: PageData}) {
   const credentialsInput = (key:keyof typeof credentials,label:string,multiline=false) => <label>{label}{multiline ? <textarea autoComplete="off" value={credentials[key]} onChange={event => setCredentials({...credentials,[key]:event.target.value})}/> : <input type="password" autoComplete="new-password" value={credentials[key]} onChange={event => setCredentials({...credentials,[key]:event.target.value})}/>}</label>;
   return <div className="validators-workspace"><Heading title="Validators" description="Deploy CATS to a dedicated Docker-ready Ubuntu host, then validate over its trusted API."/><AdminTabs data={data} selected="configuration"/><p><a href="/admin/configuration#integrations">Settings / Integrations</a></p>
     <aside className="validator-notice"><strong>Dedicated virtual machine required</strong><p>The validator controls Docker through the host socket. This grants control equivalent to root. Use a dedicated VM with no unrelated workloads. Docker must already be installed and running.</p></aside>
-    {message && <p role="status" className="save-confirmation">{message}</p>}{error && <p role="alert">{error}</p>}
+    {validatorPoll.error && <p role="status" className="page-refresh-notice">Live validator status is unavailable; retrying.</p>}{message && <p role="status" className="save-confirmation">{message}</p>}{error && <p role="alert">{error}</p>}
     <div className="validator-layout"><section className="panel padded"><div className="validator-title"><h2>Your validators</h2><button disabled={busy} onClick={refresh}>Refresh</button></div>
       {rows.length ? rows.map(row => <button className={`validator-choice ${String(row.id)===selected?'selected':''}`} key={row.id} onClick={() => select(String(row.id))}><strong>{row.name}</strong><span>{row.host}</span><span className="validator-badge">{words(row.status || 'NEW')}</span></button>) : <p>No validators configured yet.</p>}
       {allowed('add') && <details><summary>Add validator</summary><form onSubmit={event => {event.preventDefault();void submit('add',event.currentTarget);}}><label>Name<input name="name" required maxLength={100}/></label><label>Host address<input name="host" required/></label><label>SSH username<input name="ssh_username" required/></label><div className="validator-grid"><label>SSH port<input name="ssh_port" type="number" min="1" max="65535" defaultValue="22"/></label><label>API port<input name="api_port" type="number" min="1" max="65535" defaultValue="8443"/></label></div><button disabled={busy}>Add validator</button></form></details>}
