@@ -183,12 +183,16 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       store.put(location, {envelope: initial, bytes: text.length, digest: digestText(text), fetchedAt: Date.now()});
     }
     const stop = onMutation(() => store.invalidate());
-    // Session boundaries. Another tab in this browser announces sign-out,
-    // sign-in or an authorization change; this tab then forgets every saved
-    // page, hides what it shows and reloads the current page from the server
-    // (which redirects to sign-in if the session has ended).
+    // Session boundaries across tabs of this browser. Each tab announces its
+    // session identity and scope when it starts, and again when its scope
+    // changes. A receiving tab with the same session but another scope (an
+    // authorization change) only drops its saved pages: the page it shows,
+    // and any unsaved input in it, stays. A different session (sign-in as
+    // someone else) or a sign-in page (sent only after sign-out completed)
+    // makes it forget everything, hide what it shows and reload from the
+    // server, which redirects to sign-in if this tab's session has ended.
     const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(SESSION_CHANNEL) : null;
-    const announce = () => {try {channel?.postMessage({type: 'session-changed'});} catch { /* closed */ }};
+    const post = (message: Record<string, unknown>) => {try {channel?.postMessage(message);} catch { /* closed */ }};
     const forget = () => {
       store.clear();
       generation.current += 1;
@@ -196,13 +200,17 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       setAttempt(value => value + 1);
     };
     if (channel) channel.onmessage = (event: MessageEvent) => {
-      // A tab that started with the same scope needs nothing; anything else
-      // (sign-in or sign-out elsewhere, a changed authorization) does.
-      if (event.data?.type === 'scope' && event.data.scope && event.data.scope === store.currentScope) return;
-      forget();
+      const message = event.data || {};
+      if (message.type !== 'session') return;
+      const mine = store.currentSession;
+      if (message.signedOut) {if (mine) forget(); return;}
+      if (!message.session) return;  // an anonymous page that is not sign-in says nothing about sessions
+      if (message.session !== mine) {forget(); return;}
+      if (message.scope && message.scope !== store.currentScope) store.invalidate();
     };
-    if (initial?.cacheScope) {try {channel?.postMessage({type: 'scope', scope: initial.cacheScope});} catch { /* closed */ }}
-    const stopScope = store.onScopeChange(() => announce());
+    if (initial) post({type: 'session', session: initial.sessionIdentity || '', scope: initial.cacheScope || '',
+                       signedOut: initial.page === 'login' && !initial.sessionIdentity});
+    const stopScope = store.onScopeChange(scope => post({type: 'session', session: store.currentSession, scope}));
     // This tab learned the session ended (any request answered 401 or
     // redirected to sign-in): forget and hide everything. Not re-announced:
     // other tabs learn it from their own next request, and announcing here
@@ -213,7 +221,10 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       setView(null);
       setError({location: locationRef.current, message: 'Your session has ended. Please sign in again.', signIn: true});
     });
-    const ending = () => {store.clear(); announce();};
+    // Sign-out from this tab: forget locally now. Other tabs are told by the
+    // sign-in page once the sign-out has actually been processed (announcing
+    // here would race the logout request).
+    const ending = () => {store.clear();};
     window.addEventListener(SESSION_ENDING_EVENT, ending);
     return () => {
       stop(); stopScope(); stopSession(); window.removeEventListener(SESSION_ENDING_EVENT, ending); channel?.close();

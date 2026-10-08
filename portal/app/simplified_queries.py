@@ -162,7 +162,7 @@ def candidates(db, service, latest, now, configuration, *, state='active', findi
                         FindingObservation.simplified_remediation, FindingObservation.simplified_fixed,
                         FindingObservation.simplified_package_sort, FindingObservation.simplified_fixed_sort).where(
             FindingObservation.finding_id == Finding.id).order_by(
-            (FindingObservation.execution_id == latest_id).desc(), FindingObservation.id.desc()).limit(1).correlate(Finding).lateral('chosen')
+            (FindingObservation.execution_id == latest_id).desc().nulls_last(), FindingObservation.id.desc()).limit(1).correlate(Finding).lateral('chosen')
         statement = select(Finding.id.label('id'), Finding.cve.label('cve'), Finding.cve_normalized.label('cve_normalized'), Finding.severity.label('severity'),
             Finding.active.label('active'), Finding.episode_started.label('started'), rank.label('rank'),
             func.coalesce(chosen.c.simplified_key, observation_metadata({})['simplified_key']).label('group_id'),

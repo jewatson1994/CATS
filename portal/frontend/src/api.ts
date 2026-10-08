@@ -65,7 +65,7 @@ export interface PageData {
   cats_deployed_version?: string;
   [key: string]: any;
 }
-export interface PageEnvelope {schemaVersion: 1; page: string; data: PageData; cacheScope?: string}
+export interface PageEnvelope {schemaVersion: 1; page: string; data: PageData; cacheScope?: string; sessionIdentity?: string}
 
 export function can(data: PageData, permission: string, serviceId?: number): boolean {
   return data.can?.[permission]?.[serviceId == null ? '*' : String(serviceId)] === true;

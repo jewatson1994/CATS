@@ -62,3 +62,25 @@ def test_rolled_back_changes_do_not_publish_a_revision():
     with SessionLocal() as db:
         db.add(Group(name="rolled-back")); db.flush(); db.rollback()
     assert scope(client) == original
+
+
+def test_session_identity_survives_authorization_changes_but_not_sessions():
+    """Tabs of one session keep their shown page on an authorization change
+    (same identity, new scope); another session or sign-out differs."""
+    first, second = new_client(), new_client()
+    page = lambda client: client.get("/account/appearance", headers=PAGE).json()
+    before = page(first)
+    assert before["sessionIdentity"] and before["sessionIdentity"] != page(second)["sessionIdentity"]
+    with SessionLocal() as db:
+        group = Group(name="identity-check"); db.add(group); db.commit()
+    with SessionLocal() as db:
+        admin = db.scalar(select(User).where(User.username == "admin"))
+        role = db.scalar(select(Role).where(Role.name == "Assessor"))
+        db.add(UserRoleAssignment(user_id=admin.id, role_id=role.id, group_id=group.id)); db.commit()
+    after = page(first)
+    assert after["cacheScope"] != before["cacheScope"] and after["sessionIdentity"] == before["sessionIdentity"]
+    assert first.cookies.get("cats_session") not in after["sessionIdentity"]  # opaque, never the token
+    from fastapi.testclient import TestClient
+    from app.main import app
+    login = TestClient(app).get("/login", headers=PAGE).json()
+    assert login["page"] == "login" and login["sessionIdentity"] == "" and login["cacheScope"] == ""

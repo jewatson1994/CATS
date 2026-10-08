@@ -50,7 +50,7 @@ import yaml
 
 from .database import Base, background_engine, engine, get_db, SessionLocal
 from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
-from .authorization_revision import cache_scope, current_revision as current_authorization_revision
+from .authorization_revision import cache_scope, current_revision as current_authorization_revision, session_identity
 from .status_contracts import validation_revision
 from . import service_posture as posture
 from .execution_summaries import install_execution_summary_hooks
@@ -1284,6 +1284,7 @@ def page_context(auth: AuthContext, **values):
     return {
         "current_user": auth.user,
         "cache_scope": cache_scope_value,
+        "session_identity": session_identity(auth.session.id, auth.user.id) if getattr(auth, "session", None) else "",
         "csrf_token": auth.csrf_token,
         "can": auth.has,
         "themes": THEMES,

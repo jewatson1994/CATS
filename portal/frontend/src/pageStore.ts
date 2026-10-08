@@ -66,6 +66,7 @@ export class PageStore {
   private entries = new Map<string, CachedPage>();
   private inflight = new Map<string, Inflight & {generation: number}>();
   private scope = '';
+  private session = '';
   private totalBytes = 0;
   /**
    * Request generation. It advances on every boundary after which earlier
@@ -81,6 +82,8 @@ export class PageStore {
   get size() {return this.entries.size;}
   get bytes() {return this.totalBytes;}
   get currentScope() {return this.scope;}
+  /** Opaque signed-in session identity of the latest page ('' when none). */
+  get currentSession() {return this.session;}
 
   /** Notified when a response establishes a different non-empty scope than a previous non-empty one. */
   onScopeChange(listener: (scope: string, previous: string) => void): () => void {
@@ -122,6 +125,7 @@ export class PageStore {
   clear() {
     this.advance();
     this.scope = '';
+    this.session = '';
   }
 
   private adoptScope(scope: string) {
@@ -137,6 +141,7 @@ export class PageStore {
   /** Accept a fresh envelope; a scope change discards everything first. */
   put(location: string, page: CachedPage) {
     const scope = page.envelope.cacheScope || '';
+    if (page.envelope.sessionIdentity !== undefined) this.session = page.envelope.sessionIdentity || '';
     this.adoptScope(scope);
     if (!scope || page.bytes > LIMITS.entryBytes) return;
     this.delete(location);

@@ -126,11 +126,15 @@ def test_dependency_status_reports_preparation_and_schedules_pending_work(monkey
     assert client.get(f"/api/v1/services/payments-service/dependencies/status?execution_id=999999").status_code == 404
 
 
-def test_status_contracts_never_select_evidence_columns():
+def test_status_contracts_never_select_evidence_columns(monkeypatch):
     """The status queries themselves must not read heavy evidence columns,
-    not only omit them from the response."""
+    not only omit them from the response. (The dependency projection build that
+    a pending status schedules runs on its own background thread and does read
+    evidence; it is stubbed so only the request's own statements are checked.)"""
     from sqlalchemy import event
+    from app import dependency_queries
     from app.database import engine
+    monkeypatch.setattr(dependency_queries, "schedule_projection", lambda *args: None)
     client = new_client()
     service_id, execution_id = _service_and_execution(client)
     with SessionLocal() as db:

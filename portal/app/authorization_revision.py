@@ -108,6 +108,15 @@ def current_revision(db) -> str:
     return db.scalar(select(PortalSetting.value).where(PortalSetting.key == SETTING_KEY)) or "0"
 
 
+def session_identity(session_id, user_id) -> str:
+    """Opaque identity of one signed-in session (no authorization revision).
+
+    Lets browser tabs tell "same session, authorization changed" (drop cached
+    pages only) from "another session or signed out" (forget and reload).
+    """
+    return sha256(f"cats-session-identity:{session_id}:{user_id}".encode("utf-8")).hexdigest()[:24]
+
+
 def cache_scope(session_id, user_id, revision: str) -> str:
     """Opaque per-session, per-authorization-revision cache partition."""
     return sha256(f"cats-cache-scope:{session_id}:{user_id}:{revision}".encode("utf-8")).hexdigest()[:24]

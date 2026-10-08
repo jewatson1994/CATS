@@ -277,7 +277,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
     # Client page-cache partition: session + user + authorization revision.
     # Pages without an authenticated context are never cached by the client.
     return {"schemaVersion": 1, "page": name.removesuffix(".html"), "data": data,
-            "cacheScope": str(context.get("cache_scope") or "")}
+            "cacheScope": str(context.get("cache_scope") or ""),
+            "sessionIdentity": str(context.get("session_identity") or "")}
 
 
 def _wants_page_json(accept):
