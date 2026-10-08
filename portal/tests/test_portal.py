@@ -198,6 +198,23 @@ def test_legacy_policy_backfill_runs_once_and_is_not_import_work():
         assert db.scalar(select(PolicyFinding)) is not None
 
 
+def test_legacy_policy_backfill_skips_services_already_synced_at_ingest():
+    from app.main import backfill_policy_findings
+    client = new_client()
+    body = payload("synced-policy", datetime.now(timezone.utc), [])
+    body["policy_findings"] = [{"finding": "KSV-SYNCED", "target": "Deployment/api"}]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    statements = []
+    listener = lambda *args: statements.append(args[2])
+    event.listen(engine, "before_cursor_execute", listener)
+    try:
+        backfill_policy_findings(force=True)
+    finally:
+        event.remove(engine, "before_cursor_execute", listener)
+    # The latest scan's policy findings were synced by ingest: its payload is not read.
+    assert not any("raw_payload" in sql for sql in statements)
+
+
 def test_startup_backfill_surfaces_findings_hidden_by_earlier_incomplete_scans():
     from app.main import backfill_incomplete_scan_findings
     client = new_client()

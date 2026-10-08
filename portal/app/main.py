@@ -370,6 +370,9 @@ def _start_read_model_maintenance():
         try:
             from .execution_summaries import backfill_stale_summaries
             from .evidence_reads import warm_overviews
+            # Order: everything that changes source or summary data first, so
+            # posture and overviews are prepared once, from settled data (their
+            # writes would otherwise invalidate what was just prepared).
             step("execution_summaries", lambda: backfill_stale_summaries(SessionLocal))
             # One-time/idempotent upgrade backfills: bounded background work,
             # never part of module import or request serving.
@@ -1130,9 +1133,14 @@ def backfill_policy_findings(*, force: bool = False) -> None:
     with SessionLocal() as db:
         if not force and db.scalar(select(PortalSetting.id).where(PortalSetting.key == LEGACY_POLICY_BACKFILL_KEY)):
             return
-        latest_id = select(Execution.id).where(Execution.service_id == Service.id).order_by(
+        newest = lambda column: select(column).where(Execution.service_id == Service.id).order_by(
             Execution.scanned_at.desc(), Execution.id.desc()).limit(1).correlate(Service).scalar_subquery()
-        services = db.execute(select(Service.id, latest_id.label("execution_id"))).all()
+        # Ingest syncs a scan's policy findings with last_seen = its scan time,
+        # so a service with such a row for its latest scan is already
+        # materialized; only the others need their payload element read.
+        synced = select(PolicyFinding.id).where(PolicyFinding.service_id == Service.id,
+                                                PolicyFinding.last_seen >= newest(Execution.scanned_at)).correlate(Service).exists()
+        services = db.execute(select(Service.id, newest(Execution.id).label("execution_id")).where(~synced)).all()
         for offset in range(0, len(services), 32):
             ids = [row.execution_id for row in services[offset:offset + 32] if row.execution_id]
             for latest in db.execute(select(Execution.service_id, Execution.scanned_at,

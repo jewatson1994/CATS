@@ -61,6 +61,7 @@ def parse_args():
     parser.add_argument("--only", help="run only scenarios containing this text")
     parser.add_argument("--explain", help="print the slowest SQL statements (EXPLAIN ANALYZE of the slowest) of the last request of scenarios containing this text")
     parser.add_argument("--dense-findings", type=int, default=0, help="with --reset: also seed service perf-9999 with this many findings per scan")
+    parser.add_argument("--resume-seed", action="store_true", help="skip the portfolio services (already seeded); seed the dense service and fixtures")
     parser.add_argument("--service", default="perf-0001", help="service the service-tab scenarios use")
     parser.add_argument("--isolated-first", action="store_true", help="also measure each scenario's first request in a fresh process")
     parser.add_argument("--single", help=argparse.SUPPRESS)  # internal: one scenario name, one request, JSON to stdout
@@ -75,6 +76,9 @@ os.environ.update({
     "SESSION_COOKIE_SECURE": "false", "CATS_DEPLOYMENT_VALIDATION_ENABLED": "false",
     "CATS_PERFORMANCE_DIAGNOSTICS": "true",
 })
+# A dense service's scan exceeds the default 16 MB pipeline limit; a deployment
+# with services that dense raises CATS_PIPELINE_MAX_REQUEST_BYTES the same way.
+os.environ.setdefault("CATS_PIPELINE_MAX_REQUEST_BYTES", str(256 * 1024 * 1024))
 for name in ("CATS_PUBLIC_JOB_ROOT", "CATS_PATCH_JOB_ROOT", "CATS_REMEDIATION_JOB_ROOT"):
     os.environ.setdefault(name, f"/tmp/cats-bench/{name.lower()}")
 sys.path.insert(0, str(ROOT / "portal"))
@@ -158,7 +162,7 @@ def seed():
     client = TestClient(main.app)
     now = datetime.now(timezone.utc)
     started = time.perf_counter()
-    for service_number in range(1, ARGS.services + 1):
+    for service_number in range(1, 0 if ARGS.resume_seed else ARGS.services + 1):
         for scan_number in range(1, ARGS.history + 1):
             response = client.post("/api/v1/pipeline-results", json=payload(base, service_number, scan_number, now), headers=PIPELINE)
             assert response.status_code == 201, response.text[:400]
@@ -414,7 +418,7 @@ def main_run():
         return
     if ARGS.explain:
         capture_statements()
-    if ARGS.reset:
+    if ARGS.reset or ARGS.resume_seed:
         seed()
     info = metadata()
     print("metadata", json.dumps({key: info[key] for key in ("git_revision", "git_dirty", "dataset", "preparation")}), flush=True)
