@@ -25,12 +25,12 @@ def has(selector, text):
 PAGES = [
     ("Services", "/", None, has("main table tbody td", "/Performance 1/")),
     ("Cybersecurity", "/cybersecurity", None, has("main table tbody td", "/Performance 1/") + " && /Active vulnerabilities/.test(document.querySelector('main').textContent)"),
-    ("Service Overview", SVC + "?overview=true", "Overview", "/Active Fixable/.test(document.querySelector('main').textContent)"),
+    ("Service Overview", SVC + "?overview=true", "Overview", "/Active Fixable\\s*[0-9]/.test(document.querySelector('main').textContent) && /Declared resources\\s*[0-9]/.test(document.querySelector('main').textContent)"),
     ("Findings", SVC + "?findings=true", "Findings", has("main table tbody td", "/CVE-/")),
     ("Architecture", SVC + "?architecture=true", "Architecture", has("main svg text, main svg *", "/ConfigMap/") + " || " + has("main [class*=node]", "/ConfigMap/")),
     ("Dependencies", SVC + "?dependencies=true", "Dependencies", has("main table tbody td", "/package-/")),
-    ("Deployment Validation", SVC + "?validation=true", "Deployment Validation", "/Validation run/.test(document.querySelector('main').textContent)"),
-    ("Remediation", SVC + "?remediations=true&tab=pipeline", "Remediations", "/Remediation candidates/.test(document.querySelector('main').textContent)"),
+    ("Deployment Validation", SVC + "?validation=true", "Deployment Validation", "/Validation run[\\s\\S]*(Verified|Could Not Validate|Partially Verified|Failed|Running|Queued)/i.test(document.querySelector('main').textContent)"),
+    ("Remediation", SVC + "?remediations=true&tab=pipeline", "Remediations", "/Remediation candidates/.test(document.querySelector('main').textContent) && [...document.querySelectorAll('main table tbody tr')].some(row => /R-BENCH|No remediation candidates/.test(row.textContent))"),
 ]
 READY = "(() => { const m = document.querySelector('main'); if (!m || document.querySelector('.page-navigating')) return false; return %s; })()"
 
@@ -41,11 +41,23 @@ class Traffic:
         page.on("requestfinished", self.finished)
 
     def finished(self, request):
+        # Transfer size as reported by the browser; Playwright reports -1 (or
+        # other negatives) when it is unknown, e.g. served from cache. Those
+        # are counted separately, never summed.
         try:
             size = request.sizes()["responseBodySize"]
         except Exception:
-            size = 0
-        self.items.append((request.resource_type, request.url, size))
+            size = None
+        if not isinstance(size, int) or size < 0:
+            size = None
+        body = None
+        if request.resource_type in ("fetch", "xhr", "document"):
+            try:
+                response = request.response()
+                body = len(response.body()) if response else None  # uncompressed body
+            except Exception:
+                body = None
+        self.items.append((request.resource_type, request.url, size, body))
 
     def mark(self):
         return len(self.items)
@@ -53,8 +65,12 @@ class Traffic:
     def since(self, mark):
         items = self.items[mark:]
         api = [item for item in items if item[0] in ("fetch", "xhr", "document")]
-        return {"requests": len(items), "api_requests": len(api), "api_bytes": sum(item[2] for item in api),
-                "all_bytes": sum(item[2] for item in items)}
+        return {"requests": len(items), "api_requests": len(api),
+                "api_transfer_bytes": sum(item[2] for item in api if item[2] is not None),
+                "api_body_bytes": sum(item[3] for item in api if item[3] is not None),
+                "all_transfer_bytes": sum(item[2] for item in items if item[2] is not None),
+                "unknown_size_requests": sum(item[2] is None for item in items),
+                "urls": [item[1].split("//", 1)[-1].split("/", 1)[-1][:120] for item in api]}
 
 
 def wait_ready(page, predicate, url_part, timeout=120000):
@@ -170,8 +186,8 @@ with sync_playwright() as p:
 json.dump(output, open(OUT, "w"), indent=2)
 for row in output["full_loads"]:
     ms = sorted(s["ms"] for s in row["samples"])
-    print(f"{row['page']:<22} full load median {ms[len(ms)//2]:8.1f} ms  api_requests {row['samples'][-1]['api_requests']}  api_bytes {row['samples'][-1]['api_bytes']}")
+    print(f"{row['page']:<22} full load median {ms[len(ms)//2]:8.1f} ms  api_requests {row['samples'][-1]['api_requests']}  api_transfer {row['samples'][-1]['api_transfer_bytes']}  api_body {row['samples'][-1]['api_body_bytes']}")
 for row in output["in_app"]:
-    print(f"{row['page']:<22} {row['kind']:<26} {row['ms']:8.1f} ms  api_requests {row['api_requests']}  api_bytes {row['api_bytes']}")
+    print(f"{row['page']:<22} {row['kind']:<26} {row['ms']:8.1f} ms  api_requests {row['api_requests']}  api_transfer {row['api_transfer_bytes']}  api_body {row['api_body_bytes']}")
 for row in output["polling"]:
     print(row)

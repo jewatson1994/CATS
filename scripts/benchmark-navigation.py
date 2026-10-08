@@ -6,6 +6,20 @@ full ASGI stack (authentication, middleware, serialization). Each record comes
 from CATS' own PerformanceMiddleware: wall time, SQL time, query count and
 uncompressed response bytes. Nothing leaves the machine.
 
+What the numbers mean:
+
+* ``first_in_process_ms``: the first request to that scenario in this
+  process. Earlier scenarios (and the login) have already run in the same
+  process, so process-local caches for other pages may be warm. It is NOT a
+  cold start.
+* ``isolated_first``: with ``--isolated-first``, each scenario's first
+  request runs in its own fresh process (only the login before it), and
+  ``process_ready_ms`` records interpreter start to application imported.
+* ``warm_*``: computed over the repeats after the first request only
+  (``--repeat`` minus one samples), never including the first.
+* Background maintenance (application lifespan) does not run under the
+  test client; measure preparation on a real server separately.
+
     python scripts/benchmark-navigation.py \
         --database-url postgresql+psycopg://cats@/cats_perf?host=/tmp&port=55432 \
         --services 10 --findings 1000 --reset --output perf.json
@@ -26,6 +40,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+PROCESS_STARTED = time.perf_counter()
 ROOT = Path(__file__).resolve().parents[1]
 SEVERITIES = ("Critical", "High", "Medium", "Low", "Negligible")
 
@@ -45,6 +60,11 @@ def parse_args():
     parser.add_argument("--profile", help="cProfile the cold request of scenarios containing this text")
     parser.add_argument("--only", help="run only scenarios containing this text")
     parser.add_argument("--explain", help="print the slowest SQL statements (EXPLAIN ANALYZE of the slowest) of the last request of scenarios containing this text")
+    parser.add_argument("--dense-findings", type=int, default=0, help="with --reset: also seed service perf-9999 with this many findings per scan")
+    parser.add_argument("--service", default="perf-0001", help="service the service-tab scenarios use")
+    parser.add_argument("--isolated-first", action="store_true", help="also measure each scenario's first request in a fresh process")
+    parser.add_argument("--single", help=argparse.SUPPRESS)  # internal: one scenario name, one request, JSON to stdout
+    parser.add_argument("--single-user", default="admin", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -96,17 +116,18 @@ def template():
     return {"service_overview": {"images": []}, "policy_findings": []}
 
 
-def payload(base, service_number, scan_number, now):
+def payload(base, service_number, scan_number, now, finding_count=None):
+    finding_count = ARGS.findings if finding_count is None else finding_count
     rng = random.Random(service_number * 1000 + scan_number)
     body = copy.deepcopy(base)
     key = f"perf-{service_number:04d}"
     images = [f"registry.example.invalid/perf/{key}/image-{i}:1.{scan_number}" for i in range(ARGS.images)]
     findings = []
-    for number in range(ARGS.findings):
+    for number in range(finding_count):
         # Later scans resolve ~5% and introduce ~5% so history has churn.
-        offset = number + (scan_number - 1) * ARGS.findings // 20
+        offset = number + (scan_number - 1) * finding_count // 20
         findings.append({
-            "cve": f"CVE-{2020 + offset % 6}-{service_number:04d}{offset:06d}",
+            "cve": f"CVE-{2020 + offset % 6}-{service_number:04d}{offset:07d}",
             "severity": SEVERITIES[offset % len(SEVERITIES)],
             "image": images[offset % len(images)],
             "image_digest": None,
@@ -143,6 +164,11 @@ def seed():
             assert response.status_code == 201, response.text[:400]
         if service_number % 10 == 0:
             print(f"  seeded {service_number}/{ARGS.services} services ({time.perf_counter() - started:.0f}s)", flush=True)
+    if ARGS.dense_findings:
+        for scan_number in range(1, ARGS.history + 1):
+            response = client.post("/api/v1/pipeline-results", json=payload(base, 9999, scan_number, now, ARGS.dense_findings), headers=PIPELINE)
+            assert response.status_code == 201, response.text[:400]
+        print(f"  seeded dense service perf-9999 with {ARGS.dense_findings} findings per scan ({time.perf_counter() - started:.0f}s)", flush=True)
     with SessionLocal() as db:
         first = db.scalar(select(Service).where(Service.service_key == "perf-0001"))
         execution = db.scalar(select(Execution).where(Execution.service_id == first.id).order_by(Execution.id.desc()))
@@ -249,58 +275,155 @@ def explain(label, name):
             raw.close()
 
 
+def request_sample(client, name, url, headers, label, attempt):
+    before = len(RECORDS)
+    profiler = None
+    if ARGS.profile and ARGS.profile in name and attempt == 0:
+        import cProfile
+        profiler = cProfile.Profile()
+        profiler.enable()
+    STATEMENTS.clear()
+    started = time.perf_counter()
+    response = client.get(url, headers=headers)
+    elapsed = (time.perf_counter() - started) * 1000  # before any EXPLAIN/profile output
+    if profiler:
+        profiler.disable()
+        import pstats
+        print(f"--- profile {label} {name}")
+        pstats.Stats(profiler).sort_stats("cumulative").print_stats(os.getenv("BENCH_PROFILE_FILTER", ""), 30)
+    if ARGS.explain and ARGS.explain in name and attempt == ARGS.repeat - 1:
+        explain(label, name)
+    record = RECORDS[before] if len(RECORDS) > before else {}
+    return {"status": response.status_code, "client_ms": round(elapsed, 1),
+            "duration_ms": record.get("duration_ms"), "query_ms": record.get("query_ms"),
+            "query_count": record.get("query_count"), "response_bytes": record.get("response_bytes"),
+            "orm": record.get("orm_instances_loaded")}
+
+
+def quantile(values, q):
+    values = sorted(value for value in values if value is not None)
+    return values[min(len(values) - 1, int(round(q * (len(values) - 1))))] if values else None
+
+
+def summarize(user, name, samples):
+    first, warm = samples[0], [sample for sample in samples[1:] if sample["status"] == 200]
+    return {"user": user, "scenario": name, "status": first["status"],
+            "first_in_process_ms": first["duration_ms"], "first_query_ms": first["query_ms"],
+            "first_queries": first["query_count"],
+            "warm_samples": len(warm),
+            "warm_median_ms": statistics.median([s["duration_ms"] for s in warm]) if warm else None,
+            "warm_p95_ms": quantile([s["duration_ms"] for s in warm], 0.95),
+            "warm_query_ms_median": quantile([s["query_ms"] for s in warm], 0.5),
+            "queries": samples[-1]["query_count"], "bytes": samples[-1]["response_bytes"], "orm": samples[-1]["orm"],
+            "samples": samples}
+
+
 def measure(client, label, user):
     results = []
-    for name, url, headers in scenarios("perf-0001"):
+    for name, url, headers in scenarios(ARGS.service):
         if ARGS.only and ARGS.only not in name:
             continue
-        samples = []
-        for attempt in range(ARGS.repeat):
-            before = len(RECORDS)
-            profiler = None
-            if ARGS.profile and ARGS.profile in name and attempt == 0:
-                import cProfile
-                profiler = cProfile.Profile()
-                profiler.enable()
-            STATEMENTS.clear()
-            started = time.perf_counter()
-            response = client.get(url, headers=headers)
-            if ARGS.explain and ARGS.explain in name and attempt == ARGS.repeat - 1:
-                explain(label, name)
-            if profiler:
-                profiler.disable()
-                import pstats
-                print(f"--- profile {label} {name}")
-                pstats.Stats(profiler).sort_stats("cumulative").print_stats(os.getenv("BENCH_PROFILE_FILTER", ""), 30)
-            elapsed = (time.perf_counter() - started) * 1000
-            record = RECORDS[before] if len(RECORDS) > before else {}
-            samples.append({"status": response.status_code, "client_ms": round(elapsed, 1),
-                            "duration_ms": record.get("duration_ms"), "query_ms": record.get("query_ms"),
-                            "query_count": record.get("query_count"), "response_bytes": record.get("response_bytes"),
-                            "orm": record.get("orm_instances_loaded")})
-        ok = [sample for sample in samples if sample["status"] == 200]
-        def p(key, quantile):
-            values = sorted(sample[key] for sample in ok if sample[key] is not None)
-            return values[min(len(values) - 1, int(round(quantile * (len(values) - 1))))] if values else None
-        results.append({"user": user, "scenario": name, "status": samples[0]["status"], "cold_ms": samples[0]["duration_ms"],
-                        "warm_median_ms": statistics.median([s["duration_ms"] for s in ok[1:]]) if len(ok) > 1 else None,
-                        "warm_p95_ms": p("duration_ms", 0.95), "query_ms_median": p("query_ms", 0.5),
-                        "queries": samples[-1]["query_count"], "bytes": samples[-1]["response_bytes"], "orm": samples[-1]["orm"]})
-        print(f"{label:<10} {name:<32} {samples[0]['status']} cold={samples[0]['duration_ms']}ms "
-              f"warm={results[-1]['warm_median_ms']}ms q={samples[-1]['query_count']} "
-              f"sql={results[-1]['query_ms_median']}ms bytes={samples[-1]['response_bytes']} orm={samples[-1]['orm']}", flush=True)
+        samples = [request_sample(client, name, url, headers, label, attempt) for attempt in range(ARGS.repeat)]
+        results.append(summarize(user, name, samples))
+        row = results[-1]
+        print(f"{label:<10} {name:<32} {row['status']} first={row['first_in_process_ms']}ms "
+              f"warm={row['warm_median_ms']}ms p95={row['warm_p95_ms']}ms (n={row['warm_samples']}) q={row['queries']} "
+              f"sql={row['warm_query_ms_median']}ms bytes={row['bytes']} orm={row['orm']}", flush=True)
     return results
 
 
+def isolated_first(users):
+    """Each scenario's first request in its own fresh process."""
+    import subprocess
+    results = []
+    for user in users:
+        for name, _url, _headers in scenarios(ARGS.service):
+            if ARGS.only and ARGS.only not in name:
+                continue
+            command = [sys.executable, str(Path(__file__).resolve()), "--database-url", ARGS.database_url,
+                       "--service", ARGS.service, "--single", name, "--single-user", user]
+            if ARGS.template:
+                command += ["--template", str(ARGS.template)]
+            completed = subprocess.run(command, capture_output=True, text=True, timeout=1800)
+            line = [entry for entry in completed.stdout.splitlines() if entry.startswith("SINGLE ")]
+            record = json.loads(line[-1][7:]) if line else {"error": completed.stderr[-400:]}
+            record.update(user=user, scenario=name)
+            results.append(record)
+            print(f"isolated   {user:<10} {name:<32} {record.get('status')} first={record.get('duration_ms')}ms "
+                  f"process_ready={record.get('process_ready_ms')}ms q={record.get('query_count')} sql={record.get('query_ms')}ms", flush=True)
+    return results
+
+
+def metadata():
+    """Revision, environment and the database's preparation state for the run."""
+    import platform
+    import subprocess
+    from sqlalchemy import func, inspect, text
+    from app.database import engine
+    from app.models import Execution, Finding
+    info = {"started_at": datetime.now(timezone.utc).isoformat(), "python": platform.python_version(),
+            "args": {key: str(value) for key, value in vars(ARGS).items() if key not in {"database_url"}}}
+    try:
+        info["git_revision"] = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+        info["git_dirty"] = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=ROOT,
+                                                capture_output=True, text=True).stdout.strip())
+    except Exception:
+        info["git_revision"] = None
+    with engine.connect() as connection:
+        if engine.dialect.name == "postgresql":
+            info["database"] = connection.execute(text("select version()")).scalar()
+            info["jit"] = connection.execute(text("show jit")).scalar()
+        tables = set(inspect(connection).get_table_names())
+        info["dataset"] = {
+            "services": connection.execute(text("select count(*) from services")).scalar(),
+            "executions": connection.execute(text("select count(*) from executions")).scalar(),
+            "findings": connection.execute(text("select count(*) from findings")).scalar(),
+            "active_findings": connection.execute(text("select count(*) from findings where active")).scalar(),
+        }
+        prepared = {}
+        if "service_posture" in tables:
+            prepared["posture_rows"] = connection.execute(text("select count(*) from service_posture")).scalar()
+            prepared["posture_services_built"] = connection.execute(text(
+                "select count(*) from service_posture where services_built_generation = data_generation")).scalar()
+            prepared["posture_cyber_built"] = connection.execute(text(
+                "select count(*) from service_posture where cyber_built_generation = data_generation")).scalar()
+        if "execution_overviews" in tables:
+            prepared["stored_overviews"] = connection.execute(text("select count(*) from execution_overviews")).scalar()
+        if "execution_summaries" in tables:
+            prepared["execution_summaries"] = connection.execute(text("select count(*) from execution_summaries")).scalar()
+        info["preparation"] = prepared
+    return info
+
+
+def single():
+    """--single: one scenario, one request, in this fresh process."""
+    ready_ms = round((time.perf_counter() - PROCESS_STARTED) * 1000, 1)
+    client = login(ARGS.single_user)
+    for name, url, headers in scenarios(ARGS.service):
+        if name == ARGS.single:
+            sample = request_sample(client, name, url, headers, ARGS.single_user, 0)
+            sample["process_ready_ms"] = ready_ms
+            print("SINGLE " + json.dumps(sample), flush=True)
+            return
+    raise SystemExit(f"unknown scenario {ARGS.single}")
+
+
 def main_run():
+    if ARGS.single:
+        single()
+        return
     if ARGS.explain:
         capture_statements()
     if ARGS.reset:
         seed()
+    info = metadata()
+    print("metadata", json.dumps({key: info[key] for key in ("git_revision", "git_dirty", "dataset", "preparation")}), flush=True)
     results = measure(login("admin"), "admin", "admin") + measure(login("restricted"), "restricted", "restricted")
+    isolated = isolated_first(["admin", "restricted"]) if ARGS.isolated_first else []
     if ARGS.output:
         ARGS.output.write_text(json.dumps({"services": ARGS.services, "findings_per_service": ARGS.findings,
-                                           "history": ARGS.history, "repeat": ARGS.repeat, "results": results}, indent=2))
+                                           "history": ARGS.history, "repeat": ARGS.repeat, "metadata": info,
+                                           "results": results, "isolated_first": isolated}, indent=2, default=str))
 
 
 if __name__ == "__main__":
