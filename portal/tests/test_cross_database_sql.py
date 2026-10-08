@@ -199,3 +199,27 @@ def test_like_needles_escape_wildcards_on_both_dialects():
     assert "ESCAPE '!'" in postgres_sql(statement)
     parse_postgres(postgres_sql(statement))
     assert "ESCAPE '!'" in str(statement.compile(dialect=sqlite_dialect.dialect()))
+
+
+def test_simplified_current_observation_compiles_as_lateral_on_postgresql():
+    """PostgreSQL picks each finding's current observation with an indexed
+    LATERAL lookup (the computed-coalesce join hashed the whole observation
+    table); SQLite keeps the scalar-subquery form. Parity of results on real
+    PostgreSQL data is checked by the benchmark parity script."""
+    from types import SimpleNamespace
+    from sqlalchemy.dialects import postgresql, sqlite
+    from app import main, simplified_queries
+    from app.models import utcnow
+    from app.database import SessionLocal
+    with SessionLocal() as db:
+        configuration = main.get_configuration(db)
+    service, latest = SimpleNamespace(id=1), SimpleNamespace(id=7)
+    for name, dialect, expected, absent in (("postgresql", postgresql.dialect(), "LATERAL", None),
+                                            ("sqlite", sqlite.dialect(), None, "LATERAL")):
+        fake = SimpleNamespace(get_bind=lambda name=name: SimpleNamespace(dialect=SimpleNamespace(name=name)))
+        members = simplified_queries.candidates(fake, service, latest, utcnow(), configuration)
+        sql = str(select(members).compile(dialect=dialect))
+        if expected:
+            assert expected in sql and "ORDER BY finding_observations.execution_id = " in sql
+        if absent:
+            assert absent not in sql
