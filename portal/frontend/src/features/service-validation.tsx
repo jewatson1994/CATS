@@ -25,6 +25,8 @@ export function Page({data}:{data:PageData}) {
   const [submitting,setSubmitting] = useState(false);
   const [now,setNow] = useState(Date.now());
   const runKey = validation.run_key || validation.run_id;
+  const currentRun = useRef(runKey);
+  currentRun.current = runKey;
   const validationTerminal = Boolean(isTerminal(validation) || validation.terminal);
   // Poll the lightweight status contract; the full evidence view is fetched
   // only when its revision changes (throttled while running) and at terminal.
@@ -32,18 +34,21 @@ export function Page({data}:{data:PageData}) {
   const lastDetail = useRef(Date.now());
   const apiRoot = `/api/v1/services/${encodeURIComponent(service.service_key)}/deployment-validations/${encodeURIComponent(runKey || '')}`;
   const poll = usePoll<any>({url: runKey && !validationTerminal ? `${apiRoot}/status` : null, intervalMs: 2000, maxIntervalMs: 10000,
-    onStatus: async status => {
-      if (status.run_key !== runKey) return;
+    onStatus: async (status, _changed, signal) => {
+      if (status.run_key !== runKey || currentRun.current !== runKey) return;
       if (!status.terminal) {
         setValidation((current: any) => current.run_key === status.run_key ? {...current, status: status.status, phase: status.phase,
           cleanup_status: status.cleanup_status, started_at: status.started_at, duration_seconds: status.duration_seconds} : current);
         if (status.revision === shownRevision.current || Date.now() - lastDetail.current < 4000) return;
       }
       lastDetail.current = Date.now();
-      const detail = await requestJson<any>(apiRoot);
-      if (detail.run_key !== runKey) return;
+      // Cancelled with the poll (a rerun changes the run and restarts it), and
+      // applied only to the run that is still selected: a late response for
+      // an earlier run can never replace a newly started one.
+      const detail = await requestJson<any>(apiRoot, {signal});
+      if (signal.aborted || detail.run_key !== runKey || currentRun.current !== runKey) return;
       shownRevision.current = detail.revision;
-      setValidation(detail);
+      setValidation((current: any) => (current.run_key || current.run_id) === detail.run_key ? detail : current);
     }});
   useEffect(() => {setMessage(poll.error ? 'Live update unavailable; retrying.' : '');}, [poll.error]);
   useEffect(() => {if (!runKey || validationTerminal) return; const timer = setInterval(() => setNow(Date.now()),1000);return () => clearInterval(timer);},[runKey,validationTerminal]);
@@ -52,6 +57,7 @@ export function Page({data}:{data:PageData}) {
     try {
       const result = await requestJson<any>(`${root}/deployment-validations`,{method:'POST',body:new FormData(event.currentTarget)});
       if (!result.run || !result.run_id) throw new Error('Validation did not return a run.');
+      currentRun.current = result.run.run_key || result.run_id;  // before any pending detail can apply
       setValidation({...result.run,run_key:result.run.run_key || result.run_id});
       const url = new URL(result.url || `${root}?validation=true&validation_run=${encodeURIComponent(result.run_id)}`,window.location.origin);
       if (url.origin === window.location.origin) window.history.replaceState({},'',url);

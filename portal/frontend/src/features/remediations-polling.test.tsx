@@ -60,3 +60,26 @@ it('pauses while the document is hidden and resumes when visible', async () => {
   await act(async () => {document.dispatchEvent(new Event('visibilitychange'));});
   await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
 });
+
+
+it('keeps polling at a terminal status until the final report has loaded', async () => {
+  vi.useFakeTimers({shouldAdvanceTime: true});
+  const urls: string[] = [];
+  let reportAttempts = 0;
+  const fetch = vi.fn((url: string) => {
+    urls.push(url);
+    if (url.endsWith('/status')) return Promise.resolve(json({status: 'complete', phase: 'output', revision: 'r2', terminal: true}));
+    reportAttempts += 1;
+    if (reportAttempts === 1) return Promise.reject(new TypeError('network down'));
+    return Promise.resolve(json({schemaVersion: 1, page: 'remediation_report', data: data('complete', 'r2', {logs: ['Final evidence']})}, PAGE_MEDIA_TYPE));
+  });
+  vi.stubGlobal('fetch', fetch);
+  render(<Report data={data('running', 'r1')}/>);
+  for (let step = 0; step < 8; step++) await act(async () => {vi.advanceTimersByTime(5000);});
+  await waitFor(() => expect(reportAttempts).toBe(2));
+  // The first final-report request failed; polling did not stop until it loaded.
+  expect(screen.getByText(/Final evidence/)).toBeInTheDocument();
+  const count = urls.length;
+  await act(async () => {vi.advanceTimersByTime(60000);});
+  expect(urls.length).toBe(count);  // and stopped once it had
+});

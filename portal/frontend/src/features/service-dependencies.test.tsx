@@ -6,7 +6,7 @@ const data = {view:{service:{id:1,service_key:'sample',name:'Sample'}},can:{},de
 it.each(['pending','building'])('shows %s assessment without assessed zeros or empty evidence', status => {
   render(<Page data={{...data,dependency_projection_status:status} as any}/>);
   expect(screen.getByRole('status')).toHaveTextContent('background assessment');
-  expect(screen.getByRole('link',{name:'Refresh assessment'})).toBeInTheDocument();
+  expect(screen.getByRole('button',{name:'Refresh assessment'})).toBeInTheDocument();
   expect(screen.queryByText(/No matching SBOM/)).not.toBeInTheDocument();
   expect(screen.getAllByText('Unknown').length).toBeGreaterThan(0);
 });
@@ -43,6 +43,34 @@ it('renders assessed zero counts only for ready evidence', () => {
     expect(assign).not.toHaveBeenCalled();
   } finally {
     Object.defineProperty(window, 'location', {configurable: true, value: original});
+    vi.unstubAllGlobals(); vi.useRealTimers();
+  }
+});
+
+
+it('Refresh assessment after polling gave up refreshes in place and restarts the bounded poll', async () => {
+  const {vi} = await import('vitest');
+  const {act, fireEvent} = await import('@testing-library/react');
+  const {PageControlContext} = await import('../pageControl');
+  vi.useFakeTimers({shouldAdvanceTime: true});
+  const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({status: 'building', ready: false, terminal: false, revision: 'a'}),
+    {headers: {'content-type': 'application/json'}})));
+  vi.stubGlobal('fetch', fetch);
+  const refresh = vi.fn(async () => {});
+  try {
+    render(<PageControlContext.Provider value={{refresh}}><Page data={{...data, dependency_projection_status: 'building', dependency_selected_execution: {id: 42}} as any}/></PageControlContext.Provider>);
+    for (let step = 0; step < 40; step++) await act(async () => {vi.advanceTimersByTime(10000);});  // past the 5-minute bound
+    expect(screen.getByText(/Still preparing/)).toBeInTheDocument();
+    const before = fetch.mock.calls.length;
+    await act(async () => {vi.advanceTimersByTime(60000);});
+    expect(fetch.mock.calls.length).toBe(before);  // stopped
+    await act(async () => {fireEvent.click(screen.getByRole('button', {name: 'Refresh assessment'}));});
+    expect(refresh).toHaveBeenCalledTimes(1);
+    await act(async () => {vi.advanceTimersByTime(3000);});
+    expect(fetch.mock.calls.length).toBeGreaterThan(before);  // a new round of status checks
+    expect(String((fetch.mock.calls[fetch.mock.calls.length - 1] as any[])[0])).toContain('round=1');
+    expect(screen.queryByText(/Still preparing/)).toBeNull();
+  } finally {
     vi.unstubAllGlobals(); vi.useRealTimers();
   }
 });

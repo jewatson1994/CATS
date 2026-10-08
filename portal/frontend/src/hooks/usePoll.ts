@@ -11,8 +11,14 @@ export interface PollOptions<T extends PollStatus> {
   /** Give up after this long without reaching a terminal state (0 = never). */
   maxDurationMs?: number;
   isTerminal?: (status: T) => boolean;
-  /** Called for every status, with whether its revision differs from the previous one. */
-  onStatus?: (status: T, changed: boolean) => void | Promise<void>;
+  /**
+   * Called for every status, with whether its revision differs from the last
+   * one handled successfully, and the poll's signal (aborted on unmount or URL
+   * change) for any detail request it makes. If it throws, the status counts
+   * as not handled: polling continues with backoff (even at a terminal state)
+   * until it succeeds.
+   */
+  onStatus?: (status: T, changed: boolean, signal: AbortSignal) => void | Promise<void>;
   load?: (url: string, signal: AbortSignal) => Promise<T>;
 }
 
@@ -23,7 +29,8 @@ const hidden = () => typeof document !== 'undefined' && document.visibilityState
  * Lightweight status polling: one request at a time (never overlapping),
  * cancelled on unmount or URL change, paused while the document is hidden and
  * resumed immediately when it becomes visible, exponential backoff with
- * jitter on errors and while nothing changes, and a stop at terminal state.
+ * jitter on errors and while nothing changes, and a stop at terminal state
+ * once that state has been handled.
  */
 export function usePoll<T extends PollStatus>({url, intervalMs = 2000, maxIntervalMs = 15000, maxDurationMs = 0,
   isTerminal = status => Boolean(status.terminal), onStatus, load}: PollOptions<T>) {
@@ -60,10 +67,21 @@ export function usePoll<T extends PollStatus>({url, intervalMs = 2000, maxInterv
         const status = await loader(url as string, controller.signal);
         if (controller.signal.aborted) return;
         const changed = status.revision === undefined || status.revision !== revision;
-        revision = status.revision;
         const terminal = callbacks.current.isTerminal(status);
-        await callbacks.current.onStatus?.(status, changed);
+        try {
+          await callbacks.current.onStatus?.(status, changed, controller.signal);
+        } catch (cause) {
+          // Not handled (e.g. the final detail could not be loaded): keep the
+          // latest status visible and retry; never stop on a terminal state
+          // whose detail has not arrived.
+          if (controller.signal.aborted) return;
+          setState({url, status, error: cause instanceof Error ? cause.message : 'Unable to refresh the details.', stopped: false});
+          delay = Math.min(maxIntervalMs, delay * 2);
+          schedule(delay);
+          return;
+        }
         if (controller.signal.aborted) return;
+        revision = status.revision;
         setState({url, status, error: null, stopped: terminal});
         if (terminal) {done = true; return;}
         // Back off gently while nothing changes; snap back on change.

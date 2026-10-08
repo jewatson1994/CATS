@@ -46,3 +46,33 @@ it('polls validation status, not evidence, and loads evidence once at terminal',
     vi.unstubAllGlobals(); vi.useRealTimers();
   }
 });
+
+it('a delayed detail response for an earlier run never replaces a newly started run', async () => {
+  const {vi, expect: assert} = await import('vitest');
+  const {act, fireEvent, waitFor} = await import('@testing-library/react');
+  vi.useFakeTimers({shouldAdvanceTime: true});
+  let releaseOld: (response: Response) => void = () => {};
+  const json = (body: unknown) => new Response(JSON.stringify(body), {headers: {'content-type': 'application/json'}});
+  const fetch = vi.fn((url: string, options?: RequestInit) => {
+    if (options?.method === 'POST') return Promise.resolve(json({run_id: 'run-2', run: {run_key: 'run-2', status: 'QUEUED', phase: 'QUEUED', cleanup_status: 'PENDING'}}));
+    if (url.includes('/run-1/status')) return Promise.resolve(json({run_key: 'run-1', status: 'VERIFIED', phase: 'COMPLETE', cleanup_status: 'COMPLETE', revision: 'v9', terminal: true}));
+    if (url.endsWith('/run-1')) return new Promise<Response>(resolve => {
+      releaseOld = resolve;
+      options?.signal?.addEventListener('abort', () => resolve(json({run_key: 'run-1', status: 'VERIFIED', phase: 'COMPLETE', cleanup_status: 'COMPLETE', terminal: true, reason: 'OLD RUN EVIDENCE'})));
+    });
+    return Promise.resolve(json({run_key: 'run-2', status: 'RUNNING', phase: 'INSTALLING', cleanup_status: 'PENDING', revision: 'n1', terminal: false}));
+  });
+  vi.stubGlobal('fetch', fetch);
+  try {
+    render(<Page data={{view: {service: {id: 1, service_key: 'demo'}}, can_validate: true, can: {'remediation.execute': {'1': true}}, csrf_token: 't',
+      validation: {run_key: 'run-1', status: 'RUNNING', phase: 'INSTALLING', cleanup_status: 'PENDING', revision: 'v1'}} as any}/>);
+    await act(async () => {vi.advanceTimersByTime(3000);});
+    await waitFor(() => assert(fetch.mock.calls.some(call => String(call[0]).endsWith('/run-1'))));  // old detail pending
+    await act(async () => {fireEvent.submit(screen.getByRole('button', {name: 'Re-run Validation'}).closest('form')!);});
+    await waitFor(() => assert(screen.getAllByText(/Queued|Installing|Running/i).length).toBeGreaterThan(0));
+    // The earlier run's detail now arrives.
+    await act(async () => {releaseOld(json({run_key: 'run-1', status: 'VERIFIED', phase: 'COMPLETE', cleanup_status: 'COMPLETE', terminal: true, reason: 'OLD RUN EVIDENCE'}));});
+    await act(async () => {vi.advanceTimersByTime(3000);});
+    assert(screen.queryByText(/OLD RUN EVIDENCE/)).toBeNull();
+  } finally {vi.unstubAllGlobals(); vi.useRealTimers();}
+});

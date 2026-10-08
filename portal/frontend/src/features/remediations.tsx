@@ -197,16 +197,21 @@ export function Report({data: initial}: {data: PageData}) {
   // Poll the lightweight status contract only; the full report (evidence,
   // comparisons, validation) is fetched when its revision actually changes.
   const poll = usePoll<RemediationStatus>({url: isActive(initial.job) ? statusUrl : null, intervalMs: 1500, maxIntervalMs: 10000,
-    onStatus: async status => {
+    onStatus: async (status, _changed, signal) => {
       if (!status.revision || status.revision === shown.current) return;
       if (!status.terminal && Date.now() - lastDetail.current < DETAIL_MIN_INTERVAL_MS) return;
       lastDetail.current = Date.now();
       try {
-        const page = await requestJson<PageEnvelope>(root, {headers: {Accept: PAGE_MEDIA_TYPE}});
+        const page = await requestJson<PageEnvelope>(root, {headers: {Accept: PAGE_MEDIA_TYPE}, signal});
+        if (signal.aborted) return;
         shown.current = page.data.status_revision || status.revision;
         setDetail(page.data); setDetailError(null);
       } catch (cause) {
+        if (signal.aborted) return;
         setDetailError(cause instanceof Error ? cause.message : 'The report could not be refreshed.');
+        // Unhandled: the poll retries, and does not stop at a terminal state
+        // until the matching final report (evidence, delivery, signing) loads.
+        throw cause;
       }
     }});
   const status = poll.status;
