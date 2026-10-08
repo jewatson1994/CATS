@@ -221,5 +221,6 @@ def test_simplified_current_observation_compiles_as_lateral_on_postgresql():
         sql = str(select(members).compile(dialect=dialect))
         if expected:
             assert expected in sql and "ORDER BY finding_observations.execution_id = " in sql
+            parse_postgres(postgres_sql(select(members)))
         if absent:
             assert absent not in sql
