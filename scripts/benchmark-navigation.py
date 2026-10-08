@@ -220,8 +220,22 @@ def latest_execution_id(service_key):
                          .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
 
 
+def largest_group_id(service_key):
+    """The Simplified group with the most members in the service's latest scan."""
+    from sqlalchemy import func, select
+    from app.models import Finding, FindingObservation, Service
+    execution_id = latest_execution_id(service_key)
+    with SessionLocal() as db:
+        return db.scalar(select(FindingObservation.simplified_key).join(Finding, Finding.id == FindingObservation.finding_id)
+                         .join(Service, Service.id == Finding.service_id)
+                         .where(Service.service_key == service_key, FindingObservation.execution_id == execution_id)
+                         .group_by(FindingObservation.simplified_key)
+                         .order_by(func.count().desc(), FindingObservation.simplified_key).limit(1)) or "none"
+
+
 def scenarios(service_key):
     root = f"/services/{service_key}"
+    simplified = f"{root}?findings=true&findings_view=simplified"
     return [
         ("services: page", "/", PAGE),
         ("services: rows", "/api/dashboard/services?lifecycle=active", {}),
@@ -231,6 +245,17 @@ def scenarios(service_key):
         ("service: findings simplified", f"{root}?findings=true&findings_view=simplified", PAGE),
         ("service: findings raw", f"{root}?findings_view=raw", PAGE),
         ("service: findings search", f"{root}?findings_view=raw&q=package-01", PAGE),
+        ("findings: raw page 20", f"{root}?findings_view=raw&page=20", PAGE),
+        ("findings: raw critical", f"{root}?findings_view=raw&severity=Critical", PAGE),
+        ("findings: raw noncompliant", f"{root}?findings_view=raw&finding_state=noncompliant", PAGE),
+        ("findings: raw exceptions", f"{root}?findings_view=raw&finding_state=exceptions", PAGE),
+        ("findings: raw resolved", f"{root}?findings_view=raw&finding_state=resolved", PAGE),
+        ("findings: simplified search", f"{simplified}&q=package-01", PAGE),
+        ("findings: simplified critical", f"{simplified}&severity=Critical", PAGE),
+        ("findings: simplified page 3", f"{simplified}&page=3", PAGE),
+        ("findings: simplified noncompliant", f"{simplified}&finding_state=noncompliant", PAGE),
+        ("findings: simplified members", f"/api/v1/services/{service_key}/findings/simplified/{largest_group_id(service_key)}/members", {}),
+        ("service: poam", f"{root}?poam=true", PAGE),
         ("service: architecture", f"{root}?architecture=true", PAGE),
         ("service: dependencies", f"{root}?dependencies=true", PAGE),
         ("service: validation", f"{root}?validation=true", PAGE),

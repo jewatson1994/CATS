@@ -1,0 +1,65 @@
+{
+  "services": {
+    "perf-0001": {
+      "findings": 10500,
+      "full_ms": [
+        1494.9,
+        389.8,
+        405.0
+      ],
+      "full_median_ms": 405.0,
+      "targeted": {
+        "1": {
+          "ms": 50.4,
+          "mode": "targeted"
+        },
+        "100": {
+          "ms": 53.9,
+          "mode": "targeted"
+        },
+        "1000": {
+          "ms": 310.6,
+          "mode": "targeted"
+        }
+      }
+    }
+  },
+  "rss_before_kb": 61532,
+  "warm_all": {
+    "services": 100,
+    "ms": 62597.2
+  },
+  "storage": {
+    "finding_classifications": {
+      "table_bytes": 1053728768,
+      "index_bytes": 61554688,
+      "total_bytes": 1115594752,
+      "rows": 1050000
+    },
+    "finding_classification_state": {
+      "table_bytes": 57344,
+      "index_bytes": 16384,
+      "total_bytes": 106496,
+      "rows": 100
+    },
+    "finding_classification_changes": {
+      "table_bytes": 49152,
+      "index_bytes": 114688,
+      "total_bytes": 196608,
+      "rows": 0
+    },
+    "findings": {
+      "table_bytes": 194781184,
+      "index_bytes": 354877440,
+      "total_bytes": 549740544,
+      "rows": 1050000
+    },
+    "finding_observations": {
+      "table_bytes": 1024000000,
+      "index_bytes": 278577152,
+      "total_bytes": 1302888448,
+      "rows": 2000000
+    }
+  },
+  "rss_peak_kb": 119236
+}

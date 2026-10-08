@@ -1,0 +1,88 @@
+{
+  "services": {
+    "perf-9999": {
+      "findings": 52500,
+      "full_ms": [
+        3296.6,
+        2069.5,
+        2431.0
+      ],
+      "full_median_ms": 2431.0,
+      "targeted": {
+        "1": {
+          "ms": 98.0,
+          "mode": "targeted"
+        },
+        "100": {
+          "ms": 85.3,
+          "mode": "targeted"
+        },
+        "1000": {
+          "ms": 236.4,
+          "mode": "targeted"
+        }
+      }
+    },
+    "perf-0001": {
+      "findings": 1050,
+      "full_ms": [
+        68.8,
+        63.3,
+        61.1
+      ],
+      "full_median_ms": 63.3,
+      "targeted": {
+        "1": {
+          "ms": 31.3,
+          "mode": "targeted"
+        },
+        "100": {
+          "ms": 45.3,
+          "mode": "targeted"
+        },
+        "1000": {
+          "ms": 66.7,
+          "mode": "full"
+        }
+      }
+    }
+  },
+  "rss_before_kb": 61692,
+  "warm_all": {
+    "services": 1001,
+    "ms": 67263.7
+  },
+  "storage": {
+    "finding_classifications": {
+      "table_bytes": 1056702464,
+      "index_bytes": 74334208,
+      "total_bytes": 1131347968,
+      "rows": 1102500
+    },
+    "finding_classification_state": {
+      "table_bytes": 327680,
+      "index_bytes": 49152,
+      "total_bytes": 417792,
+      "rows": 1001
+    },
+    "finding_classification_changes": {
+      "table_bytes": 0,
+      "index_bytes": 262144,
+      "total_bytes": 278528,
+      "rows": 0
+    },
+    "findings": {
+      "table_bytes": 210132992,
+      "index_bytes": 445579264,
+      "total_bytes": 655802368,
+      "rows": 1102500
+    },
+    "finding_observations": {
+      "table_bytes": 1075208192,
+      "index_bytes": 296738816,
+      "total_bytes": 1372274688,
+      "rows": 2100000
+    }
+  },
+  "rss_peak_kb": 125100
+}

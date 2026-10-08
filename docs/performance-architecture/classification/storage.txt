@@ -1,0 +1,7 @@
+# finding_classifications storage (bytes): label, total, table, indexes[, rows, findings total, observations total, database]
+## cats_large
+before_vacuum|1131356160|1056702464|74334208
+after_vacuum|587849728|555352064|32489472|1102500|655802368|1372274688|4206976023
+## cats_medium
+before_vacuum|1115594752|1053728768|61554688
+after_vacuum|558292992|527335424|30949376|1050000|549740544|1302888448|2615622679

@@ -1,0 +1,75 @@
+{
+  "clients": 4,
+  "seconds": 72.6,
+  "background": "none",
+  "requests": 134,
+  "throughput_rps": 1.85,
+  "errors": [],
+  "error_count": 0,
+  "background_runs": [],
+  "scenarios": {
+    "architecture": {
+      "n": 12,
+      "p50_ms": 710.7,
+      "p95_ms": 1413.4,
+      "max_ms": 1799.9,
+      "mean_ms": 769.4
+    },
+    "cybersecurity data": {
+      "n": 14,
+      "p50_ms": 202.2,
+      "p95_ms": 351.8,
+      "max_ms": 367.7,
+      "mean_ms": 224.4
+    },
+    "findings raw": {
+      "n": 16,
+      "p50_ms": 438.2,
+      "p95_ms": 497.3,
+      "max_ms": 792.7,
+      "mean_ms": 453.5
+    },
+    "findings raw exceptions": {
+      "n": 16,
+      "p50_ms": 13090.7,
+      "p95_ms": 14133.3,
+      "max_ms": 14787.1,
+      "mean_ms": 13086.5
+    },
+    "findings raw search": {
+      "n": 16,
+      "p50_ms": 945.0,
+      "p95_ms": 1327.3,
+      "max_ms": 1399.5,
+      "mean_ms": 1009.5
+    },
+    "findings simplified": {
+      "n": 16,
+      "p50_ms": 779.1,
+      "p95_ms": 851.2,
+      "max_ms": 881.4,
+      "mean_ms": 764.3
+    },
+    "findings simplified search": {
+      "n": 16,
+      "p50_ms": 818.9,
+      "p95_ms": 871.8,
+      "max_ms": 933.4,
+      "mean_ms": 806.5
+    },
+    "overview": {
+      "n": 15,
+      "p50_ms": 455.1,
+      "p95_ms": 836.5,
+      "max_ms": 875.5,
+      "mean_ms": 512.7
+    },
+    "services rows": {
+      "n": 13,
+      "p50_ms": 411.6,
+      "p95_ms": 928.8,
+      "max_ms": 946.3,
+      "mean_ms": 519.9
+    }
+  }
+}

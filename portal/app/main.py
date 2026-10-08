@@ -378,6 +378,9 @@ def _start_read_model_maintenance():
             # never part of module import or request serving.
             step("legacy_policy_findings", backfill_policy_findings)
             step("incomplete_scan_findings", backfill_incomplete_scan_findings)
+            # Classification first: posture rows built afterwards count from it.
+            from .finding_classification import warm as warm_classifications
+            step("finding_classifications", lambda: warm_classifications(background_bind(engine)))
             step("service_posture", lambda: posture.warm(background_bind(engine)))
             step("service_overviews", lambda: warm_overviews(background_bind(engine)))
         finally:
@@ -2227,6 +2230,8 @@ def _risk_finding_expressions(
     configurations: dict[int, dict[str, str]],
     now: datetime,
     finding_exception,
+    *,
+    overdue=None,
 ):
     """Build database expressions for risk-based finding summaries.
 
@@ -2241,7 +2246,11 @@ def _risk_finding_expressions(
     catalog or service-id set is bound as a single JSON value (``member_of``),
     so statement size and bind counts stay constant as services and catalogs
     grow.  The catalogs remain the live in-memory intelligence snapshot.
+
+    ``overdue`` replaces the overdue predicate (for example ``true()``: "would
+    be non-compliant once overdue"); every other rule is unchanged.
     """
+    override = overdue
     from .risk_sql import evidence_score, evidence_truth, key_present
     from .sql_sets import catalog_subset, member_of
     eligible_parts = []
@@ -2263,9 +2272,9 @@ def _risk_finding_expressions(
         service_scope = member_of(Finding.service_id, service_ids, numeric=True)
         if cfg.get("compliance_mode", "risk_based") == "raw":
             eligible_parts.append(service_scope)
-            noncompliant_parts.append(and_(service_scope, _raw_overdue_expression(Finding, group_configurations, now)))
+            noncompliant_parts.append(and_(service_scope, override if override is not None else _raw_overdue_expression(Finding, group_configurations, now)))
             continue
-        overdue = _raw_overdue_expression(Finding, group_configurations, now)
+        overdue = override if override is not None else _raw_overdue_expression(Finding, group_configurations, now)
         eligible = []
         noncompliant = []
         minimum = str(cfg.get("minimum_severity", "None")).lower()
@@ -2352,34 +2361,53 @@ def service_overview_rows_aggregated(
         .where(latest_execution_time.c.position == 1))
     }
     execution_summaries = load_execution_summaries(db, [row.id for row in latest_by_service.values()])
-    finding_exception = select(ExceptionRecord.id).where(
-        ExceptionRecord.finding_id == Finding.id,
-        ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
-        ExceptionRecord.expires_at > now,
-    ).exists()
-    finding_eligible, finding_noncompliant, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
-    finding_query = select(
-        Finding.service_id,
-        func.sum(case((finding_eligible, 1), else_=0)).label("total"),
-        func.sum(case((and_(finding_eligible, finding_exception), 1), else_=0)).label("excepted"),
-        func.sum(case((and_(finding_noncompliant, ~finding_exception), 1), else_=0)).label("noncompliant"),
-        func.min(Finding.episode_started).label("oldest"),
-    ).where(member_of(Finding.service_id, service_ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id)
-    if needs_observations:
-        # Only the requested services' active findings need evidence; an
-        # unscoped GROUP BY would scan every retained observation globally.
-        latest_observation = select(
-            FindingObservation.finding_id,
-            func.max(FindingObservation.id).label("latest_id"),
-        ).join(Finding, Finding.id == FindingObservation.finding_id).where(
-            member_of(Finding.service_id, service_ids, numeric=True), Finding.active.is_(True),
-        ).group_by(FindingObservation.finding_id).subquery()
-        finding_query = finding_query.outerjoin(
-            latest_observation, latest_observation.c.finding_id == Finding.id,
-        ).outerjoin(
-            FindingObservation, FindingObservation.id == latest_observation.c.latest_id,
-        )
-    finding_aggregate = {row.service_id: row for row in db.execute(finding_query)}
+    from . import finding_classification as classification
+    # Services with current classification rows are counted from them (same
+    # predicates, stored); the rest evaluate the classification live.
+    classified = sorted(classification.current_services(db, service_ids, configurations, now))
+    live_ids = [service_id for service_id in service_ids if service_id not in set(classified)]
+    finding_aggregate = {}
+    if classified:
+        fc = classification.FC
+        stored_eligible, stored_excepted, stored_noncompliant = classification.predicates(
+            {service_id: configurations[service_id] for service_id in classified}, now)
+        finding_aggregate.update({row.service_id: row for row in db.execute(select(
+            fc.service_id,
+            func.sum(case((stored_eligible, 1), else_=0)).label("total"),
+            func.sum(case((and_(stored_eligible, stored_excepted), 1), else_=0)).label("excepted"),
+            func.sum(case((and_(stored_noncompliant, ~stored_excepted), 1), else_=0)).label("noncompliant"),
+            func.min(fc.episode_started).label("oldest"),
+        ).where(member_of(fc.service_id, classified, numeric=True), fc.active.is_(True)).group_by(fc.service_id))})
+    if live_ids:
+        finding_exception = select(ExceptionRecord.id).where(
+            ExceptionRecord.finding_id == Finding.id,
+            ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
+            ExceptionRecord.expires_at > now,
+        ).exists()
+        finding_eligible, finding_noncompliant, needs_observations = _risk_finding_expressions(
+            {service_id: configurations[service_id] for service_id in live_ids}, now, finding_exception)
+        finding_query = select(
+            Finding.service_id,
+            func.sum(case((finding_eligible, 1), else_=0)).label("total"),
+            func.sum(case((and_(finding_eligible, finding_exception), 1), else_=0)).label("excepted"),
+            func.sum(case((and_(finding_noncompliant, ~finding_exception), 1), else_=0)).label("noncompliant"),
+            func.min(Finding.episode_started).label("oldest"),
+        ).where(member_of(Finding.service_id, live_ids, numeric=True), Finding.active.is_(True)).group_by(Finding.service_id)
+        if needs_observations:
+            # Only the requested services' active findings need evidence; an
+            # unscoped GROUP BY would scan every retained observation globally.
+            latest_observation = select(
+                FindingObservation.finding_id,
+                func.max(FindingObservation.id).label("latest_id"),
+            ).join(Finding, Finding.id == FindingObservation.finding_id).where(
+                member_of(Finding.service_id, live_ids, numeric=True), Finding.active.is_(True),
+            ).group_by(FindingObservation.finding_id).subquery()
+            finding_query = finding_query.outerjoin(
+                latest_observation, latest_observation.c.finding_id == Finding.id,
+            ).outerjoin(
+                FindingObservation, FindingObservation.id == latest_observation.c.latest_id,
+            )
+        finding_aggregate.update({row.service_id: row for row in db.execute(finding_query)})
     policy_exception = select(PolicyExceptionRecord.id).where(
         PolicyExceptionRecord.policy_finding_id == PolicyFinding.id,
         PolicyExceptionRecord.revoked_at.is_(None), PolicyExceptionRecord.starts_at <= now,
@@ -7429,9 +7457,15 @@ def service_detail(
             # The retained payload is read only when missing evidence is itself non-compliant.
             evidence = raw_states.evidence_rows(view, execution_payload(db, current_scan.id)
                                                 if current_scan and view.get("evidence_noncompliant") else {}, current_scan)
+            # These states never write during a GET: stored rows only when current.
+            from .finding_classification import is_current
+            classified = is_current(db, service.id, configuration, now, latest_execution.id if latest_execution else None)
             result = raw_states.noncompliant_page(db, service.id, configuration, now, evidence,
-                finding_type=finding_type, query=q, resource=resource, severities=severity, page=page, page_size=page_size)
-        severity_options = raw_states.severity_options(db, service.id, configuration, now)
+                finding_type=finding_type, query=q, resource=resource, severities=severity, page=page, page_size=page_size,
+                classified=classified)
+        from .finding_classification import is_current
+        severity_options = raw_states.severity_options(db, service.id, configuration, now, classified=is_current(
+            db, service.id, configuration, now, latest_execution.id if latest_execution else None))
         archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
             WorkflowRequest.request_type == "archive", WorkflowRequest.service_id == service.id,
             WorkflowRequest.status == "pending")))
@@ -7464,7 +7498,7 @@ def service_detail(
             total_items=result["total_items"], total_pages=result["total_pages"], finding_type=finding_type,
             remediation_classes={}, query=q, resource=resource, severity=severity, severity_options=severity_options,
             pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view="raw"))
-    if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved"}:
+    if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved", "exceptions"}:
         if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
             raise HTTPException(422, detail="Unknown finding type")
         if page_size not in {50, 100, 250}:
@@ -7488,10 +7522,22 @@ def service_detail(
             severity_query = severity_query.outerjoin(latest_observation,
                 latest_observation.c.finding_id == Finding.id).outerjoin(FindingObservation,
                 FindingObservation.id == latest_observation.c.latest_id)
+        policy_severity_query = None
+        if finding_state == "exceptions":
+            # The Exceptions state historically offered the severities of every
+            # listed group: raw-visible findings, and policy findings that are
+            # resolved, excepted or not yet non-compliant.
+            policy_exception = select(PolicyExceptionRecord.id).where(
+                PolicyExceptionRecord.policy_finding_id == PolicyFinding.id, PolicyExceptionRecord.revoked_at.is_(None),
+                PolicyExceptionRecord.starts_at <= now, PolicyExceptionRecord.expires_at > now).exists()
+            policy_severity_query = select(PolicyFinding.severity).where(PolicyFinding.service_id == service.id, or_(
+                PolicyFinding.active.is_(False), policy_exception,
+                ~_hardening_overdue_expression({service.id: configuration}, now)))
         view, service, latest_execution, result, affected_images, severity_options = prepare_raw_page(
             db, service, now, configuration, service_view, raw_summary,
             state=finding_state, finding_type=finding_type, severities=severity,
-            query=q, resource=resource, page=page, page_size=page_size, severity_query=severity_query)
+            query=q, resource=resource, page=page, page_size=page_size, severity_query=severity_query,
+            policy_severity_query=policy_severity_query)
         archive_pending = bool(db.scalar(select(WorkflowRequest.id).where(
             WorkflowRequest.request_type == "archive", WorkflowRequest.service_id == service.id,
             WorkflowRequest.status == "pending")))

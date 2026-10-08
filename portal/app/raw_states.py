@@ -106,16 +106,23 @@ def _with_latest_observation(query, service_id, needed):
         FindingObservation, FindingObservation.id == latest.c.latest_id)
 
 
-def severity_options(db, service_id, configuration, now):
+def severity_options(db, service_id, configuration, now, *, classified=False):
     """Severities offered by the Raw view: raw-visible findings and listed policy findings."""
     from .main import _hardening_overdue_expression, _risk_finding_expressions
     from .models import Finding, PolicyFinding
     finding_exception, policy_exception = _exception_predicates(now)
     configurations = {service_id: configuration}
-    eligible, _, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
-    values = set(db.execute(_with_latest_observation(select(Finding.severity).distinct().where(
-        Finding.service_id == service_id,
-        or_(Finding.active.is_(False), ~finding_exception, eligible)), service_id, needs_observations)).scalars())
+    stored = None
+    if classified:
+        from .finding_classification import severity_choices
+        stored = (severity_choices(db, service_id) or (None, None))[1]
+    if stored is not None:
+        values = set(stored)  # the same raw-visible set, stored with the classification
+    else:
+        eligible, _, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
+        values = set(db.execute(_with_latest_observation(select(Finding.severity).distinct().where(
+            Finding.service_id == service_id,
+            or_(Finding.active.is_(False), ~finding_exception, eligible)), service_id, needs_observations)).scalars())
     policy_noncompliant = and_(_hardening_overdue_expression(configurations, now), ~policy_exception)
     values.update(db.execute(select(PolicyFinding.severity).distinct().where(
         PolicyFinding.service_id == service_id,
@@ -144,22 +151,32 @@ def _evidence_text(item):
 
 
 def noncompliant_page(db, service_id, configuration, now, evidence, *, finding_type="all", query="",
-                      resource="", severities=(), page=1, page_size=50):
+                      resource="", severities=(), page=1, page_size=50, classified=False):
     from .main import _hardening_overdue_expression, _risk_finding_expressions
     from .models import Finding, PolicyFinding
     finding_exception, policy_exception = _exception_predicates(now)
     configurations = {service_id: configuration}
-    _, noncompliant, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
     needle, resource_needle = query.strip().casefold(), resource.strip().casefold()
     severity_filter = any(value.strip() for value in severities)
     wanted = _TYPE_NAMES[finding_type] if finding_type != "all" else None
 
-    cve_text = _joined_text(Finding.cve, literal("Overdue fixable vulnerability"), literal("CVE"))
-    cve_rows = _with_latest_observation(select(
-        literal(0).label("kind"), Finding.id.label("id"), func.lower(Finding.cve).label("sort_item"),
-        literal("cve").label("sort_type"), cve_text.label("text")).where(
-        Finding.service_id == service_id, Finding.active.is_(True), noncompliant, ~finding_exception),
-        service_id, needs_observations)
+    if classified:
+        # Stored rule and exception state; overdue evaluated now (same rows).
+        from .finding_classification import FC, predicates
+        _, excepted, stored_noncompliant = predicates(configurations, now)
+        cve_rows = select(
+            literal(0).label("kind"), FC.finding_id.label("id"), func.lower(FC.cve).label("sort_item"),
+            literal("cve").label("sort_type"),
+            _joined_text(FC.cve, literal("Overdue fixable vulnerability"), literal("CVE")).label("text")).where(
+            FC.service_id == service_id, FC.active.is_(True), stored_noncompliant, ~excepted)
+    else:
+        _, noncompliant, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
+        cve_text = _joined_text(Finding.cve, literal("Overdue fixable vulnerability"), literal("CVE"))
+        cve_rows = _with_latest_observation(select(
+            literal(0).label("kind"), Finding.id.label("id"), func.lower(Finding.cve).label("sort_item"),
+            literal("cve").label("sort_type"), cve_text.label("text")).where(
+            Finding.service_id == service_id, Finding.active.is_(True), noncompliant, ~finding_exception),
+            service_id, needs_observations)
     policy_reason = func.coalesce(func.nullif(PolicyFinding.title, ""), literal("Overdue configuration finding"))
     policy_image = func.coalesce(func.nullif(PolicyFinding.target, ""), literal("No target reported"))
     policy_rows = select(

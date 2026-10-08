@@ -53,12 +53,23 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
         .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if include_global_latest else current
     view = prepare_summary_header(db, proxy, current, latest, now, configuration, service_view_callback)
     configs = {service.id: configuration}
-    exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
-        ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
-        ExceptionRecord.expires_at > now).exists()
-    _, noncompliant, needs_observations = _risk_finding_expressions(configs, now, exception)
-    vulnerable = select(Finding.id).where(Finding.service_id == service.id,
-        Finding.active.is_(True), noncompliant, ~exception)
+    from . import finding_classification as classification
+    needs_observations = False
+    # Every tab renders this header; it never writes, so it uses the rows only
+    # when they are already current (the Findings tabs refresh them).
+    if classification.is_current(db, service.id, configuration, now,
+                                     latest.id if include_global_latest and latest is not None else ...):
+        fc = classification.FC
+        _, excepted, stored_noncompliant = classification.predicates(configs, now)
+        vulnerable = select(fc.finding_id).where(fc.service_id == service.id, fc.active.is_(True),
+                                                 stored_noncompliant, ~excepted)
+    else:
+        exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
+            ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
+            ExceptionRecord.expires_at > now).exists()
+        _, noncompliant, needs_observations = _risk_finding_expressions(configs, now, exception)
+        vulnerable = select(Finding.id).where(Finding.service_id == service.id,
+            Finding.active.is_(True), noncompliant, ~exception)
     if needs_observations:
         latest_observation = select(FindingObservation.finding_id,
             func.max(FindingObservation.id).label("latest_id")).join(Finding,

@@ -890,7 +890,87 @@ class ServicePosture(Base):
     cyber_calculated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class FindingClassification(Base):
+    """Rebuildable current classification of one finding (never authoritative).
+
+    Holds the time-independent outputs of the canonical classification SQL for
+    a finding: risk eligibility, whether it is non-compliant once overdue, its
+    exception state for the state's validity window, its current observation,
+    Simplified group, KEV/EPSS evidence and search surface. Overdue status is
+    still evaluated at read time from ``episode_started`` with the canonical
+    overdue expression. A service's rows are used only while its
+    ``FindingClassificationState`` is current. No foreign keys: a deleted
+    finding or service must never be blocked by its cache row.
+    """
+    __tablename__ = "finding_classifications"
+    __table_args__ = (Index("ix_finding_class_service_state", "service_id", "active", "eligible", "excepted"),)
+    finding_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    service_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    cve: Mapped[str | None] = mapped_column(String(80))
+    cve_normalized: Mapped[str | None] = mapped_column(String(160))
+    severity: Mapped[str | None] = mapped_column(String(30))
+    severity_folded: Mapped[str | None] = mapped_column(String(80))
+    severity_rank: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    episode_started: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Nullable: the canonical expressions' own three-valued results.
+    eligible: Mapped[bool | None] = mapped_column(Boolean)
+    noncompliant_rule: Mapped[bool | None] = mapped_column(Boolean)
+    excepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    kev_evidence: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    epss_evidence: Mapped[float | None] = mapped_column(Float)
+    fixable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    current_observation_id: Mapped[int | None] = mapped_column(Integer)
+    latest_observation_id: Mapped[int | None] = mapped_column(Integer)
+    current_execution_id: Mapped[int | None] = mapped_column(Integer)
+    in_latest_execution: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    group_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    package: Mapped[str] = mapped_column(Text, nullable=False)
+    remediation: Mapped[str] = mapped_column(Text, nullable=False)
+    fixed: Mapped[str] = mapped_column(Text, nullable=False)
+    package_sort: Mapped[str] = mapped_column(Text, nullable=False)
+    fixed_sort: Mapped[str] = mapped_column(Text, nullable=False)
+    search_text: Mapped[str | None] = mapped_column(Text)
+
+
+class FindingClassificationState(Base):
+    """Provenance of one service's classification rows.
+
+    Current only if: no change-log row is pending for the service, the
+    algorithm version, posture epoch and classification-relevant configuration
+    digest (which includes the KEV/EPSS catalog token when the configuration
+    uses them) are unchanged, the service's latest execution is the one it was
+    built against, and ``valid_from <= now < valid_until`` (the exception
+    start/expiry instants around the build time).
+    """
+    __tablename__ = "finding_classification_state"
+    service_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    algorithm: Mapped[int] = mapped_column(Integer, nullable=False)
+    epoch: Mapped[str | None] = mapped_column(String(40))
+    config_digest: Mapped[str | None] = mapped_column(String(64))
+    latest_execution_id: Mapped[int | None] = mapped_column(Integer)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    built_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    findings: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    build_ms: Mapped[float | None] = mapped_column(Float)
+    # Distinct severities of every finding, and of the Raw-visible ones
+    # (inactive, not excepted, or eligible): the pages' filter choices.
+    severities: Mapped[list | None] = mapped_column(JSON)
+    raw_severities: Mapped[list | None] = mapped_column(JSON)
+
+
+class FindingClassificationChange(Base):
+    """Change log written in the writer's transaction (``finding_id`` NULL: whole service)."""
+    __tablename__ = "finding_classification_changes"
+    __table_args__ = (Index("ix_finding_class_changes_service", "service_id", "id"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    service_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    finding_id: Mapped[int | None] = mapped_column(Integer)
+
+
 # Read-model invalidation listeners must be active for every session that can
 # write these tables, whichever module happens to be imported first.
 from . import authorization_revision as _authorization_revision  # noqa: E402,F401
 from . import service_posture as _service_posture  # noqa: E402,F401
+from . import finding_classification as _finding_classification  # noqa: E402,F401

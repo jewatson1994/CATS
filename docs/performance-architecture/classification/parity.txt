@@ -1,0 +1,20 @@
+# Page parity (scripts/benchmark-classification-parity.py compare)
+## parity-UTC-compare
+parity-UTC-new.json: 102/102 pages identical to parity-UTC-old.json
+parity-UTC-live.json: 102/102 pages identical to parity-UTC-old.json
+## parity-America-New_York-compare
+parity-America-New_York-new.json: 102/102 pages identical to parity-America-New_York-old.json
+parity-America-New_York-live.json: 102/102 pages identical to parity-America-New_York-old.json
+## parity2-compare
+parity2-new.json: 102/102 pages identical to parity2-old.json
+## earlier build: parity-large-utc-compare
+parity-large-utc-new.json: 102/102 pages identical to parity-large-utc-old.json
+parity-large-utc-live.json: 102/102 pages identical to parity-large-utc-old.json
+## earlier build: parity-large-ny-compare
+parity-large-ny-new.json: 102/102 pages identical to parity-large-ny-old.json
+parity-large-ny-live.json: 102/102 pages identical to parity-large-ny-old.json
+## earlier build: parity-medium-utc-compare
+parity-medium-utc-new.json: 102/102 pages identical to parity-medium-utc-old.json
+parity-medium-utc-live.json: 102/102 pages identical to parity-medium-utc-old.json
+## final code (after review fixes)
+parity3-new.json: 102/102 pages identical to parity-UTC-old.json

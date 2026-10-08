@@ -217,7 +217,9 @@ def test_simplified_current_observation_compiles_as_lateral_on_postgresql():
     for name, dialect, expected, absent in (("postgresql", postgresql.dialect(), "LATERAL", None),
                                             ("sqlite", sqlite.dialect(), None, "LATERAL")):
         fake = SimpleNamespace(get_bind=lambda name=name: SimpleNamespace(dialect=SimpleNamespace(name=name)))
-        members = simplified_queries.candidates(fake, service, latest, utcnow(), configuration)
+        # The live (reference) query; ``candidates`` serves current
+        # classification rows instead when they exist.
+        members = simplified_queries.live_candidates(fake, service, latest, utcnow(), configuration)
         sql = str(select(members).compile(dialect=dialect))
         if expected:
             assert expected in sql and "ORDER BY finding_observations.execution_id = " in sql

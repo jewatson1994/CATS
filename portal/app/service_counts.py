@@ -69,6 +69,11 @@ def overview_finding_counts(db, service_id: int, configuration: dict, now: datet
         return query.outerjoin(latest, latest.c.finding_id == Finding.id).outerjoin(
             FindingObservation, FindingObservation.id == latest.c.latest_id)
 
+    from . import finding_classification as classification
+    # Overview GETs never write: use rows only when they are already current.
+    if classification.is_current(db, service_id, configuration, now):
+        return _classified_counts(db, service_id, configuration, now, view, warning_days, cutoff)
+
     finding = db.execute(with_observations(select(
         func.count(Finding.id).label("all"),
         func.coalesce(func.sum(case((eligible, 1), else_=0)), 0).label("eligible"),
@@ -104,6 +109,66 @@ def overview_finding_counts(db, service_id: int, configuration: dict, now: datet
             member_of(Finding.cve, sorted(set(candidates)))))).scalars())
         warning_count = sum(cve in eligible_cves for cve in candidates)
 
+    evidence_noncompliant = bool(view.get("evidence_noncompliant"))
+    other_warnings = [item for item in view.get("warning_items", []) if item.get("type") not in {"CVE", "Exception"}]
+    return {
+        "active": int(finding.eligible) - int(finding.excepted) - int(finding.noncompliant)
+        + int(policy.all) - int(policy.excepted) - int(policy.noncompliant),
+        "exceptions": int(finding.excepted) + int(policy.excepted),
+        "resolved": int(resolved),
+        "noncompliant": int(finding.noncompliant) + int(policy.noncompliant)
+        + (int(view.get("missing_evidence_count") or 0) if evidence_noncompliant else 0),
+        "warnings": warning_count + len(other_warnings),
+    }
+
+
+def _policy_and_resolved(db, service_id, configurations, now):
+    from .main import _hardening_overdue_expression
+    from .models import Finding, PolicyExceptionRecord, PolicyFinding
+    policy_exception = select(PolicyExceptionRecord.id).where(
+        PolicyExceptionRecord.policy_finding_id == PolicyFinding.id, PolicyExceptionRecord.revoked_at.is_(None),
+        PolicyExceptionRecord.starts_at <= now, PolicyExceptionRecord.expires_at > now).exists()
+    policy = db.execute(select(
+        func.count(PolicyFinding.id).label("all"),
+        func.coalesce(func.sum(case((policy_exception, 1), else_=0)), 0).label("excepted"),
+        func.coalesce(func.sum(case((and_(_hardening_overdue_expression(configurations, now), ~policy_exception), 1),
+                                    else_=0)), 0).label("noncompliant"),
+    ).where(PolicyFinding.service_id == service_id, PolicyFinding.active.is_(True))).one()
+    resolved = (db.scalar(select(func.count(Finding.id)).where(Finding.service_id == service_id, Finding.active.is_(False))) or 0) \
+        + (db.scalar(select(func.count(PolicyFinding.id)).where(PolicyFinding.service_id == service_id,
+                                                                PolicyFinding.active.is_(False))) or 0)
+    return policy, resolved
+
+
+def _classified_counts(db, service_id, configuration, now, view, warning_days, cutoff):
+    """``overview_finding_counts`` from current classification rows (same predicates)."""
+    from .finding_classification import FC, predicates
+    from .models import ExceptionRecord
+    from .sql_sets import member_of
+    configurations = {service_id: configuration}
+    eligible, excepted, noncompliant = predicates(configurations, now)
+    finding = db.execute(select(
+        func.count(FC.finding_id).label("all"),
+        func.coalesce(func.sum(case((eligible, 1), else_=0)), 0).label("eligible"),
+        func.coalesce(func.sum(case((and_(eligible, excepted), 1), else_=0)), 0).label("excepted"),
+        func.coalesce(func.sum(case((and_(noncompliant, ~excepted), 1), else_=0)), 0).label("noncompliant"),
+    ).where(FC.service_id == service_id, FC.active.is_(True))).one()
+    policy, resolved = _policy_and_resolved(db, service_id, configurations, now)
+    # service_view uses the first active exception (relationship order: id).
+    first_exception_expiry = select(ExceptionRecord.expires_at).where(
+        ExceptionRecord.finding_id == FC.finding_id, ExceptionRecord.revoked_at.is_(None),
+        ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).order_by(
+        ExceptionRecord.id).limit(1).correlate(FC).scalar_subquery()
+    due_window = _due_window_expression(FC, configuration, now, warning_days)
+    candidates = db.execute(select(FC.cve).where(
+        FC.service_id == service_id, FC.active.is_(True),
+        or_(and_(~excepted, due_window), and_(excepted, first_exception_expiry <= cutoff)))).scalars().all()
+    warning_count = 0
+    if candidates:
+        eligible_cves = set(db.execute(select(FC.cve).distinct().where(
+            FC.service_id == service_id, FC.active.is_(True), eligible,
+            member_of(FC.cve, sorted(set(candidates))))).scalars())
+        warning_count = sum(cve in eligible_cves for cve in candidates)
     evidence_noncompliant = bool(view.get("evidence_noncompliant"))
     other_warnings = [item for item in view.get("warning_items", []) if item.get("type") not in {"CVE", "Exception"}]
     return {

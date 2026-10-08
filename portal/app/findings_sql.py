@@ -1,5 +1,4 @@
 from sqlalchemy import case, exists, func, literal, or_, select, union_all
-from sqlalchemy import case, exists, func, literal, select, union_all
 from sqlalchemy.orm import selectinload
 
 from . import simplified_queries  # Install persisted Unicode search metadata write hooks.
@@ -23,12 +22,41 @@ def _current(exception, foreign_key, finding_id, now):
 
 
 def _ids(view, key):
-    return [item.id for item in view.get(key, ())]
+    value = view.get(key, ())
+    if hasattr(value, "subquery"):
+        return value  # a SELECT of ids, evaluated by the database
+    return [item.id for item in value]
+
+
+def _classified_rows(service_id, view, state, finding_type, severity_values, needle, resource_needle, raw_selector):
+    """Vulnerability candidates from current classification rows.
+
+    Same rows and sort keys as the live query: the stored exception state is
+    the current-exception predicate, ``search_text`` the same search surface,
+    and ``episode_started``/``cve`` copies of the finding's own columns.
+    """
+    from .finding_classification import FC
+    clauses = [FC.service_id == service_id]
+    if state == "active" and raw_selector:
+        clauses.extend((FC.active.is_(True), FC.excepted.is_(False)))
+    elif state == "resolved" and raw_selector:
+        clauses.append(FC.active.is_(False))
+    else:
+        clauses.append(FC.finding_id.in_(_ids(view, {"active": "active", "exceptions": "excepted", "resolved": "resolved"}[state])))
+    if finding_type not in {"all", "vulnerability"}:
+        clauses.append(literal(False))
+    if severity_values:
+        clauses.append(FC.severity_folded.in_(severity_values))
+    for text in (needle, resource_needle):
+        if text:
+            clauses.append(FC.search_text.contains(text, autoescape=True))
+    return select(literal(0).label("kind"), FC.finding_id.label("id"), FC.episode_started.label("episode"),
+                  FC.cve.label("name")).where(*clauses)
 
 
 def get_raw_finding_page(db, service_id, view, now, state="active", finding_type="all",
                          severities=None, query="", resource="", page=1, page_size=50,
-                         raw_selector=True):
+                         raw_selector=True, classified=False):
     """Return mixed vulnerability/configuration pagination with bounded hydration.
 
     ``view`` carries the existing policy evaluator's scalar finding groups. Raw
@@ -52,6 +80,10 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
         (0, Finding, ExceptionRecord, ExceptionRecord.finding_id),
         (1, PolicyFinding, PolicyExceptionRecord, PolicyExceptionRecord.policy_finding_id),
     ):
+        if kind == 0 and classified and (raw_selector or state == "exceptions"):
+            queries.append(_classified_rows(service_id, view, state, finding_type, severity_values,
+                                            needle, resource_needle, raw_selector))
+            continue
         clauses = [model.service_id == service_id]
         current = exists(select(exception.id).where(*_current(exception, fk, model.id, now)))
         if state == "active" and raw_selector:

@@ -108,10 +108,13 @@ def _mark_changed_services(session, _context):
     policy_ids: set[int] = set()
     execution_ids: set[int] = set()
     deleted_services: set[int] = set()
-    for instance in chain(session.new, session.dirty, session.deleted):
+    # ``session.dirty`` is recomputed on every access: take it once (testing
+    # membership against the property per instance was quadratic per flush).
+    dirty = session.dirty
+    for instance in chain(session.new, dirty, session.deleted):
         if isinstance(instance, ServicePosture):
             continue
-        if instance in session.dirty and not session.is_modified(instance, include_collections=True):
+        if instance in dirty and not session.is_modified(instance, include_collections=True):
             continue  # touched without a net change (e.g. idempotent backfills)
         if isinstance(instance, _SERVICE_TABLES):
             if getattr(instance, "service_id", None) is not None:

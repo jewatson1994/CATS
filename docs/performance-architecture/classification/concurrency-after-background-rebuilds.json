@@ -1,0 +1,128 @@
+{
+  "clients": 4,
+  "seconds": 62.2,
+  "background": "reclassify",
+  "requests": 734,
+  "throughput_rps": 11.81,
+  "errors": [],
+  "error_count": 0,
+  "background_runs": [
+    {
+      "ms": 7309.0,
+      "done": true
+    },
+    {
+      "ms": 4547.3,
+      "done": true
+    },
+    {
+      "ms": 4990.1,
+      "done": true
+    },
+    {
+      "ms": 4813.7,
+      "done": true
+    },
+    {
+      "ms": 4514.0,
+      "done": true
+    },
+    {
+      "ms": 4188.6,
+      "done": true
+    },
+    {
+      "ms": 4493.4,
+      "done": true
+    },
+    {
+      "ms": 4606.1,
+      "done": true
+    },
+    {
+      "ms": 4548.4,
+      "done": true
+    },
+    {
+      "ms": 5074.2,
+      "done": true
+    },
+    {
+      "ms": 4544.1,
+      "done": true
+    },
+    {
+      "ms": 4865.9,
+      "done": true
+    },
+    {
+      "ms": 2451.7,
+      "done": true
+    }
+  ],
+  "scenarios": {
+    "architecture": {
+      "n": 81,
+      "p50_ms": 143.5,
+      "p95_ms": 260.2,
+      "max_ms": 484.0,
+      "mean_ms": 153.4
+    },
+    "cybersecurity data": {
+      "n": 82,
+      "p50_ms": 170.4,
+      "p95_ms": 290.2,
+      "max_ms": 374.6,
+      "mean_ms": 179.8
+    },
+    "findings raw": {
+      "n": 81,
+      "p50_ms": 358.1,
+      "p95_ms": 527.4,
+      "max_ms": 692.6,
+      "mean_ms": 377.6
+    },
+    "findings raw exceptions": {
+      "n": 81,
+      "p50_ms": 279.3,
+      "p95_ms": 382.0,
+      "max_ms": 474.0,
+      "mean_ms": 290.0
+    },
+    "findings raw search": {
+      "n": 81,
+      "p50_ms": 371.9,
+      "p95_ms": 533.4,
+      "max_ms": 613.5,
+      "mean_ms": 385.8
+    },
+    "findings simplified": {
+      "n": 82,
+      "p50_ms": 453.5,
+      "p95_ms": 633.2,
+      "max_ms": 717.9,
+      "mean_ms": 473.3
+    },
+    "findings simplified search": {
+      "n": 82,
+      "p50_ms": 313.7,
+      "p95_ms": 422.7,
+      "max_ms": 465.2,
+      "mean_ms": 320.1
+    },
+    "overview": {
+      "n": 83,
+      "p50_ms": 467.5,
+      "p95_ms": 685.6,
+      "max_ms": 1048.2,
+      "mean_ms": 493.0
+    },
+    "services rows": {
+      "n": 81,
+      "p50_ms": 218.9,
+      "p95_ms": 354.5,
+      "max_ms": 463.8,
+      "mean_ms": 233.5
+    }
+  }
+}
