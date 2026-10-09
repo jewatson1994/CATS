@@ -28,7 +28,7 @@ def test_projected_export_database_residency():
                 package='package', evidence={'retained': 'x'*100}) for i in range(start,end)])
         db.commit(); db.expunge_all()
         tree = ast.parse((Path(__file__).parents[1]/'app/main.py').read_text(encoding='utf-8-sig'))
-        function = next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='export_service_findings')
+        function = next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_service_findings_book')
         function.decorator_list=[]
         function.args.defaults=[ast.Constant(None) for _ in function.args.defaults]
         peak_models = 0
@@ -47,7 +47,7 @@ def test_projected_export_database_residency():
         statements=[]
         event.listen(engine,'before_cursor_execute',lambda c,r,s,p,x,m:statements.append(s))
         tracemalloc.start(); start=time.perf_counter()
-        assert namespace['export_service_findings']('large',db,None)==size
+        assert namespace['_service_findings_book']('large',db)==size
         elapsed=time.perf_counter()-start
         _,peak=tracemalloc.get_traced_memory(); tracemalloc.stop()
         assert peak_models <= 1

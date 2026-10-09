@@ -8389,6 +8389,10 @@ def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:
 @app.get("/services/{service_key}/exports/mitigations.xlsx")
 def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return workbook_response(_service_mitigations_book(service_key, db), f"{service_key}-mitigations.xlsx")
+
+
+def _service_mitigations_book(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
@@ -8398,14 +8402,17 @@ def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
         .order_by(PoamEntry.id).execution_options(yield_per=500))
     rows = ([item.id, item.service_version, item.item_type, item.title, item.remediation,
              item.status, item.due_date.isoformat() if item.due_date else "", item.ticket or ""] for item in entries)
-    return workbook_response(_focused_export_book(
-        ["Entry ID", "Service Version", "Type", "Title", "Mitigation", "Status", "Due Date", "Ticket"], rows),
-        f"{service_key}-mitigations.xlsx")
+    return _focused_export_book(
+        ["Entry ID", "Service Version", "Type", "Title", "Mitigation", "Status", "Due Date", "Ticket"], rows)
 
 
 @app.get("/services/{service_key}/exports/findings.xlsx")
 def export_service_findings(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return workbook_response(_service_findings_book(service_key, db), f"{service_key}-findings.xlsx")
+
+
+def _service_findings_book(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
@@ -8428,14 +8435,19 @@ def export_service_findings(service_key: str, db: Session = Depends(get_db),
             yield ["Configuration", item.finding, item.severity, item.active, item.target or "",
                    "", "", "", item.first_seen.isoformat(), item.last_seen.isoformat()]
     rows = export_rows()
-    return workbook_response(_focused_export_book(
+    return _focused_export_book(
         ["Type", "Finding", "Severity", "Active", "Image or Target", "Package", "Installed Version",
-         "Fixed Version", "First Seen", "Last Seen"], rows), f"{service_key}-findings.xlsx")
+         "Fixed Version", "First Seen", "Last Seen"], rows)
 
 
 @app.get("/services/{service_key}/exports/diagrams.zip")
 def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return Response(_service_diagrams_bytes(service_key, db), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{service_key}-diagrams.zip"'})
+
+
+def _service_diagrams_bytes(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
@@ -8449,14 +8461,17 @@ def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
         for view_name in ("all", "configuration", "containers", "flow", "network", "storage"):
             archive.writestr(f"architecture-{view_name}.svg", build_architecture_svg(graph, view_name))
         archive.writestr("helm-diagram.svg", build_helm_diagram(service, latest))
-    output.seek(0)
-    return StreamingResponse(output, media_type="application/zip", headers={
-        "Content-Disposition": f'attachment; filename="{service_key}-diagrams.zip"'})
+    return output.getvalue()
 
 
 @app.get("/services/{service_key}/exports/sbom.json")
 def export_service_sbom_components(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return JSONResponse(_service_sbom_components(service_key, db), headers={
+        "Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
+
+
+def _service_sbom_components(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
@@ -8464,9 +8479,8 @@ def export_service_sbom_components(service_key: str, db: Session = Depends(get_d
     latest = latest_evidence_execution(db, service.id)
     if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
         raise HTTPException(422, detail="No retained SBOM component evidence is available")
-    return JSONResponse({"format": "cats-retained-sbom-components-v1", "service": service_key,
-        "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]},
-        headers={"Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
+    return {"format": "cats-retained-sbom-components-v1", "service": service_key,
+        "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]}
 
 
 @app.get("/services/{service_key}/exports/{kind}.xlsx")
@@ -8480,6 +8494,55 @@ def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(g
     columns, _, _ = purpose_template_for_service(db, kind, service)
     return workbook_response(purpose_workbook_for(db, service, kind, columns),
                              f"{service.service_key}-{kind}.xlsx")
+
+
+@app.get("/services/{service_key}/exports/all.zip")
+def export_service_all(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    """Package the individual downloads, applying the same templates and permissions."""
+    from .exchange_routes import bundle_export_data
+    from starlette.background import BackgroundTask
+
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    # Spill large archives to disk; this sync route runs outside the event loop.
+    output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
+    try:
+        with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+            for kind in ("ppsm", "poam", "asset_list"):
+                columns, _, _ = purpose_template_for_service(db, kind, service)
+                with archive.open(f"{kind}.xlsx", "w") as entry:
+                    purpose_workbook_for(db, service, kind, columns).save(entry)
+            for name, build in (("mitigations", _service_mitigations_book), ("findings", _service_findings_book)):
+                with archive.open(f"{name}.xlsx", "w") as entry:
+                    build(service_key, db).save(entry)
+            for name, build in (("diagrams.zip", _service_diagrams_bytes),
+                                ("sbom-components.json", _service_sbom_components)):
+                try:
+                    data = build(service_key, db)
+                except HTTPException as exc:
+                    if exc.status_code != 422:
+                        raise
+                    archive.writestr(f"{name}.unavailable.txt", str(exc.detail) + "\n")
+                else:
+                    archive.writestr(name, json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else data)
+            if auth.has("bundle.export", service.id):
+                archive.writestr("cats-service.zip", bundle_export_data(service_key, db, auth))
+        output.seek(0)
+    except BaseException:
+        output.close()
+        raise
+
+    def chunks():
+        try:
+            while block := output.read(64 * 1024):
+                yield block
+        finally:
+            output.close()
+
+    return StreamingResponse(chunks(), media_type="application/zip", background=BackgroundTask(output.close),
+        headers={"Content-Disposition": f'attachment; filename="{service_key}-exports.zip"'})
 
 
 @app.get("/services/{service_key}/export.xlsx")

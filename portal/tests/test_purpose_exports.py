@@ -1,5 +1,6 @@
 """Purpose-built downloads use server templates without changing the complete workbook."""
 from io import BytesIO
+from zipfile import ZipFile
 
 from openpyxl import load_workbook
 from sqlalchemy import select
@@ -152,6 +153,11 @@ def test_group_template_inheritance_default_and_service_export():
     }, follow_redirects=False)
     assert response.status_code == 303, response.text
     assert _sheet(client.get("/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Parent Service"
+    response = client.get("/services/export-test/exports/all.zip")
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        sheet = load_workbook(BytesIO(archive.read("ppsm.xlsx"))).active
+        assert sheet["A1"].value == "Parent Service"
     with SessionLocal() as db:
         assert template_policy(db, "ppsm", child_id)[1] == "Inherited from Cybersecurity"
         service = db.scalar(select(Service).where(Service.service_key == "export-test"))

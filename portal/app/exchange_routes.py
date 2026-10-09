@@ -22,6 +22,11 @@ router = APIRouter()
 
 @router.get("/services/{service_key}/bundle.zip")
 def bundle_export(service_key: str, db=Depends(get_db), auth=Depends(require_user)):
+    data = bundle_export_data(service_key, db, auth)
+    return StreamingResponse(BytesIO(data), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="cats-service.zip"'})
+
+
+def bundle_export_data(service_key, db, auth):
     from .service_transfer import export_service
     service = service_for(db, auth, service_key, "bundle.export")
     execution_count = db.scalar(select(func.count()).select_from(Execution).where(Execution.service_id == service.id))
@@ -31,7 +36,7 @@ def bundle_export(service_key: str, db=Depends(get_db), auth=Depends(require_use
         raise HTTPException(422, detail=str(exc)) from exc
     record_audit(db, auth, "bundle.export", "service", service.id, executions=execution_count, format="service-input-v3")
     db.commit()
-    return StreamingResponse(BytesIO(data), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="cats-service.zip"'})
+    return data
 
 
 @router.get("/exchange/bundles")

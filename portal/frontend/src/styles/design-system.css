@@ -588,3 +588,14 @@ td > dl dd { margin: 0; font-weight: 600; text-transform: capitalize; }
 .image-signing-form .config-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .warning-policy { margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border); }
 .warning-policy .policy-check { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+
+/* Service downloads: compact rows with visible formats and a distinct ZIP action. */
+.service-export-menu .actions-menu-popover { width: min(300px, calc(100vw - 40px)); min-width: 0; padding: 6px; gap: 2px; max-height: min(620px, 75vh); overflow-y: auto; }
+.service-export-menu .actions-menu-popover > a { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 12px; color: var(--text); text-decoration: none; font-size: var(--text-sm); line-height: 1.4; }
+.service-export-menu .actions-menu-popover > a:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; background: var(--surface-raised); }
+.service-export-menu .service-export-all { background: var(--surface-raised); }
+.service-export-all strong { display: block; color: var(--green); }
+.service-export-all small { display: block; margin-top: 3px; color: var(--text-muted); font-size: 11px; }
+.service-export-menu .export-file-type { flex: none; color: var(--text-muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: .04em; border: 1px solid var(--border); border-radius: 4px; padding: 2px 5px; }
+.service-export-label { padding: 12px 12px 4px; color: var(--text-muted); font-size: 10px; letter-spacing: .07em; text-transform: uppercase; }
+.service-export-menu .service-export-bundle { border-top: 1px solid var(--border); margin-top: 4px; border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
