@@ -1,4 +1,5 @@
 """Existing bounded Helm acquisition helpers, independent of Portal initialization."""
+from . import scan_runtime
 import socket
 import os, ssl, shutil, subprocess, tempfile, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
@@ -110,19 +111,21 @@ def _download_oci_chart(reference: str, certificates: list[dict] | None = None) 
     max_bytes = compressed_limit()
     output = []
     try:
-        with tempfile.TemporaryDirectory(prefix="cats-oci-chart-") as destination:
+        with tempfile.TemporaryDirectory(prefix="cats-oci-chart-", dir=scan_runtime.environment().get("TMPDIR")) as destination:
+            scan_runtime.readable(destination)
             check_space(destination, max_bytes)
             with ephemeral_trust(certificates) as (ca_file, trust_env):
+                if ca_file:
+                    scan_runtime.readable(ca_file.parent)
+                    scan_runtime.readable(ca_file)
                 command = [helm, "pull", *oci_pull_arguments(reference), "--destination", destination]
                 if ca_file:
                     command.extend(["--ca-file", str(ca_file)])
                 result = subprocess.run(
                     command, capture_output=True, text=True,
                     timeout=int(os.getenv("CATS_PUBLIC_HELM_PULL_TIMEOUT", "180")),
-                    check=False, env={**{key: value for key, value in os.environ.items()
-                                       if not key.startswith(("CATS_SCAN_", "CATS_PORTAL_"))
-                                       and key not in {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY"}},
-                                      **trust_env},
+                    check=False, env={**scan_runtime.environment(), **trust_env},
+                    **scan_runtime.privileges(),
                 )
             check_space(destination)
             if result.returncode != 0:

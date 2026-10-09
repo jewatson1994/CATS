@@ -34,7 +34,7 @@ def pack(root, destination, identity):
     manifest = {"schema": 1, **identity, "files": files}
     encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
     import io
-    with tarfile.open(destination, "w:gz") as archive:
+    with tarfile.open(destination, "w") as archive:
         info = tarfile.TarInfo("manifest.json")
         info.size = len(encoded)
         archive.addfile(info, io.BytesIO(encoded))

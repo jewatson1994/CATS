@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import yaml
+
 from app.runtime_version import deployed_version, normalize_version
 
 
@@ -27,12 +29,13 @@ def test_build_and_compose_propagate_one_requested_image_version():
     build = (root / "build.ps1").read_text(encoding="utf-8")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     dockerfile = (root / "cats-image" / "Dockerfile.all-in-one").read_text(encoding="utf-8")
-    assert "scripts/build-cats-release.py" in build
-    assert "--cats-version $version" in build
-    assert "--profile release" in build
-    assert "--scanner-base catscan-base:local" in build
-    assert "--tag $expectedImage" in build
+    assert '$expectedImage = "cats:$version"' in build
+    assert "--build-arg CATS_VERSION=$version" in build
+    assert "--build-arg CATSCAN_BASE_IMAGE=catscan-base:local" in build
+    assert "-t $expectedImage" in build
     assert '$env:CATS_IMAGE = $expectedImage' in build
-    assert compose.count("${CATS_IMAGE:-cats:local}") == 2
+    services = yaml.safe_load(compose)["services"]
+    for name in ("portal", "portal-control", "scan-worker", "patch-worker"):
+        assert services[name]["image"] == "${CATS_IMAGE:-cats:local}", name
     assert "cats:1.2.1" not in compose
     assert 'ENV CATS_VERSION="${CATS_VERSION}"' in dockerfile

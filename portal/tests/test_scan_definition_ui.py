@@ -30,7 +30,7 @@ def test_public_scan_accepts_definition_and_preserves_mixed_inputs(monkeypatch, 
         return component["reference"], {}, component["chart_name"], component["version"], []
 
     monkeypatch.setattr(definition_routes, "acquire_component", acquire)
-    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append((args, kwargs)) or "test-job")
+    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append((args, kwargs)) or "a" * 32)
     response = TestClient(main.app).post(
         "/scan", data={"image_list": "docker.io/library/alpine:3.19", "chart_url": "https://charts.example.test/app.tgz"},
         files={"service_definition": (f"catalog.{extension}", DEFINITION, "application/yaml")},
@@ -74,7 +74,7 @@ def test_public_scan_accepts_sibling_oci_fields(monkeypatch):
         return component["reference"], {}, component["chart_name"], component["version"], []
 
     monkeypatch.setattr(definition_routes, "acquire_component", acquire)
-    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
+    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "a" * 32)
     response = TestClient(main.app).post(
         "/scan", files={"service_definition": ("test-valid-versions.yml", definition, "application/yaml")},
         follow_redirects=False,
@@ -93,7 +93,7 @@ def test_public_scan_accepts_sibling_oci_fields(monkeypatch):
 def test_public_scan_defers_component_acquisition_to_worker(monkeypatch):
     started = []
     monkeypatch.setattr(definition_routes, "acquire_component", lambda *_: pytest.fail("portal must not acquire"))
-    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
+    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "a" * 32)
     response = TestClient(main.app).post(
         "/scan", files={"service_definition": ("catalog.yml", DEFINITION, "application/yaml")},
         follow_redirects=False,
@@ -155,7 +155,7 @@ def test_public_scan_isolates_unresolved_definition_component(monkeypatch):
     ociRepo: {url: 'oci://registry.example.test/charts/broken', repoName: broken, tag: '*'}
 """
     monkeypatch.setattr(definition_routes, "acquire_component", lambda component, _: (component["reference"], {}, "valid", "1.2.3", []))
-    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "test-job")
+    monkeypatch.setattr(main, "_start_public_scan", lambda *args, **kwargs: started.append(kwargs) or "a" * 32)
     response = TestClient(main.app).post(
         "/scan", files={"service_definition": ("catalog.yaml", definition, "application/yaml")},
         follow_redirects=False,

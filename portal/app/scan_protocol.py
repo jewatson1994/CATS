@@ -8,12 +8,13 @@ import secrets
 import shutil
 import tempfile
 import tarfile
+import threading
 from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from .database import SessionLocal
 from . import scan_coordination as jobs
 from .scan_artifacts import digest, unpack
@@ -46,39 +47,83 @@ def verify_image_identity(payload, output):
                 raise ValueError("Evidence contains conflicting image digest identities")
 
 
-def authenticated(authorization: str = Header(default="")):
-    configured = os.getenv("CATS_SCAN_WORKER_TOKEN", "").strip()
-    if not configured or len(configured) < 32 or not secrets.compare_digest(authorization, "Bearer " + configured):
+def _valid_token(value):
+    return (isinstance(value, str) and len(value) >= 32 and value.isascii()
+            and not any(marker in value.lower() for marker in ("replace", "changeme", "placeholder", "example", "your-token")))
+
+
+def authenticated(authorization: str = Header(default=""), x_worker_id: str = Header(default="scan-worker")):
+    worker = x_worker_id if isinstance(x_worker_id, str) else os.getenv("CATS_SCAN_WORKER_ID", "scan-worker")
+    if not worker or len(worker) > 120 or not worker.isascii():
         raise HTTPException(401, "Invalid worker credential")
+    configured = os.getenv("CATS_SCAN_WORKER_CREDENTIALS", "").strip()
+    if configured:
+        try:
+            records = json.loads(configured)
+            record = records.get(worker)
+            if not isinstance(record, dict) or not _valid_token(record.get("current")):
+                raise ValueError("Invalid credential record")
+            candidates = [record["current"]]
+            if record.get("previous"):
+                if not _valid_token(record["previous"]):
+                    raise ValueError("Invalid rotation credential")
+                candidates.append(record["previous"])
+        except (ValueError, AttributeError, TypeError):
+            raise HTTPException(401, "Invalid worker credential") from None
+    else:
+        token = os.getenv("CATS_SCAN_WORKER_TOKEN", "").strip()
+        if worker != os.getenv("CATS_SCAN_WORKER_ID", "scan-worker") or not _valid_token(token):
+            raise HTTPException(401, "Invalid worker credential")
+        candidates = [token]
+    try:
+        supplied = authorization.encode("ascii")
+    except (UnicodeEncodeError, AttributeError):
+        raise HTTPException(401, "Invalid worker credential") from None
+    if not any(secrets.compare_digest(supplied, ("Bearer " + token).encode("ascii")) for token in candidates):
+        raise HTTPException(401, "Invalid worker credential")
+    return worker
 
 
-@router.post("/claim", dependencies=[Depends(authenticated)])
-def claim(payload: dict):
+def _identity(value):
+    # Direct internal callers do not resolve FastAPI dependencies.
+    return value if isinstance(value, str) else None
+
+
+@router.post("/claim")
+def claim(payload: dict, worker_id: str = Depends(authenticated)):
     worker = str(payload.get("worker_id", ""))
     if not worker or len(worker) > 120:
         raise HTTPException(422, "Invalid worker identity")
+    if _identity(worker_id) and worker != worker_id:
+        raise HTTPException(403, "Worker identity differs from credential")
     return jobs.claim(worker)
 
 
-@router.post("/{job_id}/{attempt_id}/heartbeat", dependencies=[Depends(authenticated)])
-def heartbeat(job_id: str, attempt_id: str, payload: dict, x_attempt_token: str = Header(default="")):
-    return jobs.heartbeat(job_id, attempt_id, x_attempt_token, payload.get("phase", "prepare"), payload.get("log_tail", ""))
+@router.post("/{job_id}/{attempt_id}/heartbeat")
+def heartbeat(job_id: str, attempt_id: str, payload: dict, x_attempt_token: str = Header(default=""), worker_id: str = Depends(authenticated)):
+    return jobs.heartbeat(job_id, attempt_id, x_attempt_token, payload.get("phase", "prepare"), payload.get("log_tail", ""), worker_id=_identity(worker_id))
 
 
-@router.get("/{job_id}/{attempt_id}/input", dependencies=[Depends(authenticated)])
-def input_archive(job_id: str, attempt_id: str, x_attempt_token: str = Header(default="")):
+@router.post("/{job_id}/{attempt_id}/failure")
+def failure(job_id: str, attempt_id: str, payload: dict, x_attempt_token: str = Header(default=""), worker_id: str = Depends(authenticated)):
+    return jobs.report_failure(job_id, attempt_id, x_attempt_token, payload.get("category"),
+                               payload.get("reason", ""), payload.get("log_tail", ""), worker_id=_identity(worker_id))
+
+
+@router.get("/{job_id}/{attempt_id}/input")
+def input_archive(job_id: str, attempt_id: str, x_attempt_token: str = Header(default=""), worker_id: str = Depends(authenticated)):
     from .main import PUBLIC_JOB_ROOT
     with SessionLocal() as db:
-        jobs.fenced(db, job_id, attempt_id, x_attempt_token)
-    return FileResponse(PUBLIC_JOB_ROOT / job_id / "input.tar.gz", media_type="application/gzip")
+        jobs.fenced(db, job_id, attempt_id, x_attempt_token, worker_id=_identity(worker_id))
+    return FileResponse(PUBLIC_JOB_ROOT / job_id / "input.tar.gz", media_type="application/x-tar")
 
 
-@router.put("/{job_id}/{attempt_id}/results", dependencies=[Depends(authenticated)])
-async def results(job_id: str, attempt_id: str, request: Request, x_attempt_token: str = Header(default="")):
+@router.put("/{job_id}/{attempt_id}/results")
+async def results(job_id: str, attempt_id: str, request: Request, x_attempt_token: str = Header(default=""), worker_id: str = Depends(authenticated)):
     from .main import PUBLIC_JOB_ROOT
     # Authenticate the attempt before accepting any bytes; fence again at commit.
     with SessionLocal() as db:
-        job, attempt = jobs.fenced(db, job_id, attempt_id, x_attempt_token, completed=True)
+        job, attempt = jobs.fenced(db, job_id, attempt_id, x_attempt_token, completed=True, worker_id=_identity(worker_id))
         identity = {"job_id": job_id, "attempt_id": attempt_id, "input_digest": job.input_digest,
                     "service_key": job.service_key, "service_version": job.service_version}
         previous = attempt.manifest_digest
@@ -92,7 +137,7 @@ async def results(job_id: str, attempt_id: str, request: Request, x_attempt_toke
                 total += len(chunk)
                 if total > maximum:
                     raise HTTPException(413, "Result transfer exceeds disk budget")
-                output.write(chunk)
+                await asyncio.to_thread(output.write, chunk)
         checksum = await asyncio.to_thread(digest, archive)
         if previous:
             if not secrets.compare_digest(previous, checksum):
@@ -111,7 +156,7 @@ async def results(job_id: str, attempt_id: str, request: Request, x_attempt_toke
         except (ValueError, OSError, tarfile.TarError, json.JSONDecodeError) as exc:
             raise HTTPException(422, "Invalid result envelope") from exc
         with SessionLocal() as db:
-            job, attempt = jobs.fenced(db, job_id, attempt_id, x_attempt_token, completed=True)
+            job, attempt = jobs.fenced(db, job_id, attempt_id, x_attempt_token, completed=True, worker_id=_identity(worker_id))
             if attempt.manifest_digest:
                 if attempt.manifest_digest != checksum:
                     raise HTTPException(409, "Completed attempt cannot be replaced")
@@ -166,27 +211,40 @@ def _ingest_one():
             # Propagate those terminal outcomes to their definition workflow too.
             pending = list(db.scalars(select(jobs.ScanJob).where(
                 jobs.ScanJob.status.in_(jobs.TERMINAL),
-                jobs.ScanJob.payload["definition_context"].as_string().is_not(None),
-                jobs.ScanJob.payload["definition_notified"].as_boolean().is_(None),
+                jobs.ScanJob.definition_pending.is_(True),
             ).order_by(jobs.ScanJob.created_at).with_for_update(skip_locked=True).limit(20)))
             from .definition_routes import complete_scan
             for finished in pending:
                 complete_scan(finished.id, dict(finished.payload))
                 finished.payload = {**finished.payload, "definition_notified": True}
+                finished.definition_pending = False
             db.commit()
             return
         job_id, payload = row.id, dict(row.payload)
         attempt_root = main.PUBLIC_JOB_ROOT / job_id / "attempts" / row.attempt_id
         output = main.PUBLIC_JOB_ROOT / job_id / "output"
+        fatal = False
         try:
-            # Re-copy immutable verified evidence on replay, including a crash
-            # partway through publication; an existing directory is not proof
-            # that every artifact was published.
-            shutil.copytree(attempt_root / "output", output, dirs_exist_ok=True)
-            sources = attempt_root / "sources"
+            # Publication is a same-filesystem atomic rename. A crash after the
+            # rename reuses the complete immutable directory on the next replay.
+            staged_output = attempt_root / "output"
+            if staged_output.exists():
+                if output.exists():
+                    raise ValueError("Conflicting evidence publication")
+                os.replace(staged_output, output)
+            if not output.is_dir():
+                raise ValueError("Verified evidence is unavailable")
+            sources = main.PUBLIC_JOB_ROOT / job_id / "input" / "worker-charts"
+            staged_sources = attempt_root / "sources"
+            if staged_sources.exists():
+                sources.parent.mkdir(parents=True, exist_ok=True)
+                if sources.exists():
+                    raise ValueError("Conflicting worker source publication")
+                os.replace(staged_sources, sources)
             if sources.exists():
-                target = main.PUBLIC_JOB_ROOT / job_id / "input" / "charts"
-                shutil.copytree(sources, target, dirs_exist_ok=True)
+                payload["worker_sources"] = True
+                row.payload = payload
+                db.commit()
             fatal = (output / "scan-failure.json").exists()
             summary = json.loads((output / "scan-summary.json").read_text(encoding="utf-8"))
             if (output / "definition-acquisition-failure.json").exists():
@@ -197,7 +255,9 @@ def _ingest_one():
                         failure["reason"], acquisition_diagnostic=failure.get("diagnostic"))
                 raise ValueError("Declared chart acquisition failed; evidence was retained")
             if fatal:
-                raise ValueError("A required scanner phase failed; evidence was retained")
+                failure = json.loads((output / "scan-failure.json").read_text(encoding="utf-8"))
+                phase = jobs.sanitize_diagnostic(failure.get("phase", "unknown"), 64)
+                raise ValueError(f"Required scanner phase {phase} failed (exit {failure.get('exit_code', 'unknown')}); evidence retained")
             verify_image_identity(payload, output)
             if payload.get("definition_component"):
                 from .definition_routes import finalize_definition_result
@@ -208,11 +268,19 @@ def _ingest_one():
                 row.payload = payload
                 db.commit()
             if row.service_key and payload.get("job_kind") == "scan":
+                from types import SimpleNamespace
+                from .models import Service
+                service = db.scalar(select(Service).where(Service.service_key == row.service_key))
+                if service is None:
+                    raise ValueError("Scan service is no longer available")
                 class InternalAuth:
-                    def accessible_service_ids(self, *_args): return None
-                    def has(self, *_args): return True
+                    user = SimpleNamespace(id=payload.get("owner_user_id"))
+                    def accessible_service_ids(self, permission):
+                        return {service.id} if permission == "scan.ingest" else set()
+                    def has(self, permission, service_id):
+                        return permission == "scan.ingest" and service_id == service.id
                 # Existing execution ID public:<job> makes crash/replay ingestion idempotent.
-                main.ingest_public_scan(job_id, row.service_key, db, InternalAuth())
+                main.ingest_public_scan(job_id=job_id, service_id=row.service_key, request=None, db=db, auth=InternalAuth())
                 # The existing ingest path commits its own transaction. Preserve
                 # a cancellation recorded after that commit rather than replacing it.
                 db.refresh(row)
@@ -225,16 +293,19 @@ def _ingest_one():
             row.payload = {**payload, "status": status, "phase": "done", "summary": summary,
                            "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan")}
             row.status = status
+            row.finished_at = jobs.now()
             for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id)):
                 image.scan_status = "scanned" if status == "complete" else "failed"
                 image.last_scanned_at = jobs.now()
             db.commit()
-        except Exception:
+        except Exception as exc:
             db.rollback()
             logging.getLogger(__name__).exception("Scan evidence ingestion failed for %s", job_id)
             jobs.DurableJobs().update_job(job_id, {"status": "error", "phase": "ingest",
-                                                  "error": "Evidence ingestion failed; retained results require review",
+                                                  "error": jobs.sanitize_diagnostic(str(exc)) if isinstance(exc, ValueError) else "Evidence ingestion failed; retained results require review",
+                                                  "failure_category": "scanner_execution" if fatal else "evidence_ingestion",
                                                   "finished_at": jobs.now().isoformat()})
+        (main.PUBLIC_JOB_ROOT / job_id / "input.tar.gz").unlink(missing_ok=True)
         final = jobs.DurableJobs().get(job_id, {})
         if final.get("definition_context"):
             from .definition_routes import complete_scan
@@ -246,6 +317,102 @@ async def maintenance():
     while True:
         try:
             await asyncio.to_thread(ingest_one)
+            await asyncio.to_thread(retention_once)
         except Exception:
             logging.getLogger(__name__).exception("Scan coordinator maintenance failed")
         await asyncio.sleep(2)
+
+
+_cleanup_lock = threading.Lock()
+_cleanup_root = None
+_cleanup_job_cursor = None
+_cleanup_entries = None
+
+
+def _orphan_batch(root, limit):
+    """Advance a bounded directory scan; close its handle on exhaustion."""
+    global _cleanup_entries
+    if not root.exists():
+        if _cleanup_entries is not None:
+            _cleanup_entries.close()
+            _cleanup_entries = None
+        return []
+    if _cleanup_entries is None:
+        _cleanup_entries = os.scandir(root)
+    batch = []
+    for _ in range(limit):
+        try:
+            batch.append(next(_cleanup_entries))
+        except StopIteration:
+            _cleanup_entries.close()
+            _cleanup_entries = None
+            break
+    return batch
+
+
+def retention_once():
+    with _cleanup_lock:
+        _retention_once()
+
+
+def _retention_once():
+    """Bound each pass and touch only expired job-owned workspace directories."""
+    from .main import PUBLIC_JOB_ROOT
+    import re
+    import time
+    global _cleanup_root, _cleanup_job_cursor, _cleanup_entries
+    root = PUBLIC_JOB_ROOT.resolve()
+    if _cleanup_root != root:
+        if _cleanup_entries is not None:
+            _cleanup_entries.close()
+        _cleanup_root, _cleanup_job_cursor, _cleanup_entries = root, None, None
+    cutoff = jobs.now() - timedelta(days=jobs.setting("CATS_SCAN_RETENTION_DAYS", 30))
+    limit = jobs.setting("CATS_SCAN_CLEANUP_BATCH_SIZE", 20)
+    from .models import Execution, ServiceImage
+    with SessionLocal() as db:
+        query = (select(jobs.ScanJob).where(
+            jobs.ScanJob.status.in_(jobs.TERMINAL), jobs.ScanJob.finished_at < cutoff,
+            jobs.ScanJob.definition_pending.is_(False), jobs.ScanJob.service_key == "",
+            ~select(Execution.id).where(Execution.execution_key == "public:" + jobs.ScanJob.id).exists(),
+            ~select(ServiceImage.id).where(ServiceImage.scan_job_id == jobs.ScanJob.id).exists())
+            .order_by(jobs.ScanJob.finished_at, jobs.ScanJob.id)
+            .with_for_update(skip_locked=True).limit(limit))
+        if _cleanup_job_cursor is not None:
+            finished_at, job_id = _cleanup_job_cursor
+            query = query.where(or_(jobs.ScanJob.finished_at > finished_at,
+                                   and_(jobs.ScanJob.finished_at == finished_at, jobs.ScanJob.id > job_id)))
+        expired = list(db.scalars(query))
+        # Advance over protected payloads too; wrapping never loads full history.
+        _cleanup_job_cursor = (expired[-1].finished_at, expired[-1].id) if expired else None
+        for job in expired:
+            if job.payload.get("definition_context") or job.payload.get("ingested"):
+                continue
+            if not re.fullmatch(r"[0-9a-f]{32}", job.id):
+                continue
+            target = root / job.id
+            if target.is_symlink() or target.resolve().parent != root:
+                continue
+            if target.exists():
+                shutil.rmtree(target)
+            db.execute(jobs.delete(jobs.ScanAttempt).where(jobs.ScanAttempt.job_id == job.id))
+            db.delete(job)
+        db.commit()
+        # Staging is reserved in the DB first; only old unknown directories qualify.
+        if root.exists():
+            for entry in _orphan_batch(root, limit * 5):
+                if not re.fullmatch(r"[0-9a-f]{32}", entry.name) or entry.is_symlink():
+                    continue
+                if not entry.is_dir(follow_symlinks=False) or entry.stat(follow_symlinks=False).st_mtime > time.time() - 86400:
+                    continue
+                if db.get(jobs.ScanJob, entry.name) is None:
+                    target = Path(entry.path)
+                    # Unknown output may be retained evidence from a historical
+                    # deployment; absence of a scheduling row does not authorize deletion.
+                    if (target / "output").exists():
+                        continue
+                    if db.scalar(select(Execution.id).where(Execution.execution_key == "public:" + entry.name).limit(1)) is not None:
+                        continue
+                    if db.scalar(select(ServiceImage.id).where(ServiceImage.scan_job_id == entry.name).limit(1)) is not None:
+                        continue
+                    if target.resolve().parent == root:
+                        shutil.rmtree(target)

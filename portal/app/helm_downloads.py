@@ -1,4 +1,5 @@
 """Disk-backed ownership and bounded copying for acquired Helm archives."""
+from . import scan_runtime
 import os
 import shutil
 import tempfile
@@ -18,8 +19,8 @@ class DownloadedChart:
     """A private temporary file; consumers must close it after staging."""
 
     def __init__(self):
-        check_space(tempfile.gettempdir())
-        self.file = tempfile.TemporaryFile(mode="w+b", prefix="cats-chart-")
+        check_space(scan_runtime.environment().get("TMPDIR") or tempfile.gettempdir())
+        self.file = tempfile.TemporaryFile(dir=scan_runtime.environment().get("TMPDIR"), mode="w+b", prefix="cats-chart-")
 
     def __getattr__(self, name):
         return getattr(self.file, name)
@@ -39,7 +40,7 @@ def copy_bounded(source, maximum):
             total += len(chunk)
             if total > maximum:
                 raise HTTPException(413, detail="Helm chart archive is too large")
-            check_space(tempfile.gettempdir(), len(chunk))
+            check_space(scan_runtime.environment().get("TMPDIR") or tempfile.gettempdir(), len(chunk))
             target.write(chunk)
         target.seek(0)
         return target

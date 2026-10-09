@@ -5,6 +5,7 @@ import { useJob, type JobState } from '../hooks/useJob';
 interface ScanJob extends JobState {
   status: string; started_at?: string | null; finished_at?: string | null; phase?: string;
   skipped_charts?: string[];
+  intelligence?: { status: string; databases: Record<string, { version?: string; built?: string; status?: string }> };
   summary?: { skipped_images?: number; skipped_charts?: number; reports?: number; formats?: string[]; results?: number; configuration_findings?: number };
 }
 export interface SelfServiceData {
@@ -18,8 +19,8 @@ export interface SelfServiceData {
   progress_phases: [string, string][]; progress_order: string[];
   current_user?: PageData['current_user']; csrf_token?: string;
 }
-const labels: Record<string, string> = { queued: 'Queued', running: 'Running', complete: 'Complete', incomplete: 'Incomplete', error: 'Error', cancelled: 'Cancelled' };
-const phaseLabels: Record<string, string> = { queued: 'Queued', prepare_inputs: 'Prepare inputs', generate_sboms: 'SBOM generation', scan_sboms: 'SBOM scan', configuration_scan: 'Configuration scans', report_results: 'Report results', report_to_portal: 'Portal ingest' };
+const labels: Record<string, string> = { preparing: 'Preparing', queued: 'Queued', running: 'Running', complete: 'Complete', incomplete: 'Incomplete', error: 'Error', cancelled: 'Cancelled' };
+const phaseLabels: Record<string, string> = { preparing: 'Preparing submission', prepare: 'Preparing scan', transfer: 'Transferring evidence', ingest: 'Ingesting evidence', done: 'Finished', queued: 'Queued', prepare_inputs: 'Prepare inputs', generate_sboms: 'SBOM generation', scan_sboms: 'SBOM scan', configuration_scan: 'Configuration scans', report_results: 'Report results', report_to_portal: 'Portal ingest' };
 const ingestRequests = new Map<string, Promise<unknown>>();
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Please retry.';
 
@@ -149,11 +150,16 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           return <div key={step} className={`scan-pipeline-step${complete ? ' is-complete' : ''}${active ? ' is-active' : ''}${failed ? ' is-error' : ''}`}><span className="scan-pipeline-dot" /><strong>{label}</strong><small>{complete ? 'Complete' : active ? 'Running' : failed ? labels[status] : 'Waiting'}</small></div>;
         })}</div>
         <p className="muted self-service-status" role="status">{statusText}{elapsedSeconds != null && <span> · {Math.floor(elapsedSeconds / 60)}m {Math.floor(elapsedSeconds % 60)}s</span>}{ingestState === 'pending' && ' Ingesting into selected service…'}{ingestState === 'complete' && ' Ingested into selected service.'}</p>
+        {job?.intelligence && <details open={job.intelligence.status !== 'current'}>
+          <summary>Scan intelligence · {job.intelligence.status === 'current' ? 'Current' : 'Review database freshness'}</summary>
+          <p className="muted">Each attempt uses a fixed database version. Importing newer intelligence does not change a scan already running; rescan to use the latest version.</p>
+          <ul>{Object.entries(job.intelligence.databases).map(([scanner, database]) => <li key={scanner}>{scanner === 'grype' ? 'Grype' : 'Trivy'}: {database.status || 'unavailable'}{database.version && ` · version ${database.version}`}{database.built && ` · built ${database.built}`}</li>)}</ul>
+        </details>}
         {error && <p role="alert">Unable to read scan status. {errorMessage(error)} <button type="button" onClick={retry}>Retry status</button></p>}
         {ingestState === 'error' && <p role="alert">Ingest failed. {ingestError} <button type="button" onClick={() => { ingestRequests.delete(scope); setIngestRetry(value => value + 1); }}>Retry ingestion</button></p>}
         {!sbom && !!job?.skipped_charts?.length && <details><summary>Charts not acquired</summary><ul>{job.skipped_charts.map((entry, index) => <li key={index}>{entry}</li>)}</ul></details>}
         {terminal && status !== 'cancelled' && <div className="scan-result-actions">{!sbom && <>{download('overview.html', 'Open HTML overview', resultsReady)}{download('results/view', 'Detailed results', resultsReady)}{download('export.xlsx', 'Download Excel', resultsReady)}</>}{download(sbom ? 'sboms' : 'artifacts', sbom ? 'Download SBOMs' : 'Download artifacts')}{download('logs', 'View debug log')}</div>}
-        {['queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel scan'}</button></div>}
+        {['preparing', 'queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel scan'}</button></div>}
         {cancelError && <p role="alert">Unable to cancel scan. {cancelError}</p>}
       </div> : <p className="muted self-service-status">{data.status_message || (sbom ? 'Generated documents are temporary and are not attached to a portal service.' : 'Results are temporary and are not attached to a portal service.')}</p>}
     </section>

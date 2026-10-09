@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from app import candidate_worker
 
 from app.remediation import (
     DECISION_REQUIRED, MANUAL_ONLY, SAFE_AUTOMATIC,
@@ -82,7 +83,7 @@ def test_candidate_validation_applies_ordered_helm_overrides(tmp_path, monkeypat
         return SimpleNamespace(returncode=0, stdout="kind: Pod\nmetadata: {name: api}\n", stderr="")
     monkeypatch.setattr(main.subprocess, "run", run)
     validation = {"checks": {}, "required_checks": []}
-    main._validate_materialized_candidate(tmp_path, {"helm_values_files": ["base.yaml", "service.yaml"]},
+    candidate_worker.validate_candidate(tmp_path, {"helm_values_files": ["base.yaml", "service.yaml"]},
         {"before": {"resource_identities": ["Pod/api"]}, "images": []}, validation)
     assert [args[1] for args in calls] == ["lint", "template"]
 
@@ -91,4 +92,4 @@ def test_candidate_validation_rejects_unretained_values(tmp_path, monkeypatch):
     from app import main
     monkeypatch.setattr(main.subprocess, "run", lambda *a, **k: pytest.fail("must not render"))
     with pytest.raises(ValueError, match="confined"):
-        main._validate_materialized_candidate(tmp_path, {"helm_values_files": ["../secret.yaml"]}, {}, {"checks": {}})
+        candidate_worker.validate_candidate(tmp_path, {"helm_values_files": ["../secret.yaml"]}, {}, {"checks": {}})

@@ -1,5 +1,7 @@
 """Durability, lease fencing and untrusted worker artifact boundary checks."""
 import hashlib
+import os
+import uuid
 import asyncio
 import io
 import json
@@ -14,7 +16,7 @@ from threading import Barrier
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app import scan_artifacts as artifacts
@@ -23,17 +25,35 @@ from app import scan_coordination as coordination
 
 @pytest.fixture
 def database(tmp_path, monkeypatch):
-    engine = create_engine(f"sqlite:///{(tmp_path / 'coordination.db').as_posix()}",
-                           connect_args={"check_same_thread": False, "timeout": 20})
-    coordination.ScanJob.__table__.create(engine)
-    coordination.ScanAttempt.__table__.create(engine)
-    from app.models import ServiceImage
-    ServiceImage.__table__.create(engine)
+    test_url = os.getenv("TEST_DATABASE_URL")
+    admin_engine = None
+    schema = None
+    if test_url:
+        assert test_url.startswith("postgresql"), "TEST_DATABASE_URL must select PostgreSQL"
+        schema = "scan_test_" + uuid.uuid4().hex
+        admin_engine = create_engine(test_url)
+        with admin_engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+        engine = create_engine(test_url, connect_args={"options": f"-csearch_path={schema}"})
+    else:
+        engine = create_engine(f"sqlite:///{(tmp_path / 'coordination.db').as_posix()}",
+                               connect_args={"check_same_thread": False, "timeout": 20})
+    from app import models
+    coordination.Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    with sessions() as db:
+        db.add(models.Service(id=1, service_key="service", name="Coordination test service"))
+        db.commit()
     monkeypatch.setattr(coordination, "SessionLocal", sessions)
     monkeypatch.setenv("CATS_SCAN_MAX_ATTEMPTS", "2")
-    yield sessions
-    engine.dispose()
+    try:
+        yield sessions
+    finally:
+        engine.dispose()
+        if admin_engine:
+            with admin_engine.begin() as connection:
+                connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
+            admin_engine.dispose()
 
 
 def enqueue(key="job"):
@@ -90,9 +110,12 @@ def test_heartbeat_renews_and_cancel_fences(database):
         job = db.get(coordination.ScanJob, "job")
         job.lease_until = coordination.now() + timedelta(seconds=2)
         db.commit()
-    assert pulse(claim) == {"cancelled": False}
+    response = pulse(claim)
+    assert response["cancelled"] is False and response["lease_until"]
     with database() as db:
-        assert db.get(coordination.ScanJob, "job").lease_until > coordination.now().replace(tzinfo=None) + timedelta(seconds=10)
+        lease = db.get(coordination.ScanJob, "job").lease_until
+        reference = coordination.now() if lease.tzinfo else coordination.now().replace(tzinfo=None)
+        assert lease > reference + timedelta(seconds=10)
     coordination.DurableJobs().update_job("job", {"status": "cancelled"})
     with pytest.raises(HTTPException) as error:
         pulse(claim)
@@ -346,7 +369,7 @@ def test_restart_ingests_ready_evidence_once(database, protocol, tmp_path, retur
     claim = coordination.claim("worker")
     submit_result(worker_protocol, claim, result_content(tmp_path, claim, returncode=returncode))
     ingestions = []
-    main.ingest_public_scan = lambda job_id, service, db, auth: ingestions.append((job_id, service, auth.has("scan")))
+    main.ingest_public_scan = lambda *, job_id, service_id, request, db, auth: ingestions.append((job_id, service_id, auth.has("scan.ingest", 1)))
     worker_protocol.ingest_one()
     assert coordination.DurableJobs()["job"]["status"] == expected
     assert coordination.DurableJobs()["job"]["summary"] == {"images": []}
@@ -365,13 +388,13 @@ def test_ingest_failure_retains_attempt_evidence(database, protocol, tmp_path):
     (main.PUBLIC_JOB_ROOT / "job").mkdir()
     claim = coordination.claim("worker")
     submit_result(worker_protocol, claim, result_content(tmp_path, claim))
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ValueError("ingest failed")
     main.ingest_public_scan = fail
     worker_protocol.ingest_one()
     assert coordination.DurableJobs()["job"]["status"] == "error"
-    assert (main.PUBLIC_JOB_ROOT / "job" / "attempts" / claim["attempt_id"] /
-            "output" / "scan-summary.json").is_file()
+    # Atomic publication retains the verified evidence at its final location.
+    assert (main.PUBLIC_JOB_ROOT / "job" / "output" / "scan-summary.json").is_file()
 
 
 @pytest.fixture
@@ -381,6 +404,9 @@ def worker_harness(tmp_path, monkeypatch):
     monkeypatch.setenv("CATS_PORTAL_API_TOKEN", "portal-credential")
     monkeypatch.setenv("CATS_CONFIG_ENCRYPTION_KEY", "encryption-credential")
     monkeypatch.setenv("DATABASE_URL", "postgresql://secret.example.invalid")
+    monkeypatch.setenv("PIPELINE_API_TOKEN", "pipeline-credential")
+    monkeypatch.setenv("OIDC_CLIENT_SECRET", "oidc-credential")
+    monkeypatch.setenv("BOOTSTRAP_PASSWORD", "bootstrap-credential")
     monkeypatch.setenv("CATS_SCAN_LEASE_SECONDS", "3")
     monkeypatch.setenv("CATS_SCAN_JOB_TIMEOUT", "10")
     monkeypatch.setattr(scan_worker, "STOP", threading.Event())
@@ -404,6 +430,7 @@ def worker_harness(tmp_path, monkeypatch):
     class Response:
         def __enter__(self): return self
         def __exit__(self, *args): pass
+        def json(self): return {"cancelled": False}
         def iter_content(self, size):
             yield archive.read_bytes()
     def request(method, suffix, **kwargs):
@@ -442,6 +469,7 @@ def test_worker_executes_real_subprocess_with_isolated_environment(worker_harnes
     scan_worker, worker, job, root, calls, uploaded, processes, _, _ = worker_harness
     worker.execute(job)
     assert processes[0].returncode == 2
+    assert (root / "readiness").exists()
     assert len(uploaded) == 1
     archive = tmp_path / "worker-results.tar.gz"
     archive.write_bytes(uploaded[0])
@@ -452,15 +480,15 @@ def test_worker_executes_real_subprocess_with_isolated_environment(worker_harnes
     assert summary["mode"] == "sbom" and summary["formats"] == "syft-json,cyclonedx-json"
     assert summary["spec"] == "1.6" and summary["trust"] == "test trust"
     assert not any(key.startswith(("CATS_SCAN_", "CATS_PORTAL_")) or key in
-                   {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY"} for key in summary["environment_keys"])
+                   {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY", "PIPELINE_API_TOKEN", "OIDC_CLIENT_SECRET", "BOOTSTRAP_PASSWORD"} for key in summary["environment_keys"])
     worker_log = (output / "output" / "worker.log").read_text(encoding="utf-8")
     assert "scanner ran" in worker_log
     assert "fake-sensitive-value" not in worker_log and "[redacted]" in worker_log
-    assert (output / "sources" / "values.yaml").read_text(encoding="utf-8") == "enabled: true"
+    assert not (output / "sources").exists()  # Uploaded charts stay immutable at the Portal.
     progress = [kwargs["json"] for method, suffix, kwargs in calls if suffix.endswith("/heartbeat")]
     assert any(item["phase"] == "generate_sboms" for item in progress)
     assert any("[redacted]" in item["log_tail"] for item in progress)
-    assert not list(root.iterdir())
+    assert not [path for path in root.iterdir() if path.name != "readiness"]
 
 
 def test_worker_rejects_input_checksum_before_scanner(worker_harness):
@@ -469,7 +497,7 @@ def test_worker_rejects_input_checksum_before_scanner(worker_harness):
     with pytest.raises(ValueError, match="identity verification"):
         worker.execute(job)
     assert not processes and not uploaded
-    assert not list(root.iterdir())
+    assert not [path for path in root.iterdir() if path.name != "readiness"]
 
 
 @pytest.mark.parametrize("reason", ["stop", "lease"])
@@ -478,7 +506,7 @@ def test_worker_interrupt_kills_subprocess_and_cleans_attempt(worker_harness, mo
     def interrupt_request(method, suffix, **kwargs):
         if suffix.endswith("/heartbeat") and started.is_set():
             if reason == "lease":
-                raise scan_worker.requests.ConnectionError("lost lease")
+                raise scan_worker.requests.HTTPError("fenced lease", response=type("Fence", (), {"status_code": 409})())
             scan_worker.STOP.set()
         return request(method, suffix, **kwargs)
     monkeypatch.setattr(worker, "request", interrupt_request)
@@ -486,7 +514,7 @@ def test_worker_interrupt_kills_subprocess_and_cleans_attempt(worker_harness, mo
         worker.execute(job)
     assert processes and processes[0].poll() is not None
     assert not uploaded
-    assert not list(root.iterdir())
+    assert not [path for path in root.iterdir() if path.name != "readiness"]
 
 
 def test_cancelled_job_updates_image_and_rejects_late_completion(database):
@@ -517,7 +545,7 @@ def test_zero_exit_with_incomplete_summary_remains_incomplete(database, protocol
     archive = tmp_path / "incomplete.tar.gz"
     artifacts.pack(source, archive, {**{key: claim[key] for key in IDENTITY}, "returncode": 0})
     submit_result(worker_protocol, claim, archive.read_bytes())
-    main.ingest_public_scan = lambda *args: None
+    main.ingest_public_scan = lambda *args, **kwargs: None
     worker_protocol.ingest_one()
     assert coordination.DurableJobs()["job"]["status"] == "incomplete"
 
@@ -577,7 +605,7 @@ def test_completed_definition_evidence_notifies_once(database, protocol, tmp_pat
     (main.PUBLIC_JOB_ROOT / "job").mkdir()
     claim = coordination.claim("worker")
     submit_result(worker_protocol, claim, result_content(tmp_path, claim))
-    main.ingest_public_scan = lambda *args: None
+    main.ingest_public_scan = lambda *args, **kwargs: None
     notifications = []
     monkeypatch.setattr(definition_routes, "complete_scan", lambda job_id, job: notifications.append((job_id, job)))
     worker_protocol.ingest_one()
@@ -585,3 +613,53 @@ def test_completed_definition_evidence_notifies_once(database, protocol, tmp_pat
     assert len(notifications) == 1
     assert notifications[0][1]["status"] == "complete"
     assert coordination.DurableJobs()["job"]["definition_notified"] is True
+
+
+def test_worker_tolerates_transient_heartbeat_outage(worker_harness, monkeypatch):
+    scan_worker, worker, job, root, calls, uploaded, processes, started, request = worker_harness
+    failed = []
+    def transient_request(method, suffix, **kwargs):
+        if suffix.endswith("/heartbeat") and not failed:
+            failed.append(True)
+            raise scan_worker.requests.ConnectionError("temporary Portal restart")
+        return request(method, suffix, **kwargs)
+    monkeypatch.setattr(worker, "request", transient_request)
+    worker.execute(job)
+    assert failed and len(uploaded) == 1 and processes[0].returncode == 2
+    assert not [path for path in root.iterdir() if path.name != "readiness"]
+
+def test_worker_reports_deterministic_failure_immediately(worker_harness):
+    _, worker, job, root, calls, uploaded, processes, _, _ = worker_harness
+    job["input_digest"] = "0" * 64
+    with pytest.raises(ValueError, match="identity verification"):
+        worker.execute(job)
+    failures = [kwargs["json"] for method, suffix, kwargs in calls if suffix.endswith("/failure")]
+    assert len(failures) == 1 and failures[0]["category"] == "invalid_output"
+    assert "identity verification" in failures[0]["reason"]
+    assert not processes and not uploaded and not [path for path in root.iterdir() if path.name != "readiness"]
+
+
+@pytest.mark.parametrize("body", [[], {"lease_until": "invalid-date"}])
+def test_worker_malformed_renewal_fences_before_scanner(worker_harness, monkeypatch, body):
+    _, worker, job, root, _, uploaded, processes, _, request = worker_harness
+    renewed = threading.Event()
+    class Malformed:
+        def json(self):
+            renewed.set()
+            return body
+    def malformed_request(method, suffix, **kwargs):
+        if suffix.endswith("/heartbeat"): return Malformed()
+        if suffix.endswith("/input"):
+            assert renewed.wait(2)
+        return request(method, suffix, **kwargs)
+    monkeypatch.setattr(worker, "request", malformed_request)
+    with pytest.raises(RuntimeError, match="interrupted|authorized"):
+        worker.execute(job)
+    assert not processes and not uploaded
+    assert not [path for path in root.iterdir() if path.name != "readiness"]
+
+
+def test_scanner_environment_removes_control_secrets_but_keeps_trust_paths():
+    from app import scan_runtime
+    env = scan_runtime.sanitized_environment({"PATH": "tools", "HOME": "broker-home", "PIPELINE_API_TOKEN": "token", "OIDC_CLIENT_SECRET": "secret", "BOOTSTRAP_PASSWORD": "password", "SSH_PRIVATE_KEY": "private", "CATS_SCAN_WORKER_TOKEN": "control", "SSL_CERT_FILE": "trusted.pem"})
+    assert env == {"PATH": "tools", "HOME": "broker-home", "SSL_CERT_FILE": "trusted.pem"}

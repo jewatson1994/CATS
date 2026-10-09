@@ -1,4 +1,5 @@
 """Standalone exact-definition chart acquisition; no Portal or database imports."""
+from . import scan_runtime
 from contextlib import ExitStack
 from pathlib import Path, PurePosixPath
 import os
@@ -101,7 +102,7 @@ def _retained_helm_sources(archives: list[tuple[bytes, str]], *, preserve_archiv
     """Use the scanner's guarded archive staging to produce one retained snapshot."""
     if not archives:
         raise HTTPException(status_code=422, detail="No Helm chart archives were supplied")
-    with ExitStack() as cleanup, tempfile.TemporaryDirectory(prefix="cats-artifact-helm-") as temporary:
+    with ExitStack() as cleanup, tempfile.TemporaryDirectory(prefix="cats-artifact-helm-", dir=scan_runtime.environment().get("TMPDIR")) as temporary:
         if not preserve_archives:
             cleanup.callback(close_downloads, archives)
         root = Path(temporary)

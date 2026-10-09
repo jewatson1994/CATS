@@ -199,47 +199,13 @@ def test_assembly_rejects_fatal_scan_without_creating_import(tmp_path):
     assert not (tmp_path / "results-export.tar.gz").exists()
 
 
-def test_portal_fatal_scan_preserves_diagnostics_and_blocks_ingest(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-    from fastapi import HTTPException
+@pytest.mark.parametrize("legacy_flag", [None, "true"])
+def test_portal_scanner_execution_is_disabled_by_default(monkeypatch, legacy_flag):
     from app import main
-
-    monkeypatch.setenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", "true")
-    job_id = "fatal-shell-test"
-    output = tmp_path / job_id / "output"
-    trust = tmp_path / job_id / "input" / ".cats-trust"
-    trust.mkdir(parents=True)
-    (trust / "ca-bundle.pem").write_text("test trust")
-    monkeypatch.setattr(main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setattr(main, "PUBLIC_JOBS", {job_id: {"ingest_service_id": "service"}})
-    monkeypatch.setattr(main, "PUBLIC_PROCESSES", {})
-    def update(key, **values):
-        main.PUBLIC_JOBS[key].update(values)
-    monkeypatch.setattr(main, "_public_job_update", update)
-    def process(*args, **kwargs):
-        (output / "scan-failure.json").write_text('{"phase":"configuration_scan","exit_code":47}')
-        (output / "configuration_scan.log").write_text("fatal helper error")
-        # Even a leftover result must not be ingested.
-        (output / "portal-result.json").write_text("{}")
-        return SimpleNamespace(poll=lambda: 47, returncode=47)
-    monkeypatch.setattr(main.subprocess, "Popen", process)
-    monkeypatch.setattr(main, "SessionLocal", lambda: pytest.fail("Fatal scan attempted automatic ingest"))
-    main._run_public_scan(job_id, "")
-    state = main.PUBLIC_JOBS[job_id]
-    assert state["status"] == "error"
-    assert "configuration_scan" in state["error"] and "47" in state["error"]
-    assert (output / "worker.log").exists()
-    assert (output / "configuration_scan.log").read_text() == "fatal helper error"
-    assert not trust.exists()
-    with pytest.raises(HTTPException) as exc:
-        main.ingest_public_scan(job_id, "service", None,
-                                SimpleNamespace(accessible_service_ids=lambda _: None))
-    assert exc.value.status_code == 409
-
-
-def test_portal_scanner_execution_is_disabled_by_default(monkeypatch):
-    from app import main
-    monkeypatch.delenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", raising=False)
+    if legacy_flag is None:
+        monkeypatch.delenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", raising=False)
+    else:
+        monkeypatch.setenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", legacy_flag)
     monkeypatch.setattr(main.subprocess, "Popen", lambda *args, **kwargs: pytest.fail("portal launched scanner"))
     with pytest.raises(RuntimeError, match="dedicated scan-worker"):
         main._run_public_scan("disabled-job", "")

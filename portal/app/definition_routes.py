@@ -13,7 +13,6 @@ import yaml
 from .auth import require_user, record_audit
 from .database import SessionLocal, get_db
 from .models import BundlePreview, Service, ServiceArtifact, ServiceArtifactRevision, User
-from .helm_downloads import close_downloads
 from .oci_diagnostics import OciPullFailure
 from .service_definitions import DefinitionError, parse_definition
 
@@ -193,35 +192,9 @@ def complete_scan(job_id, job):
 
 
 def acquire_component(component, certificates):
-    """Resolve one normalized declaration through the shared guarded Helm path."""
-    from . import main
-    if component["source_type"] == "helm":
-        catalog = main._discover_helm_repository(component["repository"], certificates)
-        entry = next((item for item in catalog.get("charts", []) if item.get("name") == component["chart_name"]), None)
-        if entry is None:
-            raise ValueError(f"Requested chart missing [{main._helm_request_detail('chart selection', component['repository'])}]")
-        requested = component["version"]
-        version = ((entry or {}).get("latest") if requested == "latest" else
-                   next((v for v in (entry or {}).get("versions", []) if str(v.get("version")) == requested), None))
-        if not version or not version.get("url") or not version.get("version") or str(version["version"]) == "latest":
-            raise ValueError(f"Requested chart version missing from repository catalog [{main._helm_request_detail('chart selection', component['repository'])}]")
-        source_url = version["url"]
-        expected_version = str(version.get("version") or "")
-    else:
-        source_url = component["reference"]
-    archives = main._download_public_chart(source_url, certificates)
-    try:
-        files, count = main._retained_helm_sources(archives, preserve_archives=True)
-        actual_name, actual_version = main._chart_identity(files)
-        expected = expected_version if component["source_type"] == "helm" else component["version"]
-        if count != 1 or not actual_version or (expected != "latest" and actual_version != expected) or (
-            actual_name != component["chart_name"]
-        ):
-            raise ValueError("Retrieved chart identity or exact version did not match the declaration")
-        return source_url, files, actual_name, actual_version, archives
-    except BaseException:
-        close_downloads(archives)
-        raise
+    """Compatibility adapter to the worker's shared acquisition implementation."""
+    from .definition_acquisition import acquire_component as acquire
+    return acquire(component, certificates)
 
 
 def _chart_app_version(files):

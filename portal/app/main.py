@@ -129,6 +129,7 @@ from .preview_cleanup import preview_cleanup_lifespan
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection)
+    scan_coordination.upgrade_connection(connection)
     upgrade_connection(connection)
     upgrade_validators(connection)
     upgrade_projection(connection)
@@ -429,7 +430,7 @@ async def app_lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", lifespan=app_lifespan)
-app.include_router(scan_protocol.router)
+
 app.include_router(validator_management.router)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
@@ -3221,9 +3222,43 @@ def public_home(request: Request, auth: AuthContext | None = Depends(optional_us
     })
 
 
+def _check_public_job_access(job: dict, auth: AuthContext | None, request: Request) -> None:
+    from .scan_access import authorize_job
+    service_id = job.get("ingest_service_db_id")
+    if service_id is None and job.get("ingest_service_id"):
+        with SessionLocal() as access_db:
+            service_id = access_db.scalar(select(Service.id).where(Service.service_key == job["ingest_service_id"]))
+    authorize_job(job, auth, request, service_id=service_id)
+
+
+def _authorized_public_job(job_id: str, auth: AuthContext | None, request: Request) -> dict:
+    with PUBLIC_JOB_LOCK:
+        job = dict(PUBLIC_JOBS.get(job_id, {}))
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found or expired")
+    _check_public_job_access(job, auth, request)
+    return job
+
+
+def _public_job_projection(job: dict) -> dict:
+    from .scan_access import public_projection
+    provenance = {}
+    path = PUBLIC_JOB_ROOT / job["job_id"] / "output" / "worker-provenance.json"
+    try:
+        if path.is_file() and not path.is_symlink() and path.stat().st_size <= 4 * 1024 * 1024:
+            provenance = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    return public_projection(job, provenance)
+
+
 def self_service_context(request: Request, mode: str, image_list: str = "", chart_url: str = "", status_message: str | None = None, job_id: str | None = None, auth: AuthContext | None = None, services: list[Service] | None = None, ingest_service_id: str = "", archive_names: list[str] | None = None, sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", ingest_service_version: str = ""):
     with PUBLIC_JOB_LOCK:
         job_snapshot = dict(PUBLIC_JOBS.get(job_id, {})) if job_id else {}
+    if job_snapshot:
+        from .scan_access import public_projection
+        _check_public_job_access(job_snapshot, auth, request)
+        job_snapshot = _public_job_projection(job_snapshot)
     descriptions = {
         "scan": "Review public container images without creating a persistent service record.",
         "sbom": "Generate one or more standard SBOM documents from a single image inventory.",
@@ -3360,127 +3395,8 @@ def _chart_identity(source: dict[str, str]) -> tuple[str, str]:
 
 
 def _run_public_scan(job_id: str, image_list: str):
-    # Explicit diagnostic rollback only. Production submissions always enqueue
-    # durable worker jobs and never schedule this legacy execution path.
-    if os.getenv("CATS_ENABLE_LEGACY_PORTAL_SCANNER", "").lower() != "true":
-        raise RuntimeError("Portal scanner execution is disabled; use the dedicated scan-worker")
-    job_dir = PUBLIC_JOB_ROOT / job_id
-    input_dir = job_dir / "input"
-    output_dir = job_dir / "output"
-    input_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    if image_list.strip():
-        input_dir.joinpath("images.txt").write_text(image_list, encoding="utf-8")
-    runner = os.getenv("CATS_SCANNER_RUNNER", "cats-scan")
-    with PUBLIC_JOB_LOCK:
-        job_configuration = dict(PUBLIC_JOBS.get(job_id, {}))
-        if job_configuration.get("status") == "cancelled":
-            return
-    job_kind = str(job_configuration.get("job_kind") or "scan")
-    process_environment = os.environ.copy()
-    trust_bundle = input_dir / ".cats-trust" / "ca-bundle.pem"
-    if trust_bundle.is_file():
-        for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
-            process_environment[key] = str(trust_bundle)
-    process_environment["CATS_JOB_MODE"] = job_kind
-    if job_kind == "sbom":
-        process_environment["SBOM_FORMATS"] = ",".join(job_configuration.get("sbom_formats") or ["cyclonedx-json"])
-        process_environment["SBOM_CYCLONEDX_SPEC_VERSION"] = str(job_configuration.get("cyclonedx_spec_version") or "1.5")
-    _public_job_update(job_id, status="running", phase="prepare_inputs")
-    try:
-        log_path = output_dir / "worker.log"
-        with log_path.open("w", encoding="utf-8") as log_file:
-            process = subprocess.Popen(
-                [runner, str(input_dir), str(output_dir)],
-                stdout=log_file, stderr=subprocess.STDOUT, text=True, env=process_environment,
-            )
-            with PUBLIC_JOB_LOCK:
-                if PUBLIC_JOBS.get(job_id, {}).get("status") == "cancelled":
-                    process.terminate()
-                else:
-                    PUBLIC_PROCESSES[job_id] = process
-            phases = (("prepare_inputs", "generate_sboms") if job_kind == "sbom" else
-                      ("prepare_inputs", "generate_sboms", "scan_sboms", "configuration_scan", "report_results"))
-            deadline = time.monotonic() + int(os.getenv("CATS_PUBLIC_JOB_TIMEOUT", "3600"))
-            while process.poll() is None:
-                if time.monotonic() > deadline:
-                    process.kill()
-                    process.wait()
-                    raise TimeoutError("public scan exceeded its timeout")
-                for phase in phases:
-                    phase_path = output_dir / f"phase-{phase}.json"
-                    if phase_path.exists():
-                        try:
-                            phase_state = json.loads(phase_path.read_text(encoding="utf-8"))
-                        except (OSError, ValueError):
-                            continue
-                        if phase_state.get("status") == "running":
-                            _public_job_update(job_id, status="running", phase=phase)
-                            break
-                time.sleep(0.25)
-            returncode = process.returncode
-        with PUBLIC_JOB_LOCK:
-            PUBLIC_PROCESSES.pop(job_id, None)
-            cancelled = PUBLIC_JOBS.get(job_id, {}).get("status") == "cancelled"
-        if cancelled:
-            return
-        completed_returncode = returncode
-        fatal_scan = (output_dir / "scan-failure.json").exists()
-        failure = {}
-        if fatal_scan:
-            try:
-                failure = json.loads((output_dir / "scan-failure.json").read_text(encoding="utf-8"))
-                if not isinstance(failure, dict):
-                    failure = {}
-            except (ValueError, OSError):
-                pass
-        summary = {}
-        summary_path = output_dir / "scan-summary.json"
-        if summary_path.exists():
-            try:
-                summary = json.loads(summary_path.read_text(encoding="utf-8"))
-            except (ValueError, OSError):
-                summary = {}
-        _public_job_update(
-            job_id,
-            status="error" if fatal_scan else ("complete" if completed_returncode == 0 else "incomplete"),
-            phase=failure.get("phase") or ("generate_sboms" if job_kind == "sbom" else "report_results"), returncode=completed_returncode,
-            error=(f"Scanner phase {failure.get('phase', 'unknown')} failed (exit {failure.get('exit_code', completed_returncode)}). See phase log and worker.log." if fatal_scan else None),
-            summary=summary,
-        )
-        # Image scans launched from the service workspace are attached through
-        # the same existing ingest pipeline once the worker has produced its
-        # durable portal result.  They never create a second findings store.
-        service_key = str(job_configuration.get("ingest_service_id") or "")
-        if not fatal_scan and service_key and job_kind == "scan" and (output_dir / "portal-result.json").exists():
-            try:
-                with SessionLocal() as ingest_db:
-                    class _InternalScanAuth:
-                        def accessible_service_ids(self, _permission): return None
-                        def has(self, _permission, _service_id=None): return True
-                    ingest_public_scan(job_id, service_key, ingest_db, _InternalScanAuth())
-                    images = ingest_db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id)).all()
-                    for image in images:
-                        image.scan_status = "scanned" if completed_returncode == 0 else "failed"
-                        image.last_scanned_at = utcnow() if completed_returncode == 0 else image.last_scanned_at
-                        image.scan_error = None if completed_returncode == 0 else "Scanner completed with incomplete evidence."
-                    ingest_db.commit()
-            except Exception as exc:
-                _public_job_update(job_id, ingest_error=str(exc)[:500])
-    except Exception as exc:
-        with PUBLIC_JOB_LOCK:
-            PUBLIC_PROCESSES.pop(job_id, None)
-            cancelled = PUBLIC_JOBS.get(job_id, {}).get("status") == "cancelled"
-        if cancelled:
-            return
-        _public_job_update(job_id, status="error", phase="worker", error=str(exc))
-    finally:
-        shutil.rmtree(input_dir / ".cats-trust", ignore_errors=True)
-        with PUBLIC_JOB_LOCK:
-            final_job = dict(PUBLIC_JOBS.get(job_id, {}))
-        if final_job.get("definition_context"):
-            from .definition_routes import complete_scan
-            complete_scan(job_id, final_job)
+    """Reject obsolete in-process scanner calls, including historical test hooks."""
+    raise RuntimeError("Portal scanner execution is disabled; use the dedicated scan-worker")
 
 
 def _public_chart_skip_entry(source: str, error: object) -> str:
@@ -3851,7 +3767,28 @@ def _enrich_values_source_mappings(data: dict, source_files: dict[str, str]) -> 
         resource["_cats_source_mappings"] = mappings
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None) -> str:
+from concurrent.futures import ThreadPoolExecutor as _PreparationPool
+_SCAN_PREPARATION_POOL = _PreparationPool(max_workers=2, thread_name_prefix="scan-prepare")
+_SCAN_PREPARATION_SLOTS = threading.BoundedSemaphore(2)
+async def _prepare_public_scan(*args, **kwargs):
+    if not _SCAN_PREPARATION_SLOTS.acquire(blocking=False):
+        raise HTTPException(429, "Scan preparation is busy; retry shortly")
+    try:
+        import functools
+        future = asyncio.get_running_loop().run_in_executor(
+            _SCAN_PREPARATION_POOL, functools.partial(_start_public_scan, *args, **kwargs))
+        try:
+            return await asyncio.shield(future)
+        except asyncio.CancelledError:
+            # Keep uploaded streams alive and retain the preparation slot until
+            # the bounded background operation has finished.
+            await asyncio.shield(future)
+            raise
+    finally:
+        _SCAN_PREPARATION_SLOTS.release()
+
+
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     chart_urls = [url.strip() for url in (chart_urls or []) if url.strip()]
@@ -3873,42 +3810,74 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         raise HTTPException(status_code=400, detail=detail)
     if len(lines) > int(os.getenv("CATS_PUBLIC_MAX_IMAGES", "50")):
         raise HTTPException(status_code=413, detail="Too many image references")
-    if ingest_service_id and not ingest_service_version:
+    service_db_id = None
+    if ingest_service_id:
         with SessionLocal() as identity_db:
             selected = identity_db.scalar(select(Service).where(Service.service_key == ingest_service_id))
             if selected is None:
                 raise HTTPException(404, detail="Service not found")
+            service_db_id = selected.id
             current = identity_db.get(ServiceVersion, selected.current_version_id) if selected.current_version_id else None
-            ingest_service_version = current.version if current else (selected.manual_version or "Unversioned")
+            if not ingest_service_version:
+                ingest_service_version = current.version if current else (selected.manual_version or "Unversioned")
     job_id = uuid.uuid4().hex
-    job_input = PUBLIC_JOB_ROOT / job_id / "input"
-    job_input.mkdir(parents=True, exist_ok=True)
-    write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
-    skipped_charts: list[str] = list(definition_skipped or [])
-    for archive, filename in chart_archives:
-        try:
-            _stage_public_chart(job_input, archive, filename)
-        except Exception as exc:
-            skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
-    if skipped_charts:
-        (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
-    if image_archive:
-        image_dir = job_input / "image-archives"
-        image_dir.mkdir(parents=True, exist_ok=True)
-        image_bytes, image_filename = image_archive
-        max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
-        if len(image_bytes) > max_bytes:
-            raise HTTPException(status_code=413, detail="Docker image archive is too large")
-        safe_name = Path(image_filename or "images.tar").name
-        if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
-            raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
-        (image_dir / safe_name).write_bytes(image_bytes)
-    from .scan_artifacts import pack, digest
-    (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    envelope = job_input.parent / "input.tar.gz"
-    pack(job_input, envelope, {"job_id": job_id})
+    from .scan_access import admission_policy
+    security = admission_policy(owner_user_id, service_db_id)
+    skipped_charts = list(definition_skipped or [])
+    payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
+    payload.update(security)
+    if owner_user_id is None:
+        if not capability_token:
+            raise HTTPException(401, "Anonymous scans require a private access capability")
+        import hashlib
+        payload["access_token_hash"] = hashlib.sha256(capability_token.encode()).hexdigest()
+    # Reserve durable capacity before creating any staged files.
     with PUBLIC_JOB_LOCK:
-        PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": job_kind, "status": "queued", "phase": "queued", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": digest(envelope)}
+        PUBLIC_JOBS[job_id] = payload
+    job_input = PUBLIC_JOB_ROOT / job_id / "input"
+    try:
+        job_input.mkdir(parents=True, exist_ok=True)
+        write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
+        skipped_charts: list[str] = list(definition_skipped or [])
+        for archive, filename in chart_archives:
+            try:
+                _stage_public_chart(job_input, archive, filename)
+            except Exception as exc:
+                skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
+        if skipped_charts:
+            (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
+        if image_archive:
+            image_dir = job_input / "image-archives"
+            image_dir.mkdir(parents=True, exist_ok=True)
+            image_bytes, image_filename = image_archive
+            max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
+            safe_name = Path(image_filename or "images.tar").name
+            if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
+                raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
+            source = image_bytes if hasattr(image_bytes, "read") else __import__("io").BytesIO(image_bytes)
+            source.seek(0)
+            size = 0
+            with (image_dir / safe_name).open("wb") as target:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise HTTPException(413, "Docker image archive is too large")
+                    if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
+                        raise HTTPException(507, "Insufficient scan staging capacity")
+                    target.write(chunk)
+        from .scan_artifacts import pack, digest
+        (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        envelope = job_input.parent / "input.tar.gz"
+        pack(job_input, envelope, {"job_id": job_id})
+        # The checked envelope now owns uploaded image bytes. Retain only small
+        # request metadata and immutable chart sources for subsequent ingestion.
+        if (job_input / "image-archives").exists():
+            shutil.rmtree(job_input / "image-archives")
+        _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=digest(envelope))
+    except BaseException:
+        if job_input.parent.exists(): shutil.rmtree(job_input.parent)
+        _public_job_update(job_id, status="error", phase="prepare", error="Submission preparation failed", finished_at=utcnow().isoformat())
+        raise
     return job_id
 
 
@@ -3920,6 +3889,7 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
     ingest_service_id = ""
     ingest_service_version = ""
     if job_id:
+        _authorized_public_job(job_id, auth, request)
         job_input = PUBLIC_JOB_ROOT / job_id / "input" / "images.txt"
         if job_input.exists():
             try:
@@ -3945,6 +3915,8 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
 
 @app.post("/scan", response_class=HTMLResponse)
 async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+    import secrets
+    capability_token = secrets.token_urlsafe(32) if auth is None else None
     chart_archives = []
     try:
         chart_uploads = [chart_archive] if chart_archive and chart_archive.filename else []
@@ -3959,7 +3931,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
         image_upload = form.get("image_archive")
         image_archive = None
         if hasattr(image_upload, "read") and getattr(image_upload, "filename", None):
-            image_archive = (await image_upload.read(), image_upload.filename)
+            image_archive = (image_upload.file, image_upload.filename)
         definition_components: list[dict] = []
         definition_sources: list[str] = []
         definition_skipped: list[str] = []
@@ -4011,11 +3983,11 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                 if len(definition_skipped) > 3:
                     failures += f"; and {len(definition_skipped) - 3} more"
                 raise HTTPException(status_code=422, detail=f"No service-definition components could be acquired. {failures}")
-        job_id = _start_public_scan(image_list, chart_archives, chart_url.splitlines(), image_archive, ingest_service_id or None,
+        job_id = await _prepare_public_scan(image_list, chart_archives, chart_url.splitlines(), image_archive, ingest_service_id or None,
                                     trusted_ca_certificates=trusted_cas, definition_sources=definition_sources, definition_components=definition_components,
                                     owner_user_id=auth.user.id if auth else None,
                                     definition_skipped=definition_skipped, definition_summary=definition_summary,
-                                    ingest_service_version=ingest_service_version)
+                                    ingest_service_version=ingest_service_version, capability_token=capability_token)
     except HTTPException as exc:
         scoped = auth.accessible_service_ids("scan.ingest") if auth else set()
         services = list(db.scalars(select(Service).order_by(Service.name))) if scoped != set() else []
@@ -4029,7 +4001,11 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
     # Redirect after a successful submission so refreshing the browser only
     # reloads the existing job rather than replaying the POST and starting a
     # second scan.
-    return RedirectResponse(url=f"/scan?job_id={urllib.parse.quote(job_id)}", status_code=303)
+    response = RedirectResponse(url=f"/scan?job_id={urllib.parse.quote(job_id)}", status_code=303)
+    if capability_token:
+        from .scan_access import cookie_name
+        response.set_cookie(cookie_name(job_id), capability_token, httponly=True, samesite="lax", secure=request.url.scheme == "https", max_age=86400)
+    return response
 
 
 @app.get("/sbom", response_class=HTMLResponse)
@@ -4039,6 +4015,7 @@ def public_sbom(request: Request, job_id: str | None = None, auth: AuthContext |
     formats = ["cyclonedx-json"]
     spec_version = "1.5"
     if job_id:
+        _authorized_public_job(job_id, auth, request)
         with PUBLIC_JOB_LOCK:
             job = dict(PUBLIC_JOBS.get(job_id, {}))
         image_list = str(job.get("image_list") or "")
@@ -4059,19 +4036,22 @@ async def public_sbom_submit(
     auth: AuthContext | None = Depends(optional_user),
     db: Session = Depends(get_db),
 ):
+    import secrets
+    capability_token = secrets.token_urlsafe(32) if auth is None else None
     form = await request.form()
     formats = [str(value).strip() for value in form.getlist("sbom_formats") if str(value).strip()]
     spec_version = str(form.get("cyclonedx_spec_version") or "1.5").strip()
     image_upload = form.get("image_archive")
     image_archive = None
     if hasattr(image_upload, "read") and getattr(image_upload, "filename", None):
-        image_archive = (await image_upload.read(), image_upload.filename)
+        image_archive = (image_upload.file, image_upload.filename)
     trusted_cas = parse_json(get_global_configuration(db).get("trusted_ca_certificates"), [])
     try:
-        job_id = _start_public_scan(
+        job_id = await _prepare_public_scan(
             image_list,
             image_archive=image_archive,
             job_kind="sbom",
+            capability_token=capability_token,
             owner_user_id=auth.user.id if auth else None,
             trusted_ca_certificates=trusted_cas if isinstance(trusted_cas, list) else [],
             sbom_formats=formats,
@@ -4082,59 +4062,61 @@ async def public_sbom_submit(
             request, "sbom", image_list=image_list, status_message=str(exc.detail),
             auth=auth, sbom_formats=formats, cyclonedx_spec_version=spec_version,
         )
-    return RedirectResponse(url=f"/sbom?job_id={urllib.parse.quote(job_id)}", status_code=303)
+    response = RedirectResponse(url=f"/sbom?job_id={urllib.parse.quote(job_id)}", status_code=303)
+    if capability_token:
+        from .scan_access import cookie_name
+        response.set_cookie(cookie_name(job_id), capability_token, httponly=True, samesite="lax", secure=request.url.scheme == "https", max_age=86400)
+    return response
 
 
 @app.post("/api/public/jobs")
-def create_public_scan_job(payload: dict, db: Session = Depends(get_db)):
+def create_public_scan_job(payload: dict, request: Request, db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+    from .scan_access import admission_policy
+    admission_policy(auth)
+    capability_token = secrets.token_urlsafe(32) if auth is None else None
     chart_urls = payload.get("chart_urls") or ([payload.get("chart_url")] if payload.get("chart_url") else [])
     trusted_cas = parse_json(get_global_configuration(db).get("trusted_ca_certificates"), [])
     job_id = _start_public_scan(str(payload.get("images", "")), chart_urls=[str(value) for value in chart_urls],
-                                trusted_ca_certificates=trusted_cas if isinstance(trusted_cas, list) else [])
-    return {"job_id": job_id, "status_url": f"/api/public/jobs/{job_id}", "results_url": f"/api/public/jobs/{job_id}/results"}
+                                trusted_ca_certificates=trusted_cas if isinstance(trusted_cas, list) else [],
+                                owner_user_id=auth.user.id if auth else None, capability_token=capability_token)
+    result = {"job_id": job_id, "status_url": f"/api/public/jobs/{job_id}", "results_url": f"/api/public/jobs/{job_id}/results"}
+    if capability_token:
+        result["access_token"] = capability_token
+    return result
 
 
 @app.get("/api/public/jobs/{job_id}")
-def public_scan_job_status(job_id: str):
-    with PUBLIC_JOB_LOCK:
-        job = dict(PUBLIC_JOBS.get(job_id, {}))
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found or expired")
-    return job
+def public_scan_job_status(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    return _public_job_projection(_authorized_public_job(job_id, auth, request))
 
 
 @app.post("/api/public/jobs/{job_id}/cancel")
-def cancel_public_scan_job(job_id: str):
+def cancel_public_scan_job(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         job = PUBLIC_JOBS.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found or expired")
         if job.get("status") in {"complete", "incomplete", "error", "cancelled"}:
             return {"job_id": job_id, "status": job.get("status")}
-        process = PUBLIC_PROCESSES.get(job_id)
     _public_job_update(job_id, status="cancelled", phase="cancelled")
-    if process and process.poll() is None:
-        process.terminate()
     return {"job_id": job_id, "status": PUBLIC_JOBS.get(job_id, {}).get("status", "cancelled")}
 
 
 @app.get("/api/public/jobs/{job_id}/results")
-def public_scan_job_results(job_id: str):
-    with PUBLIC_JOB_LOCK:
-        job = dict(PUBLIC_JOBS.get(job_id, {}))
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found or expired")
+def public_scan_job_results(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    job = _authorized_public_job(job_id, auth, request)
     summary_path = PUBLIC_JOB_ROOT / job_id / "output" / "scan-summary.json"
     if summary_path.exists():
         try:
-            return {**job, "summary": json.loads(summary_path.read_text(encoding="utf-8"))}
+            return _public_job_projection({**job, "summary": json.loads(summary_path.read_text(encoding="utf-8"))})
         except (ValueError, OSError):
             pass
-    return job
+    return _public_job_projection(job)
 
 
 @app.get("/api/public/jobs/{job_id}/results/view", response_class=HTMLResponse)
-def public_scan_job_results_view(request: Request, job_id: str):
+def public_scan_job_results_view(request: Request, job_id: str, auth: AuthContext | None = Depends(optional_user)):
     """Render ephemeral results in a read-only, portal-style view.
 
     Public scans intentionally bypass the authenticated service view: there is
@@ -4142,10 +4124,12 @@ def public_scan_job_results_view(request: Request, job_id: str):
     mutate.  The page therefore displays the raw vulnerability payload and
     configuration findings without Request Exception/POA&M/Mitigation buttons.
     """
+    from .scan_access import public_projection
     with PUBLIC_JOB_LOCK:
         job = dict(PUBLIC_JOBS.get(job_id, {}))
     if not job:
         raise HTTPException(status_code=404, detail="Job not found or expired")
+    _check_public_job_access(job, auth, request)
     output_dir = PUBLIC_JOB_ROOT / job_id / "output"
     result_path = output_dir / "portal-result.json"
     if not result_path.exists():
@@ -4229,7 +4213,7 @@ def public_scan_job_results_view(request: Request, job_id: str):
     return templates.TemplateResponse(request, "public_results.html", {
         "current_user": None, "csrf_token": "", "can": lambda *_permission: False,
         "themes": THEMES, "pending_request_count": 0, "pending_poam_count": 0,
-        "job": job, "service": service, "view": {"service": {"id": None, "service_key": ""}},
+        "job": _public_job_projection(job), "service": service, "view": {"service": {"id": None, "service_key": ""}},
         "service_images": [], "rows": rows, "simplified_rows": simplified_rows,
         "vulnerability_count": len(vulnerabilities), "configuration_count": len(configurations),
         "overview_data": overview_data, "skipped_images": skipped_images, "skipped_charts": skipped_charts,
@@ -4237,7 +4221,8 @@ def public_scan_job_results_view(request: Request, job_id: str):
 
 
 @app.get("/api/public/jobs/{job_id}/logs", response_class=PlainTextResponse)
-def public_scan_job_logs(job_id: str):
+def public_scan_job_logs(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
@@ -4328,7 +4313,8 @@ def _write_public_scan_html(output_dir: Path, report_path: Path, job: dict) -> N
 
 
 @app.get("/api/public/jobs/{job_id}/overview.html", response_class=HTMLResponse)
-def public_scan_job_html_overview(job_id: str):
+def public_scan_job_html_overview(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         job = dict(PUBLIC_JOBS.get(job_id, {}))
     if not job:
@@ -4343,7 +4329,8 @@ def public_scan_job_html_overview(job_id: str):
 
 
 @app.get("/api/public/jobs/{job_id}/artifacts")
-def public_scan_job_artifacts(job_id: str):
+def public_scan_job_artifacts(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         job = dict(PUBLIC_JOBS.get(job_id, {}))
         if not job:
@@ -4364,8 +4351,9 @@ def public_scan_job_artifacts(job_id: str):
 
 
 @app.get("/api/public/jobs/{job_id}/sboms")
-def public_sbom_job_artifacts(job_id: str):
+def public_sbom_job_artifacts(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
     """Download only the SBOM formats recorded by the serializer manifest."""
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
@@ -4406,7 +4394,8 @@ def public_sbom_job_artifacts(job_id: str):
 
 
 @app.get("/api/public/jobs/{job_id}/export.xlsx")
-def public_scan_job_export(job_id: str):
+def public_scan_job_export(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
@@ -4423,8 +4412,9 @@ def public_scan_job_export(job_id: str):
 
 
 @app.get("/api/public/jobs/{job_id}/results-export")
-def public_scan_job_results_export(job_id: str):
+def public_scan_job_results_export(job_id: str, request: Request, auth: AuthContext | None = Depends(optional_user)):
     """Download the native scanner JSON bundle for manual ingestion."""
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
@@ -4438,6 +4428,7 @@ def public_scan_job_results_export(job_id: str):
 def ingest_public_scan(
     job_id: str,
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_user),
 ):
@@ -4450,9 +4441,11 @@ def ingest_public_scan(
     """
     if auth.accessible_service_ids("scan.ingest") == set():
         raise HTTPException(status_code=403, detail="Scan ingest permission is required")
+    _authorized_public_job(job_id, auth, request)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
+        job = PUBLIC_JOBS[job_id]
     result_path = PUBLIC_JOB_ROOT / job_id / "output" / "portal-result.json"
     if (result_path.parent / "scan-failure.json").exists():
         raise HTTPException(status_code=409, detail="A required scanner phase failed; this scan cannot be ingested. Review the retained scan logs.")
@@ -4501,7 +4494,7 @@ def ingest_public_scan(
             data["service_overview"] = overview
         stage_timings[ingest_stage] = round((time.perf_counter() - stage_started) * 1000, 2)
         ingest_stage = "collect_helm_sources"; stage_started = time.perf_counter()
-        source_files = _collect_helm_source_files(PUBLIC_JOB_ROOT / job_id / "input" / "charts")
+        source_files = _collect_helm_source_files(PUBLIC_JOB_ROOT / job_id / "input" / ("worker-charts" if job.get("worker_sources") else "charts"))
         _enrich_rendered_resource_lineage(data)
         if source_files:
             data["artifact_type"] = "helm"
@@ -5192,84 +5185,48 @@ def download_patched_image(job_id: str):
     return FileResponse(path, media_type="application/x-tar", filename=f"cats-patched-{job_id[:12]}.tar")
 
 
-def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
-    """Run available Level 1 tools and keep missing tools explicit."""
-    checks = validation["checks"]
-    values_files = checked_values_files(payload.get("helm_values_files", []),
-        {path.relative_to(candidate_dir).as_posix() for path in candidate_dir.rglob("*") if path.is_file()})
-    overrides = [argument for value in values_files for argument in ("--values", str(candidate_dir / value))]
-    chart_roots = sorted({path.parent for path in candidate_dir.rglob("Chart.yaml")
-                          if "charts" not in path.relative_to(candidate_dir).parts[:-1]})
-    rendered_parts: list[str] = []
-    helm = shutil.which("helm")
-    if chart_roots and helm:
-        lint_results, template_results = [], []
-        for chart_root in chart_roots:
-            lint = subprocess.run([helm, "lint", str(chart_root), *overrides], capture_output=True, text=True, timeout=180, check=False)
-            lint_results.append(lint)
-            rendered = subprocess.run([helm, "template", "cats-remediation", str(chart_root), "--include-crds", *overrides],
-                                      capture_output=True, text=True, timeout=180, check=False)
-            template_results.append(rendered)
-            if rendered.returncode == 0:
-                rendered_parts.append(rendered.stdout)
-        checks["helm_lint"] = {"status": "PASS" if all(item.returncode == 0 for item in lint_results) else "FAIL",
-                               "detail": "Validated every discovered chart."}
-        checks["helm_template"] = {"status": "PASS" if all(item.returncode == 0 for item in template_results) else "FAIL",
-                                   "detail": "Rendered every discovered chart with CRDs."}
-    elif chart_roots:
-        checks["helm_lint"] = {"status": "FAIL", "detail": "Helm is unavailable in the remediation worker."}
-        checks["helm_template"] = {"status": "FAIL", "detail": "Helm is unavailable in the remediation worker."}
-    else:
-        for raw in sorted(candidate_dir.rglob("*")):
-            if raw.suffix in {".yaml", ".yml"} and not raw.name.startswith(".cats-"):
-                rendered_parts.append(raw.read_text(encoding="utf-8"))
-
-    rendered_text = "\n---\n".join(rendered_parts)
-    if rendered_text:
+def _candidate_worker_verification(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
+    """Submit exact retained sources to the authenticated remediation worker."""
+    from .candidate_worker import request_digest, validate_request
+    files = {path.relative_to(candidate_dir).as_posix(): path.read_text(encoding="utf-8")
+             for path in candidate_dir.rglob("*") if path.is_file() and not path.name.startswith(".cats-")}
+    attempt_id = uuid.uuid4().hex
+    request_payload = {"attempt_id": attempt_id, "remediation_job_id": candidate_dir.parent.name,
+                       "files": files, "helm_values_files": payload.get("helm_values_files", []),
+                       "render_only": bool(payload.get("render_only")), "plan": plan, "validation": validation}
+    validate_request(request_payload)
+    if not PATCH_WORKER_URL or not PATCH_WORKER_TOKEN:
+        raise RuntimeError("Authenticated remediation verification worker is not configured")
+    digest = request_digest(request_payload)
+    try:
+        _patch_worker_request(f"/internal/candidate-verifications/{attempt_id}", method="POST", payload=request_payload)
+        deadline = time.monotonic() + int(os.getenv("CATS_REMEDIATION_VERIFICATION_TIMEOUT", "3600"))
+        while time.monotonic() < deadline:
+            result = _patch_worker_request(f"/internal/candidate-verifications/{attempt_id}")
+            if result.get("status") == "running":
+                time.sleep(1)
+                continue
+            if (result.get("status") != "complete" or result.get("attempt_id") != attempt_id
+                    or result.get("remediation_job_id") != request_payload["remediation_job_id"]
+                    or result.get("input_digest") != digest or not isinstance(result.get("validation"), dict)):
+                raise RuntimeError("Candidate verification failed or returned mismatched evidence")
+            return result
+        raise RuntimeError("Candidate verification worker timed out")
+    finally:
         try:
-            objects = [item for item in yaml.safe_load_all(rendered_text) if isinstance(item, dict) and item.get("kind")]
-            checks["yaml_parsing"] = {"status": "PASS", "detail": f"Parsed {len(objects)} candidate Kubernetes resources."}
-            expected_kinds = {str(value).split("/")[-2] for value in plan["before"].get("resource_identities", []) if "/" in str(value)}
-            actual_kinds = {str(item.get("kind")) for item in objects}
-            from .remediation_sources import verify_rendered_changes
-            checks["intended_changes"] = verify_rendered_changes(objects, plan.get("configuration_changes", []))
-            if "intended_changes" not in validation["required_checks"]:
-                validation["required_checks"].append("intended_changes")
-            checks["expected_resources"] = {"status": "PASS" if expected_kinds <= actual_kinds else "FAIL",
-                                             "detail": "Expected resource kinds remain present in the candidate render."}
-            rendered_path = candidate_dir / ".cats-rendered.yaml"
-            rendered_path.write_text(rendered_text, encoding="utf-8")
-            from .offline_schema import validate_resources
-            checks["kubernetes_schema"] = validate_resources(objects)
-        except (OSError, yaml.YAMLError) as exc:
-            checks["yaml_parsing"] = {"status": "FAIL", "detail": str(exc)}
-    trivy = shutil.which("trivy")
-    if trivy:
-        # Scan the rendered candidate once, not both chart sources and their render.
-        scan_target = candidate_dir / ".cats-rendered.yaml"
-        if not scan_target.is_file():
-            checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "No rendered candidate is available for configuration scanning."}
-            validation["status"] = "FAIL"
-            return validation
-        result = subprocess.run([trivy, "config", "--format", "json", "--exit-code", "0", str(scan_target)], capture_output=True, text=True,
-                                timeout=int(os.getenv("CATS_REMEDIATION_SCAN_TIMEOUT", "600")), check=False)
-        checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "Configuration scanner did not produce valid completed JSON evidence."}
-        if result.returncode == 0:
-            try:
-                summary = summarize_configuration_report(json.loads(result.stdout))
-                plan["after"].update(summary)
-                checks["trivy_config_rescan"] = {"status": "PASS" if summary["configuration_findings"] == 0 else "FAIL",
-                    "detail": f"Completed configuration rescan: {summary['configuration_findings']} unresolved findings."}
-                (candidate_dir / ".cats-config-scan.json").write_text(result.stdout, encoding="utf-8")
-            except (ValueError, TypeError):
-                pass
-    if not plan.get("images"):
-        checks["vulnerability_rescan"] = {"status": "PASS", "detail": "No image references require vulnerability scanning."}
-    elif all(item.get("candidate") and item.get("patch_status") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}
-             for item in plan.get("images", [])):
-        checks["vulnerability_rescan"] = {"status": "PASS", "detail": "Every staged image completed the existing patch worker's before/after vulnerability scan."}
-    validation["status"] = "PASS" if all(checks[name]["status"] == "PASS" for name in validation["required_checks"]) else "FAIL"
-    return validation
+            _patch_worker_request(f"/internal/candidate-verifications/{attempt_id}", method="DELETE")
+        except RuntimeError:
+            pass
+
+
+def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
+    """Orchestrate worker verification; never execute scanners in the Portal."""
+    result = _candidate_worker_verification(candidate_dir, payload, plan, validation)
+    plan.setdefault("after", {}).update(result["after"])
+    for name, content in ((".cats-rendered.yaml", result["rendered"]), (".cats-config-scan.json", result["config_scan"])):
+        if content:
+            (candidate_dir / name).write_text(content, encoding="utf-8")
+    return result["validation"]
 
 
 def _run_remediation_image_patches(db: Session, record: RemediationExecution, service: Service, plan: dict) -> None:
@@ -5712,25 +5669,15 @@ def _run_remediation_job(record_id: int) -> None:
                 target = baseline_dir / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content, encoding="utf-8")
-            baseline_parts, baseline_ok = [], bool(baseline_files)
-            baseline_helm = shutil.which("helm")
-            baseline_values = checked_values_files(payload.get("helm_values_files", []), baseline_files)
-            baseline_overrides = [argument for value in baseline_values for argument in ("--values", str(baseline_dir / value))]
-            roots = [path.parent for path in baseline_dir.rglob("Chart.yaml")
-                     if "charts" not in path.relative_to(baseline_dir).parts[:-1]]
-            if roots:
-                baseline_ok = bool(baseline_helm)
-                if baseline_helm:
-                    for root in roots:
-                        lint = subprocess.run([baseline_helm, "lint", str(root), *baseline_overrides], capture_output=True, text=True, timeout=180, check=False)
-                        render = subprocess.run([baseline_helm, "template", "cats-remediation", str(root), "--include-crds", *baseline_overrides], capture_output=True, text=True, timeout=180, check=False)
-                        baseline_ok = baseline_ok and lint.returncode == 0 and render.returncode == 0
-                        if render.returncode == 0:
-                            baseline_parts.append(render.stdout)
-            else:
-                baseline_parts = [content for name, content in baseline_files.items() if name.endswith((".yaml", ".yml"))]
-            baseline_resources = [item for item in yaml.safe_load_all("\n---\n".join(baseline_parts)) if isinstance(item, dict) and item.get("kind")]
-            (baseline_dir / ".cats-rendered.yaml").write_text("\n---\n".join(baseline_parts), encoding="utf-8")
+            baseline_result = _candidate_worker_verification(baseline_dir,
+                {**payload, "render_only": True}, plan, static_validation(payload, plan))
+            baseline_validation = baseline_result["validation"]
+            baseline_parts = [baseline_result["rendered"]]
+            baseline_ok = bool(baseline_files) and all(
+                baseline_validation["checks"].get(name, {}).get("status") == "PASS"
+                for name in (("helm_lint", "helm_template") if any(name.endswith("Chart.yaml") for name in baseline_files) else ("yaml_parsing",)))
+            baseline_resources = [item for item in yaml.safe_load_all(baseline_result["rendered"]) if isinstance(item, dict) and item.get("kind")]
+            (baseline_dir / ".cats-rendered.yaml").write_text(baseline_result["rendered"], encoding="utf-8")
             validation = _validate_materialized_candidate(candidate_dir, payload, plan, static_validation(payload, plan))
             rendered_path = candidate_dir / ".cats-rendered.yaml"
             rendered = []
@@ -5965,6 +5912,8 @@ def _run_remediation_job(record_id: int) -> None:
                     record.status = "publication_partial"
                 elif not evidence_complete:
                     record.status = "evidence_partial"
+                elif not all(value == "PASS" for value in scan_statuses):
+                    record.status = "validation_failed"
                 elif deployment_status == "VERIFIED":
                     record.status = "validated"
                 elif deployment_status in {"FAILED", "PARTIALLY_VERIFIED"}:
@@ -5981,7 +5930,7 @@ def _run_remediation_job(record_id: int) -> None:
                 record.failure_reason = "Blocking static validation defect; retained candidate requires correction"
             record.phase = "complete" if record.status != "failed" else "failed"
             record.remediation_status = ("failed" if record.status in {"failed", "not_remediable"} else
-                                         "partial" if review or unresolved_images or not evidence_complete else "complete")
+                                         "partial" if review or unresolved_images or not evidence_complete or validation["status"] == "BLOCKING" or any(value != "PASS" for value in scan_statuses) else "complete")
             publication_results = [chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings]
             publication_results.extend(bool(image.get("candidate")) and bool(image.get("digest"))
                                        for image in plan["images"])
@@ -10701,8 +10650,6 @@ async def manage_security_data_source(source_key: str, csrf_token: str = Form(),
     else:
         if action == "refresh" and not record.source:
             raise HTTPException(422, detail="Configure a source before refreshing")
-        if action == "upload" and source_key == "trivy":
-            raise HTTPException(422, detail="Trivy uses its configured OCI DB repository")
         if action == "upload" and file is None:
             raise HTTPException(422, detail="Upload a database or feed file")
         data = await file.read(MAX_SECURITY_DATA_UPLOAD + 1) if file else None

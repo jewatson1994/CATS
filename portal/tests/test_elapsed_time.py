@@ -31,6 +31,16 @@ def isolated_scan_history(tmp_path, monkeypatch):
     engine.dispose()
 
 
+@pytest.fixture
+def owner_client(monkeypatch):
+    from app.auth import AuthContext
+    from app.models import User, UserSession
+    owner = AuthContext(User(id=7, username="elapsed-owner", role_assignments=[]),
+                        UserSession(id=7, csrf_token="elapsed-csrf"))
+    monkeypatch.setitem(app.dependency_overrides, portal_main.optional_user, lambda: owner)
+    return TestClient(app)
+
+
 def _clock(monkeypatch, *values):
     moments = iter(values)
     monkeypatch.setattr(portal_main, "utcnow", lambda: next(moments))
@@ -66,20 +76,20 @@ def test_scan_timestamps_continue_across_stages_and_freeze(monkeypatch):
     portal_main._public_job_update(job_id, summary={"results": 1})
     assert portal_main.PUBLIC_JOBS[job_id]["finished_at"] == finished_at
 
-def test_standalone_sbom_and_scan_cancellation_expose_terminal_timestamps(monkeypatch):
+def test_standalone_sbom_and_scan_cancellation_expose_terminal_timestamps(monkeypatch, owner_client):
     start = datetime(2026, 9, 15, 13, 0, tzinfo=timezone.utc)
     _clock(monkeypatch, start, start + timedelta(seconds=9), start + timedelta(seconds=20), start + timedelta(seconds=27))
-    sbom_id = "sbom-elapsed-test"
-    scan_id = "cancel-elapsed-test"
-    portal_main.PUBLIC_JOBS[sbom_id] = {"job_id": sbom_id, "job_kind": "sbom", "status": "queued", "phase": "queued"}
-    portal_main.PUBLIC_JOBS[scan_id] = {"job_id": scan_id, "job_kind": "scan", "status": "queued", "phase": "queued"}
+    sbom_id = "b" * 32
+    scan_id = "c" * 32
+    portal_main.PUBLIC_JOBS[sbom_id] = {"job_id": sbom_id, "owner_user_id": 7, "job_kind": "sbom", "status": "queued", "phase": "queued"}
+    portal_main.PUBLIC_JOBS[scan_id] = {"job_id": scan_id, "owner_user_id": 7, "job_kind": "scan", "status": "queued", "phase": "queued"}
     portal_main._public_job_update(sbom_id, status="running", phase="prepare_inputs")
     portal_main._public_job_update(sbom_id, status="error", phase="worker")
     portal_main._public_job_update(scan_id, status="running", phase="scan_sboms")
-    response = TestClient(app).post(f"/api/public/jobs/{scan_id}/cancel")
+    response = owner_client.post(f"/api/public/jobs/{scan_id}/cancel")
     assert response.status_code == 200
     for job_id in (sbom_id, scan_id):
-        state = TestClient(app).get(f"/api/public/jobs/{job_id}").json()
+        state = owner_client.get(f"/api/public/jobs/{job_id}").json()
         assert state["started_at"]
         assert state["finished_at"]
 
@@ -108,13 +118,13 @@ def test_patch_timestamps_survive_refresh_and_phase_changes(monkeypatch, tmp_pat
         portal_main.PATCH_JOBS.pop(job_id, None)
 
 
-def test_timer_page_exposes_job_scope_and_timestamp_contract(monkeypatch):
-    job_id = "timer-markup-test"
+def test_timer_page_exposes_job_scope_and_timestamp_contract(monkeypatch, owner_client):
+    job_id = "d" * 32
     portal_main.PUBLIC_JOBS[job_id] = {
-        "job_id": job_id, "job_kind": "scan", "status": "running", "phase": "generate_sboms",
+        "job_id": job_id, "owner_user_id": 7, "job_kind": "scan", "status": "running", "phase": "generate_sboms",
         "started_at": "2026-09-15T12:00:00+00:00",
     }
-    scan = TestClient(app).get(f"/scan?job_id={job_id}", headers={"Accept": PAGE_MEDIA_TYPE})
+    scan = owner_client.get(f"/scan?job_id={job_id}", headers={"Accept": PAGE_MEDIA_TYPE})
     assert scan.status_code == 200
     data = scan.json()["data"]
     assert data["job_id"] == job_id

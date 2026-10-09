@@ -10,7 +10,7 @@ Regression coverage for failures seen on real services:
 * patched images whose chart mapping needs review made static validation BLOCKING.
 
 The end-to-end test drives the real HTTP routes with real Helm. Only the image
-patch worker (Docker/BuildKit) and the runtime validator are simulated.
+patch worker (Docker/BuildKit) the configuration scanner, and the runtime validator are simulated.
 """
 import hashlib
 import io
@@ -158,6 +158,22 @@ def remediation_portal(monkeypatch, tmp_path):
                   "remediation_evidence": {"sbom": "complete", "scan_before": "complete", "scan_after": "complete"}}
         (out / "patch-result.json").write_text(json.dumps(result))
     monkeypatch.setattr(main, "_run_patch_job", patch_job)
+    from app import candidate_worker
+    real_which, real_run = shutil.which, subprocess.run
+    monkeypatch.setattr(candidate_worker.shutil, "which", lambda name: "simulated-trivy" if name == "trivy" else real_which(name))
+    def tools(command, **kwargs):
+        if command[0] == "simulated-trivy":
+            return subprocess.CompletedProcess(command, 0, json.dumps({"SchemaVersion": 2, "Results": []}), "")
+        return real_run(command, **kwargs)
+    monkeypatch.setattr(candidate_worker.subprocess, "run", tools)
+    def worker_verification(directory, payload, plan, validation):
+        checked = candidate_worker.validate_candidate(directory, payload, plan, validation)
+        rendered = directory / ".cats-rendered.yaml"
+        return {"validation": checked, "after": plan.get("after", {}), "rendered": rendered.read_text() if rendered.exists() else "", "config_scan": None}
+    monkeypatch.setattr(main, "_candidate_worker_verification", worker_verification)
+
+
+
 
     def validate(_configuration, request, artifact_path=None, **_kwargs):
         from app.deployment_bundle import validate_bundle

@@ -2,6 +2,7 @@ import hashlib
 import json
 from types import SimpleNamespace
 import pytest
+from app import candidate_worker
 from fastapi import HTTPException
 from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import Session, sessionmaker
@@ -21,7 +22,7 @@ def test_candidate_configuration_scan_uses_only_rendered_manifest(monkeypatch, t
     monkeypatch.setattr(main.subprocess, 'run', run)
     plan = {'before':{'resource_identities':[]}, 'after':{}, 'images':[]}
     validation = {'checks':{}, 'required_checks':['trivy_config_rescan']}
-    main._validate_materialized_candidate(tmp_path, {}, plan, validation)
+    candidate_worker.validate_candidate(tmp_path, {}, plan, validation)
     assert calls[0][-1] == str(tmp_path / '.cats-rendered.yaml')
     assert (tmp_path / '.cats-config-scan.json').is_file()
     assert plan['after']['configuration_findings'] == 0
@@ -30,7 +31,7 @@ def test_candidate_configuration_scan_uses_only_rendered_manifest(monkeypatch, t
 def test_candidate_configuration_scan_without_render_fails_closed(monkeypatch, tmp_path):
     monkeypatch.setattr(main.shutil, 'which', lambda name: 'trivy' if name == 'trivy' else None)
     validation = {'checks':{}, 'required_checks':['trivy_config_rescan']}
-    result = main._validate_materialized_candidate(tmp_path, {}, {'before':{},'after':{},'images':[]}, validation)
+    result = candidate_worker.validate_candidate(tmp_path, {}, {'before':{},'after':{},'images':[]}, validation)
     assert result['status'] == 'FAIL'
     assert result['checks']['trivy_config_rescan']['status'] == 'FAIL'
 

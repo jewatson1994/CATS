@@ -430,9 +430,7 @@ def test_scan_and_sbom_are_separate_workspaces_with_multi_format_generation(monk
     from app import main as portal_main
 
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    submitted = []
-    monkeypatch.setattr(portal_main.PUBLIC_WORKERS, "submit", lambda function, *args: submitted.append((function, args)))
-    client = TestClient(app)
+    client = new_client()
 
     scan = client.get("/scan")
     assert scan.status_code == 200
@@ -454,8 +452,10 @@ def test_scan_and_sbom_are_separate_workspaces_with_multi_format_generation(monk
     }, follow_redirects=False)
     assert response.status_code == 303
     job_id = response.headers["location"].split("job_id=", 1)[1]
-    assert submitted and submitted[0][1][0] == job_id
     job = portal_main.PUBLIC_JOBS[job_id]
+    assert job["status"] == "queued"
+    assert job["owner_user_id"] == 1
+    assert job["input_digest"]
     assert job["job_kind"] == "sbom"
     assert job["sbom_formats"] == ["cyclonedx-json", "cyclonedx-xml", "spdx-json"]
     assert job["cyclonedx_spec_version"] == "1.6"
@@ -468,43 +468,55 @@ def test_scan_and_sbom_are_separate_workspaces_with_multi_format_generation(monk
     assert "Select at least one SBOM format" in missing_format.text
 
 
-def test_sbom_job_passes_one_inventory_configuration_to_runner(monkeypatch, tmp_path):
-    from app import main as portal_main
+def test_sbom_worker_passes_one_inventory_configuration_to_runner(monkeypatch, tmp_path):
+    from app import scan_worker
+    from app.scan_artifacts import pack, unpack, digest
 
-    monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setattr(scan_worker, "ROOT", tmp_path)
     monkeypatch.setenv("CATS_SCANNER_RUNNER", "test-cats-scan")
+    monkeypatch.setattr(scan_worker.shutil, "which", lambda tool: None)
+    scan_worker.STOP.clear()
     captured = {}
+    job_id, attempt_id = "a" * 32, "b" * 32
+    inputs = tmp_path / "inputs"; inputs.mkdir()
+    (inputs / "images.txt").write_text("docker.io/library/alpine:3.19\n", encoding="utf-8")
+    archive = tmp_path / "input.tar"
+    pack(inputs, archive, {"job_id": job_id})
 
     class CompletedProcess:
         returncode = 0
-
         def __init__(self, arguments, **kwargs):
-            captured["arguments"] = arguments
             captured["environment"] = kwargs["env"]
-            output = Path(arguments[2])
-            output.mkdir(parents=True, exist_ok=True)
-            (output / "scan-summary.json").write_text(json.dumps({
-                "status": "complete", "sboms": 1, "reports": 3,
-                "formats": ["cyclonedx-json", "cyclonedx-xml", "spdx-json"],
-            }), encoding="utf-8")
+            output = Path(arguments[-1])
+            (output / "scan-summary.json").write_text(json.dumps({"status": "complete", "sboms": 1, "reports": 3}), encoding="utf-8")
+        def poll(self): return 0
 
-        def poll(self):
-            return 0
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def iter_content(self, size): yield archive.read_bytes()
+        def json(self): return {}
 
-    monkeypatch.setattr(portal_main.subprocess, "Popen", CompletedProcess)
-    job_id = "sbom-runner-test"
-    portal_main.PUBLIC_JOBS[job_id] = {
-        "job_id": job_id, "job_kind": "sbom", "status": "queued", "phase": "queued",
-        "sbom_formats": ["cyclonedx-json", "cyclonedx-xml", "spdx-json"],
-        "cyclonedx_spec_version": "1.6",
-    }
-    portal_main._run_public_scan(job_id, "docker.io/library/alpine:3.19\n")
-
+    worker = scan_worker.Worker.__new__(scan_worker.Worker)
+    worker.worker_id = "test-worker"
+    def request(method, suffix, **kwargs):
+        if method == "PUT":
+            result = tmp_path / "returned.tar"
+            result.write_bytes(kwargs["data"].read())
+            unpack(result, tmp_path / "returned", {"job_id": job_id, "attempt_id": attempt_id})
+        return Response()
+    worker.request = request
+    monkeypatch.setattr(scan_worker.subprocess, "Popen", CompletedProcess)
+    worker._execute({"job_id": job_id, "attempt_id": attempt_id, "attempt_token": "test-attempt",
+        "input_digest": digest(archive), "service_key": "", "service_version": "",
+        "job": {"job_kind": "sbom", "credential_policy": "public",
+                "sbom_formats": ["cyclonedx-json", "cyclonedx-xml", "spdx-json"],
+                "cyclonedx_spec_version": "1.6"}}, None)
     assert captured["environment"]["CATS_JOB_MODE"] == "sbom"
     assert captured["environment"]["SBOM_FORMATS"] == "cyclonedx-json,cyclonedx-xml,spdx-json"
     assert captured["environment"]["SBOM_CYCLONEDX_SPEC_VERSION"] == "1.6"
-    assert portal_main.PUBLIC_JOBS[job_id]["status"] == "complete"
-    assert portal_main.PUBLIC_JOBS[job_id]["phase"] == "generate_sboms"
+    assert (tmp_path / "returned" / "output" / "scan-summary.json").exists()
+    assert (tmp_path / "returned" / "output" / "worker-provenance.json").exists()
 
 
 def test_sbom_download_contains_only_manifest_reports(monkeypatch, tmp_path):
@@ -524,9 +536,9 @@ def test_sbom_download_contains_only_manifest_reports(monkeypatch, tmp_path):
         {"format": "cyclonedx-xml", "path": "sboms/formats/alpine.cyclonedx.xml"},
     ]}), encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": "sbom", "status": "complete"}
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "job_kind": "sbom", "status": "complete", "owner_user_id": 1}
 
-    response = TestClient(app).get(f"/api/public/jobs/{job_id}/sboms")
+    response = new_client().get(f"/api/public/jobs/{job_id}/sboms")
     assert response.status_code == 200
     with ZipFile(BytesIO(response.content)) as bundle:
         assert set(bundle.namelist()) == {
@@ -551,12 +563,13 @@ def test_public_results_view_handles_recursive_partial_result(monkeypatch, tmp_p
     trivy_result.parent.mkdir()
     trivy_result.write_text('{"Results": []}', encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "chart_names": []})
-    response = TestClient(app).get(f"/api/public/jobs/{job_id}/results/view")
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "chart_names": [], "owner_user_id": 1}
+    client = new_client()
+    response = client.get(f"/api/public/jobs/{job_id}/results/view")
     assert response.status_code == 200
     assert "torture-test" in response.text
     assert "backend" in response.text
-    html_overview = TestClient(app).get(f"/api/public/jobs/{job_id}/overview.html")
+    html_overview = client.get(f"/api/public/jobs/{job_id}/overview.html")
     assert html_overview.status_code == 200
     assert "INTERACTIVE SCAN OVERVIEW" in html_overview.text
     assert "data-type-filter=\"Vulnerability\"" in html_overview.text
@@ -567,7 +580,7 @@ def test_public_results_view_handles_recursive_partial_result(monkeypatch, tmp_p
     assert 'href="portal-result.json"' in html_overview.text
     assert 'href="trivy-results/nginx.json"' in html_overview.text
     assert 'href="#artifacts"' in html_overview.text
-    artifacts = TestClient(app).get(f"/api/public/jobs/{job_id}/artifacts")
+    artifacts = client.get(f"/api/public/jobs/{job_id}/artifacts")
     assert artifacts.status_code == 200
     with ZipFile(BytesIO(artifacts.content)) as bundle:
         assert "scan-overview.html" in bundle.namelist()
@@ -575,7 +588,7 @@ def test_public_results_view_handles_recursive_partial_result(monkeypatch, tmp_p
         assert "CVE-2026-0001" in exported_html and "const findings=" in exported_html
         assert 'href="scan-results.xlsx"' in exported_html
         assert 'href="results-export.tar.gz"' in exported_html
-    archive = TestClient(app).get(f"/api/public/jobs/{job_id}/results-export")
+    archive = client.get(f"/api/public/jobs/{job_id}/results-export")
     assert archive.status_code == 200
     assert archive.headers["content-type"] == "application/gzip"
 
@@ -600,7 +613,7 @@ def test_public_ingest_retains_large_helm_source_set_and_is_idempotent(monkeypat
         directory.mkdir()
         (directory / "values.yaml").write_text(f"index: {index}\n", encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "image_list": "", "owner_user_id": 1}
 
     first = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service")
     assert first.status_code == 200
@@ -645,7 +658,7 @@ def test_public_ingest_validation_error_is_safe_structured_and_atomic(monkeypatc
     body["policy_findings"] = [{"finding": ""}]
     (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "image_list": "", "owner_user_id": 1}
     before_name = "Payments Service"
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
@@ -676,7 +689,7 @@ def test_public_ingest_database_failure_rolls_back_all_partial_state(monkeypatch
     body["policy_findings"] = [{"finding": "KSV-rollback"}]
     (output / "portal-result.json").write_text(json.dumps(body), encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete", "image_list": ""})
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "image_list": "", "owner_user_id": 1}
     monkeypatch.setattr(portal_main, "sync_policy_findings", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("forced transaction failure")))
 
     failing_client = TestClient(app, raise_server_exceptions=False)
@@ -690,8 +703,21 @@ def test_public_ingest_database_failure_rolls_back_all_partial_state(monkeypatch
         assert db.scalar(select(Finding).where(Finding.service_id == service.id, Finding.cve == "CVE-2026-9898")) is None
 
 
+def _mock_candidate_worker_verification(monkeypatch, portal_main):
+    """Exercise route orchestration with worker-local validation, without an HTTP worker."""
+    from app import candidate_worker
+    def verify(directory, payload, plan, validation):
+        validated = candidate_worker.validate_candidate(directory, payload, plan, validation)
+        rendered = directory / ".cats-rendered.yaml"
+        return {"validation": validated, "after": plan.get("after", {}),
+                "rendered": rendered.read_text(encoding="utf-8") if rendered.is_file() else "",
+                "config_scan": None}
+    monkeypatch.setattr(portal_main, "_candidate_worker_verification", verify)
+
+
 def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     from app import main as portal_main
+    _mock_candidate_worker_verification(monkeypatch, portal_main)
 
     client = new_client()
     assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"}, follow_redirects=False).status_code == 303
@@ -769,6 +795,7 @@ def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_hist
 
 def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypatch):
     from app import main as portal_main
+    _mock_candidate_worker_verification(monkeypatch, portal_main)
     from app.models import PortalSetting
     from app import validator_client
 
@@ -861,6 +888,7 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
 
 def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(monkeypatch):
     from app import main as portal_main
+    _mock_candidate_worker_verification(monkeypatch, portal_main)
     client = new_client()
     client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
     data = payload("remediation-bundle", datetime.now(timezone.utc), [])
@@ -2663,7 +2691,7 @@ def test_public_ingest_preserves_scan_companion_overview(monkeypatch, tmp_path):
     (output / "service-overview.json").write_text(json.dumps({"missing_evidence": [
         {"type": "Chart", "item": "companion-chart", "reason": "Unavailable"}]}), encoding="utf-8")
     monkeypatch.setattr(portal_main, "PUBLIC_JOB_ROOT", tmp_path)
-    monkeypatch.setitem(portal_main.PUBLIC_JOBS, job_id, {"job_id": job_id, "status": "complete"})
+    portal_main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "owner_user_id": 1}
     assert client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service").status_code == 200
     with SessionLocal() as db:
         execution = db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}"))

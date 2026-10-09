@@ -11,9 +11,12 @@ import sqlite3
 import ssl
 import subprocess
 import tempfile
+import tarfile
 import urllib.parse
 import urllib.request
 import uuid
+
+from .scan_intelligence import publish_generation
 
 
 SOURCE_KEYS = {"kev", "epss", "grype", "trivy"}
@@ -85,11 +88,11 @@ def _check_sqlite(path: Path) -> None:
 def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: str | None) -> str:
     if key == "grype":
         destination = Path(os.getenv("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.mkdir(parents=True, exist_ok=True)
         binary = shutil.which("grype")
         if not binary:
             raise ValueError("Grype is unavailable")
-        with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
+        with tempfile.TemporaryDirectory(dir=destination, prefix=".cats-import-") as temporary:
             stage = Path(temporary) / "db"
             stage.mkdir()
             archive = Path(temporary) / "candidate.tar.zst"
@@ -107,20 +110,20 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: s
             _check_sqlite(databases[0])
             try:
                 metadata = json.loads(status)
+                if not isinstance(metadata, dict):
+                    raise ValueError("Grype candidate metadata is invalid")
                 version = str(metadata.get("built") or metadata.get("schemaVersion") or "Imported Grype database")[:240]
-            except (ValueError, TypeError):
-                version = "Imported Grype database"
-            _activate_directory(stage, destination)
+            except (ValueError, TypeError) as exc:
+                raise ValueError("Grype candidate metadata is invalid") from exc
+            publish_generation(stage, destination, key, metadata)
         return version
     if key == "trivy":
-        if uploaded is not None:
-            raise ValueError("Trivy offline upload is unsupported; configure an OCI DB repository mirror")
         destination = Path(os.getenv("TRIVY_CACHE_DIR", "/opt/catscan/trivy-cache"))
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.mkdir(parents=True, exist_ok=True)
         binary = shutil.which("trivy")
         if not binary:
             raise ValueError("Trivy is unavailable")
-        with tempfile.TemporaryDirectory(dir=destination.parent) as temporary:
+        with tempfile.TemporaryDirectory(dir=destination, prefix=".cats-import-") as temporary:
             stage = Path(temporary) / "cache"
             stage.mkdir()
             from .trusted_ca import write_additive_bundle
@@ -128,19 +131,62 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: s
             environment = dict(os.environ, TRIVY_SKIP_CHECK_UPDATE="true")
             if bundle:
                 environment["SSL_CERT_FILE"] = str(bundle)
-            _run([binary, "image", "--download-db-only", "--db-repository", source,
-                  "--cache-dir", str(stage)], environment)
+            if uploaded is not None:
+                _extract_trivy_database(uploaded, stage)
+            else:
+                _run([binary, "image", "--download-db-only", "--db-repository", source,
+                      "--cache-dir", str(stage)], environment)
             if not (stage / "db" / "trivy.db").is_file() or not (stage / "db" / "metadata.json").is_file():
                 raise ValueError("Trivy candidate has no native database")
-            _check_sqlite(stage / "db" / "trivy.db")
+            # Trivy uses bbolt, not SQLite. Let the native scanner open and
+            # validate the staged database, with all update paths disabled.
+            probe = Path(temporary) / "probe"
+            probe.mkdir()
+            (probe / "requirements.txt").write_text("requests==2.0.0\n", encoding="utf-8")
+            environment.update(TRIVY_SKIP_DB_UPDATE="true", TRIVY_SKIP_JAVA_DB_UPDATE="true")
+            _run([binary, "filesystem", "--cache-dir", str(stage), "--skip-db-update",
+                  "--skip-java-db-update", "--offline-scan", "--scanners", "vuln",
+                  "--format", "json", str(probe)], environment)
             try:
                 metadata = json.loads((stage / "db" / "metadata.json").read_text(encoding="utf-8"))
+                if not isinstance(metadata, dict):
+                    raise ValueError("Trivy candidate metadata is invalid")
                 version = str(metadata.get("Version") or metadata.get("UpdatedAt") or "Downloaded Trivy database")[:240]
-            except (OSError, ValueError, TypeError):
-                version = "Downloaded Trivy database"
-            _activate_directory(stage, destination)
+            except (OSError, ValueError, TypeError) as exc:
+                raise ValueError("Trivy candidate metadata is invalid") from exc
+            if not isinstance(metadata, dict) or not metadata.get("Version") or not metadata.get("UpdatedAt"):
+                raise ValueError("Trivy candidate metadata is incomplete")
+            publish_generation(stage, destination, key, metadata)
         return version
     raise ValueError("Unknown scanner database")
+
+
+def _extract_trivy_database(data: bytes, stage: Path) -> None:
+    """Accept the official offline DB tarball without arbitrary extraction."""
+    expected = {"trivy.db", "metadata.json"}
+    seen = set()
+    total = 0
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
+        for member in archive:
+            name = member.name.removeprefix("./")
+            if member.isdir() and name.rstrip("/") == "db":
+                continue
+            name = name.removeprefix("db/")
+            if name not in expected or name in seen or not member.isfile():
+                raise ValueError("Trivy DB archive contains an invalid member")
+            total += member.size
+            if total > MAX_UPLOAD:
+                raise ValueError("Trivy DB archive exceeds expanded size limit")
+            target = stage / "db" / name
+            target.parent.mkdir(exist_ok=True)
+            stream = archive.extractfile(member)
+            if stream is None:
+                raise ValueError("Trivy DB archive member is unreadable")
+            with stream, target.open("wb") as output:
+                shutil.copyfileobj(stream, output, length=1024 * 1024)
+            seen.add(name)
+    if seen != expected:
+        raise ValueError("Trivy DB archive is incomplete")
 
 
 def _download(source: str, ca_bundle: str | None) -> bytes:

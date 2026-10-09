@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from pathlib import Path
 
@@ -146,3 +147,111 @@ def cancel_patch_job(job_id: str, x_cats_worker_token: str | None = Header(None)
         "stages": existing.get("stages") or initial_patch_stages("download"),
     }, indent=2), encoding="utf-8")
     return {"job_id": job_id, "status": "cancelled", "phase": "cancelled"}
+
+
+# Configuration verification belongs to the remediation worker, separate from
+# runtime SchrÃ¶dinger validation. Each request has a fresh immutable attempt ID.
+CANDIDATE_SLOTS = threading.BoundedSemaphore(max(1, int(os.getenv("CATS_CANDIDATE_VERIFICATION_CONCURRENCY", "2"))))
+CANDIDATE_PROCESSES: dict[str, subprocess.Popen] = {}
+
+
+def _candidate_paths(attempt_id: str) -> tuple[Path, Path, Path]:
+    if len(attempt_id) != 32 or any(char not in "0123456789abcdef" for char in attempt_id):
+        raise HTTPException(status_code=400, detail="Invalid verification attempt")
+    root = JOB_ROOT / "candidate-verifications" / attempt_id
+    return root, root / "request.json", root / "result.json"
+
+
+def _candidate_authorize(token: str | None) -> None:
+    import hmac
+    if not TOKEN or not token or not hmac.compare_digest(token.encode("utf-8"), TOKEN.encode("utf-8")):
+        raise HTTPException(status_code=403, detail="Worker authentication failed")
+
+
+def _watch_candidate(attempt_id: str, process: subprocess.Popen, config: Path) -> None:
+    try:
+        try:
+            process.wait(timeout=max(1, int(os.getenv("CATS_REMEDIATION_VERIFICATION_TIMEOUT", "3600"))))
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (AttributeError, ProcessLookupError, PermissionError):
+                process.kill()
+            process.wait()
+    finally:
+        config.unlink(missing_ok=True)
+        with LOCK:
+            CANDIDATE_PROCESSES.pop(attempt_id, None)
+        CANDIDATE_SLOTS.release()
+
+
+@app.post("/internal/candidate-verifications/{attempt_id}")
+def start_candidate_verification(attempt_id: str, payload: dict, x_cats_worker_token: str | None = Header(None)):
+    from .candidate_worker import validate_request
+    _candidate_authorize(x_cats_worker_token)
+    root, config, result = _candidate_paths(attempt_id)
+    if payload.get("attempt_id") != attempt_id or not isinstance(payload.get("remediation_job_id"), str):
+        raise HTTPException(status_code=400, detail="Verification identity mismatch")
+    try:
+        validate_request(payload)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid verification source") from None
+    with LOCK:
+        retention_root = JOB_ROOT / "candidate-verifications"
+        retained = list(retention_root.iterdir()) if retention_root.exists() else []
+        oldest = time.time() - max(60, int(os.getenv("CATS_CANDIDATE_VERIFICATION_RETENTION_SECONDS", "3600")))
+        for directory in retained:
+            if directory.name not in CANDIDATE_PROCESSES and directory.stat().st_mtime < oldest:
+                shutil.rmtree(directory, ignore_errors=True)
+        if sum(directory.exists() for directory in retained) >= max(1, int(os.getenv("CATS_CANDIDATE_VERIFICATION_MAX_RETAINED", "128"))):
+            raise HTTPException(status_code=503, detail="Verification retention capacity reached")
+        if root.exists():
+            raise HTTPException(status_code=409, detail="Verification attempt already exists")
+        if not CANDIDATE_SLOTS.acquire(blocking=False):
+            raise HTTPException(status_code=503, detail="Verification worker is busy")
+        try:
+            root.mkdir(parents=True, mode=0o700)
+            config.write_text(json.dumps(payload), encoding="utf-8")
+            process = subprocess.Popen([sys.executable, "-m", "app.candidate_worker", str(config), str(result)],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            CANDIDATE_PROCESSES[attempt_id] = process
+        except Exception:
+            CANDIDATE_SLOTS.release()
+            shutil.rmtree(root, ignore_errors=True)
+            raise HTTPException(status_code=503, detail="Verification worker failed to start") from None
+    threading.Thread(target=_watch_candidate, args=(attempt_id, process, config), daemon=True).start()
+    return {"status": "running", "attempt_id": attempt_id}
+
+
+@app.get("/internal/candidate-verifications/{attempt_id}")
+def candidate_verification_status(attempt_id: str, x_cats_worker_token: str | None = Header(None)):
+    _candidate_authorize(x_cats_worker_token)
+    root, _, result = _candidate_paths(attempt_id)
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail="Verification attempt is unavailable")
+    if result.is_file():
+        try:
+            return json.loads(result.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {"status": "failed", "attempt_id": attempt_id, "error": "Invalid verification evidence"}
+    with LOCK:
+        process = CANDIDATE_PROCESSES.get(attempt_id)
+        running = process is not None and process.poll() is None
+    return {"status": "running" if running else "failed", "attempt_id": attempt_id,
+            "error": "" if running else "Verification worker stopped before producing evidence"}
+
+
+@app.delete("/internal/candidate-verifications/{attempt_id}")
+def cleanup_candidate_verification(attempt_id: str, x_cats_worker_token: str | None = Header(None)):
+    _candidate_authorize(x_cats_worker_token)
+    root, _, _ = _candidate_paths(attempt_id)
+    with LOCK:
+        process = CANDIDATE_PROCESSES.get(attempt_id)
+    if process is not None and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError):
+            process.kill()
+        process.wait(timeout=10)
+    shutil.rmtree(root, ignore_errors=True)
+    return {"attempt_id": attempt_id, "status": "removed"}
