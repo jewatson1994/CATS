@@ -126,13 +126,16 @@ RUN if ! command -v copa >/dev/null 2>&1; then \
 
 RUN command -v kind && command -v kubectl && command -v helm && command -v docker \
     && command -v bash && command -v tar
-# The scan broker runs with only identity-switch capabilities. Scanner subprocesses
-# use cats-scanner; the root-owned control workspace protects broker credentials.
+# The broker can switch identity, reclaim files, and terminate scanner groups.
+# A private parent keeps the site-wide registry bind hidden from scanner UIDs,
+# even when the host config.json permits reading by every user.
 RUN addgroup -g 10001 cats-scan \
     && adduser -D -u 10001 -G cats-scan -h /var/lib/cats-scan cats-scan \
     && addgroup -g 10002 cats-scanner \
     && adduser -D -u 10002 -G cats-scanner -h /var/lib/cats-scan cats-scanner \
-    && mkdir -p /var/lib/cats-scan/tmp \
+    && mkdir -p /var/lib/cats-scan/tmp /run/cats-scan-control \
+    && chmod 0700 /run/cats-scan-control \
+    && chown 0:0 /run/cats-scan-control \
     && chmod 0711 /var/lib/cats-scan \
     && chown 0:0 /var/lib/cats-scan
 EXPOSE 8000 8443

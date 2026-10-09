@@ -1,6 +1,7 @@
 """Per-attempt untrusted-tool identity and environment; no control secrets."""
 import contextvars
 import os
+import stat
 from pathlib import Path
 
 _identity = contextvars.ContextVar("scan_identity", default=None)
@@ -13,7 +14,10 @@ def sanitized_environment(source=None):
     source = os.environ if source is None else source
     return {key: value for key, value in source.items()
             if not key.startswith(("CATS_SCAN_", "CATS_PORTAL_"))
-            and key not in {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY"}
+            and key not in {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY",
+                            "DOCKER_AUTH_CONFIG", "REGISTRY_AUTH_FILE",
+                            "GOOGLE_APPLICATION_CREDENTIALS", "AWS_SHARED_CREDENTIALS_FILE",
+                            "AWS_CONFIG_FILE", "HELM_REPOSITORY_CONFIG"}
             and "SECRET" not in key.upper()
             and not key.upper().endswith(("TOKEN", "PASSWORD", "PRIVATE_KEY"))}
 
@@ -31,19 +35,29 @@ def readable(path):
         os.chown(path, identity[0], 0)
 
 
-def reclaim(directory):
+def reclaim(directory, *, reject_links=False):
     """Reclaim scanner-owned output using CHOWN, without DAC/FOWNER caps."""
     directory = Path(directory)
     if os.name == "nt" or os.geteuid() != 0 or not directory.exists():
         return
+    hardlinks = []
     def normalize(path):
         if path.is_symlink(): return
+        metadata = path.lstat()
+        if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink != 1:
+            # Only remove the attempt's directory entry. Changing ownership or
+            # permissions would also change a file outside this attempt.
+            path.unlink()
+            hardlinks.append(path)
+            return
         os.chown(path, 0, 0)
         path.chmod(0o700 if path.is_dir() else 0o600)
     normalize(directory)
     for parent, folders, files in os.walk(directory, topdown=True, followlinks=False):
         for name in folders + files:
             normalize(Path(parent) / name)
+    if hardlinks and reject_links:
+        raise ValueError("Artifact hard links are forbidden")
 
 class identity:
     def __init__(self, uid, env): self.uid, self.env = uid, env

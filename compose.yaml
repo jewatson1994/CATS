@@ -109,12 +109,12 @@ services:
     entrypoint: []
     command: ["/opt/cats-venv/bin/python", "-m", "app.scan_worker"]
     networks: [scan_control, scan_egress]
-    # Control broker retains only the capabilities needed to drop scanner identity.
+    # Control broker can drop scanner identity, reclaim files, and stop scanner groups.
     # Scanner subprocesses run as 10002 without capabilities or control credentials.
     user: "0:0"
     read_only: true
     cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN]
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
     security_opt:
       - no-new-privileges:true
     cpus: ${CATS_SCAN_CPUS:-2}
@@ -150,7 +150,7 @@ services:
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
       CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
       CATS_IMAGE_SOURCE: daemonless
-      DOCKER_CONFIG: /run/cats-registry-auth
+      DOCKER_CONFIG: /run/cats-scan-control/registry-auth
       GRYPE_DB_CACHE_DIR: /var/lib/cats-scan/cache/grype
       GRYPE_DB_METADATA: /var/lib/cats-scan/cache/grype/latest.json
       TRIVY_CACHE_DIR: /var/lib/cats-scan/cache/trivy
@@ -164,7 +164,7 @@ services:
       - scan_jobs:/var/lib/cats-scan
       - type: bind
         source: ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-./scan-registry-auth}
-        target: /run/cats-registry-auth
+        target: /run/cats-scan-control/registry-auth
         read_only: true
         bind:
           create_host_path: false

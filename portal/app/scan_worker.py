@@ -19,7 +19,7 @@ from pathlib import Path
 
 import requests
 import re
-from .scan_artifacts import digest, pack, unpack
+from .scan_artifacts import digest, pack, unpack, validate_tree
 from .scan_acquisition import _download_public_chart
 from .helm_archives import extract_chart
 from .helm_downloads import close_downloads
@@ -46,7 +46,13 @@ class Worker:
         self.session.headers.update({"X-Worker-ID": self.worker_id, "Accept-Encoding": "identity"})
 
     def request(self, method, suffix, **kwargs):
+        # Requests only strips Authorization on cross-origin redirects; the
+        # attempt credential and replayable result body would still be sent.
+        kwargs["allow_redirects"] = False
         response = self.session.request(method, self.url + suffix, timeout=kwargs.pop("timeout", (5, 15)), **kwargs)
+        if 300 <= response.status_code < 400:
+            response.close()
+            raise requests.HTTPError("Worker control redirects are forbidden", response=response)
         response.raise_for_status()
         return response
 
@@ -57,10 +63,16 @@ class Worker:
         # Concurrent attempts have separate UIDs, preventing cross-job /proc and
         # private registry-file access. Only the broker retains control secrets.
         uid = None
+        if os.name != "nt" and os.geteuid() != 0:
+            raise ValueError("Scan broker must run as root to isolate scanner identities")
         if os.name != "nt" and os.geteuid() == 0:
             with _UID_LOCK:
                 uid = int(os.getenv("CATS_SCAN_SCANNER_UID", "10002"))
+                if not 1 <= uid < 2**32 - 1:
+                    raise ValueError("CATS_SCAN_SCANNER_UID must be an unprivileged positive UID")
                 while uid in _ACTIVE_UIDS: uid += 1
+                if uid >= 2**32 - 1:
+                    raise ValueError("No scanner UID is available")
                 _ACTIVE_UIDS.add(uid)
         try:
             return self._execute(job, uid)
@@ -170,6 +182,9 @@ class Worker:
                     (auth_dir / "config.json").write_text(json.dumps({"auths": scoped}), encoding="utf-8")
             environment["DOCKER_CONFIG"] = str(auth_dir)
             environment["HELM_REGISTRY_CONFIG"] = str(auth_dir / "config.json")
+            for key in ("CATS_SCAN_GRYPE_SOURCE", "CATS_SCAN_TRIVY_SOURCE"):
+                if key in os.environ:
+                    environment[key] = os.environ[key]
             provenance = {"started_at": time.time(), "tools": {}, "databases": pin_databases(environment, directory)}
             for key in list(environment):
                 if key.startswith(("CATS_SCAN_", "CATS_PORTAL_")) or key in {"DATABASE_URL", "CATS_CONFIG_ENCRYPTION_KEY", "CATS_PATCH_WORKER_TOKEN"}:
@@ -255,15 +270,16 @@ class Worker:
                 except (OSError, subprocess.TimeoutExpired):
                     provenance["tools"][tool] = {"status": "unavailable"}
             authorized()
-            with (output / "worker.log").open("w", encoding="utf-8") as log:
+            # Retain the read handle before the scanner starts. Reopening its
+            # path would let a scanner-created link expose broker-readable data.
+            with (output / "worker.log").open("w", encoding="utf-8") as log, (output / "worker.log").open("rb") as progress:
                 command = [runner, str(inputs), str(output)]
                 if sys.platform == "linux":
                     command = [sys.executable, "-m", "app.scan_runner", str(os.getpid()), *command]
                 process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
                                            env=environment, start_new_session=os.name != "nt", **scan_runtime.privileges())
                 while process.poll() is None:
-                    if STOP.is_set() or lost.is_set() or time.monotonic() > deadline:
-                        raise RuntimeError("Scan interrupted or attempt lease lost")
+                    authorized()
                     size = sum(p.stat().st_size for p in directory.rglob("*") if p.is_file() and not p.is_symlink())
                     if size > int(os.getenv("CATS_SCAN_DISK_BYTES", str(8 * 1024**3))):
                         raise RuntimeError("Worker disk budget exceeded")
@@ -276,11 +292,20 @@ class Worker:
                                     phase[0] = name
                                     break
                             except (ValueError, OSError): pass
-                    with (output / "worker.log").open("rb") as progress:
-                        progress.seek(max(0, progress.seek(0, 2) - 8192))
-                        log_tail[0] = redact(progress.read().decode("utf-8", errors="replace"))
+                    progress.seek(max(0, progress.seek(0, 2) - 8192))
+                    log_tail[0] = redact(progress.read().decode("utf-8", errors="replace"))
                     time.sleep(0.5)
-            scan_runtime.reclaim(directory)
+            # A successful supervisor may leave background children behind.
+            # Stop those before inspecting or reclaiming scanner-owned files.
+            if os.name != "nt":
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            # Tools can create mode-0700 directories. Reclaim without following
+            # links first, then validate before any artifact reads or writes.
+            scan_runtime.reclaim(directory, reject_links=True)
+            validate_tree(directory)
             for log_path in output.rglob("*.log"):
                 if not log_path.is_file() or log_path.is_symlink():
                     continue
@@ -309,8 +334,7 @@ class Worker:
                             completed_at=time.time())
             pack(evidence, results, identity)
             phase[0] = "transfer"
-            if lost.is_set() or STOP.is_set():
-                raise RuntimeError("Attempt is no longer authorized")
+            authorized()
             with results.open("rb") as source:
                 self.request("PUT", suffix + "/results", headers={**headers, "Content-Type": "application/x-tar"}, data=source, timeout=(5, 300))
         except Exception as exc:
@@ -358,6 +382,8 @@ class Worker:
 
 def redact(value):
     value = re.sub(r"(?i)(authorization[\s:=]+)(?:Bearer|Basic)\s+\S+", r"\1[redacted]", value)
+    value = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "[redacted]", value)
+    value = re.sub(r'(?i)("[^"\s]*(?:authorization|password|token|secret)"\s*:\s*)"(?:\\.|[^"\\])*"', r'\1"[redacted]"', value)
     value = re.sub(r"(?i)(https?://)[^/\s@]+@", r"\1[redacted]@", value)
     value = re.sub(r"(?i)(authorization|password|token|secret)([\s:=]+)\S+", r"\1\2[redacted]", value)
     return re.sub(r"(?i)(https?://[^\s?]+)\?[^\s]+", r"\1?[redacted]", value)

@@ -35,7 +35,7 @@ def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
     worker = deployment["services"]["scan-worker"]
     assert worker["user"] == "0:0"
     assert worker["cap_drop"] == ["ALL"]
-    assert set(worker["cap_add"]) == {"SETUID", "SETGID", "CHOWN"}
+    assert set(worker["cap_add"]) == {"SETUID", "SETGID", "CHOWN", "KILL"}
     assert worker["read_only"] is True
     assert worker["security_opt"] == ["no-new-privileges:true"]
     assert worker["environment"]["CATS_SCAN_SCANNER_UID"] == "10002"
@@ -45,7 +45,8 @@ def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
     assert not any("docker.sock" in str(volume) for volume in worker["volumes"])
     assert "DATABASE_URL" not in worker["environment"]
     auth = next(volume for volume in worker["volumes"] if isinstance(volume, dict))
-    assert auth["target"] == "/run/cats-registry-auth"
+    assert auth["target"] == "/run/cats-scan-control/registry-auth"
+    assert worker["environment"]["DOCKER_CONFIG"] == auth["target"]
     assert auth["read_only"] is True
     assert auth["bind"]["create_host_path"] is False
     assert worker["healthcheck"]["test"][-1] == "--readiness"

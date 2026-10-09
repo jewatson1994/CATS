@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import stat
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -21,8 +22,26 @@ def safe_name(name):
     return path
 
 
+def validate_tree(root):
+    """Reject filesystem indirection before privileged artifact processing."""
+    root = Path(root)
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("Artifact links are forbidden")
+        if stat.S_ISDIR(metadata.st_mode):
+            pending.extend(path.iterdir())
+        elif not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("Artifact special files are forbidden")
+        elif metadata.st_nlink != 1:
+            raise ValueError("Artifact hard links are forbidden")
+
+
 def pack(root, destination, identity):
     root = Path(root)
+    validate_tree(root)
     files = {}
     for path in sorted(root.rglob("*")):
         if path.is_symlink():
