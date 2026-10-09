@@ -21,7 +21,7 @@ def candidate(tmp_path):
 
 
 def evidence(request, status='VERIFIED'):
-    return {'status': status, 'artifact_digest': request['artifact']['digest'],
+    return {'status': status, 'request_id': request['request_id'], 'artifact_digest': request['artifact']['digest'],
             'service': request['service'], 'validation_type': 'oci', 'checks': {'rollout': 'passed'}}
 
 
@@ -41,7 +41,7 @@ def test_validates_exact_oci_identity_and_retains_evidence(tmp_path, monkeypatch
     assert observed['results'][0]['result']['checks'] == {'rollout': 'passed'}
 
 
-@pytest.mark.parametrize('field,value', [('artifact_digest', 'sha256:' + 'b' * 64),
+@pytest.mark.parametrize('field,value', [('request_id', 'b' * 32), ('request_id', None), ('artifact_digest', 'sha256:' + 'b' * 64),
     ('service', {'id': 'other', 'version': '1.0.0'}), ('validation_type', 'helm-chart')])
 def test_rejects_mismatched_remote_identity(tmp_path, monkeypatch, field, value):
     record, result = candidate(tmp_path)
@@ -61,6 +61,7 @@ def test_all_charts_must_verify(tmp_path, monkeypatch):
     assert observed['status'] == 'not_verified'
     assert observed['remote_status'] == 'FAILED'
     assert len(observed['results']) == 2
+    assert calls[0]['request_id'] != calls[1]['request_id']
 
 
 @pytest.mark.parametrize('invalid', ['mutable', 'service', 'digest', 'unsafe_archive'])

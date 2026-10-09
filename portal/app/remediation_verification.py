@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 from pathlib import Path
 import re
+import uuid
 from zipfile import ZipFile
 from sqlalchemy.orm import object_session
 from .deployment_bundle import file_digest
@@ -51,7 +52,8 @@ def verify_delivery(record, result, validator_config, root):
             if reference in seen:
                 raise ValueError("Ambiguous OCI deployment identity")
             seen.add(reference)
-            request = {'schema_version': REQUEST_SCHEMA_VERSION, 'validation_type': 'oci', 'service': service,
+            request = {'schema_version': REQUEST_SCHEMA_VERSION, 'request_id': uuid.uuid4().hex,
+                       'validation_type': 'oci', 'service': service,
                        'artifact': {'reference': reference, 'digest': digest},
                        'deployment': {'type': 'helm', 'namespace': 'cats-validation'}, 'validation_profile': 'default'}
             validate_request(request)
@@ -63,6 +65,7 @@ def verify_delivery(record, result, validator_config, root):
         for request in requests:
             remote = run_remote(validator_config, request)
             if (not isinstance(remote, dict) or remote.get('status') not in {'VERIFIED', 'PARTIALLY_VERIFIED', 'COULD_NOT_VALIDATE', 'FAILED', 'ERROR', 'CANCELLED', 'TIMED_OUT'}
+                    or remote.get('request_id') != request['request_id']
                     or remote.get('artifact_digest') != request['artifact']['digest'] or remote.get('service') != service or remote.get('validation_type') != 'oci'):
                 raise ValueError("Validator returned evidence for a different final artifact")
             results.append({'reference': request['artifact']['reference'], 'digest': request['artifact']['digest'], 'result': remote})

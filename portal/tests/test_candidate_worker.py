@@ -35,6 +35,40 @@ def test_worker_missing_scanner_never_passes(tmp_path, monkeypatch):
     assert not list(tmp_path.glob('candidate-*'))
 
 
+@pytest.mark.parametrize('expected', [['Pod/other'], ['Pod/api', 'Pod/api'], ['team/Pod/api']])
+def test_worker_requires_expected_resource_identities(tmp_path, monkeypatch, expected):
+    payload = request()
+    payload['render_only'] = True
+    payload['plan']['before']['resource_identities'] = expected
+    monkeypatch.setattr(candidate_worker.shutil, 'which', lambda _: None)
+    result = candidate_worker.execute(payload, tmp_path / 'result.json')
+    assert result['validation']['checks']['expected_resources']['status'] == 'FAIL'
+
+
+def test_empty_render_cannot_reuse_planning_checks(tmp_path, monkeypatch):
+    payload = request()
+    payload['files'] = {'empty.yaml': ''}
+    payload['render_only'] = True
+    payload['validation']['checks'] = {
+        name: {'status': 'PASS'} for name in ('yaml_parsing', 'expected_resources', 'kubernetes_schema')}
+    monkeypatch.setattr(candidate_worker.shutil, 'which', lambda _: None)
+    result = candidate_worker.execute(payload, tmp_path / 'result.json')
+    assert result['validation']['checks']['yaml_parsing']['status'] == 'FAIL'
+
+
+@pytest.mark.parametrize('count,status', [(1, 'PASS'), (2, 'FAIL')])
+def test_helm_resource_counts_allow_verification_release_names(tmp_path, monkeypatch, count, status):
+    payload = request()
+    payload['files'] = {'Chart.yaml': 'apiVersion: v2\nname: api\nversion: 1.0.0\n'}
+    payload['render_only'] = True
+    payload['plan']['before']['resource_identities'] = ['Pod/original-release'] * count
+    monkeypatch.setattr(candidate_worker.shutil, 'which', lambda tool: 'helm' if tool == 'helm' else None)
+    monkeypatch.setattr(candidate_worker.subprocess, 'run', lambda *args, **kwargs:
+                        SimpleNamespace(returncode=0, stdout=request()['files']['pod.yaml']))
+    result = candidate_worker.execute(payload, tmp_path / 'result.json')
+    assert result['validation']['checks']['expected_resources']['status'] == status
+
+
 @pytest.mark.parametrize('report', ['{}', 'not-json', '{"SchemaVersion":2,"Results":[]}'])
 def test_worker_evidence_requires_completed_json(tmp_path, monkeypatch, report):
     monkeypatch.setattr(candidate_worker.shutil, 'which', lambda tool: 'trivy' if tool == 'trivy' else None)

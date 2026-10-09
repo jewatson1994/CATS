@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import hashlib
 import json
 import os
@@ -11,7 +12,7 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
-from .remediation import summarize_configuration_report
+from .remediation import resource_identity, summarize_configuration_report
 from .remediation_delivery import checked_values_files
 
 
@@ -35,6 +36,10 @@ def validate_request(payload: dict) -> None:
 def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
     """Run available Level 1 tools and keep missing tools explicit."""
     checks = validation["checks"]
+    # Planning checks describe the original persisted render. Only this attempt's
+    # output can establish these checks for the materialized candidate.
+    for name in ("yaml_parsing", "expected_resources", "kubernetes_schema"):
+        checks[name] = {"status": "FAIL", "detail": "No candidate Kubernetes resources were rendered."}
     values_files = checked_values_files(payload.get("helm_values_files", []),
         {path.relative_to(candidate_dir).as_posix() for path in candidate_dir.rglob("*") if path.is_file()})
     overrides = [argument for value in values_files for argument in ("--values", str(candidate_dir / value))]
@@ -68,15 +73,23 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
     if rendered_text:
         try:
             objects = [item for item in yaml.safe_load_all(rendered_text) if isinstance(item, dict) and item.get("kind")]
-            checks["yaml_parsing"] = {"status": "PASS", "detail": f"Parsed {len(objects)} candidate Kubernetes resources."}
-            expected_kinds = {str(value).split("/")[-2] for value in plan["before"].get("resource_identities", []) if "/" in str(value)}
-            actual_kinds = {str(item.get("kind")) for item in objects}
+            checks["yaml_parsing"] = {"status": "PASS" if objects else "FAIL", "detail": f"Parsed {len(objects)} candidate Kubernetes resources."}
+            expected = Counter(plan["before"].get("resource_identities", []))
+            actual = Counter(resource_identity(item) for item in objects)
+            if chart_roots:
+                # Helm's verification release differs from the original scan's
+                # release, so generated names/namespaces can legitimately differ.
+                # Portal also compares baseline and candidate renders under the
+                # same release to prove exact scope; retain multiplicity here.
+                expected = Counter(str(value).split("/")[-2] for value in plan["before"].get("resource_identities", []) if "/" in str(value))
+                actual = Counter(str(item.get("kind")) for item in objects)
             from .remediation_sources import verify_rendered_changes
             checks["intended_changes"] = verify_rendered_changes(objects, plan.get("configuration_changes", []))
             if "intended_changes" not in validation["required_checks"]:
                 validation["required_checks"].append("intended_changes")
-            checks["expected_resources"] = {"status": "PASS" if expected_kinds <= actual_kinds else "FAIL",
-                                             "detail": "Expected resource kinds remain present in the candidate render."}
+            checks["expected_resources"] = {"status": "PASS" if objects and expected <= actual else "FAIL",
+                                             "detail": "Expected resource kinds and counts must remain present in the candidate render." if chart_roots
+                                             else "Expected resource identities and counts must remain present in the candidate render."}
             rendered_path = candidate_dir / ".cats-rendered.yaml"
             rendered_path.write_text(rendered_text, encoding="utf-8")
             from .offline_schema import validate_resources
