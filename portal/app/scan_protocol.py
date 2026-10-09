@@ -245,6 +245,11 @@ def _ingest_one():
                 payload["worker_sources"] = True
                 row.payload = payload
                 db.commit()
+                # Publication commits release the job lock. Cancellation may
+                # win before the next transaction; reacquire before continuing.
+                db.refresh(row, with_for_update=True)
+                if row.status == "cancelled":
+                    return
             fatal = (output / "scan-failure.json").exists()
             summary = json.loads((output / "scan-summary.json").read_text(encoding="utf-8"))
             if (output / "definition-acquisition-failure.json").exists():
@@ -267,6 +272,9 @@ def _ingest_one():
                 finalize_definition_result(job_id, payload, files, resolution)
                 row.payload = payload
                 db.commit()
+                db.refresh(row, with_for_update=True)
+                if row.status == "cancelled":
+                    return
             if row.service_key and payload.get("job_kind") == "scan":
                 from types import SimpleNamespace
                 from .models import Service
@@ -283,7 +291,7 @@ def _ingest_one():
                 main.ingest_public_scan(job_id=job_id, service_id=row.service_key, request=None, db=db, auth=InternalAuth())
                 # The existing ingest path commits its own transaction. Preserve
                 # a cancellation recorded after that commit rather than replacing it.
-                db.refresh(row)
+                db.refresh(row, with_for_update=True)
                 if row.status == "cancelled":
                     return
             status = "complete" if (payload.get("returncode") == 0
