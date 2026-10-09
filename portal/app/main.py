@@ -39,7 +39,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
-from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true
+from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
@@ -5537,6 +5537,12 @@ def _publish_remediation_charts(db: Session, packaged_charts: list[tuple[Path, d
 def _run_remediation_job(record_id: int) -> None:
     """Create an isolated candidate and persist every terminal outcome."""
     with SessionLocal() as db:
+        claimed = db.execute(update(RemediationExecution).where(
+            RemediationExecution.id == record_id, RemediationExecution.status == "queued"
+        ).values(status="running"))
+        db.commit()
+        if claimed.rowcount != 1:
+            return
         record = db.get(RemediationExecution, record_id)
         if not record:
             return
@@ -5557,23 +5563,11 @@ def _run_remediation_job(record_id: int) -> None:
                 execution = next((item for item in service.executions if item.execution_key == record.rollback_reference), None)
             if execution is None:
                 raise ValueError("The retained source assessment is unavailable; refusing to switch to a newer scan")
-            payload = _remediation_source_payload(execution)
-            retained_findings = []
-            identities = {item.identity_key: item.id for item in service.policy_findings}
-            for item in payload.get("policy_findings") or []:
-                values = policy_finding_values(item)
-                retained_findings.append(SimpleNamespace(
-                    id=identities.get(policy_finding_identity(values)), **values))
-            if record.finding_type == "configuration":
-                findings = [item for item in retained_findings if item.id == record.finding_id]
-                if not findings:
-                    raise ValueError("The selected configuration finding is absent from the retained source scan")
-            elif record.finding_type == "vulnerability":
-                findings = []
-            else:
-                findings = retained_findings
-            plan = build_plan(payload, findings, record.job_key)
+            payload, plan = _retained_remediation_plan(db, service, execution,
+                record.finding_type, record.finding_id, record.job_key)
             inputs = record.workflow_inputs or {}
+            if inputs.get("workflow_version") == 2 and inputs.get("plan_digest") != plan_digest(plan):
+                raise ValueError("The retained source no longer matches the confirmed plan")
             if inputs:
                 plan = resolve_decisions(plan, inputs.get("remediation_mode", "automated"), inputs.get("decisions", {}), record.requested_by_id)
                 _remediation_audit(db, record, "remediation.decisions_applied", mode=inputs.get("remediation_mode"), decisions=inputs.get("decisions", {}))
@@ -5581,18 +5575,6 @@ def _run_remediation_job(record_id: int) -> None:
                 for _, score in [risk_metadata(finding.cve)]
                 if any(item.execution_id == execution.id for item in finding.observations) and score is not None), default=None)
             _remediation_stage(record, "snapshot", "success")
-            planned_references = {str(item.get("original")) for item in plan.get("images", [])}
-            source_images = {item.image: item.image_digest for finding in service.findings
-                             for item in finding.observations if item.execution_id == execution.id}
-            for image_reference, image_digest in source_images.items():
-                if image_reference in planned_references:
-                    continue
-                plan["images"].append({"original": image_reference,
-                    "original_digest": image_digest,
-                    "classification": "REVIEW REQUIRED", "candidate": None,
-                    "source_mapping": {"ambiguous": True},
-                    "reason": "Canonical service image has no exact Helm source mapping; patching can proceed, chart rewriting needs review."})
-                planned_references.add(image_reference)
             plan["_source_files"] = payload.get("helm_source_files") or payload.get("source_files") or {}
             _assert_bundle_sources_safe(plan["_source_files"])
             _remediation_stage(record, "patch_images", "running")
@@ -5876,6 +5858,11 @@ def _run_remediation_job(record_id: int) -> None:
             with artifact.open("rb") as artifact_stream:
                 record.artifact_digest = "sha256:" + hashlib.file_digest(artifact_stream, "sha256").hexdigest()
             record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
+            deployable = bool(candidate_manifest.get("deployment_manifest"))
+            publishable = any(row.get("archive_path") or row.get("package_path") for row in candidate_manifest.get("charts", [])) or any(
+                row.get("archive_path") for row in candidate_manifest.get("images", []))
+            record.workflow_inputs = {**(record.workflow_inputs or {}), "artifact_capabilities": {
+                "download": True, "oci": publishable, "standard-bundle": deployable, "offline-bundle": deployable}}
             db.commit()
             _remediation_stage(record, "output", "success" if artifact.is_file() else "failed")
             _remediation_audit(db, record, "remediation.bundle_created" if record.output_mode == "bundle" else "remediation.candidate_created",
@@ -5952,8 +5939,9 @@ def _run_remediation_job(record_id: int) -> None:
                               target_type="remediation_execution", target_id=str(record.id),
                               detail={"service_id": record.service_id, "job_key": record.job_key, "status": record.status}))
             db.commit()
-            _validate_retained_remediation(db, record)
-            if inputs.get("requested_delivery") in {"oci", "standard-bundle", "offline-bundle"} and record.remediation_status in {"complete", "partial"} and validation["status"] != "BLOCKING":
+            if inputs.get("workflow_version") != 2:
+                _validate_retained_remediation(db, record)
+            if inputs.get("workflow_version") != 2 and inputs.get("requested_delivery") in {"oci", "standard-bundle", "offline-bundle"} and record.remediation_status in {"complete", "partial"} and validation["status"] != "BLOCKING":
                 try:
                     _queue_delivery(db, record, record.requested_by_id, inputs["requested_delivery"], inputs.get("destination_id", ""), inputs.get("verify_runtime", False))
                 except Exception as delivery_error:
@@ -6051,6 +6039,7 @@ def _validate_retained_remediation(db, record):
             "cleanup_status": "UNKNOWN" if request else "NOT_REQUIRED"}
         _remediation_stage(record, "deployment_validation", "unavailable", type(exc).__name__)
     finally:
+        validation.setdefault("deployment", {})["validated_at"] = utcnow().isoformat()
         history = list(validation.get("runtime_attempts") or [])
         history.append(deepcopy(validation.get("deployment") or {}))
         validation["runtime_attempts"] = history[-20:]
@@ -6079,6 +6068,12 @@ def _recover_retained_candidate_validations():
 
 def _run_retained_remediation_validation(record_id):
     with SessionLocal() as db:
+        claimed = db.execute(update(RemediationExecution).where(
+            RemediationExecution.id == record_id, RemediationExecution.verification_status == "queued")
+            .values(verification_status="running"))
+        db.commit()
+        if claimed.rowcount != 1:
+            return
         record = db.get(RemediationExecution, record_id)
         if record:
             _validate_retained_remediation(db, record)
@@ -6093,11 +6088,17 @@ def validate_remediation_candidate(service_key: str, job_key: str, csrf_token: s
     check_csrf(auth, csrf_token)
     with _CANDIDATE_VALIDATION_LOCK:
         record = db.scalar(select(RemediationExecution).join(Service).where(
-            RemediationExecution.job_key == job_key, Service.service_key == service_key))
+            RemediationExecution.job_key == job_key, Service.service_key == service_key).with_for_update(of=RemediationExecution))
         if not record:
             raise HTTPException(404)
+        db.execute(update(RemediationExecution).where(RemediationExecution.id == record.id).values(
+            job_key=RemediationExecution.job_key))
+        db.refresh(record)
         if record.status in {"queued", "running"} or record.verification_status in {"queued", "running"}:
             raise HTTPException(409, detail="Candidate validation or remediation is already active")
+        if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id,
+                DeliveryAttempt.status.in_(["queued", "running", "staged", "publishing"]))):
+            raise HTTPException(409, detail="Wait for the active delivery before validating this candidate")
         try:
             retained_candidate(record, REMEDIATION_JOB_ROOT)
         except ValueError as exc:
@@ -6107,10 +6108,52 @@ def validate_remediation_candidate(service_key: str, job_key: str, csrf_token: s
         prior = (record.validation_results or {}).get("deployment") or {}
         if prior.get("cleanup_status") == "UNKNOWN" and not prior.get("validation_id"):
             raise HTTPException(409, detail="Cleanup is unconfirmed and no bound remote job is available to resume; reconcile the interrupted validator request before retrying")
+        record.workflow_inputs = {key: value for key, value in (record.workflow_inputs or {}).items() if key != "validation_skipped"}
         record.verification_status = "queued"
         _remediation_stage(record, "deployment_validation", "queued")
         db.commit()
         REMEDIATION_WORKERS.submit(_run_retained_remediation_validation, record.id)
+    return RedirectResponse(f"/services/{service_key}/remediations/{job_key}", status_code=303)
+
+
+@app.post("/services/{service_key}/remediations/{job_key}/validation/skip")
+def skip_remediation_validation(service_key: str, job_key: str, csrf_token: str = Form(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    from .remediation_workflow import validation_required
+    check_csrf(auth, csrf_token)
+    if validation_required():
+        raise HTTPException(409, detail="Policy requires candidate validation")
+    with _CANDIDATE_VALIDATION_LOCK:
+        record = db.scalar(select(RemediationExecution).join(Service).where(
+            RemediationExecution.job_key == job_key, Service.service_key == service_key).with_for_update(of=RemediationExecution))
+        if not record:
+            raise HTTPException(404)
+        db.execute(update(RemediationExecution).where(RemediationExecution.id == record.id).values(
+            job_key=RemediationExecution.job_key))
+        db.refresh(record)
+        if record.status in {"queued", "running"} or record.verification_status in {"queued", "running", "failed", "blocked", "verified"}:
+            raise HTTPException(409, detail="Active or completed candidate validation cannot be skipped")
+        prior = (record.validation_results or {}).get("deployment") or {}
+        if prior.get("cleanup_status") == "UNKNOWN" or prior.get("status") in {"FAILED", "BLOCKED", "PARTIALLY_VERIFIED"}:
+            raise HTTPException(409, detail="Resolve the previous validation and cleanup before proceeding")
+        if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id,
+                DeliveryAttempt.status.in_(["queued", "running", "staged", "publishing"]))):
+            raise HTTPException(409, detail="A delivery is already active")
+        try:
+            retained_candidate(record, REMEDIATION_JOB_ROOT)
+        except ValueError as exc:
+            raise HTTPException(409, detail=str(exc)) from None
+        now = utcnow()
+        record.workflow_inputs = {**(record.workflow_inputs or {}), "validation_skipped": {
+            "at": now.isoformat(), "actor_id": auth.user.id, "artifact_digest": record.artifact_digest}}
+        record.verification_status = "skipped"
+        record.validation_results = {**(record.validation_results or {}), "deployment": {
+            "status": "SKIPPED", "detail": "Candidate validation explicitly skipped under optional validation policy.",
+            "artifact_digest": record.artifact_digest, "validated_at": now.isoformat(), "cleanup_status": "NOT_REQUIRED"}}
+        record.updated_at = now
+        _remediation_stage(record, "deployment_validation", "skipped")
+        _remediation_audit(db, record, "remediation.validation_skipped", actor_id=auth.user.id, artifact_digest=record.artifact_digest)
+        db.commit()
     return RedirectResponse(f"/services/{service_key}/remediations/{job_key}", status_code=303)
 
 
@@ -6137,7 +6180,12 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
         raise HTTPException(409, detail="Retained remediation storage is full; allow active jobs to finish before retrying")
     if output_mode not in {"publish", "bundle"}:
         raise HTTPException(422, detail="Choose OCI publish or downloadable bundle")
-    db.execute(select(Service.id).where(Service.id == service.id).with_for_update()).scalar_one()
+    # A write lock also serializes confirmations on SQLite, where FOR UPDATE is ignored.
+    db.execute(update(Service).where(Service.id == service.id).values(service_key=Service.service_key))
+    if workflow_inputs and workflow_inputs.get("submission_key"):
+        replay = _confirmed_remediation(db, service.id, auth.user.id, workflow_inputs)
+        if replay:
+            return replay
     existing = db.scalar(select(RemediationExecution).where(
         RemediationExecution.service_id == service.id,
         RemediationExecution.status.in_(["queued", "running"])))
@@ -6217,65 +6265,182 @@ def _remediation_source_payload(execution) -> dict:
     return payload
 
 
-def _source_remediation_plan(db, service):
+def _source_remediation_plan(db, service, finding_type=None, finding_id=None):
     execution = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
     if not execution:
         raise HTTPException(422, "No source assessment is available")
+    _, plan = _retained_remediation_plan(db, service, execution, finding_type, finding_id)
+    return execution, plan
+
+
+def _retained_remediation_plan(db, service, execution, finding_type=None, finding_id=None, job_key="PREVIEW"):
+    """Build the same complete source inventory for review and execution."""
+    if execution.service_id != service.id:
+        raise HTTPException(404, "Remediation source is unavailable")
     payload = _remediation_source_payload(execution)
     identities = {item.identity_key: item.id for item in db.scalars(select(PolicyFinding).where(PolicyFinding.service_id == service.id))}
     findings = []
     for item in payload.get("policy_findings") or []:
         values = policy_finding_values(item)
         findings.append(SimpleNamespace(id=identities.get(policy_finding_identity(values)), **values))
+    if finding_type is not None or finding_id is not None:
+        model = PolicyFinding if finding_type == "configuration" else Finding if finding_type == "vulnerability" else None
+        if model is None or finding_id is None:
+            raise HTTPException(422, "Invalid remediation finding scope")
+        selected = db.get(model, finding_id)
+        if not selected or selected.service_id != service.id:
+            raise HTTPException(404, "Remediation finding is unavailable")
+        findings = [item for item in findings if item.id == finding_id] if finding_type == "configuration" else []
+        if finding_type == "configuration" and not findings:
+            raise HTTPException(422, "The selected finding is absent from the retained assessment")
+        if finding_type == "vulnerability" and not db.scalar(select(FindingObservation.id).where(
+                FindingObservation.finding_id == finding_id, FindingObservation.execution_id == execution.id).limit(1)):
+            raise HTTPException(422, "The selected finding is absent from the retained assessment")
     try:
         _assert_bundle_sources_safe(payload.get("helm_source_files") or payload.get("source_files") or {})
     except ValueError:
         raise HTTPException(422, "Retained source contains unsupported secret material") from None
-    return execution, build_plan(payload, findings, "PREVIEW")
+    plan = build_plan(payload, findings, job_key)
+    observations = db.execute(select(FindingObservation.image, FindingObservation.image_digest)
+        .join(Finding).where(Finding.service_id == service.id, FindingObservation.execution_id == execution.id)
+        .distinct().order_by(FindingObservation.image, FindingObservation.image_digest)).all()
+    planned_references = {str(item.get("original")) for item in plan.get("images", [])}
+    for image_reference, image_digest in observations:
+        if image_reference in planned_references:
+            continue
+        plan["images"].append({"original": image_reference, "original_digest": image_digest,
+            "classification": "REVIEW REQUIRED", "candidate": None,
+            "source_mapping": {"ambiguous": True},
+            "reason": "Canonical service image has no exact Helm source mapping; patching can proceed, chart rewriting needs review."})
+        planned_references.add(image_reference)
+    # Bind all source bytes, including files with no selected finding, and the
+    # supplemental image evidence. Never persist source contents in the approval.
+    plan["source_digest"] = hashlib.sha256(json.dumps({
+        "payload": execution.raw_payload, "source_execution_id": execution.id,
+        "source_version_id": execution.service_version_id,
+        "observed_images": [list(item) for item in observations],
+    }, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    return payload, plan
+
+
+def _public_remediation_plan(db, execution, plan):
+    """Display and persist the exact proposal without retaining source file contents."""
+    from .remediation_summary import _redact
+    version = db.get(ServiceVersion, execution.service_version_id) if execution.service_version_id else None
+    payload = execution.raw_payload or {}
+    files = payload.get("helm_source_files") or payload.get("source_files") or {}
+    charts = [{"path": str(path)} for path in files if str(path).replace("\\", "/").endswith("Chart.yaml")] if isinstance(files, dict) else []
+    return _redact({"source_execution_id": execution.id,
+        "source_version": version.version if version else execution.commit_sha or execution.execution_key,
+        "images": plan.get("images", []), "charts": charts,
+        "configuration_changes": plan.get("configuration_changes", []), "before": plan.get("before", {}),
+        "manual_review": [row for row in plan.get("configuration_changes", []) if row.get("classification") != "AUTO-REMEDIABLE"]})
+
+
+def _confirmed_remediation(db, service_id, actor_id, inputs):
+    record = db.scalar(select(RemediationExecution).where(
+        RemediationExecution.service_id == service_id, RemediationExecution.requested_by_id == actor_id,
+        RemediationExecution.workflow_inputs["submission_key"].as_string() == inputs["submission_key"]))
+    if record and (record.workflow_inputs or {}).get("submission_digest") != inputs.get("submission_digest"):
+        raise HTTPException(409, "This confirmation was already used for a different plan")
+    return record
+
+
+def _remediation_delivery_policy(db, record):
+    from .remediation_workflow import delivery_policy, validation_required
+    return delivery_policy(record, validation_required=validation_required())
+
+
+_REMEDIATION_CONFIRMATION_LOCK = threading.Lock()
 
 
 @app.get("/services/{service_key}/remediations/plan")
 def remediation_plan(service_key: str, db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True)),
+    finding_type: str | None = None, finding_id: int | None = None):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    execution, plan = _source_remediation_plan(db, service)
-    return {"source_execution_id": execution.id, "plan_digest": plan_digest(plan),
-            "configuration_changes": plan["configuration_changes"], "images": plan["images"]}
+    execution, plan = _source_remediation_plan(db, service, finding_type, finding_id)
+    return {**_public_remediation_plan(db, execution, plan), "plan_digest": plan_digest(plan)}
 
 
 @app.post("/services/{service_key}/remediations/start")
 def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mode: str = Form(),
     decisions: str = Form("{}"), plan_digest: str = Form(), source_execution_id: int = Form(),
-    output_mode: str = Form("bundle"), destination_id: str = Form(""), verify_runtime: str = Form("no"),
-    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    confirmed: str = Form("no"), submission_key: str = Form(""),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True)),
+    finding_type: str | None = Form(None), finding_id: int | None = Form(None)):
     check_csrf(auth, csrf_token)
+    # Direct internal callers use the same defaults as HTTP form parsing.
+    finding_type = finding_type if isinstance(finding_type, str) and finding_type else None
+    finding_id = finding_id if isinstance(finding_id, int) else None
+    if confirmed != "yes":
+        raise HTTPException(422, "Explicit confirmation of the remediation plan is required")
+    try:
+        submission_key = str(uuid.UUID(submission_key))
+        choices = json.loads(decisions)
+        submission_digest = hashlib.sha256(json.dumps([source_execution_id, plan_digest, remediation_mode, choices, finding_type, finding_id], sort_keys=True).encode()).hexdigest()
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(422, "Invalid confirmation key or remediation decisions") from None
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    execution, plan = _source_remediation_plan(db, service)
-    if execution.id != source_execution_id or not secrets.compare_digest(plan_digest, globals()["plan_digest"](plan)):
+    replay_inputs = {"submission_key": submission_key, "submission_digest": submission_digest}
+    replay = _confirmed_remediation(db, service.id, auth.user.id, replay_inputs)
+    if replay:
+        return RedirectResponse(f"/services/{service_key}/remediations/{replay.job_key}", status_code=303)
+    execution, plan = _source_remediation_plan(db, service, finding_type, finding_id)
+    if execution.id != source_execution_id or not secrets.compare_digest(plan_digest.encode(), globals()["plan_digest"](plan).encode()):
         raise HTTPException(409, "The source plan changed; rebuild it before executing")
     try:
-        choices = json.loads(decisions)
-        resolve_decisions(plan, remediation_mode, choices, auth.user.id)
+        approved = resolve_decisions(plan, remediation_mode, choices, auth.user.id)
     except (ValueError, TypeError):
         raise HTTPException(422, "Invalid or incomplete remediation decisions") from None
-    if output_mode not in {"bundle", "oci", "standard-bundle", "offline-bundle"}:
-        raise HTTPException(422, "Invalid delivery mode")
-    if output_mode == "oci":
-        service_oci.resolve_destination(db, service.id, destination_id,
-            parse_json(get_global_configuration(db).get("oci_registries"), []))
+    public_plan = _public_remediation_plan(db, execution, approved)
     inputs = {"remediation_mode": remediation_mode, "decisions": choices, "source_execution_id": source_execution_id,
-              "plan_digest": plan_digest, "requested_delivery": output_mode, "destination_id": destination_id,
-              "verify_runtime": verify_runtime == "yes"}
-    record = _queue_remediation(db, auth, service, output_mode="bundle", workflow_inputs=inputs)
+              "plan_digest": plan_digest, "workflow_version": 2, **replay_inputs,
+              "confirmed_by": auth.user.id, "confirmed_at": utcnow().isoformat(), "approved_plan": public_plan,
+              "service": {"id": service.service_key, "version": public_plan["source_version"]}}
+    with _REMEDIATION_CONFIRMATION_LOCK:
+        record = _queue_remediation(db, auth, service, finding_type=finding_type, finding_id=finding_id,
+                                   output_mode="bundle", workflow_inputs=inputs)
     return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
 
 
+def _delivery_actor(db, record, actor_id, output_mode):
+    actor = db.get(User, actor_id)
+    permission = "artifact.publish" if output_mode == "oci" else "service.export"
+    auth = AuthContext(user=actor, session=None) if actor and actor.enabled else None
+    if not auth or not auth.has(permission, record.service_id):
+        raise HTTPException(403, "Permission to publish artifacts is required" if output_mode == "oci" else "Permission to export service artifacts is required")
+    return auth
+
+
+def _check_delivery_policy(db, record, output_mode):
+    capabilities = (record.workflow_inputs or {}).get("artifact_capabilities")
+    capability = "download" if output_mode == "bundle" else output_mode
+    if isinstance(capabilities, dict) and capabilities.get(capability) is not True:
+        raise HTTPException(409, "This delivery method is unavailable for the retained artifact type")
+    policy = _remediation_delivery_policy(db, record)
+    if not policy["resolved"]:
+        raise HTTPException(409, policy.get("reason") or "Resolve candidate validation before choosing delivery")
+    if output_mode == "oci" and not policy["publish_allowed"]:
+        raise HTTPException(409, policy.get("reason") or "Candidate validation policy prevents OCI publication")
+
+
 def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify_runtime=False):
-    if (record.validation_results or {}).get("status") == "BLOCKING":
+    from .remediation_delivery import candidate_provenance
+    auth = _delivery_actor(db, record, actor_id, output_mode)
+    # Read policy only after serializing with validation/delivery state changes.
+    from sqlalchemy import update
+    db.execute(update(RemediationExecution).where(RemediationExecution.id == record.id)
+               .values(delivery_status=RemediationExecution.delivery_status))
+    db.refresh(record)
+    if output_mode == "oci":
+        _portal_signing_material(db, auth, "push", record.service)
+    _check_delivery_policy(db, record, output_mode)
+    if output_mode != "bundle" and (record.validation_results or {}).get("status") == "BLOCKING":
         raise HTTPException(409, detail="Candidate has blocking static validation defects")
     try:
         retained_candidate(record, REMEDIATION_JOB_ROOT)
@@ -6283,10 +6448,12 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
         raise HTTPException(409, str(exc)) from None
     if record.status in {"queued", "running"}:
         raise HTTPException(409, "Remediation is still running")
-    if record.remediation_status not in {"complete", "partial"}:
+    if output_mode != "bundle" and record.remediation_status not in {"complete", "partial"}:
         raise HTTPException(409, "No validated remediation candidate is available for delivery")
-    db.execute(select(RemediationExecution.id).where(RemediationExecution.id == record.id).with_for_update()).scalar_one()
-    if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id, DeliveryAttempt.status.in_(["queued", "running"]))):
+    version = db.get(ServiceVersion, record.source_version_id) if record.source_version_id else None
+    if output_mode != "bundle" and (not version or version.service_id != record.service_id):
+        raise HTTPException(409, "Retained service version identity is unavailable")
+    if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id, DeliveryAttempt.status.in_(["queued", "running", "staged", "publishing"]))):
         raise HTTPException(409, "A delivery is already running")
     if output_mode == "oci":
         destination = service_oci.resolve_destination(db, record.service_id, destination_id,
@@ -6301,11 +6468,17 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
         raise HTTPException(422, "Invalid delivery mode")
     attempt = DeliveryAttempt(remediation_id=record.id, actor_id=actor_id, destination=public,
         content_digest=record.artifact_digest, status="download_ready" if output_mode == "bundle" else "queued",
-        result={"verification_requested": True, "delivery_mode": output_mode})
+        result={"verification_requested": output_mode != "bundle", "delivery_mode": output_mode,
+                "provenance": {**candidate_provenance(record),
+                    "service": {"id": record.service.service_key, "version": version.version if version else record.original_revision}}})
     db.add(attempt); db.flush()
-    if output_mode != "bundle":
-        record.delivery_status = "queued"
-    _remediation_audit(db, record, "remediation.delivery_requested", attempt_id=attempt.id, actor_id=actor_id, destination=public)
+    record.delivery_status = attempt.status
+    if output_mode == "bundle":
+        attempt.completed_at = utcnow()
+        attempt.result = {**attempt.result,
+            "download_url": f"/services/{record.service.service_key}/remediations/{record.job_key}/candidate.zip"}
+    _remediation_audit(db, record, "remediation.delivery_requested", attempt_id=attempt.id, actor_id=actor_id,
+                       destination=public, provenance=attempt.result["provenance"])
     db.commit()
     if output_mode != "bundle":
         REMEDIATION_WORKERS.submit(_run_delivery_attempt, attempt.id)
@@ -6331,7 +6504,7 @@ def _run_bundle_delivery(db, record, attempt):
             result, path = remediation_bundles.assemble(record, REMEDIATION_JOB_ROOT, attempt.id, mode, version.version,
                                                        configuration=material)
         attempt.artifact_path = path
-        attempt.result = {**result, "delivery_mode": mode, "verification_requested": True}
+        attempt.result = {**(attempt.result or {}), **result, "delivery_mode": mode, "verification_requested": True}
         request = {"schema_version": "cats.validation/v2", "request_id": uuid.uuid4().hex, "validation_type": mode,
                    "service": {"id": record.service.service_key, "version": version.version},
                    "artifact": {"reference": Path(path).name, "digest": result["materialized_digest"]},
@@ -6354,10 +6527,9 @@ def _run_bundle_delivery(db, record, attempt):
         ready = verification.get("status") == "VERIFIED" and matched
         if mode == "offline-bundle":
             ready = ready and verification.get("offlineVerified") is True
-        attempt.result = {**result, "delivery_mode": mode, "verification_requested": True, "verification": verification,
+        attempt.result = {**(attempt.result or {}), **result, "delivery_mode": mode, "verification_requested": True, "verification": verification,
                           "download_url": f"/services/{record.service.service_key}/remediations/{record.job_key}/deliveries/{attempt.id}/bundle.zip" if ready else None}
         attempt.status = record.delivery_status = "download_ready" if ready else "validation_failed"
-        record.verification_status = "verified" if ready else "failed" if verification.get("status") == "FAILED" else "not_verified"
         validation = dict(record.validation_results or {})
         validation["final_delivery_validations"] = [*(validation.get("final_delivery_validations") or []),
             {"attempt_id": attempt.id, "validation_type": mode, "artifact_digest": result["materialized_digest"],
@@ -6388,11 +6560,42 @@ def _run_bundle_delivery(db, record, attempt):
 
 def _run_delivery_attempt(attempt_id):
     with SessionLocal() as db:
+        from sqlalchemy import update
+        # Only one worker may claim this attempt, including duplicate dispatches.
+        claimed = db.execute(update(DeliveryAttempt).where(DeliveryAttempt.id == attempt_id,
+            DeliveryAttempt.status == "queued").values(status="running"))
+        if claimed.rowcount != 1:
+            db.rollback()
+            return
         attempt = db.get(DeliveryAttempt, attempt_id)
         record = db.get(RemediationExecution, attempt.remediation_id) if attempt else None
         if not record:
             return
-        attempt.status = "running"; record.delivery_status = "running"; db.commit()
+        record.delivery_status = "running"; db.commit()
+        try:
+            mode = (attempt.result or {}).get("delivery_mode", "oci")
+            auth = _delivery_actor(db, record, attempt.actor_id, mode)
+            _check_delivery_policy(db, record, mode)
+            retained_candidate(record, REMEDIATION_JOB_ROOT)
+            version = db.get(ServiceVersion, record.source_version_id) if record.source_version_id else None
+            if not version or version.service_id != record.service_id:
+                raise ValueError("Retained service version identity is unavailable")
+            provenance = (attempt.result or {}).get("provenance") or {}
+            if (attempt.content_digest != record.artifact_digest or
+                    provenance.get("service") != {"id": record.service.service_key, "version": version.version} or
+                    any(provenance.get(key) != value for key, value in {
+                        "remediation_id": record.id, "service_id": record.service_id,
+                        "source_execution_id": record.source_execution_id,
+                        "source_version_id": record.source_version_id,
+                        "candidate_digest": record.artifact_digest}.items())):
+                raise ValueError("Retained candidate provenance changed after delivery was requested")
+        except Exception as exc:
+            attempt.status = record.delivery_status = "failed"
+            attempt.result = {**(attempt.result or {}), "error": "Delivery authorization, validation policy, or candidate provenance no longer permits this operation."}
+            attempt.completed_at = utcnow()
+            _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
+            db.commit()
+            return
         if attempt.destination.get("validation_type") in {"standard-bundle", "offline-bundle"}:
             _run_bundle_delivery(db, record, attempt)
             return
@@ -6400,12 +6603,10 @@ def _run_delivery_attempt(attempt_id):
             destination = service_oci.resolve_destination(db, record.service_id, attempt.destination["id"],
                 parse_json(get_global_configuration(db).get("oci_registries"), []))
             attempt.destination = {key: destination.get(key) for key in ("id", "name", "endpoint", "namespace", "scope")}
-            settings = get_global_configuration(db)
-            signing_config, signing_credentials = signing.job_material(settings, "push")
+            signing_config, signing_credentials = _portal_signing_material(db, auth, "push", record.service)
             delivery_options = {"signing_material": (signing_config, signing_credentials)} if signing_config else {}
             result, attempt.artifact_path = deliver(record, destination, attempt.id, REMEDIATION_JOB_ROOT, **delivery_options)
-            record.signing_status = result.get("signing_status", "not_requested")
-            attempt.result = {**result, "verification_requested": True, "delivery_mode": "oci"}
+            attempt.result = {**(attempt.result or {}), **result, "verification_requested": True, "delivery_mode": "oci"}
             attempt.status = "staged"; record.delivery_status = "staged"
             db.commit()
             # Registry upload is staging, not evidence of runtime validation.
@@ -6420,8 +6621,7 @@ def _run_delivery_attempt(attempt_id):
                     validator_management.select_configuration(db, parse_json(get_global_configuration(db).get("validator_configuration"), {}), 'oci'), REMEDIATION_JOB_ROOT)
             except Exception:
                 verification = {"status": "verification_unavailable", "detail": "Sandbox verification unavailable"}
-            attempt.result = {**result, "verification_requested": True, "delivery_mode": "oci", "validation_type": "oci", "verification": verification}
-            record.verification_status = verification["status"]
+            attempt.result = {**(attempt.result or {}), **result, "verification_requested": True, "delivery_mode": "oci", "validation_type": "oci", "verification": verification}
             attempt.status = record.delivery_status = "published" if verification["status"] == "verified" else "validation_failed"
             _remediation_audit(db, record, "remediation.verification_completed", attempt_id=attempt.id,
                 verification_status=verification["status"], artifact_digest=verification.get("artifact_digest"))
@@ -6438,7 +6638,7 @@ def _run_delivery_attempt(attempt_id):
                 content_digest=attempt.content_digest, materialized_digest=result.get("materialized_digest"))
         except Exception as exc:
             attempt.status = "failed"; record.delivery_status = "failed"
-            attempt.result = {"error": f"Delivery failed ({type(exc).__name__}); check destination access, credentials, trust, and retained artifacts."}
+            attempt.result = {**(attempt.result or {}), "error": f"Delivery failed ({type(exc).__name__}); check destination access, credentials, trust, and retained artifacts."}
             _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
         attempt.completed_at = utcnow(); db.commit()
         _cleanup_completed_remediations(db)
@@ -6447,12 +6647,15 @@ def _run_delivery_attempt(attempt_id):
 @app.post("/services/{service_key}/remediations/{job_key}/delivery")
 def redeliver_remediation(service_key: str, job_key: str, csrf_token: str = Form(), output_mode: str = Form(),
     destination_id: str = Form(""), verify_runtime: str = Form("no"), db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+    auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
     check_csrf(auth, csrf_token)
     record = db.scalar(select(RemediationExecution).join(Service).where(RemediationExecution.job_key == job_key,
         Service.service_key == service_key))
     if not record:
         raise HTTPException(404)
+    permission = "artifact.publish" if output_mode == "oci" else "service.export"
+    if not auth.has(permission, record.service_id):
+        raise HTTPException(403, "Permission to publish artifacts is required" if output_mode == "oci" else "Permission to export service artifacts is required")
     _queue_delivery(db, record, auth.user.id, output_mode, destination_id, verify_runtime == "yes")
     target = "candidate.zip" if output_mode == "bundle" else ""
     return RedirectResponse(f"/services/{service_key}/remediations/{job_key}" + (f"/{target}" if target else ""), status_code=303)
@@ -6474,9 +6677,16 @@ def remediation_delivery_bundle(service_key: str, job_key: str, attempt_id: int,
     result = attempt.result or {}
     evidence = result.get("verification") or {}
     digest = result.get("materialized_digest")
+    version = db.get(ServiceVersion, record.source_version_id) if record.source_version_id else None
+    mode = attempt.destination.get("validation_type")
     if (path.is_symlink() or any(parent.is_symlink() for parent in path.parents) or not path.is_file() or path.resolve() != expected.resolve()
             or expected.resolve().parent.parent != root or not isinstance(digest, str)
             or evidence.get("status") != "VERIFIED" or evidence.get("artifact_digest") != digest
+            or attempt.content_digest != record.artifact_digest
+            or not version or version.service_id != record.service_id
+            or evidence.get("service") != {"id": record.service.service_key, "version": version.version}
+            or evidence.get("validation_type") != mode
+            or (mode == "offline-bundle" and evidence.get("offlineVerified") is not True)
             or not secrets.compare_digest(file_digest(path), digest)):
         raise HTTPException(409, "Final delivery integrity check failed")
     return FileResponse(path, media_type="application/zip", filename=f"cats-{service_key}-{job_key}-{attempt.destination.get('validation_type', 'delivery')}.zip")
@@ -6486,33 +6696,36 @@ def remediation_delivery_bundle(service_key: str, job_key: str, attempt_id: int,
 def remediate_service(service_key: str, csrf_token: str = Form(), output_mode: str = Form("publish"), db: Session = Depends(get_db),
                       auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
     check_csrf(auth, csrf_token)
+    if not remediation_enabled(db):
+        raise HTTPException(403, detail="Remediation is disabled by the administrator")
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    record = _queue_remediation(db, auth, service, output_mode=output_mode)
-    return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
+    raise HTTPException(422, detail="Open Remediate to review and explicitly confirm a plan before starting")
 
 
 @app.post("/services/{service_key}/policy-findings/{finding_id}/remediate")
 def remediate_policy_finding(service_key: str, finding_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
                               auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
     check_csrf(auth, csrf_token)
+    if not remediation_enabled(db):
+        raise HTTPException(403, detail="Remediation is disabled by the administrator")
     finding = db.scalar(select(PolicyFinding).where(PolicyFinding.id == finding_id).options(selectinload(PolicyFinding.service)))
     if not finding or finding.service.service_key != service_key:
         raise HTTPException(404)
-    record = _queue_remediation(db, auth, finding.service, "configuration", finding.id)
-    return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
+    raise HTTPException(422, detail="Open Remediate on this finding to review and explicitly confirm its plan")
 
 
 @app.post("/services/{service_key}/findings/{finding_id}/remediate")
 def remediate_vulnerability_finding(service_key: str, finding_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
                                      auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
     check_csrf(auth, csrf_token)
+    if not remediation_enabled(db):
+        raise HTTPException(403, detail="Remediation is disabled by the administrator")
     finding = db.scalar(select(Finding).where(Finding.id == finding_id).options(selectinload(Finding.service)))
     if not finding or finding.service.service_key != service_key:
         raise HTTPException(404)
-    record = _queue_remediation(db, auth, finding.service, "vulnerability", finding.id)
-    return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
+    raise HTTPException(422, detail="Open Remediate on this finding to review and explicitly confirm its plan")
 
 
 @app.get("/services/{service_key}/remediations/{job_key}", response_class=HTMLResponse)
@@ -6529,6 +6742,7 @@ def remediation_report(service_key: str, job_key: str, request: Request, db: Ses
     light = remediation_status(db, service_key, job_key, DeliveryAttempt)
     return templates.TemplateResponse(request, "remediation_report.html", page_context(auth, job=record, service=record.service,
         remediation_enabled=remediation_enabled(db), oci_destinations=_remediation_destinations(db, record.service_id),
+        remediation_signing_required=signing.public_metadata(get_global_configuration(db))["enabled"],
         status_revision=light["revision"] if light else None))
 
 
@@ -6542,8 +6756,15 @@ def retry_remediation(service_key: str, job_key: str, csrf_token: str = Form(), 
         raise HTTPException(404)
     if prior.status in {"queued", "running"}:
         raise HTTPException(409, detail="The remediation job is still active")
+    inputs = deepcopy(prior.workflow_inputs or {})
+    if inputs.get("workflow_version") != 2 or not all(inputs.get(key) for key in (
+            "confirmed_by", "confirmed_at", "approved_plan", "plan_digest", "source_execution_id")):
+        raise HTTPException(422, detail="Open Remediate to review and confirm a new plan before retrying this older job")
+    for key in ("submission_key", "submission_digest", "validation_skipped", "artifact_capabilities",
+                "requested_delivery", "destination_id", "verify_runtime"):
+        inputs.pop(key, None)
     record = _queue_remediation(db, auth, prior.service, prior.finding_type, prior.finding_id,
-                                prior.output_mode, retry_of_id=prior.id)
+                                "bundle", retry_of_id=prior.id, workflow_inputs=inputs)
     return RedirectResponse(f"/services/{service_key}/remediations/{record.job_key}", status_code=303)
 
 

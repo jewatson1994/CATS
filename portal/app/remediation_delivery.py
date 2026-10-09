@@ -36,9 +36,21 @@ class DeliveryAttempt(Base):
 
 
 def attempt_dto(row):
-    return {"id": row.id, "actor_id": row.actor_id, "destination": row.destination, "content_digest": row.content_digest,
+    return {"id": row.id, "remediation_id": row.remediation_id, "actor_id": row.actor_id, "destination": row.destination, "content_digest": row.content_digest,
             "status": row.status, "result": row.result, "started_at": row.started_at.isoformat() if row.started_at else None,
             "completed_at": row.completed_at.isoformat() if row.completed_at else None}
+
+
+def candidate_provenance(record):
+    """Keep candidate evidence separate from each materialized delivery's evidence."""
+    deployment = (record.validation_results or {}).get("deployment") or {}
+    return {"remediation_id": record.id, "job_key": record.job_key, "service_id": record.service_id,
+            "source_execution_id": record.source_execution_id, "source_version_id": record.source_version_id,
+            "candidate_digest": record.artifact_digest,
+            "validation": {key: deployment.get(key) for key in
+                ("status", "validation_id", "request_id", "validator_id", "artifact_digest", "validation_type", "service")},
+            "verification_status": record.verification_status,
+            "validation_skipped": bool((record.workflow_inputs or {}).get("validation_skipped"))}
 
 
 def retained_candidate(record, root):

@@ -20,9 +20,10 @@ import json
 from sqlalchemy import select
 
 from .models import DeploymentValidationRun, RemediationExecution, Service
+from .remediation_workflow import workflow_projection
 
 VALIDATION_CLEANUP_TERMINAL = {"COMPLETE", "FAILED", "NOT_REQUIRED", "NOT_ATTEMPTED", "UNKNOWN"}
-REMEDIATION_ACTIVE = {"queued", "running"}
+REMEDIATION_ACTIVE = {"queued", "running", "publishing", "staged"}
 _DETAIL_LIMIT = 240
 
 
@@ -84,6 +85,7 @@ def remediation_status(db, service_key: str, job_key: str, attempts_model) -> di
         RemediationExecution.signing_status, RemediationExecution.artifact_digest,
         RemediationExecution.failure_reason, RemediationExecution.created_at, RemediationExecution.started_at,
         RemediationExecution.completed_at, RemediationExecution.updated_at,
+        RemediationExecution.workflow_inputs["workflow_version"].as_integer().label("workflow_version"),
     ).join(Service, Service.id == RemediationExecution.service_id).where(
         Service.service_key == service_key, RemediationExecution.job_key == job_key)).one_or_none()
     if row is None:
@@ -97,6 +99,8 @@ def remediation_status(db, service_key: str, job_key: str, attempts_model) -> di
     stages = {str(name): {"status": (stage or {}).get("status"), "started_at": (stage or {}).get("started_at"),
                           "completed_at": (stage or {}).get("completed_at"), "detail": _short((stage or {}).get("detail"))}
               for name, stage in (row.stages or {}).items() if isinstance(stage, dict) or stage is None}
+    workflow = workflow_projection({**dict(row._mapping),
+        "workflow_inputs": {"workflow_version": row.workflow_version}}, include_details=False)
     active = any(str(value or "").lower() in REMEDIATION_ACTIVE
                  for value in (row.status, row.delivery_status, row.verification_status))
     return {
@@ -104,10 +108,10 @@ def remediation_status(db, service_key: str, job_key: str, attempts_model) -> di
         "remediation_status": row.remediation_status, "delivery_status": row.delivery_status,
         "verification_status": row.verification_status, "signing_status": row.signing_status,
         "artifact_digest": row.artifact_digest, "failure_reason": _short(row.failure_reason),
-        "stages": stages, "delivery_attempts": attempts,
+        "stages": stages, "delivery_attempts": attempts, "workflow": workflow,
         "created_at": row.created_at, "started_at": row.started_at, "completed_at": row.completed_at,
         "updated_at": row.updated_at, "active": active, "terminal": not active,
         "revision": revision(row.status, row.phase, row.remediation_status, row.delivery_status,
                              row.verification_status, row.signing_status, row.artifact_digest,
-                             row.failure_reason, row.stages, row.completed_at, row.updated_at, attempts),
+                             row.failure_reason, row.stages, row.completed_at, row.updated_at, attempts, workflow),
     }

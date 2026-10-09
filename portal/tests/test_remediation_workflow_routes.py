@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 from types import SimpleNamespace
 import pytest
 from app import candidate_worker
@@ -8,7 +9,7 @@ from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import Session, sessionmaker
 from app import main
 from app.database import Base
-from app.models import Service, User, Execution, RemediationExecution
+from app.models import Service, User, Execution, RemediationExecution, Role, UserRoleAssignment
 from app.remediation_delivery import DeliveryAttempt
 
 
@@ -47,7 +48,10 @@ def workflow(monkeypatch, tmp_path):
     db.add_all([user, service]); db.flush()
     execution = Execution(service_id=service.id, execution_key='source', scanned_at=main.utcnow(), complete=True, raw_payload={'artifact_type':'helm'})
     db.add(execution); db.commit()
-    auth = SimpleNamespace(user=user)
+    role = Role(name='Delivery Operator', permissions=['service.view', 'service.export', 'remediation.execute', 'artifact.publish'])
+    db.add(role); db.flush()
+    db.add(UserRoleAssignment(user=user, role=role, service=service)); db.commit()
+    auth = main.AuthContext(user=user, session=None)
     submitted = []
     monkeypatch.setattr(main, 'check_csrf', lambda *_: None)
     monkeypatch.setattr(main, 'remediation_enabled', lambda _: True)
@@ -69,29 +73,40 @@ def start(workflow, **override):
     preview = main.remediation_plan(service.service_key, db=db, auth=auth)
     args = dict(service_key=service.service_key, csrf_token='token', remediation_mode='automated',
         decisions='{}', plan_digest=preview['plan_digest'], source_execution_id=execution.id,
-        output_mode='bundle', destination_id='', verify_runtime='no', db=db, auth=auth)
+        confirmed='yes', submission_key=str(uuid.uuid4()), db=db, auth=auth)
     args.update(override)
     return main.start_remediation(**args)
 
 
 def candidate(workflow):
+    from app.models import ServiceVersion
     db, service, execution, auth, _, root = workflow
     path = root / 'R1' / 'candidate.zip'; path.parent.mkdir(); path.write_bytes(b'retained content')
+    version = ServiceVersion(service_id=service.id, version='source-version')
+    db.add(version); db.flush()
     row = RemediationExecution(job_key='R1', service_id=service.id, requested_by_id=auth.user.id,
         source_execution_id=execution.id, revision_number=1, status='complete', remediation_status='partial',
-        artifact_path=str(path), artifact_digest='sha256:'+hashlib.sha256(path.read_bytes()).hexdigest())
+        source_version_id=version.id, original_revision=version.version,
+        artifact_path=str(path), artifact_digest='sha256:'+hashlib.sha256(path.read_bytes()).hexdigest(),
+        verification_status='verified',
+        validation_results={'deployment': {'status': 'VERIFIED',
+            'service': {'id': service.service_key, 'version': version.version},
+            'artifact_digest': 'sha256:'+hashlib.sha256(path.read_bytes()).hexdigest()}})
     db.add(row); db.commit()
     return row
 
 
 def test_plan_start_binds_source_and_persists_workflow(workflow):
     db, _, execution, _, submitted, _ = workflow
-    response = start(workflow, output_mode='oci', destination_id='1', verify_runtime='yes')
+    response = start(workflow)
     assert response.status_code == 303
     row = db.scalar(select(RemediationExecution))
     assert row.source_execution_id == execution.id and row.revision_number == 1
-    assert row.workflow_inputs['requested_delivery'] == 'oci'
-    assert row.workflow_inputs['verify_runtime'] is True
+    assert row.output_mode == 'bundle' and row.workflow_inputs['workflow_version'] == 2
+    assert row.workflow_inputs['approved_plan']['source_execution_id'] == execution.id
+    assert 'requested_delivery' not in row.workflow_inputs
+    assert row.workflow_inputs['confirmed_by'] == workflow[3].user.id
+    assert not db.scalar(select(DeliveryAttempt))
     assert submitted == [(main._run_remediation_job, row.id)]
 
 
@@ -106,6 +121,70 @@ def test_invalid_decisions_never_queue(workflow):
     with pytest.raises(HTTPException) as error: start(workflow, decisions=json.dumps({'foreign':{'action':'proposed'}}))
     assert error.value.status_code == 422
     assert not workflow[4]
+
+
+def test_unconfirmed_plan_cannot_start(workflow):
+    with pytest.raises(HTTPException) as error:
+        start(workflow, confirmed='no')
+    assert error.value.status_code == 422
+    assert not workflow[4]
+
+
+def test_confirmation_replay_returns_same_job_even_after_completion(workflow):
+    key = str(uuid.uuid4())
+    first = start(workflow, submission_key=key)
+    db = workflow[0]
+    row = db.scalar(select(RemediationExecution))
+    row.status = 'bundle_ready'; db.commit()
+    again = start(workflow, submission_key=key)
+    assert again.headers['location'] == first.headers['location']
+    assert db.scalar(select(func.count(RemediationExecution.id))) == 1
+    assert len(workflow[4]) == 1
+    with pytest.raises(HTTPException) as error:
+        start(workflow, submission_key=key, remediation_mode='manual')
+    assert error.value.status_code == 409
+
+
+def test_legacy_start_cannot_bypass_plan_confirmation(workflow):
+    db, service, _, auth, submitted, _ = workflow
+    with pytest.raises(HTTPException) as error:
+        main.remediate_service(service.service_key, 'token', 'publish', db, auth)
+    assert error.value.status_code == 422 and not submitted
+
+
+def test_legacy_retry_requires_new_plan_confirmation(workflow):
+    db, service, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    row.output_mode = 'publish'
+    db.commit()
+    with pytest.raises(HTTPException) as error:
+        main.retry_remediation(service.service_key, row.job_key, 'token', db, auth)
+    assert error.value.status_code == 422
+    assert not submitted
+    assert db.scalar(select(func.count(RemediationExecution.id))) == 1
+
+
+def test_confirmed_retry_preserves_plan_but_resets_delivery_and_validation(workflow):
+    db, service, _, auth, submitted, _ = workflow
+    start(workflow)
+    prior = db.scalar(select(RemediationExecution))
+    approved = prior.workflow_inputs['approved_plan']
+    prior.status = 'failed'
+    prior.output_mode = 'publish'
+    prior.workflow_inputs = {**prior.workflow_inputs, 'requested_delivery': 'oci',
+        'destination_id': '1', 'verify_runtime': True, 'validation_skipped': {'by': auth.user.id},
+        'artifact_capabilities': {'oci': True}}
+    db.commit()
+    response = main.retry_remediation(service.service_key, prior.job_key, 'token', db, auth)
+    assert response.status_code == 303
+    retry = db.scalar(select(RemediationExecution).where(RemediationExecution.retry_of_id == prior.id))
+    assert retry.output_mode == 'bundle'
+    assert retry.workflow_inputs['approved_plan'] == approved
+    assert retry.source_execution_id == prior.source_execution_id
+    assert not set(retry.workflow_inputs).intersection({'submission_key', 'submission_digest',
+        'requested_delivery', 'destination_id', 'verify_runtime', 'validation_skipped', 'artifact_capabilities'})
+    assert not db.scalar(select(DeliveryAttempt))
+    assert submitted[-1] == (main._run_remediation_job, retry.id)
 
 
 def test_redelivery_retains_r1_and_history_without_remediation(workflow, monkeypatch):
@@ -177,7 +256,7 @@ def test_worker_retains_staged_delivery_but_rejects_publication_when_verificatio
     db.expire_all()
     assert attempt.status == 'validation_failed' and attempt.artifact_path == 'materialized.zip'
     assert row.delivery_status == 'validation_failed' and row.remediation_status == 'partial'
-    assert row.verification_status == 'verification_unavailable'
+    assert row.verification_status == 'verified'
     assert attempt.result['materialized_digest'] == result['materialized_digest']
     assert row.validation_results['artifact_identities'][0]['verification']['status'] == 'verification_unavailable'
     assert attempt.completed_at is not None
@@ -228,6 +307,7 @@ def test_final_bundle_worker_validates_exact_bytes_and_releases_only_verified(wo
     assert requests[0][1] == str(final)
     assert requests[0][0]['artifact']['digest'] == result['materialized_digest']
     assert attempt.result['verification']['network_evidence'] == {'external_access_observed': False}
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
     assert row.validation_results['final_delivery_validations'][0]['attempt_id'] == attempt.id
     response = main.remediation_delivery_bundle(service.service_key, row.job_key, attempt.id, db, auth)
     assert str(response.path) == str(final)
@@ -255,6 +335,7 @@ def test_final_bundle_missing_validator_fails_closed_preserving_evidence(workflo
     assert attempt.status == 'validation_failed'
     assert attempt.result['verification']['status'] == 'COULD_NOT_VALIDATE'
     assert attempt.result['download_url'] is None
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
     with pytest.raises(HTTPException) as failure:
         main.remediation_delivery_bundle(service.service_key, row.job_key, attempt.id, db, auth)
     assert failure.value.status_code == 404
@@ -278,7 +359,167 @@ def test_bundle_preparation_failure_preserves_safe_diagnostics(workflow, monkeyp
     evidence = json.dumps(attempt.result) + diagnostic.read_text()
     assert 'Missing dependency common' in evidence
     assert 'SECRET' not in evidence and 'TOKEN' not in evidence
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
     assert main.retained_candidate(row, root).is_file()
+
+
+@pytest.mark.parametrize('active_status', ['staged', 'publishing'])
+def test_staged_delivery_blocks_another_attempt(workflow, active_status):
+    db, _, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt.status = row.delivery_status = active_status
+    db.commit()
+    with pytest.raises(HTTPException) as failure:
+        main._queue_delivery(db, row, auth.user.id, 'offline-bundle')
+    assert failure.value.status_code == 409
+    assert len(submitted) == 1
+
+
+@pytest.mark.parametrize('status', ['running', 'staged', 'failed', 'published', 'download_ready'])
+def test_worker_never_reexecutes_claimed_or_completed_attempt(workflow, monkeypatch, status):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt.status = status
+    db.commit()
+    monkeypatch.setattr(main, 'deliver', lambda *_a, **_k: pytest.fail('Duplicate delivery executed'))
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == status
+    assert row.verification_status == 'verified'
+
+
+@pytest.mark.parametrize('mode,permission', [('oci', 'artifact.publish'), ('bundle', 'service.export'),
+                                          ('standard-bundle', 'service.export'), ('offline-bundle', 'service.export')])
+def test_delivery_requires_its_own_permission(workflow, mode, permission):
+    db, service, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    role = db.scalar(select(Role))
+    role.permissions = ['service.view', 'remediation.execute']
+    db.commit()
+    assert auth.has('remediation.execute', service.id)
+    assert not auth.has(permission, service.id)
+    with pytest.raises(HTTPException) as failure:
+        main.redeliver_remediation(service.service_key, row.job_key, 'token', mode, '1', 'no', db, auth)
+    assert failure.value.status_code == 403
+    assert not submitted
+    assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
+
+
+def test_worker_rechecks_revoked_publication_permission(workflow, monkeypatch):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    role = db.scalar(select(Role))
+    role.permissions = ['service.view', 'remediation.execute']
+    db.commit()
+    monkeypatch.setattr(main, 'deliver', lambda *_a, **_k: pytest.fail('Revoked user published'))
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == 'failed'
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
+    assert attempt.result['provenance']['candidate_digest'] == row.artifact_digest
+
+
+@pytest.mark.parametrize('resolved,publish_allowed,mode,blocked', [
+    (False, False, 'bundle', True), (False, False, 'oci', True),
+    (True, False, 'oci', True), (True, False, 'bundle', False),
+    (True, True, 'oci', False)])
+def test_queue_obeys_candidate_validation_policy(workflow, monkeypatch, resolved, publish_allowed, mode, blocked):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    monkeypatch.setattr(main, '_remediation_delivery_policy', lambda *_: {
+        'resolved': resolved, 'publish_allowed': publish_allowed, 'reason': 'Candidate validation policy'})
+    if blocked:
+        with pytest.raises(HTTPException) as failure:
+            main._queue_delivery(db, row, auth.user.id, mode, '1')
+        assert failure.value.status_code == 409
+        assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
+    else:
+        main._queue_delivery(db, row, auth.user.id, mode, '1')
+        assert db.scalar(select(func.count(DeliveryAttempt.id))) == 1
+
+
+@pytest.mark.parametrize('change', ['policy', 'digest', 'version'])
+def test_worker_rechecks_policy_and_candidate_association_before_upload(workflow, monkeypatch, change):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    if change == 'policy':
+        monkeypatch.setattr(main, '_remediation_delivery_policy', lambda *_: {
+            'resolved': True, 'publish_allowed': False, 'reason': 'Policy changed'})
+    elif change == 'digest':
+        row.artifact_digest = 'sha256:' + 'f' * 64
+    else:
+        from app.models import ServiceVersion
+        version = ServiceVersion(service_id=row.service_id, version='different-version')
+        db.add(version); db.flush(); row.source_version_id = version.id
+    db.commit()
+    monkeypatch.setattr(main, 'deliver', lambda *_a, **_k: pytest.fail('Mismatched candidate was uploaded'))
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == 'failed'
+    assert row.verification_status == 'verified'
+    assert row.remediation_status == 'partial'
+
+
+def test_repeated_downloads_have_independent_provenance_and_completion(workflow):
+    db, service, execution, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    attempts = [main._queue_delivery(db, row, auth.user.id, 'bundle') for _ in range(2)]
+    assert attempts[0].id != attempts[1].id
+    assert not submitted
+    for attempt in attempts:
+        assert attempt.completed_at is not None and attempt.status == 'download_ready'
+        provenance = attempt.result['provenance']
+        assert provenance['service_id'] == service.id
+        assert provenance['source_execution_id'] == execution.id
+        assert provenance['candidate_digest'] == row.artifact_digest
+        assert provenance['verification_status'] == 'verified'
+        assert attempt.result['download_url'].endswith('/R1/candidate.zip')
+
+
+def test_explicit_candidate_capabilities_block_unsupported_delivery(workflow):
+    db, _, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    row.workflow_inputs = {'artifact_capabilities': {'download': True, 'oci': False,
+        'standard-bundle': False, 'offline-bundle': False}}
+    db.commit()
+    with pytest.raises(HTTPException) as failure:
+        main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    assert failure.value.status_code == 409
+    main._queue_delivery(db, row, auth.user.id, 'bundle')
+    assert not submitted
+
+
+def test_publication_with_configured_signing_requires_signing_permission(workflow, monkeypatch):
+    db, _, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    monkeypatch.setattr(main.signing, 'configuration', lambda _: {'enabled': True})
+    with pytest.raises(HTTPException) as failure:
+        main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    assert failure.value.status_code == 403
+    assert not submitted
+    assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
+
+
+def test_failed_candidate_download_allows_scoped_exporter_to_troubleshoot(workflow):
+    db, service, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    row.remediation_status = row.status = 'failed'
+    row.verification_status = 'blocked'
+    row.validation_results = {'status': 'BLOCKING', 'deployment': {'status': 'BLOCKED'}}
+    role = db.scalar(select(Role))
+    role.permissions = ['service.view', 'service.export']
+    db.commit()
+    assert not auth.has('remediation.execute', service.id)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'bundle')
+    assert attempt.status == 'download_ready' and not submitted
+    assert row.status == 'failed' and row.verification_status == 'blocked'
+    with pytest.raises(HTTPException) as failure:
+        main._queue_delivery(db, row, auth.user.id, 'standard-bundle')
+    assert failure.value.status_code == 409
 
 
 @pytest.mark.parametrize('policies', [{}, {'ubuntu': {'mode': 'default'}}])

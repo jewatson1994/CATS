@@ -2,6 +2,7 @@ from io import BytesIO
 import os
 import re
 import json
+import uuid
 import urllib.parse
 import urllib.error
 import ssl
@@ -46,6 +47,17 @@ def csrf(client):
     raw = client.cookies.get("cats_session")
     with SessionLocal() as db:
         return db.scalar(select(UserSession.csrf_token).where(UserSession.token_hash == token_hash(raw)))
+
+
+def confirmed_remediation(client):
+    preview = client.get("/services/payments-service/remediations/plan")
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    return client.post("/services/payments-service/remediations/start", data={
+        "csrf_token": csrf(client), "remediation_mode": "automated", "decisions": "{}",
+        "source_execution_id": plan["source_execution_id"], "plan_digest": plan["plan_digest"],
+        "confirmed": "yes", "submission_key": str(uuid.uuid4()),
+    }, follow_redirects=False)
 
 
 def payload(execution_id, scanned_at, cves, service_id="payments-service", complete=True, skipped_images=None):
@@ -733,7 +745,7 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
     }]}
     assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
     monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
-    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    response = confirmed_remediation(client)
     assert response.status_code == 303
     with SessionLocal() as db:
         job = db.scalar(select(RemediationExecution))
@@ -783,7 +795,8 @@ def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_hist
         db.add(RemediationExecution(job_key="R-CONCURRENT", service_id=service.id, requested_by_id=admin.id,
                                     output_mode="publish", status="running", phase="patch_images"))
         db.commit()
-    assert client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}).status_code == 409
+    assert client.post("/api/v1/pipeline-results", json=payload("active-remediation", datetime.now(timezone.utc), []), headers=pipeline_headers).status_code == 201
+    assert confirmed_remediation(client).status_code == 409
     assert client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client)}, follow_redirects=False).status_code == 303
     with SessionLocal() as db:
         assert db.scalar(select(RemediationExecution).where(RemediationExecution.job_key == "R-CONCURRENT")).status == "running"
@@ -869,8 +882,11 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
     monkeypatch.setattr(portal_main.validator_management, "select_configuration",
                         lambda _db, _manual, _kind: {"endpoint": "https://validator.internal"})
     monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
-    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    response = confirmed_remediation(client)
     assert response.status_code == 303
+    assert not submitted  # Remediation retains the candidate; validation is a separate action.
+    validated = client.post(response.headers["location"] + "/validate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    assert validated.status_code == 303
     assert submitted[0][0]["schema_version"] == "cats.validation/v2"
     assert submitted[0][1]["requiredImages"] == [candidate]
     assert submitted[0][1]["deployment"]["valuesFiles"] == ["candidate/" + name for name in data["helm_values_files"]]
@@ -942,8 +958,7 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
     monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
     monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
     monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
-    response = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client),
-        "output_mode": "bundle"}, follow_redirects=False)
+    response = confirmed_remediation(client)
     assert response.status_code == 303
     with SessionLocal() as db:
         job = db.scalar(select(RemediationExecution))

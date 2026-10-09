@@ -19,6 +19,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import uuid
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -143,6 +144,7 @@ def remediation_portal(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "remediation_enabled", lambda _db: True)
     monkeypatch.setattr(main, "REMEDIATION_WORKERS", SimpleNamespace(submit=lambda fn, *args: fn(*args)))
     patched = []
+    validated = []
 
     def patch_job(job_id, _credentials):
         root = main.PATCH_JOB_ROOT / job_id
@@ -177,6 +179,7 @@ def remediation_portal(monkeypatch, tmp_path):
 
     def validate(_configuration, request, artifact_path=None, **_kwargs):
         from app.deployment_bundle import validate_bundle
+        validated.append(request)
         if request["validation_type"] == "standard-bundle":
             validate_bundle(artifact_path, expected_type="standard-bundle")
         return {"request_id": request["request_id"], "validation_type": request["validation_type"],
@@ -216,11 +219,11 @@ def remediation_portal(monkeypatch, tmp_path):
         "policy_findings": [],
     }
     assert client.post("/api/v1/pipeline-results", json=payload, headers={"Authorization": "Bearer test-token"}).status_code == 201
-    return client, csrf, patched
+    return client, csrf, patched, validated
 
 
 def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
-    client, csrf, patched = remediation_portal
+    client, csrf, patched, validated = remediation_portal
     page = {"Accept": main.PAGE_MEDIA_TYPE} if hasattr(main, "PAGE_MEDIA_TYPE") else {"Accept": "application/vnd.cats.page+json"}
 
     tab = client.get("/services/catalog?remediations=true&tab=pipeline", headers=page)
@@ -235,7 +238,7 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
 
     started = client.post("/services/catalog/remediations/start", follow_redirects=False, data={
         "csrf_token": csrf, "remediation_mode": "automated", "decisions": "{}", "plan_digest": plan["plan_digest"],
-        "source_execution_id": plan["source_execution_id"], "output_mode": "standard-bundle", "destination_id": "", "verify_runtime": "no"})
+        "source_execution_id": plan["source_execution_id"], "confirmed": "yes", "submission_key": str(uuid.uuid4())})
     assert started.status_code == 303
 
     with SessionLocal() as db:
@@ -251,24 +254,75 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
         assert checks["image_references"]["status"] == "PASS"
         assert checks["change_scope"]["status"] == "PASS"
         assert record.validation_results["status"] != "BLOCKING"
-        assert record.stages["deployment_validation"]["status"] == "success"
-        assert record.verification_status == "verified"
-        assert [attempt.status for attempt in attempts] == ["download_ready"]
+        assert record.verification_status == "not_verified"
+        assert record.delivery_status == "not_delivered"
+        assert attempts == []
+        assert validated == []
+        assert Path(record.artifact_path).is_file()
+        identity = (record.id, record.source_execution_id, record.source_version_id, record.artifact_digest)
+        remediation_status = record.remediation_status
         job_key = record.job_key
 
     candidate = client.get(f"/services/catalog/remediations/{job_key}/candidate.zip")
     assert candidate.status_code == 200
+    assert f"sha256:{hashlib.sha256(candidate.content).hexdigest()}" == identity[3]
     with zipfile.ZipFile(io.BytesIO(candidate.content)) as archive:
         values = yaml.safe_load(archive.read("candidate/upload/values.yaml"))
         rendered = archive.read("scans/rendered-after.yaml").decode()
     assert values["images"]["api"].endswith(f"-cats-{job_key.lower()}")
     assert values["images"]["worker"].endswith(f"-cats-{job_key.lower()}")
     assert "registry.example/catalog-api:2.4.1\n" not in rendered
+
+    validation = client.post(f"/services/catalog/remediations/{job_key}/validate",
+                             data={"csrf_token": csrf}, follow_redirects=False)
+    assert validation.status_code == 303
+    with SessionLocal() as db:
+        record = db.get(RemediationExecution, identity[0])
+        assert record.verification_status == "verified", record.validation_results.get("deployment")
+        assert record.stages["deployment_validation"]["status"] == "success"
+        candidate_verification = record.validation_results["deployment"]
+        assert candidate_verification["artifact_digest"] == identity[3]
+        assert candidate_verification["service"] == {"id": "catalog", "version": "1.4.0"}
+        assert db.scalars(select(DeliveryAttempt)).all() == []
+    assert len(validated) == 1
+
+    # Two separately validated deliveries reuse one immutable candidate and its patches.
+    attempt_ids = []
+    for _ in range(2):
+        delivered = client.post(f"/services/catalog/remediations/{job_key}/delivery",
+            data={"csrf_token": csrf, "output_mode": "standard-bundle"}, follow_redirects=False)
+        assert delivered.status_code == 303
+        with SessionLocal() as db:
+            records = db.scalars(select(RemediationExecution)).all()
+            assert len(records) == 1
+            record = records[0]
+            assert (record.id, record.source_execution_id, record.source_version_id, record.artifact_digest) == identity
+            assert record.remediation_status == remediation_status
+            assert record.verification_status == "verified"
+            assert record.validation_results["deployment"] == candidate_verification
+            attempts = db.scalars(select(DeliveryAttempt).order_by(DeliveryAttempt.id)).all()
+            assert len(attempts) == len(attempt_ids) + 1
+            assert all(attempt.status == "download_ready" for attempt in attempts), [attempt.result for attempt in attempts]
+            attempt = attempts[-1]
+            assert attempt.id not in attempt_ids
+            attempt_ids.append(attempt.id)
+            assert attempt.content_digest == identity[3]
+            result = attempt.result
+            assert result["verification"]["artifact_digest"] == result["materialized_digest"]
+            assert result["verification"]["service"] == candidate_verification["service"]
+            assert result["verification"]["validation_type"] == "standard-bundle"
+        bundle = client.get(result["download_url"])
+        assert bundle.status_code == 200
+        assert f"sha256:{hashlib.sha256(bundle.content).hexdigest()}" == result["materialized_digest"]
+    assert len(validated) == 3
+    assert len({request["request_id"] for request in validated}) == 3
+    assert len(patched) == 2
+    assert client.get(f"/services/catalog/remediations/{job_key}/candidate.zip").content == candidate.content
     assert client.get(f"/services/catalog/remediations/{job_key}", headers=page).status_code == 200
 
 
 def test_remediation_tab_survives_a_failing_plan_preview(remediation_portal, monkeypatch):
-    client, _csrf, _patched = remediation_portal
+    client, _csrf, _patched, _validated = remediation_portal
 
     def broken(*_args, **_kwargs):
         raise main.MutationError("Resource has no metadata") if hasattr(main, "MutationError") else ValueError("broken")
