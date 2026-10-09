@@ -1,5 +1,7 @@
 # Service Remediation
 
+The [remediation wizard](remediation-wizard.md) is the current workflow: Plan, Review, Confirm, Remediate, Validate, and Deliver. New requests create retained candidates first. OCI publication is a separate, permission-controlled delivery action after candidate validation is resolved. Historical jobs retain their original outcomes.
+
 Remediation is **disabled by default**. A global configuration administrator
 enables it under **Configuration → Remediation** after verifying the patch
 worker, configured OCI registry, mirrors, certificates, and validator. A
@@ -8,6 +10,9 @@ requests; existing jobs finish, and all prior reports remain visible.
 
 Execution requires the existing scoped `remediation.execute` permission.
 Reports require `service.view`; bundle downloads require `service.export`.
+OCI publication requires `artifact.publish`, and required signing also needs
+`artifact.sign`. Administrator and Cybersecurity include publication permission;
+Service Manager does not receive it automatically.
 The existing public Patch workspace is a separate workflow.
 
 ## What the job does
@@ -16,8 +21,9 @@ The job snapshots the latest service assessment, rendered workload images,
 active canonical service images, findings, and retained Helm source. It uses
 the existing Copa patch worker once per distinct image. That worker applies
 configured package mirrors and CAs, produces a new image archive, compares
-fixable Grype findings, and, for OCI output, pushes and optionally signs the
-new image using configured registry credentials. Remediation also requests
+fixable Grype findings, and retains the patched image archive. A later OCI
+delivery action publishes the image and optionally signs its immutable digest
+using configured registry credentials. Remediation also requests
 new Syft, Trivy, and Dockle evidence from the patched artifact. Unsupported
 images and individual patch failures remain visible without erasing other
 successful images. Original images, charts, and assessment history remain
@@ -37,16 +43,24 @@ are not automatically edited: an image hardening change can alter application
 behavior and requires an explicit safe rule and source evidence. Other
 unmapped findings remain manual remediation.
 
-## Output modes
+## Delivery modes
 
-**Publish to configured OCI** stages patched images in the configured
+Select delivery after resolving candidate validation. With the default
+`CATS_REMEDIATION_REQUIRE_VALIDATION=true`, OCI publication requires verified
+evidence for the exact retained digest, service, and version. Optional validation
+permits explicit Skip or an unavailable result; a validation failure or unresolved
+validator cleanup always blocks OCI publication. Final deployment bundles still
+require their own successful validation. See the [wizard policy](remediation-wizard.md#validation-policy).
+
+**Publish to configured OCI** stages retained patched images in the configured
 registry, packages and pushes charts, and submits the exact remediated chart
 and image references to CATSchrödinger when its mTLS endpoint is configured.
 Publication and validation have separate result states. A deployment failure
 does not erase published images, charts, scans, or the candidate bundle.
 Only a `VERIFIED` validator result is shown as validated.
 
-**Downloadable bundle** uses the same patch worker in download mode. The ZIP
+**Download candidate** exports the retained remediation output for inspection
+or troubleshooting. Its ZIP
 contains `manifest.json` (`cats.remediation/v1`), image archives, Helm
 packages where packaging succeeded, new SBOMs, Grype reports, Trivy/Dockle
 completion status, the before/after summary, and candidate source files. Raw
@@ -54,10 +68,12 @@ Trivy/Dockle output stays out of transferable bundles because scanner
 messages can contain image configuration values. The bundle
 contains no registry credentials, signing keys, or patch logs. Source files
 with recognizable secret-bearing material are rejected for either output mode.
-manifest gives each archive's loaded Docker tag and its intended remediated registry
+The manifest gives each archive's loaded Docker tag and its intended remediated registry
 reference. An operator must load, tag, and publish these images to the
-configured target registry before deploying the bundled chart. Offline
-bundles are not marked Kind Verified before that transfer and validation.
+configured target registry before deploying the bundled chart. The retained candidate is not marked verified by downloading it.
+**Standard bundle** and **Offline bundle** are separate delivery choices when
+the retained content supports them. Both require final delivery validation;
+offline delivery also requires its complete image and dependency inventory.
 
 The bundle does not include signatures for images that have not been
 published; the existing signing path applies only to pushed image digests.
@@ -83,9 +99,10 @@ New states include `bundle_ready`, `bundle_partial`, `publication_partial`,
 show what completed rather than collapsing every stage into one pass/fail.
 Image, chart, validation, bundle, and terminal events are audited without
 credential material.
-Terminal jobs can be retried as a new job. The new record points to its prior
-attempt and receives new image tags and a new chart version; existing evidence
-is not overwritten. A service row lock and active-job check prevent concurrent
+Validation and delivery retries reuse the retained revision. Rerunning remediation
+requires confirmation of a new plan and creates a new job. Historical retries
+point to their prior attempt and retain their original image tags, chart versions,
+and evidence. A service row lock and active-job check prevent concurrent
 requests for the same service.
 
 ## Deployment requirements and limits
