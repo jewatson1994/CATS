@@ -104,3 +104,18 @@
 .comparison-delta.improved { color: var(--success) !important; }
 .comparison-delta.worse { color: var(--danger) !important; }
 .comparison-metric > div > span { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-sm); }
+
+/* Durable six-stage workflow and accessible native-radio delivery cards. */
+.workflow-steps { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: var(--space-2); list-style: none; padding: 0 !important; margin: var(--space-4) 0; }
+.workflow-steps > li { padding: var(--space-2) !important; margin: 0 !important; border-top: 0 !important; border-bottom: 3px solid var(--border); color: var(--text-muted); }
+.workflow-steps small { display: block; font-size: var(--text-xs); }
+.workflow-steps [data-state=active] { border-bottom-color: var(--accent); color: var(--text); font-weight: 700; }
+.workflow-steps [data-state=completed] { border-bottom-color: var(--success); color: var(--text); }
+.delivery-cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: var(--space-3); border: 0; padding: var(--space-3) 0; }
+.delivery-card { display: grid; grid-template-columns: auto minmax(0,1fr); gap: var(--space-2); padding: var(--space-4); border: 2px solid var(--border); border-radius: var(--radius-lg); cursor: pointer; }
+.delivery-card input { grid-column: 1; width: auto; }
+.delivery-card strong, .delivery-card span, .delivery-card small { grid-column: 2; overflow-wrap: anywhere; }
+.delivery-card[data-selected=true] { border-color: var(--accent); background: color-mix(in srgb,var(--accent) 8%,var(--surface)); }
+.delivery-card:focus-within { outline: 2px solid var(--accent); outline-offset: 3px; }
+.delivery-card[data-available=false] { opacity: .6; cursor: not-allowed; }
+@media (max-width: 650px) { .workflow-steps { grid-template-columns: repeat(3,minmax(0,1fr)); } .delivery-cards { grid-template-columns: 1fr; } }
