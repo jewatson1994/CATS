@@ -4,7 +4,7 @@ These templates deploy the current runtime and its separate validator sandbox. R
 
 ## Main CATS
 
-The main template runs PostgreSQL, portal, and patch-worker under the project name `cats`. It uses an already-built image and does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
+The main template runs PostgreSQL, portal, the private portal-control listener, patch-worker, and scan-worker under the project name `cats`. It uses an already-built image and does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
 
 ```powershell
 Copy-Item templates/main.env.example C:/secure/cats.env
@@ -23,7 +23,16 @@ Generate the encryption key with the portal Python environment:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Update the image selection and recreate portal and worker together for upgrades; retain database volumes and the encryption key.
+The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Update the image selection and recreate portal, portal-control, patch-worker, and scan-worker together for upgrades; retain database volumes and the encryption key.
+
+
+The scan-worker requires its own random `CATS_SCAN_WORKER_TOKEN` of at least 32 characters, shared with the control listener. Worker APIs are available only on `http://portal-control:8001` inside the private network; do not publish this port. The worker has no PostgreSQL credentials or Docker socket. Its root broker has only the capabilities needed to launch isolated scanner subprocesses under a separate UID/GID (base 10002), with a read-only root filesystem and a disk workspace for large artifacts.
+
+Before direct Compose startup, create the registry-auth directory and set `CATS_SCAN_REGISTRY_AUTH_SOURCE` to its absolute path. The bind is read-only and missing-path creation is disabled. An empty directory supports public sources; private sources require pull-only Docker `auths` entries scoped to approved repositories. The release script creates/checks the directory, but the template commands above do not. Credentials are copied only for referenced hosts in authorized authenticated service scans. Anonymous submissions are disabled by default; enabling `CATS_SCAN_ALLOW_ANONYMOUS` does not grant service credentials.
+
+Scan inputs/results use plain tar envelopes; bounded submission preparation and evidence upload work run off the async request thread. Offline database imports publish immutable generations; each attempt receives a verified private snapshot. Durable PostgreSQL jobs survive restart, failed attempts follow bounded category-specific retry rules, and eligible unreferenced terminal scan evidence/history has a default 30-day retention; service/execution/image/definition references and output-bearing orphan directories are retained conservatively. Remediation candidate security checks run in patch-worker and fail closed when valid evidence is unavailable; Schrödinger remains independent.
+
+Follow [the dedicated worker guide](../docs/dedicated-scan-worker.md) for controls, credential rotation, storage/generation lifecycle, retention, and the target-host validation checklist. Compose rendering proves configuration consistency; validate actual scanner tools, large disk-backed artifacts, private OCI, offline imports, restart/cancellation, resource/network enforcement, and Portal latency on the deployment host before claiming operational readiness.
 
 The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires explicit image and release-directory selections; the root file retains local-development fallbacks. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
 
