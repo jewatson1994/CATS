@@ -111,9 +111,11 @@ def cleanup_remediation_artifacts(db, root: Path, *, now=None, policy=None):
             continue
         result["retained_bytes"] += size
         active = (str(row.status).lower() in active_states
-                  or str(row.delivery_status).lower() in {"running", "queued", "publishing", "delivering", "in_progress"}
+                  or str(row.delivery_status).lower() in {"running", "queued", "publishing", "staged", "delivering", "in_progress"}
                   or str(row.verification_status).lower() in {"running", "queued", "in_progress"})
-        if active:
+        if active or (folder / "release-documentation").is_dir():
+            # Immutable release history remains authoritative until explicit service deletion.
+            # It still consumes quota and can stop new admission.
             continue
         stamp = row.completed_at or row.created_at
         stamp = stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp

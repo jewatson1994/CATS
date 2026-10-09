@@ -294,7 +294,8 @@ def rows_for(db, service, kind):
             _asset_rows(db, service, execution))
 
 
-def workbook_for(db, service, kind, columns):
+def workbook_for(db, service, kind, columns, *, rows=None):
+    """Render configured columns, optionally from a retained execution snapshot."""
     columns = [c for c in validate_template(kind, columns) if c["enabled"]]
     workbook = Workbook()
     sheet = workbook.active
@@ -304,7 +305,7 @@ def workbook_for(db, service, kind, columns):
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="17312B")
         cell.alignment = Alignment(vertical="center", wrap_text=True)
-    for row in rows_for(db, service, kind):
+    for row in rows_for(db, service, kind) if rows is None else rows:
         values = []
         for column in columns:
             value = row.get(column["field"])

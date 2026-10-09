@@ -191,9 +191,9 @@ def test_redelivery_retains_r1_and_history_without_remediation(workflow, monkeyp
     db, service, _, auth, submitted, _ = workflow
     row = candidate(workflow)
     monkeypatch.setattr(main, '_run_remediation_job', lambda *_: pytest.fail('Delivery reran remediation'))
-    first = main._queue_delivery(db,row,auth.user.id,'oci','1')
+    first = main._queue_delivery(db,row,auth.user.id,'oci','1', authorize_documentation=True)
     first.status='failed'; first.result={'error':'Authentication'}; db.commit()
-    response = main.redeliver_remediation(service.service_key,row.job_key,'token','oci','2','no',db,auth)
+    response = main.redeliver_remediation(service.service_key,row.job_key,'token','oci','2','no','yes',db,auth)
     assert response.status_code == 303
     assert db.scalar(select(func.count(RemediationExecution.id))) == 1
     attempts = db.scalars(select(DeliveryAttempt).order_by(DeliveryAttempt.id)).all()
@@ -207,7 +207,7 @@ def test_redelivery_retains_r1_and_history_without_remediation(workflow, monkeyp
 def test_download_instead_reuses_retained_r1_without_worker(workflow):
     db, service, _, auth, submitted, _ = workflow
     row = candidate(workflow)
-    response = main.redeliver_remediation(service.service_key,row.job_key,'token','bundle','','no',db,auth)
+    response = main.redeliver_remediation(service.service_key,row.job_key,'token','bundle','','no','yes',db,auth)
     assert response.headers['location'].endswith('/R1/candidate.zip')
     assert db.scalar(select(DeliveryAttempt)).status == 'download_ready'
     assert not submitted and db.scalar(select(func.count(RemediationExecution.id))) == 1
@@ -216,9 +216,9 @@ def test_download_instead_reuses_retained_r1_without_worker(workflow):
 def test_delivery_requires_retained_integrity_and_rejects_concurrent_attempts(workflow):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
-    main._queue_delivery(db,row,auth.user.id,'oci','1')
+    main._queue_delivery(db,row,auth.user.id,'oci','1', authorize_documentation=True)
     with pytest.raises(HTTPException) as error:
-        main._queue_delivery(db,row,auth.user.id,'oci','2')
+        main._queue_delivery(db,row,auth.user.id,'oci','2', authorize_documentation=True)
     assert error.value.status_code == 409
     from pathlib import Path
     Path(row.artifact_path).write_bytes(b'tampered candidate')
@@ -232,7 +232,7 @@ def test_delivery_route_cannot_select_candidate_from_another_service(workflow):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
     with pytest.raises(HTTPException) as error:
-        main.redeliver_remediation('other-service',row.job_key,'token','oci','1','no',db,auth)
+        main.redeliver_remediation('other-service',row.job_key,'token','oci','1','no','yes',db,auth)
     assert error.value.status_code == 404
     assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
 
@@ -243,9 +243,9 @@ def test_worker_retains_staged_delivery_but_rejects_publication_when_verificatio
     row = candidate(workflow)
     version = ServiceVersion(service_id=service.id, version='retained-oci-1.0')
     db.add(version); db.flush(); row.source_version_id = version.id; db.commit()
-    attempt = main._queue_delivery(db,row,auth.user.id,'oci','1',True)
+    attempt = main._queue_delivery(db,row,auth.user.id,'oci','1',True, authorize_documentation=True)
     result = {'materialized_digest':'sha256:'+'b'*64, 'artifact_identities':[{'kind':'helm','digest':'sha256:'+'c'*64}]}
-    monkeypatch.setattr(main,'deliver',lambda *_: (result,'materialized.zip'))
+    monkeypatch.setattr(main,'deliver',lambda *_a, **_k: (result,'materialized.zip'))
     from app import remediation_verification
     def unavailable(record, retained, configuration, root):
         assert retained['service'] == {'id': service.service_key, 'version': version.version}
@@ -265,8 +265,8 @@ def test_worker_retains_staged_delivery_but_rejects_publication_when_verificatio
 def test_delivery_failure_is_sanitized_and_content_survives(workflow, monkeypatch):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
-    attempt = main._queue_delivery(db,row,auth.user.id,'oci','1')
-    monkeypatch.setattr(main,'deliver',lambda *_: (_ for _ in ()).throw(RuntimeError('password=SECRET')))
+    attempt = main._queue_delivery(db,row,auth.user.id,'oci','1', authorize_documentation=True)
+    monkeypatch.setattr(main,'deliver',lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError('password=SECRET')))
     main._run_delivery_attempt(attempt.id)
     db.expire_all()
     assert attempt.status == 'failed' and 'SECRET' not in json.dumps(attempt.result)
@@ -291,7 +291,7 @@ def test_final_bundle_worker_validates_exact_bytes_and_releases_only_verified(wo
     final.write_bytes(b'exact final delivery')
     identity = {'id': service.service_key, 'version': version.version}
     result = {'materialized_digest': file_digest(final), 'validation_type': mode, 'service': identity}
-    monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration: (result, str(final)))
+    monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration, documentation_builder=None: (result, str(final)))
     requests = []
     def validate(configuration, request, *, artifact_path):
         requests.append((request, artifact_path))
@@ -328,7 +328,7 @@ def test_final_bundle_missing_validator_fails_closed_preserving_evidence(workflo
     attempt = main._queue_delivery(db, row, auth.user.id, 'standard-bundle')
     final = root / row.job_key / f'delivery-{attempt.id}.zip'
     final.write_bytes(b'final')
-    monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration: ({'materialized_digest': file_digest(final)}, str(final)))
+    monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration, documentation_builder=None: ({'materialized_digest': file_digest(final)}, str(final)))
     monkeypatch.setattr(validator_client, 'validate', lambda *args, **kwargs: (_ for _ in ()).throw(ValueError('missing config')))
     main._run_delivery_attempt(attempt.id)
     db.expire_all()
@@ -367,7 +367,7 @@ def test_bundle_preparation_failure_preserves_safe_diagnostics(workflow, monkeyp
 def test_staged_delivery_blocks_another_attempt(workflow, active_status):
     db, _, _, auth, submitted, _ = workflow
     row = candidate(workflow)
-    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     attempt.status = row.delivery_status = active_status
     db.commit()
     with pytest.raises(HTTPException) as failure:
@@ -380,7 +380,7 @@ def test_staged_delivery_blocks_another_attempt(workflow, active_status):
 def test_worker_never_reexecutes_claimed_or_completed_attempt(workflow, monkeypatch, status):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
-    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     attempt.status = status
     db.commit()
     monkeypatch.setattr(main, 'deliver', lambda *_a, **_k: pytest.fail('Duplicate delivery executed'))
@@ -401,7 +401,7 @@ def test_delivery_requires_its_own_permission(workflow, mode, permission):
     assert auth.has('remediation.execute', service.id)
     assert not auth.has(permission, service.id)
     with pytest.raises(HTTPException) as failure:
-        main.redeliver_remediation(service.service_key, row.job_key, 'token', mode, '1', 'no', db, auth)
+        main.redeliver_remediation(service.service_key, row.job_key, 'token', mode, '1', 'no', 'yes', db, auth)
     assert failure.value.status_code == 403
     assert not submitted
     assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
@@ -410,7 +410,7 @@ def test_delivery_requires_its_own_permission(workflow, mode, permission):
 def test_worker_rechecks_revoked_publication_permission(workflow, monkeypatch):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
-    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     role = db.scalar(select(Role))
     role.permissions = ['service.view', 'remediation.execute']
     db.commit()
@@ -433,11 +433,11 @@ def test_queue_obeys_candidate_validation_policy(workflow, monkeypatch, resolved
         'resolved': resolved, 'publish_allowed': publish_allowed, 'reason': 'Candidate validation policy'})
     if blocked:
         with pytest.raises(HTTPException) as failure:
-            main._queue_delivery(db, row, auth.user.id, mode, '1')
+            main._queue_delivery(db, row, auth.user.id, mode, '1', authorize_documentation=True)
         assert failure.value.status_code == 409
         assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
     else:
-        main._queue_delivery(db, row, auth.user.id, mode, '1')
+        main._queue_delivery(db, row, auth.user.id, mode, '1', authorize_documentation=True)
         assert db.scalar(select(func.count(DeliveryAttempt.id))) == 1
 
 
@@ -445,7 +445,7 @@ def test_queue_obeys_candidate_validation_policy(workflow, monkeypatch, resolved
 def test_worker_rechecks_policy_and_candidate_association_before_upload(workflow, monkeypatch, change):
     db, _, _, auth, _, _ = workflow
     row = candidate(workflow)
-    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     if change == 'policy':
         monkeypatch.setattr(main, '_remediation_delivery_policy', lambda *_: {
             'resolved': True, 'publish_allowed': False, 'reason': 'Policy changed'})
@@ -487,7 +487,7 @@ def test_explicit_candidate_capabilities_block_unsupported_delivery(workflow):
         'standard-bundle': False, 'offline-bundle': False}}
     db.commit()
     with pytest.raises(HTTPException) as failure:
-        main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+        main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     assert failure.value.status_code == 409
     main._queue_delivery(db, row, auth.user.id, 'bundle')
     assert not submitted
@@ -498,7 +498,7 @@ def test_publication_with_configured_signing_requires_signing_permission(workflo
     row = candidate(workflow)
     monkeypatch.setattr(main.signing, 'configuration', lambda _: {'enabled': True})
     with pytest.raises(HTTPException) as failure:
-        main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+        main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
     assert failure.value.status_code == 403
     assert not submitted
     assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
@@ -520,6 +520,199 @@ def test_failed_candidate_download_allows_scoped_exporter_to_troubleshoot(workfl
     with pytest.raises(HTTPException) as failure:
         main._queue_delivery(db, row, auth.user.id, 'standard-bundle')
     assert failure.value.status_code == 409
+
+
+@pytest.mark.parametrize('entrypoint', ['queue', 'route'])
+def test_oci_requires_explicit_documentation_disclosure_consent(workflow, entrypoint):
+    db, service, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    with pytest.raises(HTTPException) as failure:
+        if entrypoint == 'queue':
+            main._queue_delivery(db, row, auth.user.id, 'oci', '1')
+        else:
+            main.redeliver_remediation(service.service_key, row.job_key, 'token', 'oci', '1', 'no', 'no', db, auth)
+    assert failure.value.status_code == 422
+    assert not submitted
+    assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
+
+
+@pytest.mark.parametrize('entrypoint', ['queue', 'route'])
+def test_artifact_publisher_without_service_export_cannot_disclose_documentation(workflow, entrypoint):
+    db, service, _, auth, submitted, _ = workflow
+    row = candidate(workflow)
+    role = db.scalar(select(Role))
+    role.permissions = ['service.view', 'remediation.execute', 'artifact.publish']
+    db.commit()
+    assert auth.has('artifact.publish', service.id)
+    assert not auth.has('service.export', service.id)
+    with pytest.raises(HTTPException) as failure:
+        if entrypoint == 'queue':
+            main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+        else:
+            main.redeliver_remediation(service.service_key, row.job_key, 'token', 'oci', '1', 'no', 'yes', db, auth)
+    assert failure.value.status_code == 403
+    assert not submitted
+    assert db.scalar(select(func.count(DeliveryAttempt.id))) == 0
+
+
+def _release_worker_io(workflow, monkeypatch):
+    """Fake external delivery/export work while exercising durable release orchestration."""
+    from app import release_documentation, release_oci, remediation_verification
+    from zipfile import ZipFile
+    db, _, execution, _, _, root = workflow
+    row = candidate(workflow)
+    state = {'deliveries': [], 'exports': [], 'publications': [], 'fail_subject': None}
+    identities = [{'kind': kind, 'identity_type': 'oci_manifest', 'digest': 'sha256:' + digit * 64,
+        'reference': f'registry.example/apps/{kind}@sha256:' + digit * 64}
+        for kind, digit in [('image', 'a'), ('helm', 'b')]]
+
+    def deliver(record, destination, attempt_id, delivery_root, signing_material=None, checkpoint=None):
+        state['deliveries'].append(attempt_id)
+        output = delivery_root / record.job_key / f'delivery-{attempt_id}.zip'
+        output.write_bytes(b'materialized deployment bytes')
+        checkpoint({'artifact_identities': identities[:1]})
+        return {'artifact_identities': identities, 'materialized_digest': 'sha256:' + hashlib.sha256(output.read_bytes()).hexdigest(),
+                'signing_status': 'not_requested', 'values_files': [], 'values_embedded': True}, str(output)
+
+    def export(db, record, auth, target):
+        state['exports'].append(target)
+        snapshot = {'service_id': record.service_id, 'source_execution_id': execution.id,
+                    'source_version_id': record.source_version_id, 'files': []}
+        with ZipFile(target, 'w') as archive:
+            archive.writestr('documentation-manifest.json', json.dumps(snapshot, sort_keys=True))
+        return snapshot
+
+    def publish(files, subject, env):
+        contents = {name: path.read_bytes() for name, path in files.items()}
+        state['publications'].append((subject, contents))
+        digest = 'sha256:' + hashlib.sha256(contents['release-manifest.json'] + subject.encode()).hexdigest()
+        failed = subject == state['fail_subject']
+        return {'status': 'failed' if failed else 'published', 'publication_status': 'published',
+                'verification_status': 'failed' if failed else 'verified', 'subject': subject, 'digest': digest,
+                'reference': subject.split('@')[0] + '@' + digest, 'association_mode': 'oci_referrers'}
+
+    monkeypatch.setattr(main, 'deliver', deliver)
+    monkeypatch.setattr(main, '_portal_signing_material', lambda *_: ({}, {}))
+    monkeypatch.setattr(main.validator_management, 'select_configuration', lambda *_: {})
+    monkeypatch.setattr(remediation_verification, 'verify_delivery', lambda *_: {'status': 'verified'})
+    monkeypatch.setattr(release_documentation, 'write_documentation', export)
+    monkeypatch.setattr(release_oci, 'publish_documentation', publish)
+    return row, identities, state
+
+
+def test_worker_publishes_documentation_bound_to_every_verified_artifact(workflow, monkeypatch):
+    db, _, _, auth, _, root = workflow
+    row, identities, state = _release_worker_io(workflow, monkeypatch)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == row.delivery_status == 'published'
+    receipt = attempt.result['documentation']
+    assert receipt['status'] == 'published'
+    assert receipt['manifest']['artifacts'] == identities
+    assert [item['subject'] for item in receipt['publications']] == [item['reference'] for item in identities]
+    assert all(item['verification_status'] == 'verified' for item in receipt['publications'])
+    contents = state['publications'][0][1]
+    manifest = json.loads(contents['release-manifest.json'])
+    assert manifest['documentation']['digest'] == 'sha256:' + hashlib.sha256(contents['documentation.zip']).hexdigest()
+    assert manifest['documentation']['bytes'] == len(contents['documentation.zip'])
+    assert manifest['snapshot']['remediation']['candidate_digest'] == row.artifact_digest
+    assert receipt['signing']['status'] == 'unsigned'
+    assert 'VERIFY.txt' in contents
+    assert len(state['exports']) == len(state['deliveries']) == 1
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
+
+
+def test_worker_documentation_failure_retains_partial_refs_and_retry_reuses_bytes(workflow, monkeypatch):
+    db, _, _, auth, _, root = workflow
+    row, identities, state = _release_worker_io(workflow, monkeypatch)
+    state['fail_subject'] = identities[-1]['reference']
+    first = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    main._run_delivery_attempt(first.id)
+    db.expire_all()
+    assert first.status == 'failed'
+    assert first.result['artifacts_complete'] is True
+    assert first.result['artifact_identities'] == identities
+    partial = first.result['documentation']
+    assert partial['status'] == 'failed'
+    assert [item['status'] for item in partial['publications']] == ['published', 'failed']
+    assert all(item['reference'] and item['publication_status'] == 'published' for item in partial['publications'])
+    assert row.verification_status == 'verified' and row.remediation_status == 'partial'
+    first_contents = state['publications'][0][1]
+    state['fail_subject'] = None
+    retry = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    main._run_delivery_attempt(retry.id)
+    db.expire_all()
+    assert retry.status == 'published'
+    assert retry.result['retry_of'] == first.id
+    assert retry.artifact_path == first.artifact_path
+    assert retry.result['documentation']['revision'] == partial['revision']
+    assert len(state['exports']) == len(state['deliveries']) == 1
+    assert len(state['publications']) == 4
+    assert all(contents == first_contents for _, contents in state['publications'])
+    assert first.result['documentation'] == partial
+
+
+def test_worker_preserves_artifact_checkpoint_when_later_upload_fails(workflow, monkeypatch):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    identity = {'kind': 'image', 'identity_type': 'oci_manifest', 'digest': 'sha256:' + 'a' * 64,
+                'reference': 'registry.example/apps/image@sha256:' + 'a' * 64}
+    def partial(*args, checkpoint=None, **kwargs):
+        checkpoint({'artifact_identities': [identity]})
+        raise ValueError('Subsequent chart upload failed')
+    monkeypatch.setattr(main, 'deliver', partial)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == 'failed'
+    assert attempt.result['artifact_identities'] == [identity]
+    assert not attempt.result.get('artifacts_complete')
+    assert row.verification_status == 'verified'
+
+
+@pytest.mark.parametrize('revocation', ['consent', 'export_permission'])
+def test_worker_rechecks_documentation_authorization_before_upload(workflow, monkeypatch, revocation):
+    db, _, _, auth, _, _ = workflow
+    row = candidate(workflow)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    if revocation == 'consent':
+        attempt.result = {**attempt.result, 'documentation_authorized': False}
+    else:
+        role = db.scalar(select(Role))
+        role.permissions = ['service.view', 'remediation.execute', 'artifact.publish']
+    db.commit()
+    monkeypatch.setattr(main, 'deliver', lambda *_args, **_kwargs: pytest.fail('Revoked documentation authorization uploaded artifacts'))
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    assert attempt.status == 'failed'
+    assert not attempt.result.get('documentation')
+    assert row.verification_status == 'verified'
+
+
+def test_retained_release_downloads_validate_ownership_and_all_file_hashes(workflow, monkeypatch):
+    from pathlib import Path
+    db, service, _, auth, _, _ = workflow
+    row, _, _ = _release_worker_io(workflow, monkeypatch)
+    attempt = main._queue_delivery(db, row, auth.user.id, 'oci', '1', authorize_documentation=True)
+    main._run_delivery_attempt(attempt.id)
+    db.expire_all()
+    def request(name):
+        return SimpleNamespace(url=SimpleNamespace(path='/' + name))
+    for name in ('documentation.zip', 'release-manifest.json', 'VERIFY.txt'):
+        response = main.release_documentation_download(request(name), service.service_key, row.job_key, attempt.id, db, auth)
+        assert response.filename == name
+        assert Path(response.path).is_file()
+    with pytest.raises(HTTPException) as absent:
+        main.release_documentation_download(request('release-manifest.sig'), service.service_key, row.job_key, attempt.id, db, auth)
+    assert absent.value.status_code == 404
+    with pytest.raises(HTTPException) as other:
+        main.release_documentation_download(request('documentation.zip'), service.service_key, 'another-job', attempt.id, db, auth)
+    assert other.value.status_code == 404
+    Path(response.path).write_text('tampered verification instructions')
+    with pytest.raises(HTTPException) as corrupt:
+        main.release_documentation_download(request('documentation.zip'), service.service_key, row.job_key, attempt.id, db, auth)
+    assert corrupt.value.status_code == 409
 
 
 @pytest.mark.parametrize('policies', [{}, {'ubuntu': {'mode': 'default'}}])

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from zipfile import ZipFile
 import yaml
 
-from .deployment_bundle import build_bundle, file_digest, dependency_inventory, workload_images, image_archive_identity, _untar
+from .deployment_bundle import build_bundle, file_digest, dependency_inventory, workload_images, image_archive_identity, safe_path, _untar
 from .remediation_delivery import retained_candidate, checked_inventory, checked_values_files
 
 
@@ -202,7 +202,13 @@ def _acquire_image(reference, destination, workspace, configuration):
             "registryManifestDigest": registry_digest}
 
 
-def assemble(record, root, attempt_id, bundle_type, service_version, configuration=None):
+def assemble(record, root, attempt_id, bundle_type, service_version, configuration=None, documentation_builder=None):
+    """Materialize deployment identities, then embed optional signed release files.
+
+    documentation_builder(artifacts) returns (filename-to-Path mapping, metadata).
+    The callback runs after image acquisition and Helm rendering so the release
+    manifest describes the actual deployment bytes included in the final bundle.
+    """
     configuration = configuration or {}
     candidate = retained_candidate(record, root)
     with tempfile.TemporaryDirectory(prefix="cats-final-bundle-") as temporary:
@@ -277,6 +283,34 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
         if set(sources).intersection(documentation):
             raise ValueError("Remediation documentation conflicts with chart sources")
         sources.update(documentation)
+        artifact_identities = [
+            {"kind": "embedded-helm-deployment", "reference": chart_path,
+             "digest": chart_identity, "identity_type": "source_tree_sha256"},
+            {"kind": "rendered-manifests", "reference": "rendered.yaml",
+             "digest": "sha256:" + hashlib.sha256(rendered.stdout.encode("utf-8")).hexdigest(),
+             "identity_type": "file_sha256"},
+            *({"kind": "image-archive", "reference": image["archive_path"],
+               "digest": file_digest(image["source_path"]), "identity_type": "file_sha256"}
+              for image in images),
+            *({"kind": "image", "reference": reference,
+               "digest": reference.rsplit("@", 1)[1], "identity_type": "oci_manifest_digest"}
+              for reference in sorted(required) if re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", reference)),
+        ]
+        release_documentation = None
+        if documentation_builder is not None:
+            release_files, release_documentation = documentation_builder([dict(item) for item in artifact_identities])
+            if not isinstance(release_files, dict) or not release_files or not isinstance(release_documentation, dict):
+                raise ValueError("Invalid release documentation result")
+            occupied = {name.casefold() for name in sources}
+            for name, path in release_files.items():
+                name = safe_path("release/" + safe_path(name))
+                folded = name.casefold()
+                if any(folded == other or folded.startswith(other + "/") or other.startswith(folded + "/") for other in occupied):
+                    raise ValueError("Release documentation conflicts with bundle sources")
+                if not isinstance(path, Path) or path.is_symlink() or not path.is_file():
+                    raise ValueError("Release documentation must reference regular files")
+                sources[name] = path
+                occupied.add(folded)
         build_bundle(output, bundle_type=bundle_type,
                      service={"id": record.service.service_key, "version": service_version},
                      source_files=sources, chart_path=chart_path, values_files=values,
@@ -288,9 +322,11 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
                                  "sourceVersionId": record.source_version_id, "candidateDigest": record.artifact_digest,
                                  "embeddedDeployment": {"type": "helm", "chartPath": chart_path,
                                                         "identityType": "source_tree_sha256", "digest": chart_identity}})
-        return {"validation_type": bundle_type, "materialized_digest": file_digest(output),
-                "service": {"id": record.service.service_key, "version": service_version},
-                "artifact_identities": [{"kind": "bundle", "reference": output.name,
-                                         "digest": file_digest(output), "identity_type": "bundle_sha256"},
-                                        {"kind": "embedded-helm-deployment", "reference": chart_path,
-                                         "digest": chart_identity, "identity_type": "source_tree_sha256"}]}, str(output)
+        result = {"validation_type": bundle_type, "materialized_digest": file_digest(output),
+                  "service": {"id": record.service.service_key, "version": service_version},
+                  "artifact_identities": [{"kind": "bundle", "reference": output.name,
+                                           "digest": file_digest(output), "identity_type": "bundle_sha256"},
+                                          *artifact_identities]}
+        if release_documentation is not None:
+            result["documentation"] = release_documentation
+        return result, str(output)

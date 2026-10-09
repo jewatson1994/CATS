@@ -123,6 +123,19 @@ def test_delivery_preserves_ordered_custom_values(tmp_path, monkeypatch):
     with ZipFile(path) as output:
         assert json.loads(output.read("lineage.json"))["values_files"] == overrides
         assert yaml.safe_load(output.read("candidate/api/values.yaml"))["replicas"] == 3
+    calls.clear()
+    checkpoints = []
+    retried, _ = delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"},
+                                  2, tmp_path, checkpoint=checkpoints.append)
+    assert [args[1] for args in calls] == ["lint", "template", "push"]
+    assert retried["artifact_identities"] == result["artifact_identities"]
+    assert checkpoints[0]["artifact_identities"][1]["identity_type"] == "oci_manifest"
+    assert "signature_status" not in checkpoints[0]["artifact_identities"][1]
+    assert checkpoints[-1]["artifact_identities"][1]["signature_status"] == "not_requested"
+    cached = next((Path(record.artifact_path).parent / "delivery-packages").rglob("*.tgz"))
+    cached.write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="integrity mismatch"):
+        delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"}, 3, tmp_path)
 
 
 @pytest.mark.parametrize('image,source',[
@@ -250,7 +263,10 @@ def test_helm_ignoring_rewritten_digest_is_not_published(tmp_path, monkeypatch):
             output = "spec:\n  containers:\n  - image: local:tag\n"
         return SimpleNamespace(returncode=0, stdout=output, stderr="")
     monkeypatch.setattr(delivery.subprocess, "run", run)
+    checkpoints = []
     with pytest.raises(ValueError, match="Rendered Helm images"):
-        delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"}, 1, tmp_path)
+        delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"}, 1, tmp_path,
+                         checkpoint=checkpoints.append)
+    assert checkpoints[-1]["artifact_identities"][0]["digest"] == digest
     assert not any(args[1] in {"package", "push"} for args in calls)
     assert delivery.retained_candidate(record, tmp_path).exists()

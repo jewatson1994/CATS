@@ -1,5 +1,6 @@
 import io
 import json
+import hashlib
 import tarfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -127,3 +128,97 @@ def test_existing_configuration_auth_material_is_ephemeral_and_admin_only(tmp_pa
         assert configuration['image_registries'][0]['password'] == 'decoded-secret'
     assert not auth.exists()
     assert not ca.exists()
+
+
+@pytest.fixture
+def release_candidate(tmp_path, monkeypatch):
+    directory = tmp_path / 'job'
+    directory.mkdir()
+    candidate = directory / 'candidate.zip'
+    with ZipFile(candidate, 'w') as archive:
+        archive.writestr('candidate/helm/app/Chart.yaml', 'apiVersion: v2\nname: app\nversion: 1.0.0\n')
+        archive.writestr('manifest.json', json.dumps({'values_files': [], 'images': []}))
+    record = SimpleNamespace(job_key='job', artifact_path=str(candidate), artifact_digest=file_digest(candidate),
+                             service=SimpleNamespace(service_key='app'), source_execution_id=1, source_version_id=1)
+    reference = 'private.test/app@sha256:' + 'a' * 64
+    rendered = 'apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    image: ' + reference + '\n'
+    monkeypatch.setattr(producer.shutil, 'which', lambda name: name)
+    monkeypatch.setattr(producer, '_run', lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=rendered))
+    monkeypatch.setattr(producer, '_acquire_image', lambda ref, target, *args: {'identity': docker_archive(target, ref)})
+    return record, reference, rendered
+
+
+@pytest.mark.parametrize('bundle_type', ['standard-bundle', 'offline-bundle'])
+def test_release_builder_receives_materialized_identities_and_files_are_inventory_bound(tmp_path, release_candidate, bundle_type):
+    record, reference, rendered = release_candidate
+    docs = tmp_path / 'documentation.zip'
+    with ZipFile(docs, 'w') as archive:
+        archive.writestr('Assets.csv', 'Name\napp\n')
+    captured = []
+    documentation = {'status': 'ready', 'sha256': file_digest(docs), 'signing': {'status': 'unsigned'}}
+
+    def builder(artifacts):
+        captured.extend(artifacts)
+        release_manifest = tmp_path / 'release-manifest.json'
+        release_manifest.write_text(json.dumps({'artifacts': artifacts, 'documentation': {'sha256': file_digest(docs)}}))
+        return {'documentation.zip': docs, 'release-manifest.json': release_manifest}, documentation
+
+    result, path = producer.assemble(record, tmp_path, 'release', bundle_type, '2', documentation_builder=builder)
+    manifest = validate_bundle(path, expected_type=bundle_type, expected_digest=result['materialized_digest'])
+    assert result['documentation'] == documentation
+    assert captured[0] == result['artifact_identities'][1]
+    assert captured[0]['digest'] == manifest['provenance']['embeddedDeployment']['digest']
+    assert captured[1] == {'kind': 'rendered-manifests', 'reference': 'rendered.yaml',
+                           'digest': 'sha256:' + hashlib.sha256(rendered.encode()).hexdigest(), 'identity_type': 'file_sha256'}
+    assert captured[1]['digest'] == manifest['files']['rendered.yaml']['sha256']
+    assert captured[-1] == {'kind': 'image', 'reference': reference, 'digest': 'sha256:' + 'a' * 64,
+                            'identity_type': 'oci_manifest_digest'}
+    embedded_images = [item for item in captured if item['kind'] == 'image-archive']
+    assert len(embedded_images) == (1 if bundle_type == 'offline-bundle' else 0)
+    for image in embedded_images:
+        assert image['digest'] == manifest['files'][image['reference']]['sha256']
+    assert manifest['files']['release/documentation.zip']['sha256'] == file_digest(docs)
+    with ZipFile(path) as archive:
+        assert archive.read('release/documentation.zip') == docs.read_bytes()
+        assert json.loads(archive.read('release/release-manifest.json'))['artifacts'] == captured
+        tampered = tmp_path / 'tampered.zip'
+        with ZipFile(tampered, 'w') as altered:
+            for name in archive.namelist():
+                altered.writestr(name, b'changed documentation' if name == 'release/documentation.zip' else archive.read(name))
+    with pytest.raises(ValueError, match='artifact integrity mismatch'):
+        validate_bundle(tampered, expected_digest=result['materialized_digest'])
+    with pytest.raises(ValueError, match='file integrity mismatch'):
+        validate_bundle(tampered)
+
+
+@pytest.mark.parametrize('name', ['../escape', '/escape', 'documentation.zip/../escape'])
+def test_release_builder_rejects_unsafe_filenames(tmp_path, release_candidate, name):
+    record, _, _ = release_candidate
+    document = tmp_path / 'documentation.zip'
+    document.write_bytes(b'documentation')
+    with pytest.raises(ValueError, match='Unsafe bundle path'):
+        producer.assemble(record, tmp_path, 'release', 'standard-bundle', '2',
+                          documentation_builder=lambda artifacts: ({name: document}, {'status': 'ready'}))
+    assert not (tmp_path / 'job' / 'delivery-release.zip').exists()
+
+
+def test_release_builder_rejects_collision_with_candidate_sources(tmp_path, release_candidate):
+    record, _, _ = release_candidate
+    with ZipFile(record.artifact_path, 'a') as archive:
+        archive.writestr('candidate/release/documentation.zip', 'preexisting')
+    record.artifact_digest = file_digest(record.artifact_path)
+    document = tmp_path / 'documentation.zip'
+    document.write_bytes(b'documentation')
+    with pytest.raises(ValueError, match='conflicts with bundle sources'):
+        producer.assemble(record, tmp_path, 'release', 'standard-bundle', '2',
+                          documentation_builder=lambda artifacts: ({'documentation.zip': document}, {'status': 'ready'}))
+    assert not (tmp_path / 'job' / 'delivery-release.zip').exists()
+
+
+def test_failed_release_builder_never_produces_final_bundle(tmp_path, release_candidate):
+    record, _, _ = release_candidate
+    def builder(artifacts):
+        raise ValueError('Release signature verification failed')
+    with pytest.raises(ValueError, match='signature verification failed'):
+        producer.assemble(record, tmp_path, 'release', 'offline-bundle', '2', documentation_builder=builder)
+    assert not (tmp_path / 'job' / 'delivery-release.zip').exists()

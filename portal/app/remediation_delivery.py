@@ -194,7 +194,7 @@ def embed_values(files, chart_root, values_files):
     return name, content
 
 
-def deliver(record, destination, attempt_id, root, *, signing_material=None):
+def deliver(record, destination, attempt_id, root, *, signing_material=None, checkpoint=None):
     """Copy retained image archives, reconcile/package Helm; never patch or decide."""
     source = retained_candidate(record, root)
     validate_destination(destination)
@@ -205,6 +205,10 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
     namespace = destination.get("namespace", "")
     prefix = "/".join(p for p in (host, namespace) if p)
     results, mappings = [], {}
+    def save_progress():
+        if checkpoint:
+            # Do not share mutable identities with the persistence callback.
+            checkpoint({"artifact_identities": json.loads(json.dumps(results))})
     with ZipFile(source) as bundle, tempfile.TemporaryDirectory(prefix="cats-delivery-") as temp:
         names = checked_inventory(bundle)
         manifest = json.loads(bundle.read("manifest.json"))
@@ -262,6 +266,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                 reference += "@" + digest
                 mappings[image["remediated"]] = reference
                 results.append({"kind": "image", "reference": reference, "digest": digest, "identity_type": "oci_manifest"})
+                save_progress()
             files = materialize({name[10:]: (bundle.read(name) if name.endswith(".tgz") else bundle.read(name).decode("utf-8")) for name in names if name.startswith("candidate/") and not name.endswith("/")}, mappings)
             candidate = work / "candidate"
             candidate.mkdir()
@@ -303,14 +308,49 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
             if chart_roots and mappings and (set(mappings) & rendered_images or not set(mappings.values()).issubset(rendered_images)):
                 raise ValueError("Rendered Helm images do not match immutable delivery identities")
             for chart_root in chart_roots:
-                package_dir = work / "packages"
-                package_dir.mkdir(exist_ok=True)
-                before = set(package_dir.glob("*.tgz"))
-                run([helm, "package", str(chart_root), "--destination", str(package_dir)], env=env)
-                packages = set(package_dir.glob("*.tgz")) - before
-                if len(packages) != 1:
-                    raise ValueError("Helm package output ambiguous")
-                archive = packages.pop()
+                # Helm package embeds timestamps. Retain the exact bytes before
+                # pushing so a later attempt does not create a new chart digest.
+                inventory = [(path.relative_to(chart_root).as_posix(), file_digest(path))
+                             for path in sorted(chart_root.rglob("*")) if path.is_file()]
+                cache_key = hashlib.sha256(json.dumps({"candidate": record.artifact_digest,
+                    "destination": prefix, "chart": chart_root.relative_to(candidate).as_posix(),
+                    "files": inventory}, sort_keys=True).encode()).hexdigest()
+                cache_root = source.parent / "delivery-packages"
+                if cache_root.is_symlink():
+                    raise ValueError("Retained Helm package cache is unsafe")
+                cache_dir = cache_root / cache_key
+                if cache_dir.is_symlink():
+                    raise ValueError("Retained Helm package cache is unsafe")
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                receipt = cache_dir / "package.json"
+                if receipt.is_symlink():
+                    raise ValueError("Retained Helm package receipt is unsafe")
+                if receipt.is_file():
+                    cached = json.loads(receipt.read_text())
+                    filename = cached.get("file", "")
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.tgz", filename):
+                        raise ValueError("Retained Helm package name is unsafe")
+                    archive = cache_dir / filename
+                    if archive.is_symlink() or not archive.is_file() or file_digest(archive) != cached.get("digest"):
+                        raise ValueError("Retained Helm package integrity mismatch")
+                else:
+                    package_dir = work / ("packages-" + cache_key)
+                    package_dir.mkdir()
+                    run([helm, "package", str(chart_root), "--destination", str(package_dir)], env=env)
+                    packages = list(package_dir.glob("*.tgz"))
+                    if len(packages) != 1 or packages[0].is_symlink():
+                        raise ValueError("Helm package output ambiguous")
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.tgz", packages[0].name):
+                        raise ValueError("Helm package name is unsafe")
+                    archive = cache_dir / packages[0].name
+                    if archive.is_symlink():
+                        raise ValueError("Retained Helm package cache is unsafe")
+                    shutil.copyfile(packages[0], archive)
+                    with tempfile.NamedTemporaryFile(mode="w", dir=cache_dir, prefix="receipt-", suffix=".tmp",
+                                                     encoding="utf-8", delete=False) as stream:
+                        staged_receipt = Path(stream.name)
+                        json.dump({"file": archive.name, "digest": file_digest(archive)}, stream)
+                    staged_receipt.replace(receipt)
                 push_args = [helm, "push", str(archive), "oci://" + prefix]
                 if ca:
                     push_args += ["--ca-file", str(ca)]
@@ -322,6 +362,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                 charts.append(archive)
                 results.extend([{"kind": "helm", "reference": archive.name, "digest": digest, "identity_type": "package_sha256"},
                                 {"kind": "helm", "reference": prefix + "/" + str(yaml.safe_load((chart_root / "Chart.yaml").read_text())["name"]) + "@" + match.group(1), "digest": match.group(1), "identity_type": "oci_manifest"}])
+                save_progress()
             if not results:
                 raise ValueError("No deliverable artifacts in retained candidate")
             for identity in results:
@@ -333,6 +374,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None):
                     except Exception:
                         # Publication and signing are independent, truthful outcomes.
                         identity["signature_status"] = "failed"
+                save_progress()
             output_path = source.parent / f"delivery-{attempt_id}.zip"
             with ZipFile(output_path, "w", ZIP_DEFLATED) as output:
                 output.writestr("lineage.json", json.dumps({"remediation": record.job_key, "content_digest": record.artifact_digest, "artifacts": results, "values_files": values_files}))

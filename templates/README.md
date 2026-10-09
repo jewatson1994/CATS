@@ -36,6 +36,10 @@ Follow [the dedicated worker guide](../docs/dedicated-scan-worker.md) for contro
 
 The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires explicit image and release-directory selections; the root file retains local-development fallbacks. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
 
+## Signed release documentation
+
+The main environment and Compose templates include `CATS_RELEASE_DOC_MAX_BYTES` (256 MiB default) and `CATS_OCI_TOKEN_REALMS` (empty by default). Configure delegated token-service origins only when your approved registry requires them. Release documents use the existing signing configuration and destination CA trust. Review [release documentation operations](../docs/signed-release-documentation.md) before deployment, including disclosure authorization, retained-history storage, independent verification, and registry compatibility checks.
+
 ## OIDC clock skew and remediation validation
 
 `OIDC_CLOCK_SKEW_SECONDS=60` configures OIDC token timestamp tolerance. It is an environment-only setting, with no Administration field. Use an integer from `0` through `300` seconds; `0` disables tolerance. An omitted value defaults to `60`; blank or invalid values are rejected. Keep the host clock synchronized.

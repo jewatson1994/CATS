@@ -396,7 +396,7 @@ def validate_bundle(path, *, expected_type=None, expected_digest=None, destinati
 
 def build_bundle(output_path, *, bundle_type, service, source_files, chart_path, values_files=None,
                  rendered_manifests, image_archives=None, evidence=None, namespace='cats-validation', provenance=None):
-    """Build final bytes once; callers retain this path and validate its digest before release."""
+    """Build final bytes once; source_files values may be text, bytes, or file Paths."""
     if bundle_type not in {'helm-chart', 'standard-bundle', 'offline-bundle'}:
         raise ValueError('Unsupported bundle type')
     if Path(output_path).exists():
@@ -408,8 +408,15 @@ def build_bundle(output_path, *, bundle_type, service, source_files, chart_path,
                 raise ValueError('Reserved bundle file')
             target = root / safe_path(name)
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(content.encode() if isinstance(content, str) else content)
-        (root / 'rendered.yaml').write_text(rendered_manifests, encoding='utf-8')
+            if isinstance(content, Path):
+                if content.is_symlink() or not content.is_file():
+                    raise ValueError('Bundle source must be a regular file')
+                shutil.copyfile(content, target)
+            else:
+                target.write_bytes(content.encode() if isinstance(content, str) else content)
+        # Preserve the exact UTF-8 render bytes used by the release manifest,
+        # including on Windows where text-mode writes translate newlines.
+        (root / 'rendered.yaml').write_bytes(rendered_manifests.encode('utf-8'))
         images = []
         for image in image_archives or []:
             name = safe_path(image['archive_path'])

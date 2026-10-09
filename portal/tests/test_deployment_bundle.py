@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import tarfile
+from pathlib import Path
 from zipfile import ZipFile, ZipInfo
 
 import pytest
@@ -45,6 +46,21 @@ def test_deterministic_final_bundle_and_ordered_values(tmp_path):
     other.mkdir()
     build(other, evidence={'status': 'not_run'})
     assert file_digest(other / 'bundle.zip') == file_digest(tmp_path / 'bundle.zip')
+
+
+def test_documentation_path_is_copied_without_loading_into_memory(tmp_path, monkeypatch):
+    documentation = tmp_path / 'large-documentation.zip'
+    documentation.write_bytes(b'documentation bytes\n' * 65536)
+    source_read = Path.read_bytes
+    def read(path):
+        if path == documentation:
+            pytest.fail('Source documentation must be copied as a file')
+        return source_read(path)
+    monkeypatch.setattr(Path, 'read_bytes', read)
+    manifest = build(tmp_path, source_files={**chart(), 'release/documentation.zip': documentation})
+    assert manifest['files']['release/documentation.zip']['sha256'] == file_digest(documentation)
+    assert manifest['files']['release/documentation.zip']['bytes'] == documentation.stat().st_size
+    assert validate_bundle(tmp_path / 'bundle.zip') == manifest
 
 
 def test_offline_image_closure_and_actual_archive_identity(tmp_path):

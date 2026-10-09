@@ -403,6 +403,7 @@ async def app_lifespan(_app: FastAPI):
     validator_management.recover_operations()
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
     REMEDIATION_WORKERS.submit(_recover_retained_candidate_validations)
+    REMEDIATION_WORKERS.submit(_recover_release_deliveries)
     async def monitor_validators():
         while True:
             try:
@@ -6412,7 +6413,7 @@ def _delivery_actor(db, record, actor_id, output_mode):
     actor = db.get(User, actor_id)
     permission = "artifact.publish" if output_mode == "oci" else "service.export"
     auth = AuthContext(user=actor, session=None) if actor and actor.enabled else None
-    if not auth or not auth.has(permission, record.service_id):
+    if not auth or not auth.has(permission, record.service_id) or not auth.has("service.export", record.service_id):
         raise HTTPException(403, "Permission to publish artifacts is required" if output_mode == "oci" else "Permission to export service artifacts is required")
     return auth
 
@@ -6429,7 +6430,7 @@ def _check_delivery_policy(db, record, output_mode):
         raise HTTPException(409, policy.get("reason") or "Candidate validation policy prevents OCI publication")
 
 
-def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify_runtime=False):
+def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify_runtime=False, authorize_documentation=False):
     from .remediation_delivery import candidate_provenance
     auth = _delivery_actor(db, record, actor_id, output_mode)
     # Read policy only after serializing with validation/delivery state changes.
@@ -6437,7 +6438,9 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
     db.execute(update(RemediationExecution).where(RemediationExecution.id == record.id)
                .values(delivery_status=RemediationExecution.delivery_status))
     db.refresh(record)
-    if output_mode == "oci":
+    if output_mode == "oci" and not authorize_documentation:
+        raise HTTPException(422, "Authorize disclosure of release security documentation to the destination registry audience")
+    if output_mode != "bundle":
         _portal_signing_material(db, auth, "push", record.service)
     _check_delivery_policy(db, record, output_mode)
     if output_mode != "bundle" and (record.validation_results or {}).get("status") == "BLOCKING":
@@ -6469,6 +6472,7 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
     attempt = DeliveryAttempt(remediation_id=record.id, actor_id=actor_id, destination=public,
         content_digest=record.artifact_digest, status="download_ready" if output_mode == "bundle" else "queued",
         result={"verification_requested": output_mode != "bundle", "delivery_mode": output_mode,
+                "documentation_authorized": bool(authorize_documentation), "release_stage": "queued",
                 "provenance": {**candidate_provenance(record),
                     "service": {"id": record.service.service_key, "version": version.version if version else record.original_revision}}})
     db.add(attempt); db.flush()
@@ -6500,9 +6504,20 @@ def _run_bundle_delivery(db, record, attempt):
             ServiceArtifact.service_id == record.service_id,
             ServiceArtifact.artifact_type == "helm_repository", ServiceArtifact.lifecycle_status == "active",
         )).all()
+        from . import release_documentation
+        auth = _delivery_actor(db, record, attempt.actor_id, mode)
+        signing_material = _portal_signing_material(db, auth, "push", record.service)
+        def documentation_builder(identities):
+            attempt.result = {**(attempt.result or {}), "release_stage": "generating_documentation"}
+            db.commit()
+            files, receipt = release_documentation.prepare(db, record, auth, REMEDIATION_JOB_ROOT,
+                identities, mode, signing_material)
+            attempt.result = {**(attempt.result or {}), "documentation": receipt, "release_stage": "assembling_bundle"}
+            db.commit()
+            return files, receipt
         with remediation_bundles.configured_material(bundle_settings, [url for url in repository_urls if url]) as material:
             result, path = remediation_bundles.assemble(record, REMEDIATION_JOB_ROOT, attempt.id, mode, version.version,
-                                                       configuration=material)
+                                                       configuration=material, documentation_builder=documentation_builder)
         attempt.artifact_path = path
         attempt.result = {**(attempt.result or {}), **result, "delivery_mode": mode, "verification_requested": True}
         request = {"schema_version": "cats.validation/v2", "request_id": uuid.uuid4().hex, "validation_type": mode,
@@ -6530,6 +6545,7 @@ def _run_bundle_delivery(db, record, attempt):
         attempt.result = {**(attempt.result or {}), **result, "delivery_mode": mode, "verification_requested": True, "verification": verification,
                           "download_url": f"/services/{record.service.service_key}/remediations/{record.job_key}/deliveries/{attempt.id}/bundle.zip" if ready else None}
         attempt.status = record.delivery_status = "download_ready" if ready else "validation_failed"
+        attempt.result = {**attempt.result, "release_stage": attempt.status}
         validation = dict(record.validation_results or {})
         validation["final_delivery_validations"] = [*(validation.get("final_delivery_validations") or []),
             {"attempt_id": attempt.id, "validation_type": mode, "artifact_digest": result["materialized_digest"],
@@ -6545,6 +6561,8 @@ def _run_bundle_delivery(db, record, attempt):
         detail = re.sub(r"(https?://[^\s?#]+)[?#][^\s]*", r"\1", detail)[:1000]
         message = f"Final bundle preparation failed ({type(exc).__name__}): {detail}"
         attempt.result = {**(attempt.result or {}), "error": message}
+        if getattr(exc, "receipt", None):
+            attempt.result = {**attempt.result, "documentation": exc.receipt}
         diagnostics = REMEDIATION_JOB_ROOT / record.job_key / f"delivery-{attempt.id}-diagnostics.json"
         try:
             diagnostics.parent.mkdir(parents=True, exist_ok=True)
@@ -6558,7 +6576,45 @@ def _run_bundle_delivery(db, record, attempt):
     _cleanup_completed_remediations(db)
 
 
+def _recover_release_deliveries():
+    """Retain partial receipts and unblock explicit retry after an interrupted delivery."""
+    from .delivery_execution import delivery_lock
+    with SessionLocal() as db:
+        ids = db.scalars(select(DeliveryAttempt.id).where(
+            DeliveryAttempt.status.in_(["queued", "running", "staged", "publishing"]))).all()
+    queued = []
+    for attempt_id in ids:
+        with delivery_lock(REMEDIATION_JOB_ROOT, attempt_id) as owned:
+            if not owned:
+                continue
+            with SessionLocal() as db:
+                attempt = db.get(DeliveryAttempt, attempt_id)
+                if not attempt or attempt.status not in {"queued", "running", "staged", "publishing"}:
+                    continue
+                if attempt.status == "queued":
+                    queued.append(attempt_id)
+                    continue
+                attempt.status = "failed"
+                attempt.completed_at = utcnow()
+                attempt.result = {**(attempt.result or {}), "interrupted": True,
+                    "error": "Delivery was interrupted. Retained publication records are available; retry delivery to continue."}
+                record = db.get(RemediationExecution, attempt.remediation_id)
+                if record:
+                    record.delivery_status = "failed"
+                    _remediation_audit(db, record, "remediation.delivery_interrupted", attempt_id=attempt_id)
+                db.commit()
+    for attempt_id in queued:
+        REMEDIATION_WORKERS.submit(_run_delivery_attempt, attempt_id)
+
+
 def _run_delivery_attempt(attempt_id):
+    from .delivery_execution import delivery_lock
+    with delivery_lock(REMEDIATION_JOB_ROOT, attempt_id) as owned:
+        if owned:
+            _execute_delivery_attempt(attempt_id)
+
+
+def _execute_delivery_attempt(attempt_id):
     with SessionLocal() as db:
         from sqlalchemy import update
         # Only one worker may claim this attempt, including duplicate dispatches.
@@ -6577,6 +6633,8 @@ def _run_delivery_attempt(attempt_id):
             auth = _delivery_actor(db, record, attempt.actor_id, mode)
             _check_delivery_policy(db, record, mode)
             retained_candidate(record, REMEDIATION_JOB_ROOT)
+            if cleanup_remediation_artifacts(db, REMEDIATION_JOB_ROOT)["over_quota"]:
+                raise ValueError("Retained release storage is full")
             version = db.get(ServiceVersion, record.source_version_id) if record.source_version_id else None
             if not version or version.service_id != record.service_id:
                 raise ValueError("Retained service version identity is unavailable")
@@ -6603,9 +6661,43 @@ def _run_delivery_attempt(attempt_id):
             destination = service_oci.resolve_destination(db, record.service_id, attempt.destination["id"],
                 parse_json(get_global_configuration(db).get("oci_registries"), []))
             attempt.destination = {key: destination.get(key) for key in ("id", "name", "endpoint", "namespace", "scope")}
+            if (attempt.result or {}).get("documentation_authorized") is not True:
+                raise ValueError("Registry documentation disclosure has not been authorized")
+            from . import release_documentation
+            from .deployment_bundle import file_digest
             signing_config, signing_credentials = _portal_signing_material(db, auth, "push", record.service)
-            delivery_options = {"signing_material": (signing_config, signing_credentials)} if signing_config else {}
-            result, attempt.artifact_path = deliver(record, destination, attempt.id, REMEDIATION_JOB_ROOT, **delivery_options)
+            def checkpoint(progress):
+                attempt.result = {**(attempt.result or {}), **progress}
+                db.commit()
+            checkpoint({"release_stage": "publishing_artifacts"})
+            # A retry after documentation/validation failure reuses the complete
+            # immutable representation, rather than repackaging Helm archives.
+            previous = db.scalars(select(DeliveryAttempt).where(
+                DeliveryAttempt.remediation_id == record.id, DeliveryAttempt.id < attempt.id,
+                DeliveryAttempt.content_digest == record.artifact_digest,
+                DeliveryAttempt.status.in_(["failed", "validation_failed"])).order_by(DeliveryAttempt.id.desc()).limit(50)).all()
+            reuse = next((prior for prior in previous if prior.destination == attempt.destination
+                and (prior.result or {}).get("artifacts_complete") and prior.artifact_path), None)
+            if reuse:
+                path = Path(reuse.artifact_path)
+                expected = Path(REMEDIATION_JOB_ROOT).resolve() / record.job_key / f"delivery-{reuse.id}.zip"
+                if (path.is_symlink() or any(parent.is_symlink() for parent in path.parents)
+                        or path.resolve() != expected or file_digest(path) != reuse.result.get("materialized_digest")):
+                    raise ValueError("Retained delivery integrity mismatch")
+                result = {key: reuse.result[key] for key in ("artifact_identities", "materialized_digest", "values_files", "values_embedded", "signing_status") if key in reuse.result}
+                # Signing policy changes require a fresh signing operation.
+                if signing_config and (result.get("signing_status") != "verified" or
+                        reuse.result.get("signing_fingerprint") != signing_config.get("signing_fingerprint")):
+                    reuse = None
+                else:
+                    attempt.artifact_path = str(path)
+                    checkpoint({"retry_of": reuse.id})
+            if not reuse:
+                result, attempt.artifact_path = deliver(record, destination, attempt.id, REMEDIATION_JOB_ROOT,
+                    signing_material=(signing_config, signing_credentials), checkpoint=checkpoint)
+            checkpoint({**result, "artifacts_complete": True, "signing_fingerprint": signing_config.get("signing_fingerprint")})
+            if result.get("signing_status") == "failed":
+                raise ValueError("Mandatory artifact signing failed")
             attempt.result = {**(attempt.result or {}), **result, "verification_requested": True, "delivery_mode": "oci"}
             attempt.status = "staged"; record.delivery_status = "staged"
             db.commit()
@@ -6622,7 +6714,15 @@ def _run_delivery_attempt(attempt_id):
             except Exception:
                 verification = {"status": "verification_unavailable", "detail": "Sandbox verification unavailable"}
             attempt.result = {**(attempt.result or {}), **result, "verification_requested": True, "delivery_mode": "oci", "validation_type": "oci", "verification": verification}
+            if verification["status"] == "verified":
+                checkpoint({"release_stage": "generating_documentation"})
+                files, receipt = release_documentation.prepare(db, record, auth, REMEDIATION_JOB_ROOT,
+                    result["artifact_identities"], "oci", (signing_config, signing_credentials))
+                checkpoint({"documentation": receipt, "release_stage": "publishing_documentation"})
+                release_documentation.publish(files, receipt, destination,
+                    lambda document: checkpoint({"documentation": document}))
             attempt.status = record.delivery_status = "published" if verification["status"] == "verified" else "validation_failed"
+            checkpoint({"release_stage": attempt.status})
             _remediation_audit(db, record, "remediation.verification_completed", attempt_id=attempt.id,
                 verification_status=verification["status"], artifact_digest=verification.get("artifact_digest"))
             validation = dict(record.validation_results or {})
@@ -6638,7 +6738,9 @@ def _run_delivery_attempt(attempt_id):
                 content_digest=attempt.content_digest, materialized_digest=result.get("materialized_digest"))
         except Exception as exc:
             attempt.status = "failed"; record.delivery_status = "failed"
-            attempt.result = {**(attempt.result or {}), "error": f"Delivery failed ({type(exc).__name__}); check destination access, credentials, trust, and retained artifacts."}
+            attempt.result = {**(attempt.result or {}), "error": f"Delivery failed during {(attempt.result or {}).get('release_stage', 'preparation')} ({type(exc).__name__}); check destination access, signing, trust, and retained evidence."}
+            if getattr(exc, "receipt", None):
+                attempt.result = {**attempt.result, "documentation": exc.receipt}
             _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
         attempt.completed_at = utcnow(); db.commit()
         _cleanup_completed_remediations(db)
@@ -6646,7 +6748,7 @@ def _run_delivery_attempt(attempt_id):
 
 @app.post("/services/{service_key}/remediations/{job_key}/delivery")
 def redeliver_remediation(service_key: str, job_key: str, csrf_token: str = Form(), output_mode: str = Form(),
-    destination_id: str = Form(""), verify_runtime: str = Form("no"), db: Session = Depends(get_db),
+    destination_id: str = Form(""), verify_runtime: str = Form("no"), authorize_documentation: str = Form("no"), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
     check_csrf(auth, csrf_token)
     record = db.scalar(select(RemediationExecution).join(Service).where(RemediationExecution.job_key == job_key,
@@ -6656,9 +6758,33 @@ def redeliver_remediation(service_key: str, job_key: str, csrf_token: str = Form
     permission = "artifact.publish" if output_mode == "oci" else "service.export"
     if not auth.has(permission, record.service_id):
         raise HTTPException(403, "Permission to publish artifacts is required" if output_mode == "oci" else "Permission to export service artifacts is required")
-    _queue_delivery(db, record, auth.user.id, output_mode, destination_id, verify_runtime == "yes")
+    _queue_delivery(db, record, auth.user.id, output_mode, destination_id, verify_runtime == "yes", authorize_documentation == "yes")
     target = "candidate.zip" if output_mode == "bundle" else ""
     return RedirectResponse(f"/services/{service_key}/remediations/{job_key}" + (f"/{target}" if target else ""), status_code=303)
+
+
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/release-manifest.sig")
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/release-public-key.pem")
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/VERIFY.txt")
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/documentation.zip")
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/release-manifest.json")
+def release_documentation_download(request: Request, service_key: str, job_key: str, attempt_id: int,
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    from .release_documentation import retained_files
+    record = db.scalar(select(RemediationExecution).join(Service).where(
+        RemediationExecution.job_key == job_key, Service.service_key == service_key))
+    attempt = db.get(DeliveryAttempt, attempt_id)
+    if not record or not attempt or attempt.remediation_id != record.id:
+        raise HTTPException(404)
+    try:
+        files = retained_files(record, REMEDIATION_JOB_ROOT, (attempt.result or {}).get("documentation") or {})
+    except (ValueError, OSError, KeyError):
+        raise HTTPException(409, "Release documentation integrity check failed or evidence unavailable") from None
+    name = request.url.path.rsplit("/", 1)[-1]
+    if name not in files:
+        raise HTTPException(404, "This release does not contain the requested signature file")
+    media = "application/zip" if name.endswith(".zip") else "application/json" if name.endswith(".json") else "text/plain"
+    return FileResponse(files[name], filename=name, media_type=media)
 
 
 @app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/bundle.zip")
@@ -8730,26 +8856,18 @@ def export_service_all(service_key: str, db: Session = Depends(get_db),
     # Spill large archives to disk; this sync route runs outside the event loop.
     output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
     try:
-        with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-            for kind in ("ppsm", "poam", "asset_list"):
-                columns, _, _ = purpose_template_for_service(db, kind, service)
-                with archive.open(f"{kind}.xlsx", "w") as entry:
-                    purpose_workbook_for(db, service, kind, columns).save(entry)
-            for name, build in (("mitigations", _service_mitigations_book), ("findings", _service_findings_book)):
-                with archive.open(f"{name}.xlsx", "w") as entry:
-                    build(service_key, db).save(entry)
-            for name, build in (("diagrams.zip", _service_diagrams_bytes),
-                                ("sbom-components.json", _service_sbom_components)):
-                try:
-                    data = build(service_key, db)
-                except HTTPException as exc:
-                    if exc.status_code != 422:
-                        raise
-                    archive.writestr(f"{name}.unavailable.txt", str(exc.detail) + "\n")
-                else:
-                    archive.writestr(name, json.dumps(data, ensure_ascii=False) if isinstance(data, dict) else data)
-            if auth.has("bundle.export", service.id):
-                archive.writestr("cats-service.zip", bundle_export_data(service_key, db, auth))
+        from .release_exports import write_export_archive
+        workbooks = {}
+        for kind in ("ppsm", "poam", "asset_list"):
+            columns, _, _ = purpose_template_for_service(db, kind, service)
+            workbooks[f"{kind}.xlsx"] = lambda kind=kind, columns=columns: purpose_workbook_for(db, service, kind, columns)
+        workbooks.update({f"{name}.xlsx": lambda build=build: build(service_key, db)
+            for name, build in (("mitigations", _service_mitigations_book), ("findings", _service_findings_book))})
+        write_export_archive(output, workbook_builders=workbooks,
+            evidence_builders={"diagrams.zip": lambda: _service_diagrams_bytes(service_key, db),
+                               "sbom-components.json": lambda: _service_sbom_components(service_key, db)},
+            supplemental_entries={"cats-service.zip": bundle_export_data(service_key, db, auth)}
+                if auth.has("bundle.export", service.id) else {})
         output.seek(0)
     except BaseException:
         output.close()

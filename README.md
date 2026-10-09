@@ -175,6 +175,7 @@ Offline operation requires locally supplied inputs and usable scanner databases.
 - [Service remediation](docs/remediation.md) and [remediation pipeline](portal/docs/remediation-pipeline.md)
 - [Deployment Validation](portal/docs/deployment-validation.md)
 - [Validator appliance](docs/validator-appliance.md) and [managed validator acceptance](docs/managed-validator-completion-report.md)
+- [Signed release documentation](docs/signed-release-documentation.md): immutable OCI attachments, Standard/Offline bundles, verification, and recovery.
 - [Signing](portal/SIGNING.md)
 - [OIDC integration](docs/KEYCLOAK-INTEGRATION.md)
 - [Trusted CAs and repository policies](docs/trusted-ca-and-repository-policies.md)
