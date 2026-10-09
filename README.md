@@ -8,25 +8,36 @@ Assess container services, retain the evidence, and manage remediation and secur
 
 The React interface provides service workspaces, scan results, remediation views, and administration. Docker builds compile the frontend automatically, so the UI shipped in an image comes from the checkout used for that build.
 
-## What you can do
+## Workspaces and capabilities
 
 | Workspace | Purpose |
 | --- | --- |
-| Services | Track service versions, owners, image digests, workload occurrences, evidence, and assessment history. |
+| Services | Filter the Service Security Matrix; switch Active, Staged, or Archived, choose page size, and inspect versioned service evidence. |
 | Scan | Assess images, Docker image archives, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
 | Architecture | Explore topology derived from rendered Kubernetes resources and export SVG or workbook data. |
 | Patch and Remediations | Patch supported Linux images with Copa, rescan candidates, download artifacts, or publish and optionally sign immutable digests. |
 | Deployment Validation | Validate retained Helm artifacts in disposable kind clusters and preserve runtime evidence separately from static assessment. |
-| Cybersecurity review | Review posture, watchlist matches, missing evidence, and links to underlying findings. |
+| Cybersecurity | Investigate scoped posture, trends, missing evidence, and top service/CVE/package contributors through clickable metrics. |
 | Administration | Configure accounts, OIDC, access, registries, trust, validators, signing, and security data sources. |
 
 Scan downloads include an offline HTML overview, an Excel workbook, SBOMs, raw scanner reports, normalized findings, and a manual DefectDojo import bundle. Connected and disconnected workflows are supported when their required images, charts, databases, and tools are available.
 
-## Start here
+## Role training
 
-The main stack contains **portal**, **patch-worker**, and **PostgreSQL**. Portal and worker use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
+The [training library](docs/training/README.md) contains real application screenshots and practical guides for every built-in role:
+
+- [Administrator](docs/training/administrator.md): accounts, configuration, validators, signing, and deletion.
+- [Assessor](docs/training/assessor.md): evidence review and standard exports.
+- [Service Manager](docs/training/service-manager.md): service maintenance, scan ingestion, requests, and remediation.
+- [Cybersecurity](docs/training/cybersecurity.md): posture investigation, independent reviews, and security policy.
+
+Assignments can be global, group-scoped, or service-scoped, and permissions combine. The built-in Administrator role excludes `scan.ingest`; an additional suitable grant is needed to retain scans. Temporary public scans are distinct from governed service evidence.
+
+## Install and start
+
+The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, and **PostgreSQL**. Portal, its private control listener, and both workers use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
 
 You need Docker Engine or Docker Desktop running Linux containers, Docker Compose v2, and a built CATS image. Run the following from the repository root.
 
@@ -56,7 +67,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Setting | Meaning |
 | --- | --- |
-| `CATS_IMAGE` | Image used by both portal and worker, for example `cats:1.3`. |
+| `CATS_IMAGE` | Image used by portal, portal-control, and both workers, for example `cats:1.3`. |
+| `CATS_SCAN_WORKER_TOKEN` | Unique random token of at least 32 characters shared with the private control listener; replace the example placeholder. |
+| `CATS_SCAN_REGISTRY_AUTH_SOURCE` | Existing registry-auth directory; defaults to `./scan-registry-auth`. |
 | `CATS_PORT` | Browser-facing port; defaults to `8080`. |
 | `CATS_BOOTSTRAP_USERNAME` / `CATS_BOOTSTRAP_PASSWORD` | Initial local administrator credentials. |
 | `CATS_CONFIG_ENCRYPTION_KEY` | Stable key for stored secrets; retain it across upgrades. |
@@ -73,7 +86,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 .\build.bat
 ```
 
-Enter the version you want to build. The utility builds the scanner base and CATS image, prepares verified validator image archives, recreates portal and worker, and verifies the deployed image identities. It uses the **current checkout**, including the current UI. Docker must be running. The versioned image selection applies to that rebuild; update `CATS_IMAGE` in your environment file for future Compose runs.
+Enter the version you want to build. The utility builds the scanner base and CATS image, prepares verified validator image archives, recreates portal, portal-control, patch-worker, and scan-worker, and verifies the deployed image identities. It uses the **current checkout**, including the current UI. Docker must be running. The versioned image selection applies to that rebuild; update `CATS_IMAGE` in your environment file for future Compose runs.
 
 **Connected release build without deployment:**
 
@@ -94,6 +107,8 @@ Also transfer PostgreSQL and required validator/node image archives or release i
 
 ### 3. Start and verify
 
+Before starting, ensure the directory selected by `CATS_SCAN_REGISTRY_AUTH_SOURCE` exists (an empty directory is sufficient without registry credentials). The Windows build utility prepares the default directory. Keep port 8001 private.
+
 If you loaded or built the image without using the Windows deployment utility:
 
 ```sh
@@ -105,10 +120,12 @@ docker compose ps
 Open **http://localhost:8080** (or your configured port) and sign in with your local account. The project name is `cats`, so root and main-template deployments refer to the same stack.
 
 ```sh
-docker compose logs -f portal patch-worker
+docker compose logs -f portal portal-control scan-worker patch-worker
 ```
 
-For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal patch-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+
+Before production use, complete the [scan-worker target-host acceptance checks](docs/dedicated-scan-worker.md). The [architecture review](docs/scan-worker-architecture-review-2026-10-09.md) records measured results, existing test failures, and deployment validation still required. Rebuild the image and update Compose together.
 
 ## Deployment templates
 
@@ -129,7 +146,10 @@ flowchart LR
     Browser[Browser or API client] --> Portal[CATS portal]
     Pipeline[CI pipeline or cats CLI] --> Portal
     Portal --> DB[(PostgreSQL)]
-    Portal --> Scanner[Scanner jobs]
+    Portal --> Queue[(Durable scan jobs)]
+    Control[Private portal-control] --> Queue
+    Scanner[Dedicated scan worker] --> Control
+    Control --> DB
     Portal --> Worker[Patch worker]
     Portal --> Validator[Dedicated validator sandbox]
     Portal -. Optional OIDC .-> Identity[External identity provider]
@@ -138,9 +158,15 @@ flowchart LR
     Validator --> Runtime[Helm runtime and cleanup evidence]
 ```
 
-The worker has Docker-host access. The validator uses host networking and the Docker socket on a dedicated sandbox VM; it must not share a production host. Its validation API uses mTLS, while its administrator interface uses HTTPS. Restrict both interfaces to their intended networks.
+The patch-worker has Docker-host access. The scan-worker has no Docker socket or database credentials; it exchanges jobs and evidence through the private control listener. The validator uses host networking and the Docker socket on a dedicated sandbox VM; it must not share a production host. Its validation API uses mTLS, while its administrator interface uses HTTPS. Restrict both interfaces to their intended networks.
 
 Use an HTTPS reverse proxy for shared deployments, keep development bypass disabled, and retain access/audit controls. Configure private registries, trusted CAs, and signing through administration. Signing records the published digest and verification evidence; it does not replace vulnerability or runtime assessment.
+
+Simplified service findings group vulnerabilities by CVE, whereas scan totals may count individual observations. Cybersecurity warning policy can turn a compliant service yellow without changing the underlying compliance decision. Missing evidence matters even when no vulnerabilities are shown.
+
+Remediation is disabled until enabled in administration. Patch, publication, signature verification, and runtime validation have separate outcomes. Downloaded candidates are not proof of runtime success; reassess and ingest authoritative evidence after deployment.
+
+Permanent service deletion requires global `service.delete`, a reason, and exact `delete <service name>` confirmation. Active jobs block deletion. CATS removes its service records and associated local outputs, retains audit history, and does not remove external registry images.
 
 Offline operation requires locally supplied inputs and usable scanner databases. Security-source freshness and missing evidence remain part of the assessment. See [cybersecurity and validation](docs/cybersecurity-and-validation.md) and [disconnected delivery limits](docs/schrodinger-deliveries.md).
 
