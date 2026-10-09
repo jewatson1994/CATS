@@ -8,6 +8,9 @@ import urllib.parse
 import urllib.request
 import urllib.error
 import ssl
+import logging
+import math
+import re
 try:
     import jwt
 except ImportError:  # Optional until OIDC mode is enabled.
@@ -21,6 +24,35 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import SessionLocal, get_db
 from .models import AuditEvent, Group, OidcClaimMapping, Role, Service, User, UserRoleAssignment, UserSession
+
+logger = logging.getLogger(__name__)
+
+
+def oidc_clock_skew_seconds() -> int:
+    value = os.getenv("OIDC_CLOCK_SKEW_SECONDS", "60")
+    if not re.fullmatch(r"[0-9]{1,3}", value) or int(value) > 300:
+        raise ValueError("OIDC_CLOCK_SKEW_SECONDS must be an integer from 0 to 300")
+    return int(value)
+
+
+def _numeric_timestamp(value) -> bool:
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _log_timestamp_failure(category: str, claim: str, value, leeway: int):
+    now = datetime.now(timezone.utc)
+    # Only signed, identity-validated numeric timestamps reach diagnostics.
+    # Malformed values may contain secrets and are never rendered.
+    safe = _numeric_timestamp(value) and abs(value) < 10**12
+    logger.warning(
+        "OIDC timestamp validation failed category=%s claim=%s server_utc=%s "
+        "token_timestamp=%s skew_seconds=%s delta_seconds=%s",
+        category, claim, now.isoformat(), value if safe else "unavailable",
+        leeway, value - now.timestamp() if safe else "unavailable",
+    )
 
 
 def oidc_enabled(mode: str | None = None) -> bool:
@@ -125,6 +157,7 @@ def verify_oidc_id_token(tokens: dict, discovery: dict, expected_nonce: str | No
     token = tokens.get("id_token")
     if not token:
         raise ValueError("OIDC token response did not include an ID token")
+    leeway = oidc_clock_skew_seconds()
     context = ssl.create_default_context()
     if ca_bundle:
         if "BEGIN CERTIFICATE" in ca_bundle:
@@ -138,7 +171,39 @@ def verify_oidc_id_token(tokens: dict, discovery: dict, expected_nonce: str | No
     # discovery uses a private address. Both values are administrator-
     # configured and validated.
     expected_issuer = config.get("browser_issuer") or config["issuer"]
-    claims = jwt.decode(token, signing_key.key, algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"], audience=config["client_id"], issuer=expected_issuer)
+    validation = dict(algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+                      audience=config["client_id"], issuer=expected_issuer, leeway=leeway)
+    required = ["iss", "sub", "aud", "iat", "exp"]
+    try:
+        claims = jwt.decode(token, signing_key.key, options={"require": required}, **validation)
+    except (jwt.InvalidIssuedAtError, jwt.ImmatureSignatureError, jwt.ExpiredSignatureError,
+            jwt.DecodeError, TypeError, OverflowError) as exc:
+        # Re-verify signature and identity before inspecting failed timestamps.
+        # This result is diagnostics only and can never authenticate a user.
+        try:
+            diagnostic = jwt.decode(token, signing_key.key, options={
+                "require": required, "verify_iat": False, "verify_nbf": False, "verify_exp": False,
+            }, **validation)
+        except Exception:
+            diagnostic = {}
+        for claim in ("iat", "nbf", "exp"):
+            if claim not in diagnostic:
+                continue
+            value = diagnostic[claim]
+            if not _numeric_timestamp(value):
+                _log_timestamp_failure("malformed_timestamp", claim, None, leeway)
+                break
+            now = datetime.now(timezone.utc).timestamp()
+            if (claim in ("iat", "nbf") and int(value) > now + leeway) or (claim == "exp" and int(value) <= now - leeway):
+                _log_timestamp_failure(type(exc).__name__, claim, value, leeway)
+                break
+        raise
+    # PyJWT accepts numeric strings and booleans through int(); NumericDate
+    # claims must actually be finite JSON numbers. Keep native time boundaries.
+    for claim in ("iat", "nbf", "exp"):
+        if claim in claims and not _numeric_timestamp(claims[claim]):
+            _log_timestamp_failure("malformed_timestamp", claim, None, leeway)
+            raise ValueError("OIDC timestamp claim must be a finite number")
     if expected_nonce and claims.get("nonce") != expected_nonce:
         raise ValueError("OIDC nonce validation failed")
     return claims

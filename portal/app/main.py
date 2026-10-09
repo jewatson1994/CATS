@@ -2549,7 +2549,7 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(400, detail="Invalid OIDC state")
     error = request.query_params.get("error")
     if error:
-        return RedirectResponse(f"/login?error={urllib.parse.quote(redact(error))}", status_code=303)
+        return RedirectResponse("/login?error=OIDC%20login%20failed", status_code=303)
     code = request.query_params.get("code", "")
     if not code:
         raise HTTPException(400, detail="OIDC callback did not include an authorization code")
@@ -2595,11 +2595,11 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
             else:
                 raise ValueError(f"OIDC user-info endpoint returned HTTP {exc.code}") from exc
         user = provision_oidc_user(db, claims, oidc_config)
-    except Exception as exc:
+    except Exception:
         db.rollback()
         # Never reflect provider responses, token payloads, or configuration
         # values into the browser.  They may contain credentials or claims.
-        return RedirectResponse(f"/login?error={urllib.parse.quote(f'OIDC login failed: {redact(exc)}')}", status_code=303)
+        return RedirectResponse("/login?error=OIDC%20login%20failed", status_code=303)
     if not user.enabled:
         record_audit(db, AuthContext(user, None), "auth.oidc_denied_disabled", "user", user.id)
         db.commit()
