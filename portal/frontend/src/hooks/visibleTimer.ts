@@ -4,7 +4,6 @@
  * function. Used by polling loops so background tabs make no requests.
  */
 export function visibleTimeout(callback: () => void, delayMs: number): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
   const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden';
   const onVisible = () => {
@@ -12,7 +11,7 @@ export function visibleTimeout(callback: () => void, delayMs: number): () => voi
     document.removeEventListener('visibilitychange', onVisible);
     callback();
   };
-  timer = setTimeout(() => {
+  const timer = setTimeout(() => {
     if (cancelled) return;
     if (hidden()) document.addEventListener('visibilitychange', onVisible);
     else callback();

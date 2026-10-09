@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 import {can, requestJson, PAGE_MEDIA_TYPE, type PageData, type PageEnvelope} from '../api';
 import {usePoll, type PollStatus} from '../hooks/usePoll';
 import {Csrf, Dialog, Status} from '../components/Form';
@@ -29,7 +29,7 @@ function useDestinations(data:PageData) {
 // evidence: when the server has not cached it, the tab renders at once and
 // the counts are loaded on demand.
 function PlanPreview({data}:{data:PageData}) {
-  const initial = data.remediation_preview || {};
+  const initial = useMemo(() => data.remediation_preview || {}, [data.remediation_preview]);
   const [state,setState] = useState<{source:any, preview:any, error:string}>({source:initial, preview:initial, error:''});
   const current = state.source === initial ? state : {source:initial, preview:initial, error:''};
   useEffect(() => {

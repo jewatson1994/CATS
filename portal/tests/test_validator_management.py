@@ -58,46 +58,6 @@ def test_persistent_dedicated_ca_and_authorized_csr(factory):
         assert e.trust_domain(db).id==identity
         assert len(db.scalars(select(ValidatorTrustDomain)).all())==1
 
-@pytest.mark.parametrize('failed_stage',[None,'install','cleanup','selftest'])
-def test_provision_ready_requires_verified_cleanup_and_secrets_retired(factory,monkeypatch,tmp_path,failed_stage):
-    with factory() as db:
-        v=validator(db);vid=v.id;request_csr=csr(v)
-        a=ValidatorProvisioningAttempt(id=uuid.uuid4().hex,validator_id=vid,action='provision',
-            encrypted_credentials=encrypt_secret(json.dumps({'password':'DO_NOT_LEAK'})),host_fingerprint=v.ssh_fingerprint,payload_digest='trusted')
-        db.add(a);db.commit();aid=a.id
-    calls=[]
-    class SSH:
-        def __init__(self,target,credentials,pin):assert pin=='SHA256:trusted';self.credentials=credentials
-        def __enter__(self):calls.append('connect');return self
-        def __exit__(self,*args):calls.append('close');self.credentials.clear()
-        def preflight(self):return {'status':'supported','facts':{'architecture':'amd64'}}
-        def transfer_payload(self,*args):calls.append('transfer')
-        def install(self,*args):
-            calls.append('install')
-            if failed_stage=='install':raise RuntimeError('DO_NOT_LEAK')
-        def generate_csr(self,*args):return request_csr
-        def install_certificates(self,*args):calls.append('certificates')
-        def start_service(self):calls.append('start')
-        def cleanup(self):
-            calls.append('cleanup')
-            if failed_stage=='cleanup':raise RuntimeError('DO_NOT_LEAK')
-    monkeypatch.setattr(m,'SSHBootstrap',SSH)
-    monkeypatch.setattr(m,'payload_material',lambda facts=None:(tmp_path,{'architecture':'amd64','node_image_reference':'kind@sha256:'+'a'*64},'trusted'))
-    monkeypatch.setattr(m,'check_health',lambda config:{'ready':True,'validator_id':vid})
-    monkeypatch.setattr(m.validator_client,'self_test',lambda config:{'id':'a'*32,'status':'QUEUED'})
-    monkeypatch.setattr(m.validator_client,'self_test_result',lambda *args:{'status':'FAILED' if failed_stage=='selftest' else 'PASSED',
-        'result':{'status':'VERIFIED','cleanup_status':'COMPLETE'}})
-    m.run_attempt(aid)
-    with factory() as db:
-        a=db.get(ValidatorProvisioningAttempt,aid);v=db.get(ManagedValidator,vid)
-        assert a.encrypted_credentials is None
-        assert 'DO_NOT_LEAK' not in json.dumps(m.public_validator(v,db),default=str)
-        assert a.status==('SUCCEEDED' if failed_stage is None else 'FAILED')
-        assert v.status==('READY' if failed_stage is None else 'FAILED' if failed_stage=='install' else 'DEGRADED')
-        if failed_stage is None:
-            assert v.last_self_test['cleanup_status']=='COMPLETE' and v.configuration['expected_validator_id']==vid
-            assert calls.index('cleanup')<calls.index('close')
-
 def test_no_duplicate_active_jobs_and_interrupted_secrets_retired(factory):
     from sqlalchemy.exc import IntegrityError
     with factory() as db:

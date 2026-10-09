@@ -168,15 +168,19 @@ def test_service_policy_and_simplified_projection():
     assert payload["data"]["simplified_findings"][0]["due"] == "2026-09-30T00:00:00"
     assert "secret" not in json.dumps(payload)
 
-def test_managed_validator_bootstrap_omits_credentials_and_inventory():
-    context = {"can": lambda permission: permission == "validator.view", "can_manage_validators": True,
-               "csrf_token": "csrf", "validators": [{"password": "secret", "private_key": "secret"}],
+@pytest.mark.parametrize("allowed", [True, False])
+def test_managed_validator_bootstrap_projects_public_inventory_and_admin_permissions(allowed):
+    context = {"can": lambda permission: False, "validator_management_allowed": allowed,
+               "csrf_token": "csrf", "validators": [{"id": "host-1", "name": "Validator",
+                   "password": "secret", "private_key": "secret",
+                   "health": {"ready": True, "private_key": "secret"}}],
                "password": "secret", "payload": {"private_key": "secret"}}
     envelope = page_data(request(), "validators.html", context)
     assert "validators.html" in MIGRATED_PAGES
     assert envelope["page"] == "validators"
-    assert envelope["data"]["can_manage_validators"] is True
-    assert envelope["data"]["can"]["validator.view"] == {"*": True}
-    assert envelope["data"]["can"]["validator.provision"] == {"*": False}
+    data = envelope["data"]
+    assert data["validator_management_allowed"] is allowed
+    for action in ("view", "add", "preflight", "provision", "test", "selftest", "cancel", "remove"):
+        assert data["can"]["validator." + action] == {"*": allowed}
     assert "secret" not in json.dumps(envelope)
-    assert "validators" not in envelope["data"]
+    assert data["validators"] == [{"id": "host-1", "name": "Validator", "health": {"ready": True}}]

@@ -136,12 +136,14 @@ class FakeSSH:
 
 
 def mock_provision(monkeypatch, result):
+    deployment = {'validator_key':'temporary-sensitive'}
     monkeypatch.setattr(managed,'SSHBootstrap',FakeSSH)
     monkeypatch.setattr(managed,'load_release',lambda:{'cats_image':{'reference':'cats:exact','image_id':'sha256:'+'a'*64}})
-    monkeypatch.setattr(managed,'create_identity',lambda *args:{'configuration':{'client_key':'enc:sensitive'},'persistence':{'server_key':'enc:sensitive'},'public':{'validator_id':'host-1'},'deployment':{'validator_key':'temporary-sensitive'}})
+    monkeypatch.setattr(managed,'create_identity',lambda *args:{'configuration':{'client_key':'enc:sensitive'},'persistence':{'server_key':'enc:sensitive'},'public':{'validator_id':'host-1'},'deployment':deployment})
     monkeypatch.setattr(managed.validator_client,'health',lambda config:healthy())
     monkeypatch.setattr(managed,'selftest_request',lambda release:({'schema_version':'cats.validation/v2'},Path('selftest.zip')))
     monkeypatch.setattr(managed.validator_client,'validate',lambda *args,**kwargs:result)
+    return deployment
 
 
 def test_preflight_succeeds_without_promoting(sessions,monkeypatch):
@@ -156,19 +158,21 @@ def test_preflight_succeeds_without_promoting(sessions,monkeypatch):
 
 
 def test_provision_requires_real_runtime_evidence_contract(sessions,monkeypatch):
-    mock_provision(monkeypatch,evidence())
+    deployment=mock_provision(monkeypatch,evidence())
     operation=claim(sessions,'provision');credentials={'password':'sensitive'}
     managed.run_operation('host-1',operation,credentials,{'resource_warnings':False})
     with sessions() as db:
         row,op=db.get(ManagedValidator,'host-1'),db.get(ManagedValidatorOperation,operation)
         assert row.status == 'HEALTHY' and row.active_operation_id is None
         assert op.status == 'SUCCEEDED' and row.last_self_test['cleanup_status']=='COMPLETE'
-    assert credentials == {}
+        assert row.last_self_test['status'] == 'VERIFIED' and op.finished_at
+        assert 'sensitive' not in json.dumps(managed.public_record(db,row),default=str)
+    assert credentials == {} and deployment == {}
 
 
-@pytest.mark.parametrize('patch', [ {'cleanup_status':'FAILED'}, {'helm_result':{'install':'PASS','release_status':'DEPLOYED','execution_mode':'PREFLIGHTED_MANIFEST_APPLY'}}, {'resource_summary':{'pods':{'expected':1,'ready':0}}} ])
+@pytest.mark.parametrize('patch', [ {'status':'FAILED'}, {'cleanup_status':'FAILED'}, {'helm_result':{'install':'PASS','release_status':'DEPLOYED','execution_mode':'PREFLIGHTED_MANIFEST_APPLY'}}, {'resource_summary':{'pods':{'expected':1,'ready':0}}} ])
 def test_failed_runtime_evidence_clears_credentials_and_lock(sessions,monkeypatch,patch):
-    mock_provision(monkeypatch,evidence() | patch)
+    deployment=mock_provision(monkeypatch,evidence() | patch)
     operation=claim(sessions,'provision');credentials={'password':'sensitive'}
     managed.run_operation('host-1',operation,credentials,{'resource_warnings':False})
     with sessions() as db:
@@ -177,7 +181,27 @@ def test_failed_runtime_evidence_clears_credentials_and_lock(sessions,monkeypatc
         assert op.status == 'FAILED' and op.finished_at
         assert 'sensitive' not in op.error
         assert op.error.startswith('Self-test failed:')
-    assert credentials == {}
+        assert row.last_self_test['status'] == patch.get('status','VERIFIED')
+        assert row.last_self_test['cleanup_status'] == patch.get('cleanup_status','COMPLETE')
+        assert 'sensitive' not in json.dumps(managed.public_record(db,row),default=str)
+    assert credentials == {} and deployment == {}
+
+
+def test_deployment_failure_retires_secrets_and_releases_lock(sessions,monkeypatch):
+    deployment=mock_provision(monkeypatch,evidence())
+    def fail_deploy(self,owner_id,release,identity):
+        assert identity is deployment and identity['validator_key']=='temporary-sensitive'
+        raise RuntimeError('temporary-sensitive')
+    monkeypatch.setattr(FakeSSH,'deploy',fail_deploy)
+    operation=claim(sessions,'provision');credentials={'password':'sensitive'}
+    managed.run_operation('host-1',operation,credentials,{'resource_warnings':False})
+    with sessions() as db:
+        row,op=db.get(ManagedValidator,'host-1'),db.get(ManagedValidatorOperation,operation)
+        assert row.status == 'DEGRADED' and row.active_operation_id is None
+        assert op.status == 'FAILED' and op.phase == 'DEPLOYING' and op.finished_at
+        assert not row.last_self_test
+        assert 'sensitive' not in json.dumps(managed.public_record(db,row),default=str)
+    assert credentials == {} and deployment == {}
 
 
 def test_readiness_caches_archive_check_and_returns_copy(monkeypatch):

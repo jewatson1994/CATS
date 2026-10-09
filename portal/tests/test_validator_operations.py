@@ -1,6 +1,8 @@
 import hashlib
-import http.client
-from types import SimpleNamespace
+import ssl
+import threading
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
@@ -41,35 +43,83 @@ def test_self_test_uses_existing_engine_and_requires_complete_evidence(monkeypat
     api.JOBS.pop(job)
 
 
-def test_tls_pin_is_checked_before_http_request(monkeypatch):
-    import urllib.request
-    events = []
-    class Socket:
-        def getpeercert(self, binary_form):
-            events.append("peer")
-            return b"wrong-server"
-    def connect(connection):
-        events.append("connect")
-        connection.sock = Socket()
-    monkeypatch.setattr(http.client.HTTPSConnection, "connect", connect)
-    monkeypatch.setattr(http.client.HTTPSConnection, "close", lambda connection: events.append("closed"))
-    def do_open(handler, connection_type, request, **kwargs):
-        connection = connection_type("validator", context=None)
-        connection.connect()
-        events.append("sent")
-    monkeypatch.setattr(urllib.request.HTTPSHandler, "do_open", do_open)
-    context = SimpleNamespace(cats_server_fingerprint="a" * 64)
-    with pytest.raises(ValueError, match="differs from enrolled identity"):
-        validator_client._request("https://validator/api/v1/identity/certificate", context, {"certificate": "secret"})
-    assert events == ["connect", "peer", "closed"]
+@pytest.mark.parametrize("peer", ["enrolled", "another-validator", "wrong-hostname", "untrusted-client"])
+def test_mtls_checks_enrollment_and_hostname_before_http_request(monkeypatch, tmp_path, peer):
+    from cryptography.fernet import Fernet
+    from app.managed_validator_pki import create_identity
+
+    monkeypatch.setenv("CATS_CONFIG_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    host = "wrong.example" if peer == "wrong-hostname" else "127.0.0.1"
+    identity = create_identity("enrolled", host, "https://" + host)
+    foreign = create_identity("another", "127.0.0.1", "https://127.0.0.1")
+    server_identity = foreign if peer == "another-validator" else identity
+    configuration = dict(identity["configuration"])
+    if peer == "untrusted-client":
+        configuration.update(client_certificate=foreign["configuration"]["client_certificate"],
+                             client_key=foreign["configuration"]["client_key"])
+    deployment = server_identity["deployment"]
+    certificate = tmp_path / "server.pem"
+    key = tmp_path / "server-key.pem"
+    certificate.write_text(deployment["validator_certificate"])
+    key.write_text(deployment["validator_key"])
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certificate, key)
+    server_context.load_verify_locations(cadata=deployment["client_ca"])
+    server_context.verify_mode = ssl.CERT_REQUIRED
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            received.append((self.path, self.rfile.read(int(self.headers["Content-Length"]))))
+            self.send_response(200)
+            self.send_header("Content-Length", "2")
+            self.end_headers()
+            self.wfile.write(b"{}")
+
+        def log_message(self, *args):
+            pass
+
+    class Server(HTTPServer):
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(5)
+            try:
+                return server_context.wrap_socket(connection, server_side=True), address
+            except Exception:
+                connection.close()
+                raise
+
+    # Real loopback TLS: no mocked connection or certificate verification.
+    with Server(("127.0.0.1", 0), Handler) as server:
+        server.timeout = 5
+        worker = threading.Thread(target=server.handle_request, daemon=True)
+        worker.start()
+        try:
+            context = validator_client._client_context(configuration, tmp_path)
+            url = "https://127.0.0.1:" + str(server.server_port) + "/protected"
+            if peer == "enrolled":
+                assert validator_client._request(url, context, {"certificate": "secret"}) == {}
+            else:
+                with pytest.raises((urllib.error.URLError, ssl.SSLError)) as error:
+                    validator_client._request(url, context, {"certificate": "secret"})
+                reason = error.value.reason if isinstance(error.value, urllib.error.URLError) else error.value
+                assert isinstance(reason, ssl.SSLError)
+                if peer != "untrusted-client":
+                    assert isinstance(reason, ssl.SSLCertVerificationError)
+        finally:
+            worker.join(timeout=6)
+        assert not worker.is_alive()
+    assert received == ([("/protected", b'{"certificate": "secret"}')] if peer == "enrolled" else [])
 
 
 def test_health_rejects_another_enrolled_identity(monkeypatch):
+    from app.managed_validators import health_checked, BootstrapError
+
     monkeypatch.setattr(validator_client, "_client_context", lambda *args: None)
     monkeypatch.setattr(validator_client, "_request", lambda *args: {
-        "validator_id": "different", "protocol_versions": ["cats.validation/v2"]})
-    with pytest.raises(ValueError, match="identity or protocol"):
-        validator_client.health({"endpoint": "https://validator", "expected_validator_id": "enrolled"})
+        "validator_id": "different", "ready": True, "request_schema_versions": ["cats.validation/v2"]})
+    with pytest.raises(BootstrapError, match="identity verification failed"):
+        health_checked({"endpoint": "https://validator", "expected_validator_id": "enrolled"}, "enrolled")
 
 
 def test_rotation_uses_local_key_and_persists_live_reload(monkeypatch, tmp_path):
@@ -151,11 +201,46 @@ def test_self_test_artifact_verifies_exact_payload(monkeypatch, tmp_path, tamper
         assert artifact.expected_images == [manifest["image"]]
 
 
-def test_cancel_self_test_uses_authenticated_existing_job_route(monkeypatch):
-    calls = []
-    monkeypatch.setattr(validator_client, "_operation", lambda *args: calls.append(args) or {"cancel_requested": True})
+def test_cancel_self_test_uses_authenticated_v2_job_and_waits_for_cleanup(monkeypatch, tmp_path):
+    declaration = {"schema_version": "cats.validation/v2", "request_id": "b" * 32,
+                   "validation_type": "helm-chart", "service": {"id": "selftest", "version": "1"},
+                   "artifact": {"reference": "selftest.zip", "digest": "sha256:" + "c" * 64},
+                   "deployment": {"type": "helm"}}
     job = "a" * 32
-    assert validator_client.self_test_cancel({}, job)["cancel_requested"]
-    assert calls == [({}, "/api/v1/validations/" + job + "/cancel", {})]
-    with pytest.raises(ValueError):
-        validator_client.self_test_cancel({}, "../health")
+    identity = {key: declaration[key] for key in ("schema_version", "request_id", "validation_type", "service", "artifact")}
+    identity.update(artifact_digest=declaration["artifact"]["digest"], artifact_reference="selftest.zip",
+                    validator_id="enrolled", validation_id=job)
+    result = dict(identity, status="CANCELLED", cleanup_status="COMPLETE")
+    states = iter([dict(identity, status="RUNNING", phase="CLEANING_UP"),
+                   dict(identity, status="CANCELLED", phase="CANCELLED", result=result)])
+    context = object()
+    calls = []
+    artifact = tmp_path / "selftest.zip"
+    artifact.write_bytes(b"fixture")
+    monkeypatch.setattr(validator_client, "_client_context", lambda *args: context)
+    monkeypatch.setattr(validator_client.time, "sleep", lambda seconds: None)
+
+    def request(url, actual_context, body=None, **kwargs):
+        assert actual_context is context
+        calls.append((url, body))
+        if url.endswith("/cancel"):
+            assert body == {}
+            return {"cancel_requested": True}
+        if url.endswith("/" + job):
+            return next(states)
+        assert kwargs == {"artifact_path": artifact, "declaration": declaration}
+        return dict(identity, status="QUEUED")
+
+    monkeypatch.setattr(validator_client, "_request", request)
+    configuration = {"endpoint": "https://validator", "expected_validator_id": "enrolled"}
+    phases = []
+    assert validator_client.validate(configuration, declaration, phases.append, artifact_path=artifact,
+                                     cancel_requested=lambda: True) == result
+    endpoint = "https://validator/api/v2/validations"
+    assert [url for url, body in calls] == [endpoint, endpoint + "/" + job + "/cancel",
+                                           endpoint + "/" + job, endpoint + "/" + job]
+    assert phases == ["CLEANING_UP", "CANCELLED"]
+    calls.clear()
+    with pytest.raises(ValueError, match="Invalid retained validation job identity"):
+        validator_client.validate(configuration, declaration, artifact_path=artifact, resume_validation_id="../health")
+    assert calls == []

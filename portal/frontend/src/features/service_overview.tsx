@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {can, requestJson, type PageData} from '../api';
 import {ServiceHeader, ServiceTabs} from '../components/ServiceHeader';
-import {Callout, ExpandableEvidence, MetricCard, MetricGrid, StatusBadge, humanize} from '../components/ui';
+import {Callout, ExpandableEvidence, MetricCard, StatusBadge, humanize} from '../components/ui';
 
 /** Ready / expected runtime counts. A missing measurement is never shown as zero. */
 function runtimeCount(entry: any) {

@@ -383,7 +383,12 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
     assert len(body["views"]) == 1  # no invented rows for services not yet prepared
     assert scheduled and len(scheduled[0]) == 3
     cyber_body = client.get("/api/dashboard/cybersecurity?page_size=200").json()
-    assert cyber_body["posture_preparing"] == 3 and cyber_body["metrics"]["services"] == 1
+    # Services now prepares its security matrix too. The next request may
+    # prepare one more service, while retaining the first cached projection.
+    assert cyber_body["posture_preparing"] == 2 and cyber_body["metrics"]["services"] == 2
+    assert cyber_body["posture_refreshing"] is True
+    assert len(cyber_body["rows"]) == 2
+    assert len(scheduled[-1]) == 2
 
 
 def test_services_matrix_filters_paging_and_lifecycle():
