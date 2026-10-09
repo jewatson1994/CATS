@@ -126,11 +126,14 @@ RUN if ! command -v copa >/dev/null 2>&1; then \
 
 RUN command -v kind && command -v kubectl && command -v helm && command -v docker \
     && command -v bash && command -v tar
-# The dedicated scanner overrides the user without changing Portal/patch behavior.
-# Docker initializes a new named workspace volume with this ownership.
+# The scan broker runs with only identity-switch capabilities. Scanner subprocesses
+# use cats-scanner; the root-owned control workspace protects broker credentials.
 RUN addgroup -g 10001 cats-scan \
     && adduser -D -u 10001 -G cats-scan -h /var/lib/cats-scan cats-scan \
-    && mkdir -p /var/lib/cats-scan \
-    && chown 10001:10001 /var/lib/cats-scan
+    && addgroup -g 10002 cats-scanner \
+    && adduser -D -u 10002 -G cats-scanner -h /var/lib/cats-scan cats-scanner \
+    && mkdir -p /var/lib/cats-scan/tmp \
+    && chmod 0711 /var/lib/cats-scan \
+    && chown 0:0 /var/lib/cats-scan
 EXPOSE 8000 8443
 ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]

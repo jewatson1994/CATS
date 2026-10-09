@@ -105,13 +105,16 @@ services:
 
   # Dedicated daemonless scanner: no database credentials or Docker socket.
   scan-worker:
-    image: ${CATS_IMAGE:-cats:local}
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["/opt/cats-venv/bin/python", "-m", "app.scan_worker"]
     networks: [scan_control, scan_egress]
-    user: "10001:10001"
+    # Control broker retains only the capabilities needed to drop scanner identity.
+    # Scanner subprocesses run as 10002 without capabilities or control credentials.
+    user: "0:0"
     read_only: true
     cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN]
     security_opt:
       - no-new-privileges:true
     cpus: ${CATS_SCAN_CPUS:-2}
@@ -121,6 +124,9 @@ services:
     environment:
       PYTHONDONTWRITEBYTECODE: "1"
       HOME: /var/lib/cats-scan
+      TMPDIR: /var/lib/cats-scan/tmp
+      CATS_SCAN_SCANNER_UID: "10002"
+      CATS_SCAN_SCANNER_GID: "10002"
       CATS_PUBLIC_MAX_CHART_BYTES: ${CATS_PUBLIC_MAX_CHART_BYTES:-536870912}
       CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES: ${CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES:-1073741824}
       CATS_PUBLIC_MAX_CHART_MEMBERS: ${CATS_PUBLIC_MAX_CHART_MEMBERS:-10000}
@@ -135,9 +141,10 @@ services:
       CATS_SERVICE_DEFINITION_MAX_STRING_BYTES: ${CATS_SERVICE_DEFINITION_MAX_STRING_BYTES:-1048576}
       CATS_SERVICE_DEFINITION_MAX_COMPONENTS: ${CATS_SERVICE_DEFINITION_MAX_COMPONENTS:-1000}
       CATS_SCAN_WORKER_TOKEN: ${CATS_SCAN_WORKER_TOKEN:?Set CATS_SCAN_WORKER_TOKEN in .env}
-      CATS_SCAN_PORTAL_URL: http://portal:8000
+      CATS_SCAN_WORKER_ID: ${CATS_SCAN_WORKER_ID:-scan-worker}
+      CATS_SCAN_PORTAL_URL: http://portal-control:8001
       CATS_SCAN_JOB_ROOT: /var/lib/cats-scan
-      CATS_SCAN_CONCURRENCY: ${CATS_SCAN_CONCURRENCY:-1}
+      CATS_SCAN_CONCURRENCY: ${CATS_SCAN_CONCURRENCY:-2}
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
       CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
@@ -167,10 +174,10 @@ services:
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=${CATS_SCAN_TMP_BYTES:-536870912},mode=1777
     depends_on:
-      portal:
+      portal-control:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.scan_worker", "--healthcheck"]
+      test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.scan_worker", "--readiness"]
       interval: 10s
       timeout: 5s
       retries: 6
@@ -179,8 +186,9 @@ services:
 
   portal:
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    networks: [default, scan_control]
 
-    environment:
+    environment: &portal_environment
 
       # -------------------------------------------------------
       # Database
@@ -256,9 +264,15 @@ services:
       # -------------------------------------------------------
 
       CATS_SCAN_WORKER_TOKEN: ${CATS_SCAN_WORKER_TOKEN:?Set CATS_SCAN_WORKER_TOKEN in .env}
+      CATS_SCAN_WORKER_ID: ${CATS_SCAN_WORKER_ID:-scan-worker}
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
       CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
+      CATS_SCAN_WORKER_CREDENTIALS: ${CATS_SCAN_WORKER_CREDENTIALS:-}
       CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
+      CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY: ${CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY:-10}
+      CATS_SCAN_PREPARATION_TTL_SECONDS: ${CATS_SCAN_PREPARATION_TTL_SECONDS:-900}
+      CATS_SCAN_RETENTION_DAYS: ${CATS_SCAN_RETENTION_DAYS:-30}
+      CATS_SCAN_CLEANUP_BATCH_SIZE: ${CATS_SCAN_CLEANUP_BATCH_SIZE:-20}
       CATS_SCAN_MAX_ATTEMPTS: ${CATS_SCAN_MAX_ATTEMPTS:-3}
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
       CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
@@ -465,7 +479,7 @@ services:
     # Volumes
     # ---------------------------------------------------------
 
-    volumes:
+    volumes: &portal_volumes
       # Required by current CATS Docker/kind/scanning operations.
       - type: bind
         source: ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:?Set an absolute path to the prepared validator release directory}
@@ -529,6 +543,29 @@ services:
 
 
     restart: unless-stopped
+
+
+  # Dedicated internal listener: worker protocol never uses the published Portal port.
+  portal-control:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    command: ["uvicorn", "app.scan_control:app", "--host", "0.0.0.0", "--port", "8001"]
+    networks: [default, scan_control]
+    environment: *portal_environment
+    volumes: *portal_volumes
+    depends_on:
+      db:
+        condition: service_healthy
+      portal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/cats-venv/bin/python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
 
 
 # ===========================================================

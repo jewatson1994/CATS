@@ -41,6 +41,44 @@ Write-Host "Target image: $expectedImage" -ForegroundColor Cyan
 Write-Host ""
 
 try {
+    # Resolve the registry bind exactly as Compose does; never let Docker create it
+    # silently as a root-owned directory. Empty directories support anonymous pulls.
+    $registryAuthSource = $env:CATS_SCAN_REGISTRY_AUTH_SOURCE
+    if ([string]::IsNullOrWhiteSpace($registryAuthSource)) {
+        $envFile = Join-Path $PSScriptRoot '.env'
+        if (Test-Path -LiteralPath $envFile) {
+            $registrySetting = Get-Content -LiteralPath $envFile | Where-Object { $_ -match '^\s*CATS_SCAN_REGISTRY_AUTH_SOURCE\s*=' } | Select-Object -Last 1
+            if ($registrySetting) {
+                $registryAuthSource = ($registrySetting -split '=', 2)[1].Trim().Trim('"').Trim("'")
+            }
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($registryAuthSource)) { $registryAuthSource = './scan-registry-auth' }
+    if (-not [System.IO.Path]::IsPathRooted($registryAuthSource)) {
+        $registryAuthSource = Join-Path $PSScriptRoot $registryAuthSource
+    }
+    $registryAuthSource = [System.IO.Path]::GetFullPath($registryAuthSource)
+    if (-not (Test-Path -LiteralPath $registryAuthSource)) {
+        New-Item -ItemType Directory -Path $registryAuthSource -Force | Out-Null
+    }
+    $registryDirectory = Get-Item -LiteralPath $registryAuthSource
+    if (-not $registryDirectory.PSIsContainer -or ($registryDirectory.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'Registry authentication source must be a real directory, not a file or symbolic link.'
+    }
+    $registryConfig = Join-Path $registryAuthSource 'config.json'
+    if (Test-Path -LiteralPath $registryConfig) {
+        $registryConfigItem = Get-Item -LiteralPath $registryConfig
+        if ($registryConfigItem.PSIsContainer -or ($registryConfigItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+            throw 'Registry config.json must be a regular file.'
+        }
+        try {
+            $registryConfigText = Get-Content -LiteralPath $registryConfig -Raw
+            if (-not $registryConfigText.TrimStart().StartsWith('{')) { throw 'Expected object' }
+            $null = $registryConfigText | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch { throw 'Registry config.json must contain a valid JSON object.' }
+    }
+    $env:CATS_SCAN_REGISTRY_AUTH_SOURCE = $registryAuthSource
     $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
     $pythonArgs = @()
     if (-not (Test-Path -LiteralPath $python)) {
@@ -135,14 +173,14 @@ try {
         -d `
         --force-recreate `
         --wait `
-        portal patch-worker scan-worker
+        portal portal-control patch-worker scan-worker
 
     if ($LASTEXITCODE -ne 0) {
         throw "Docker Compose recreation failed."
     }
 
     Write-Host ""
-    Write-Host "Portal, patch-worker, and scan-worker recreated successfully." -ForegroundColor Green
+    Write-Host "Portal, control listener, patch-worker, and scan-worker recreated successfully." -ForegroundColor Green
     Write-Host ""
 
     # ---------------------------------------------------------
@@ -171,6 +209,15 @@ try {
     $scanWorkerImage = docker inspect $scanWorkerContainer --format "{{.Config.Image}}"
     if ($LASTEXITCODE -ne 0 -or $scanWorkerImage -ne $expectedImage) {
         throw "Scan-worker image mismatch or inspection failed. Expected '$expectedImage'."
+    }
+
+    $controlContainer = docker @composeArgs ps -q portal-control
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($controlContainer)) {
+        throw "Could not locate the portal-control container."
+    }
+    $controlImage = docker inspect $controlContainer --format "{{.Config.Image}}"
+    if ($LASTEXITCODE -ne 0 -or $controlImage -ne $expectedImage) {
+        throw "Portal-control image mismatch or inspection failed. Expected '$expectedImage'."
     }
 
     $portalImage = docker inspect $portalContainer --format "{{.Config.Image}}"
@@ -202,7 +249,7 @@ try {
         throw "Patch-worker image mismatch. Expected '$expectedImage' but found '$workerImage'."
     }
 
-    foreach ($container in @($portalContainer, $workerContainer, $scanWorkerContainer)) {
+    foreach ($container in @($portalContainer, $controlContainer, $workerContainer, $scanWorkerContainer)) {
         $deployedImageId = docker inspect $container --format "{{.Image}}"
         if ($LASTEXITCODE -ne 0) {
             throw "Could not inspect the deployed image for container '$container'."
