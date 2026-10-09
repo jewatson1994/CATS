@@ -37,6 +37,16 @@ Keycloak is then available to the browser at `http://localhost:8081` and to CATS
 
 The internal issuer prevents the CATS container from trying to reach itself through `localhost`. The browser issuer rewrites only the browser-facing authorization URL. HTTP issuers require the explicit local-development setting `CATS_OIDC_ALLOW_INSECURE_HTTP=true` and must not be used in production.
 
+## OIDC clock tolerance
+
+Set `OIDC_CLOCK_SKEW_SECONDS=60` in the deployment environment to tolerate small differences between Portal and provider clocks. The default is 60 seconds when absent; accepted values are integer seconds from 0 through 300. Zero restores strict timing. Negative, empty, noninteger, and larger values reject OIDC authentication rather than silently falling back. Local password recovery remains available.
+
+PyJWT applies the same native leeway to future `iat` and optional `nbf`, and to `exp`. Tokens beyond that tolerance are rejected; expiry at exactly the leeway boundary is rejected by PyJWT. ID tokens require issuer, subject, audience, issued-at and expiration claims, and timestamps must be finite JSON numbers. Signature, issuer, audience, nonce, callback state, identity linking, role mapping and account enablement checks remain enforced.
+
+After upgrading the image, recreate the Portal container to load the setting. Both supported Compose files pass it through with the default, so existing `.env` files need no edit unless overriding it. Do not replace secrets or regenerate environment files. Keep NTP enabled on both provider and Portal hosts; leeway does not repair a badly incorrect clock.
+
+Timestamp failures produce server-side warnings containing only category, claim name, server UTC time, safe numeric token timestamp, tolerance and signed difference (`token - server`). Malformed values are omitted; tokens, authorization codes, secrets and user claims are never included. The browser receives a generic login failure. Compare these diagnostics with the actual token issuance time: a provider HTTP Date header can come from a proxy and does not prove the token issuer's clock.
+
 ## Linking existing CATS accounts
 
 Existing accounts require an explicit administrator binding. Username and email claims alone cannot claim a local account. Set `CATS_OIDC_ACCOUNT_LINKS` to a JSON object indexed by the configured issuer and the provider's immutable subject, for example:

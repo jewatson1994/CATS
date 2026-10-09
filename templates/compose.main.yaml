@@ -442,6 +442,7 @@ services:
       # CATS does NOT deploy an identity provider.
       # =======================================================
 
+      OIDC_CLOCK_SKEW_SECONDS: ${OIDC_CLOCK_SKEW_SECONDS-60}
       CATS_OIDC_ALLOW_INSECURE_HTTP: ${CATS_OIDC_ALLOW_INSECURE_HTTP:-false}
 
       CATS_OIDC_ISSUER_URL: ${CATS_OIDC_ISSUER_URL:-}
