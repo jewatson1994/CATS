@@ -365,7 +365,16 @@ def redact(value):
 
 def initialize():
     ROOT.mkdir(parents=True, exist_ok=True)
-    if os.name != "nt": ROOT.chmod(0o711)
+    if os.name != "nt":
+        # Existing volumes may retain the former broker UID. CHOWN is retained,
+        # whereas FOWNER/DAC overrides are deliberately absent.
+        os.chown(ROOT, 0, 0)
+        ROOT.chmod(0o711)
+        for name in ("heartbeat", "readiness"):
+            stamp = ROOT / name
+            if stamp.exists():
+                os.chown(stamp, 0, 0)
+                stamp.chmod(0o600)
     (ROOT / "heartbeat").touch()
 
 

@@ -10,6 +10,7 @@ import tarfile
 import types
 import subprocess
 import threading
+from unittest.mock import MagicMock
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from threading import Barrier
@@ -21,6 +22,26 @@ from sqlalchemy.orm import sessionmaker
 
 from app import scan_artifacts as artifacts
 from app import scan_coordination as coordination
+
+
+@pytest.mark.parametrize("existing_stamps", [False, True])
+def test_initialize_reclaims_restored_workspace_before_chmod(monkeypatch, existing_stamps):
+    from app import scan_worker
+    root = MagicMock()
+    events = []
+    root.chmod.side_effect = lambda mode: events.append(("chmod", mode))
+    stamp = root.__truediv__.return_value
+    stamp.exists.return_value = existing_stamps
+    stamp.chmod.side_effect = lambda mode: events.append(("stamp_chmod", mode))
+    monkeypatch.setattr(scan_worker, "ROOT", root)
+    monkeypatch.setattr(scan_worker, "os", types.SimpleNamespace(
+        name="posix", chown=lambda path, uid, gid: events.append(("chown", uid, gid))))
+    scan_worker.initialize()
+    expected = [("chown", 0, 0), ("chmod", 0o711)]
+    if existing_stamps:
+        expected += [("chown", 0, 0), ("stamp_chmod", 0o600)] * 2
+    assert events == expected
+    stamp.touch.assert_called_once_with()
 
 
 @pytest.fixture
