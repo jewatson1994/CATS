@@ -165,7 +165,8 @@ def test_ingestion_attaches_effective_release_namespace_before_planning():
 
 
 def test_source_plan_rejoins_old_retained_candidates_without_changing_evidence():
-    from app.main import _source_remediation_plan
+    from app.main import _retained_remediation_plan, _source_remediation_plan
+    from app.remediation import plan_digest
     payload, finding = fixture(namespace=None)
     resource = payload["rendered_resources"][0]
     lineage = retained(payload, finding, group="container")
@@ -175,9 +176,14 @@ def test_source_plan_rejoins_old_retained_candidates_without_changing_evidence()
         "namespace": finding.namespace, "target": finding.target,
         "evidence": {"candidate_resources": [lineage, {**lineage, "container_name": "worker"}]}}]
     original = deepcopy(payload)
-    execution = SimpleNamespace(raw_payload=payload)
-    db = SimpleNamespace(scalar=lambda statement: execution, scalars=lambda statement: [])
-    _, plan = _source_remediation_plan(db, SimpleNamespace(id=1))
+    execution = SimpleNamespace(id=17, service_id=1, service_version_id=23, raw_payload=payload)
+    db = SimpleNamespace(scalar=lambda statement: execution, scalars=lambda statement: [],
+                         execute=lambda statement: SimpleNamespace(all=lambda: []))
+    source, plan = _source_remediation_plan(db, SimpleNamespace(id=1))
+    assert source is execution
+    _, worker_plan = _retained_remediation_plan(db, SimpleNamespace(id=1), execution, job_key="REM-1")
+    assert plan["source_digest"] == worker_plan["source_digest"]
+    assert plan_digest(plan) == plan_digest(worker_plan)
     row = plan["configuration_changes"][0]
     assert row["source_resolution"] == "editable-candidates"
     assert {option["container_name"] for option in row["target_options"]} == {"web", "worker"}

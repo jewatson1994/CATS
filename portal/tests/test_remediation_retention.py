@@ -4,7 +4,7 @@ import hashlib
 
 from sqlalchemy import select
 
-from test_portal import setup_function, new_client, csrf, payload, pipeline_headers
+from test_portal import setup_function, new_client, csrf, payload, pipeline_headers, confirmed_remediation
 from app import main
 from app.database import SessionLocal
 from app.models import Execution, RemediationExecution, Service, User
@@ -17,7 +17,7 @@ def test_retry_keeps_original_execution_after_new_release(monkeypatch):
     now = datetime.now(timezone.utc)
     first = payload("original-remediation-scan", now, [])
     assert client.post("/api/v1/pipeline-results", json=first, headers=pipeline_headers).status_code == 201
-    queued = client.post("/services/payments-service/remediate", data={"csrf_token": csrf(client)}, follow_redirects=False)
+    queued = confirmed_remediation(client)
     assert queued.status_code == 303
     with SessionLocal() as db:
         original = db.scalar(select(RemediationExecution))

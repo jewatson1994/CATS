@@ -64,7 +64,7 @@ describe('remediation candidate lifecycle', () => {
     for (const [label, value] of [['Remediation','completed'],['Delivery','failed'],['Verification','not run'],['Signing','verified']]) {
       expect(lifecycle.getByText(label).nextElementSibling).toHaveTextContent(value);
     }
-    expect(screen.getByRole('link', {name:'Download retained candidate (legacy)'})).toHaveAttribute('href','/services/example/remediations/candidate-1/candidate.zip');
+    expect(screen.getByRole('link', {name:'Download candidate evidence for troubleshooting'})).toHaveAttribute('href','/services/example/remediations/candidate-1/candidate.zip');
   });
   it('does not invent candidate or source versions when metadata is missing', () => {
     render(<Report data={{...data,job:{...job,revision_number:null,original_revision:null,source_version_id:null,resulting_revision:'legacy-generated-name'}}}/>);
@@ -80,7 +80,7 @@ describe('remediation candidate lifecycle', () => {
     expect(screen.getByText('failed')).toBeInTheDocument();
   });
   it('downloads only the exact independently verified final bundle', () => {
-    render(<Report data={{...data,job:{...job,delivery_attempts:[
+    render(<Report data={{...data,job:{...job,workflow:{stage:'deliver',validation_resolved:true},delivery_attempts:[
       {id:41,result:'download_ready',validation_type:'standard-bundle',verification:{status:'VERIFIED'}},
       {id:42,result:'validation_failed',validation_type:'offline-bundle',verification:{status:'FAILED',offlineVerified:false}},
       {id:43,result:'download_ready',validation_type:'offline-bundle',verification:{status:'VERIFIED',offlineVerified:true,network:{isolated:true,external_chart_fetches:0,external_image_pulls:0}}},
@@ -91,7 +91,7 @@ describe('remediation candidate lifecycle', () => {
     expect(screen.getByRole('region',{name:'CATSchrödinger’s evidence'})).toHaveTextContent('Original artifact validation');
   });
   it('does not claim offline verification or measured isolation when evidence is missing', () => {
-    render(<Report data={{...data,job:{...job,delivery_attempts:[{id:44,result:'download_ready',validation_type:'offline-bundle',verification:{status:'VERIFIED'}}]}}}/>);
+    render(<Report data={{...data,job:{...job,workflow:{stage:'deliver',validation_resolved:true},delivery_attempts:[{id:44,result:'download_ready',validation_type:'offline-bundle',verification:{status:'VERIFIED'}}]}}}/>);
     expect(screen.queryByRole('link',{name:'Download verified Offline Bundle'})).not.toBeInTheDocument();
     for(const term of screen.getAllByText('Network isolated')) expect(term.nextElementSibling).toHaveTextContent('Unavailable');
     for(const term of screen.getAllByText('External image pulls')) expect(term.nextElementSibling).toHaveTextContent('Unavailable');

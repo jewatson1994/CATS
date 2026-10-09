@@ -377,6 +377,7 @@ PERMISSIONS = {
     "validator.rotate_certificate": "Rotate managed validator certificates",
     "validator.upgrade": "Upgrade managed validator software",
     "validator.remove": "Remove and revoke managed validators",
+    "artifact.publish": "Publish retained remediation artifacts to OCI destinations",
     "artifact.sign": "Sign portal-patched images with the configured signing key",
     "service.view": "View services, findings, evidence, and history",
     "service.export": "Export service and finding evidence",
@@ -418,7 +419,7 @@ SYSTEM_ROLES = {
     "Cybersecurity": [
         "validator.view", "validator.create", "validator.provision", "validator.test",
         "validator.self_test", "validator.rotate_certificate", "validator.upgrade", "validator.remove",
-        "artifact.sign",
+        "artifact.sign", "artifact.publish",
         "service.view", "service.export", "service.edit", "exception.request",
         "exception.review", "exception.revoke", "archive.request", "archive.review",
         "poam.request", "poam.review",

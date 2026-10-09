@@ -1,6 +1,7 @@
 """Explicit governance and remediation DTOs; never serialize ORM internals."""
 from .frontend_governance import entry, service
 from .remediation_summary import _redact
+from .remediation_workflow import workflow_projection
 
 
 def project_remediations(data, name, context, can, formatters):
@@ -13,7 +14,7 @@ def project_remediations(data, name, context, can, formatters):
     data["return_to"] = data["next_path"]
     data["service"] = service(context.get("service") or _field(context.get("view", {}), "service"))
     sid = data["service"].get("id")
-    for key in ("poam.review", "exception.revoke", "remediation.execute", "service.export"):
+    for key in ("poam.review", "exception.revoke", "remediation.execute", "service.export", "artifact.publish", "artifact.sign"):
         permission(key, sid)
     data["services"] = [service(item) for item in context.get("services", [])]
     data["poam_services"] = [service(item) for item in context.get("poam_services", [])]
@@ -35,13 +36,15 @@ def project_remediations(data, name, context, can, formatters):
         data["exceptions"].append(row)
     def validation_evidence(value):
         # Only declared public evidence fields cross the page boundary.
-        projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest", "detail", "request_id", "validation_id", "validator_id", "cleanup_status"))
+        projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest", "detail", "request_id", "validation_id", "validator_id", "cleanup_status", "validated_at", "phase"))
         projected["service"] = _fields(_field(value, "service", {}) or {}, ("id", "version"))
         projected["network"] = _fields(_field(value, "network", {}) or {}, ("isolated", "external_chart_fetches", "external_image_pulls"))
         return projected
     def job(item, full=False):
         result = _fields(item, ("job_key", "finding_type", "original_revision", "resulting_revision", "retry_of_id", "status", "output_mode", "failure_reason", "rollback_reference", "source_execution_id", "source_version_id", "revision_number", "remediation_status", "delivery_status", "verification_status", "signing_status", "artifact_digest"))
         result.update(started_at=_formatted(_field(item, "started_at")), finished_at=_formatted(_field(item, "completed_at")), started_label=timestamp(_field(item, "started_at")), finished_label=timestamp(_field(item, "completed_at")), has_artifact=bool(_field(item, "artifact_path")))
+        result["workflow"] = workflow_projection(item, can=can, service_id=_field(item, "service_id") or sid,
+            signing_required=bool(context.get("remediation_signing_required")), include_details=full)
         if not full:
             return result
         result["delivery_attempts"] = []

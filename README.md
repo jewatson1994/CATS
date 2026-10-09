@@ -164,7 +164,7 @@ Use an HTTPS reverse proxy for shared deployments, keep development bypass disab
 
 Simplified service findings group vulnerabilities by CVE, whereas scan totals may count individual observations. Cybersecurity warning policy can turn a compliant service yellow without changing the underlying compliance decision. Missing evidence matters even when no vulnerabilities are shown.
 
-Remediation is disabled until enabled in administration. Patch, publication, signature verification, and runtime validation have separate outcomes. Downloaded candidates are not proof of runtime success; reassess and ingest authoritative evidence after deployment.
+Remediation is disabled until enabled in administration. The [remediation wizard](docs/remediation-wizard.md) guides operators through Plan, Review, Confirm, Remediate, Validate, and Deliver. Candidates are retained before delivery; OCI publication requires scoped `artifact.publish` permission and, by default, verified evidence for the exact candidate and service version (`CATS_REMEDIATION_REQUIRE_VALIDATION=true`). Validation, publication, and signing retain separate outcomes. Downloaded candidates are not proof of runtime success; reassess and ingest authoritative evidence after deployment.
 
 Permanent service deletion requires global `service.delete`, a reason, and exact `delete <service name>` confirmation. Active jobs block deletion. CATS removes its service records and associated local outputs, retains audit history, and does not remove external registry images.
 

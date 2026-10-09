@@ -1,4 +1,4 @@
-import {fireEvent, render, screen, waitFor, cleanup} from '@testing-library/react';
+import {fireEvent, render, screen, waitFor, cleanup, within} from '@testing-library/react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {Remediate} from './remediations';
 import {requestJson, type PageData} from '../api';
@@ -16,11 +16,11 @@ describe('remediation decisions', () => {
     await screen.findByText('rule-1 · DECISION REQUIRED');
     expect(screen.queryByText('rule-12 · DECISION REQUIRED')).not.toBeInTheDocument();
     fireEvent.change(screen.getAllByLabelText('Decision')[0],{target:{value:'unresolved'}});
-    fireEvent.click(screen.getByRole('button',{name:'Next'}));
+    fireEvent.click(within(screen.getByRole('tabpanel',{name:'Configuration'})).getByRole('button',{name:'Next'}));
     expect(screen.getByText('rule-12 · DECISION REQUIRED')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button',{name:'Previous'}));
+    fireEvent.click(within(screen.getByRole('tabpanel',{name:'Configuration'})).getByRole('button',{name:'Previous'}));
     expect(screen.getAllByLabelText('Decision')[0]).toHaveValue('unresolved');
-    fireEvent.change(screen.getByLabelText('Findings per page'),{target:{value:'25'}});
+    fireEvent.change(within(screen.getByRole('tabpanel',{name:'Configuration'})).getByLabelText('Findings per page'),{target:{value:'25'}});
     expect(screen.getAllByLabelText('Decision')).toHaveLength(12);
   });
   it('reviews image vulnerability evidence in a separate tab without losing configuration decisions', async () => {
@@ -32,7 +32,7 @@ describe('remediation decisions', () => {
     fireEvent.click(screen.getByText('Build plan'));
     expect(await screen.findByLabelText('Decision')).toHaveValue('proposed');
     fireEvent.click(screen.getByRole('tab',{name:'Vulnerability'}));
-    expect(screen.getByText('ubuntu:latest')).toBeVisible();
+    expect(screen.getByRole('heading',{name:'ubuntu:latest'})).toBeVisible();
     expect(screen.getByText(/Copa attempts supported package fixes/)).toBeVisible();
     fireEvent.click(screen.getByText('Retained vulnerabilities'));
     expect(screen.getByText(/CVE-test/)).toBeVisible();
@@ -124,13 +124,13 @@ describe('remediation decisions', () => {
     fireEvent.change(screen.getByLabelText('Resource quantity'),{target:{value:'250m'}});
     expect(JSON.parse((container.querySelector('[name="decisions"]') as HTMLInputElement).value)['1']).toEqual({action:'custom',value:'250m'});
   });
-  it('skips automatic reviews when no decision is required', async () => {
+  it('reviews automatic changes before confirmation', async () => {
     vi.mocked(requestJson).mockResolvedValue({configuration_changes:[safe],images:[],plan_digest:'digest'});
     render(<Remediate data={data}/>);
     fireEvent.change(screen.getByLabelText('Mode'),{target:{value:'automated'}});
     fireEvent.click(screen.getByText('Build plan'));
-    await waitFor(() => expect(screen.getByText('Delivery / Verification')).toBeInTheDocument());
-    expect(screen.queryByText('Decision')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText('Review proposed changes')).toBeInTheDocument());
+    expect(screen.getByLabelText('Decision')).toBeDisabled();
     fireEvent.click(screen.getByText('Final review'));
     expect(screen.getByText(/1 configuration changes accepted/)).toBeInTheDocument();
   });
@@ -149,19 +149,16 @@ describe('remediation decisions', () => {
     expect(decisions['2']).toEqual({action:'custom',value:false});
     expect(decisions['3'].action).toBe('unresolved');
   });
-  it('offers explicit final bundle modes and requires final validation', async () => {
+  it('keeps delivery and runtime selections out of the approved plan', async () => {
     vi.mocked(requestJson).mockResolvedValue({configuration_changes:[safe],images:[],plan_digest:'digest'});
-    render(<Remediate data={data}/>);
-    fireEvent.change(screen.getByLabelText('Mode'),{target:{value:'automated'}});
+    const {container} = render(<Remediate data={data}/>);
     fireEvent.click(screen.getByText('Build plan'));
-    await screen.findByText('Delivery / Verification');
-    const delivery = screen.getByLabelText('Delivery');
-    expect(screen.getByRole('option',{name:'Standard Bundle',hidden:true})).toHaveValue('standard-bundle');
-    expect(screen.getByRole('option',{name:'Offline Bundle',hidden:true})).toHaveValue('offline-bundle');
-    fireEvent.change(delivery,{target:{value:'offline-bundle'}});
-    expect(screen.getByLabelText('CATSchrödinger’s final delivery verification')).toBeChecked();
-    expect(screen.getByLabelText('CATSchrödinger’s final delivery verification')).toBeDisabled();
+    await screen.findByText('Review proposed changes');
     fireEvent.click(screen.getByText('Final review'));
-    expect(screen.getByText('Offline Bundle · Final delivery verification required')).toBeInTheDocument();
+    expect(screen.getByText('Confirm remediation')).toBeInTheDocument();
+    expect(container.querySelector('[name="output_mode"]')).toBeNull();
+    expect(container.querySelector('[name="verify_runtime"]')).toBeNull();
+    expect(container.querySelector('[name="destination_id"]')).toBeNull();
+    expect(screen.getByText('Execute remediation')).toBeDisabled();
   });
 });

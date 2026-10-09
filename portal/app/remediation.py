@@ -485,8 +485,10 @@ def plan_digest(plan: dict[str, Any]) -> str:
     """Bind decisions to immutable plan content, excluding execution metadata."""
     rows = [{key: value for key, value in row.items() if key not in {"timestamp", "job_id"}}
             for row in plan.get("configuration_changes", [])]
-    return sha256(json.dumps({"changes": rows, "images": plan.get("images", []), "before": plan.get("before")},
-                             sort_keys=True, default=str).encode()).hexdigest()
+    content = {"changes": rows, "images": plan.get("images", []), "before": plan.get("before")}
+    if plan.get("source_digest"):
+        content["source_digest"] = plan["source_digest"]
+    return sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
 
 
 def resolve_decisions(plan: dict[str, Any], mode: str, decisions: dict[str, Any] | None, actor: str) -> dict[str, Any]:
