@@ -36,6 +36,21 @@ Follow [the dedicated worker guide](../docs/dedicated-scan-worker.md) for contro
 
 The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires explicit image and release-directory selections; the root file retains local-development fallbacks. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
 
+## OIDC clock skew and remediation validation
+
+`OIDC_CLOCK_SKEW_SECONDS=60` configures OIDC token timestamp tolerance. It is an environment-only setting, with no Administration field. Use an integer from `0` through `300` seconds; `0` disables tolerance. An omitted value defaults to `60`; blank or invalid values are rejected. Keep the host clock synchronized.
+
+After editing your existing environment file, recreate the Portal services to load the value. No image rebuild is needed:
+
+```sh
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate --wait portal portal-control
+```
+
+For the repository-root stack, use `docker compose up -d --no-deps --force-recreate --wait portal portal-control` after editing `.env`. For direct Portal development, restart the process with the updated environment.
+
+`CATS_REMEDIATION_REQUIRE_VALIDATION=true` requires validation bound to the candidate before OCI or deployable bundle delivery. Keep this default unless your deployment deliberately permits skipping validation. This delivery policy is separate from `CATS_DEPLOYMENT_VALIDATION_ENABLED`; see [the remediation wizard guide](../docs/remediation-wizard.md) for the workflow and deployment requirements.
+
 ## Validator sandbox
 
 Use a dedicated **Linux amd64 VM** with Docker; this host-networked template is not a Docker Desktop deployment. It builds `portal/Dockerfile.validator` from the checkout. The root file uses context `.` and the template uses `..`, relative to their Compose-file directories.

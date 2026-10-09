@@ -443,6 +443,9 @@ services:
       # CATS does NOT deploy an identity provider.
       # =======================================================
 
+      # Environment-only token timestamp tolerance: 0-300 seconds, default 60.
+      # Preserve blank values so invalid configuration fails validation.
+      # Recreate portal and portal-control after changes; no image rebuild needed.
       OIDC_CLOCK_SKEW_SECONDS: ${OIDC_CLOCK_SKEW_SECONDS-60}
       CATS_OIDC_ALLOW_INSECURE_HTTP: ${CATS_OIDC_ALLOW_INSECURE_HTTP:-false}
 
