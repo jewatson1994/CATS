@@ -1,8 +1,10 @@
 """Direct ORM transfer checks; no server, worker, or shared database."""
 from copy import deepcopy
 from datetime import datetime, timezone, timedelta
+from io import BytesIO
 import unittest
 from unittest.mock import patch
+from zipfile import ZipFile, ZIP_DEFLATED
 
 from sqlalchemy import create_engine, select, event, DateTime, Integer, Boolean, JSON
 from sqlalchemy.orm import Session
@@ -98,9 +100,46 @@ class TransferCoreTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "record count"):
                 t.export_service(self.db, self.service, "tester")
 
-    def test_export_rejects_oversized_manifest(self):
-        with self.assertRaisesRegex(ValueError, "manifest exceeds"):
-            t.export_service(self.db, self.service, "x" * 65536)
+    def test_large_redaction_manifest_roundtrips(self):
+        values = {f"api_key_{i:04d}_{'x' * 80}": "sensitive" for i in range(1000)}
+        self.db.add(m.ServiceMetadata(service_id=self.service.id, values=values))
+        self.db.flush()
+        data = t.export_service(self.db, self.service, "tester")
+        with ZipFile(BytesIO(data)) as archive:
+            self.assertGreater(archive.getinfo("manifest.json").file_size, 65536)
+            self.assertNotIn(b"sensitive", archive.read("service.json"))
+        manifest, state = t.parse_service(data)
+        self.assertGreaterEqual(len(manifest["redactions"]), len(values))
+        restored = t.restore_service(self.db, state, "large-manifest-restored", self.user.id)
+        self.assertEqual(restored.service_key, "large-manifest-restored")
+
+    def test_manifest_counts_toward_aggregate_expanded_limit(self):
+        data = t.export_service(self.db, self.service, "x" * 65536)
+        with ZipFile(BytesIO(data)) as archive:
+            sizes = [entry.file_size for entry in archive.infolist()]
+        limit = sum(sizes) - 1
+        self.assertGreater(limit, max(sizes))
+        self.assertLess(len(data), limit)
+        with patch.dict("os.environ", {"CATS_BUNDLE_MAX_BYTES": str(limit)}):
+            with self.assertRaisesRegex(ValueError, "expanded-byte limit"):
+                t.parse_service(data)
+            with self.assertRaisesRegex(ValueError, "expanded-byte limit"):
+                t.export_service(self.db, self.service, "x" * 65536)
+
+    def test_large_manifest_still_rejects_duplicate_keys_and_complexity(self):
+        data = t.export_service(self.db, self.service, "x" * 65536)
+        with ZipFile(BytesIO(data)) as archive:
+            manifest = archive.read("manifest.json")
+            body = archive.read("service.json")
+        malformed = BytesIO()
+        with ZipFile(malformed, "w", ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", b'{"format":"duplicate",' + manifest[1:])
+            archive.writestr("service.json", body)
+        with self.assertRaisesRegex(ValueError, "Duplicate JSON key"):
+            t.parse_service(malformed.getvalue())
+        with patch.dict("os.environ", {"CATS_BUNDLE_MAX_JSON_NODES": "10"}):
+            with self.assertRaisesRegex(ValueError, "complexity"):
+                t.parse_service(data)
 
     def test_export_ignores_derived_validation_artifact(self):
         self.db.add(m.DeploymentValidationRun(service_id=self.service.id, run_key="dangling",

@@ -4,10 +4,12 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
+from io import BytesIO
 import ssl
 from threading import Thread
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+from zipfile import ZipFile
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,6 +18,7 @@ from cryptography.x509.oid import NameOID
 import pytest
 
 from app import release_oci as oci
+from test_release_exports import source
 
 
 @pytest.fixture
@@ -23,6 +26,7 @@ def files(tmp_path):
     contents = {"documentation.zip": b"retained documentation archive",
                 "release-manifest.json": b'{"release":"test"}',
                 "release-manifest.sig": b"detached signature",
+                "documentation.zip.sig": b"detached archive signature",
                 "release-public-key.pem": b"public key",
                 "VERIFY.txt": b"Verify manifest and archive before use."}
     for name, data in contents.items():
@@ -161,6 +165,33 @@ def registry(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_export_all_with_large_manifest_can_be_attached_and_retrieved(registry, files, source):
+    from app.models import ServiceMetadata
+    from app.release_exports import write_documentation
+    from app.service_transfer import parse_service
+
+    db, record = source
+    db.add(ServiceMetadata(service_id=record.service_id, values={
+        f"api_key_{index:04d}_{'x' * 80}": "sensitive" for index in range(1000)}))
+    db.flush()
+    auth = SimpleNamespace(has=lambda permission, service_id: True,
+                           user=SimpleNamespace(username="exporter"))
+    write_documentation(db, record, auth, files["documentation.zip"])
+    with ZipFile(files["documentation.zip"]) as archive:
+        bundle_bytes = archive.read("cats-service.zip")
+        with ZipFile(BytesIO(bundle_bytes)) as bundle:
+            assert bundle.getinfo("manifest.json").file_size > 65536
+        assert len(parse_service(bundle_bytes)[0]["redactions"]) >= 1000
+    # Release metadata is a blob too, and also accepts more than 64 KiB.
+    files["release-manifest.json"].write_text(json.dumps({"inventory": ["entry" * 30] * 600}))
+    result = oci.publish_documentation(files, registry.subject, registry.env)
+    assert result["status"] == "published", result
+    assert oci.verify_documentation(result["reference"], registry.subject, registry.env)["status"] == "verified"
+    for row in result["files"]:
+        name = row["annotations"]["org.opencontainers.image.title"]
+        assert registry.blobs[row["digest"]] == files[name].read_bytes()
 
 
 def test_publish_and_retrieve_referrer_with_signatures_and_immutable_digest(registry, files):

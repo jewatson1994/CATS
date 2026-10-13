@@ -37,6 +37,8 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from .service_exports import (format_sheet, _service_mitigations_book,
+                              _service_findings_book, _service_diagrams_bytes, _service_sbom_components)
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
@@ -44,8 +46,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
 import yaml
 
 from .database import Base, background_engine, engine, get_db, SessionLocal
@@ -1660,23 +1660,6 @@ def workbook_response(workbook: Workbook, filename: str):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-
-def format_sheet(sheet):
-    sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = sheet.dimensions
-    sheet.sheet_view.showGridLines = False
-    header_fill = PatternFill("solid", fgColor="17312B")
-    for cell in sheet[1]:
-        cell.fill = header_fill
-        cell.font = Font(color="FFFFFF", bold=True)
-        cell.alignment = Alignment(vertical="center")
-    for column in sheet.columns:
-        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 55)
-        sheet.column_dimensions[get_column_letter(column[0].column)].width = max(width, 12)
-    for row in sheet.iter_rows(min_row=2):
-        for cell in row:
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def service_view(service: Service, now: datetime, configuration: dict[str, str] | None = None):
@@ -6763,6 +6746,7 @@ def redeliver_remediation(service_key: str, job_key: str, csrf_token: str = Form
     return RedirectResponse(f"/services/{service_key}/remediations/{job_key}" + (f"/{target}" if target else ""), status_code=303)
 
 
+@app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/documentation.zip.sig")
 @app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/release-manifest.sig")
 @app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/release-public-key.pem")
 @app.get("/services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/VERIFY.txt")
@@ -8717,74 +8701,16 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
     return {"images": rows}
 
 
-
-
-def _focused_export_book(headers: list[str], rows: list[list]) -> Workbook:
-    from .exchange import literal
-    book = Workbook()
-    sheet = book.active
-    sheet.title = "CATS Export"
-    sheet.append(headers)
-    for row_number, row in enumerate(rows, 2):
-        sheet.append([None] * len(headers))
-        for index, value in enumerate(row, 1):
-            literal(sheet.cell(row_number, index), value)
-    format_sheet(sheet)
-    return book
-
-
 @app.get("/services/{service_key}/exports/mitigations.xlsx")
 def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return workbook_response(_service_mitigations_book(service_key, db), f"{service_key}-mitigations.xlsx")
 
 
-def _service_mitigations_book(service_key: str, db: Session):
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    entries = db.execute(select(PoamEntry.id, PoamEntry.service_version, PoamEntry.item_type,
-        PoamEntry.title, PoamEntry.remediation, PoamEntry.status, PoamEntry.due_date, PoamEntry.ticket)
-        .where(PoamEntry.service_id == service.id, PoamEntry.remediation.is_not(None), PoamEntry.remediation != "")
-        .order_by(PoamEntry.id).execution_options(yield_per=500))
-    rows = ([item.id, item.service_version, item.item_type, item.title, item.remediation,
-             item.status, item.due_date.isoformat() if item.due_date else "", item.ticket or ""] for item in entries)
-    return _focused_export_book(
-        ["Entry ID", "Service Version", "Type", "Title", "Mitigation", "Status", "Due Date", "Ticket"], rows)
-
-
 @app.get("/services/{service_key}/exports/findings.xlsx")
 def export_service_findings(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return workbook_response(_service_findings_book(service_key, db), f"{service_key}-findings.xlsx")
-
-
-def _service_findings_book(service_key: str, db: Session):
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    latest_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
-    def export_rows():
-        observations = db.execute(select(Finding.cve, Finding.severity, Finding.active,
-            FindingObservation.image, FindingObservation.package, FindingObservation.installed_version,
-            FindingObservation.fixed_version, Finding.first_seen, Finding.last_seen)
-            .join(FindingObservation, FindingObservation.finding_id == Finding.id)
-            .where(Finding.service_id == service.id, FindingObservation.execution_id == latest_id)
-            .order_by(Finding.id, FindingObservation.id).execution_options(yield_per=500))
-        for item in observations:
-            yield ["Vulnerability", *item[:7], item.first_seen.isoformat(), item.last_seen.isoformat()]
-        policies = db.execute(select(PolicyFinding.finding, PolicyFinding.severity, PolicyFinding.active,
-            PolicyFinding.target, PolicyFinding.first_seen, PolicyFinding.last_seen)
-            .where(PolicyFinding.service_id == service.id).order_by(PolicyFinding.id)
-            .execution_options(yield_per=500))
-        for item in policies:
-            yield ["Configuration", item.finding, item.severity, item.active, item.target or "",
-                   "", "", "", item.first_seen.isoformat(), item.last_seen.isoformat()]
-    rows = export_rows()
-    return _focused_export_book(
-        ["Type", "Finding", "Severity", "Active", "Image or Target", "Package", "Installed Version",
-         "Fixed Version", "First Seen", "Last Seen"], rows)
 
 
 @app.get("/services/{service_key}/exports/diagrams.zip")
@@ -8794,40 +8720,11 @@ def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
         "Content-Disposition": f'attachment; filename="{service_key}-diagrams.zip"'})
 
 
-def _service_diagrams_bytes(service_key: str, db: Session):
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    from .activity_queries import latest_evidence_execution
-    latest = latest_evidence_execution(db, service.id, architecture=True)
-    if latest is None:
-        raise HTTPException(422, detail="No architecture evidence is available to diagram")
-    graph = build_architecture_graph(latest.raw_payload or {})
-    output = BytesIO()
-    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        for view_name in ("all", "configuration", "containers", "flow", "network", "storage"):
-            archive.writestr(f"architecture-{view_name}.svg", build_architecture_svg(graph, view_name))
-        archive.writestr("helm-diagram.svg", build_helm_diagram(service, latest))
-    return output.getvalue()
-
-
 @app.get("/services/{service_key}/exports/sbom.json")
 def export_service_sbom_components(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return JSONResponse(_service_sbom_components(service_key, db), headers={
         "Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
-
-
-def _service_sbom_components(service_key: str, db: Session):
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    from .activity_queries import latest_evidence_execution
-    latest = latest_evidence_execution(db, service.id)
-    if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
-        raise HTTPException(422, detail="No retained SBOM component evidence is available")
-    return {"format": "cats-retained-sbom-components-v1", "service": service_key,
-        "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]}
 
 
 @app.get("/services/{service_key}/exports/{kind}.xlsx")
@@ -8856,18 +8753,9 @@ def export_service_all(service_key: str, db: Session = Depends(get_db),
     # Spill large archives to disk; this sync route runs outside the event loop.
     output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
     try:
-        from .release_exports import write_export_archive
-        workbooks = {}
-        for kind in ("ppsm", "poam", "asset_list"):
-            columns, _, _ = purpose_template_for_service(db, kind, service)
-            workbooks[f"{kind}.xlsx"] = lambda kind=kind, columns=columns: purpose_workbook_for(db, service, kind, columns)
-        workbooks.update({f"{name}.xlsx": lambda build=build: build(service_key, db)
-            for name, build in (("mitigations", _service_mitigations_book), ("findings", _service_findings_book))})
-        write_export_archive(output, workbook_builders=workbooks,
-            evidence_builders={"diagrams.zip": lambda: _service_diagrams_bytes(service_key, db),
-                               "sbom-components.json": lambda: _service_sbom_components(service_key, db)},
-            supplemental_entries={"cats-service.zip": bundle_export_data(service_key, db, auth)}
-                if auth.has("bundle.export", service.id) else {})
+        from .service_exports import write_all
+        write_all(output, service, db, auth,
+                  bundle_builder=lambda: bundle_export_data(service_key, db, auth))
         output.seek(0)
     except BaseException:
         output.close()
@@ -10909,6 +10797,28 @@ def save_oidc_configuration(
             result = f"OIDC discovery failed: {redact(exc)}"
         return RedirectResponse(f"/admin/configuration?saved=1&oidc_result={urllib.parse.quote(result)}", status_code=303)
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.post("/admin/configuration/oidc-mappings/discover")
+def discover_oidc_mappings(
+    csrf_token: str = Form(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_global_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    from .oidc_directory import OidcDirectoryError, discover_oidc_directory
+
+    configuration = get_global_configuration(db)
+    connection = dict(_json_setting(configuration, "oidc_configuration", {}))
+    if connection.get("client_secret"):
+        try:
+            connection["client_secret"] = decrypt_secret(connection["client_secret"])
+        except Exception:
+            raise HTTPException(422, detail="The saved OIDC client secret could not be read. Save the client secret again.") from None
+    try:
+        result = discover_oidc_directory(connection, configured_ca_bundle(configuration))
+    except OidcDirectoryError as exc:
+        return JSONResponse({"detail": str(exc)}, status_code=422, headers={"Cache-Control": "no-store"})
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/admin/configuration/oidc-mappings")

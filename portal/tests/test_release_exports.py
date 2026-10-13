@@ -1,4 +1,4 @@
-"""Signed documentation must bind to the approved scan, with bounded secret-safe exports."""
+"""Release documentation is the permission-scoped Export All archive."""
 from datetime import datetime, timezone
 from io import BytesIO
 import json
@@ -61,27 +61,17 @@ def source():
 
 
 def _auth(allowed=True):
-    return SimpleNamespace(has=lambda permission, service_id: allowed)
+    return SimpleNamespace(has=lambda permission, service_id: allowed and permission == "service.export")
 
 
-def test_documentation_uses_source_snapshot_and_configured_templates(source, tmp_path):
+def test_documentation_uses_all_export_data_and_configured_templates(source, tmp_path):
     db, record = source
     path = tmp_path / "docs.zip"
     manifest = write_documentation(db, record, _auth(), path)
     with ZipFile(path) as archive:
-        assert set(archive.namelist()) >= {"ppsm.xlsx", "poam.xlsx", "asset_list.xlsx", "findings.xlsx",
-            "mitigations.xlsx", "sbom-components.json", "diagrams.zip", "raw-scan-evidence.json",
-            "release-metadata.json", "remediation-summary.json", "candidate-validation.json",
-            "documentation-manifest.json", "cats-service.zip.unavailable.txt"}
-        assert "cats-service.zip" not in archive.namelist()
-        assert json.loads(archive.read("documentation-manifest.json")) == manifest
-        raw = json.loads(archive.read("raw-scan-evidence.json"))
-        assert raw["findings"][0]["cve"] == "CVE-OLD"
-        assert "helm_source_files" not in raw and "access_token" not in raw
-        for name in archive.namelist():
-            data = archive.read(name)
-            assert b"VERY_SECRET" not in data
-            assert b"CVE-NEW" not in data and b"new-component" not in data
+        assert set(archive.namelist()) == {"ppsm.xlsx", "poam.xlsx", "asset_list.xlsx", "findings.xlsx",
+            "mitigations.xlsx", "sbom-components.json", "diagrams.zip"}
+        assert json.loads(archive.read("sbom-components.json"))["components"] == [{"name": "new-component"}]
         all_cells = []
         for name in ("ppsm.xlsx", "poam.xlsx", "asset_list.xlsx", "findings.xlsx", "mitigations.xlsx"):
             workbook = load_workbook(BytesIO(archive.read(name)))
@@ -89,15 +79,9 @@ def test_documentation_uses_source_snapshot_and_configured_templates(source, tmp
             all_cells.extend(cells)
             if name == "poam.xlsx":
                 assert cells[0] == "Configured Service Heading"
-        assert "CVE-OLD" in all_cells and "POLICY-OLD" in all_cells
-        assert "Original name" in all_cells
-        assert "New mutable service name" not in all_cells
-        assert "example/new-global:2" not in all_cells
-        assert "Upgrade to 2" in all_cells
-        summary = json.loads(archive.read("remediation-summary.json"))
-        assert summary["candidate_validation"]["deployment"] == {"run_key": "candidate-7", "status": "PASSED"}
+        assert "example/new-global:2" in all_cells
     assert manifest["source_execution_id"] == record.source_execution_id
-    assert "operational_poam" in manifest["unavailable"]
+    assert manifest["evidence_scope"] == "current-service-at-export"
 
 
 def test_rejects_cross_service_or_version_scope_before_writing(source, tmp_path):
@@ -123,12 +107,11 @@ def test_export_permission_is_required(source, tmp_path):
 
 def test_missing_evidence_is_explicit(source, tmp_path):
     db, record = source
-    execution = db.get(Execution, record.source_execution_id)
-    execution.raw_payload = {}
+    for execution in db.query(Execution).all():
+        execution.raw_payload = {}
     manifest = write_documentation(db, record, _auth(), tmp_path / "docs.zip")
-    assert all(kind in manifest["unavailable"] for kind in ("ppsm", "poam", "asset_list", "findings", "mitigations"))
     unavailable = {entry["name"] for entry in manifest["entries"] if entry["status"] == "unavailable"}
-    assert {"diagrams.zip", "sbom-components.json", "cats-service.zip"} <= unavailable
+    assert unavailable == {"diagrams.zip", "sbom-components.json"}
 
 
 def test_byte_limit_preserves_existing_file_and_cleans_temporary(source, tmp_path, monkeypatch):
@@ -140,17 +123,6 @@ def test_byte_limit_preserves_existing_file_and_cleans_temporary(source, tmp_pat
         write_documentation(db, record, _auth(), path)
     assert path.read_bytes() == b"existing file"
     assert list(tmp_path.iterdir()) == [path]
-
-
-def test_structure_limit_and_script_redaction(source, tmp_path):
-    db, record = source
-    execution = db.get(Execution, record.source_execution_id)
-    nested = {}
-    for _ in range(42):
-        nested = {"nested": nested}
-    execution.raw_payload = nested
-    with pytest.raises(ValueError, match="structure limit"):
-        write_documentation(db, record, _auth(), tmp_path / "docs.zip")
 
 
 def test_common_export_writer_preserves_unavailable_contract():
@@ -167,8 +139,14 @@ def test_common_export_writer_preserves_unavailable_contract():
 
 def test_formula_cells_are_escaped(source, tmp_path):
     db, record = source
-    execution = db.get(Execution, record.source_execution_id)
-    execution.raw_payload = {"findings": [{"cve": "=DANGEROUS()", "fixed_version": "2"}]}
+    from app.models import PoamEntry, User
+    user = User(username="planner", display_name="Planner")
+    db.add(user)
+    db.flush()
+    db.add(PoamEntry(service_id=record.service_id, item_type="manual", title="=DANGEROUS()",
+                     description="Manual finding", remediation="=DANGEROUS()", status="open",
+                     created_by_id=user.id))
+    db.flush()
     path = tmp_path / "docs.zip"
     write_documentation(db, record, _auth(), path)
     with ZipFile(path) as archive:

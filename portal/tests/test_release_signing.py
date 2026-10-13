@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,117 @@ def test_sign_and_verify_exact_manifest_bytes(release, crypto_cli):
     verification = release_signing.verify_release_manifest(manifest, output / result["signature_file"],
                                                          output / result["public_key_file"], result["key_fingerprint"])
     assert verification["status"] == "verified"
+
+
+@pytest.fixture
+def archive(tmp_path):
+    path = tmp_path / "documentation.zip"
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as bundle:
+        bundle.writestr("documentation.txt", b"complete export content\n" * 4000)
+    assert path.stat().st_size > 65536
+    return path
+
+
+def test_sign_and_verify_complete_archive_bytes(archive, tmp_path, crypto_cli):
+    material, calls, key_paths = crypto_cli
+    output = tmp_path / "output"
+    result = release_signing.sign_release_archive(archive, output, material)
+    assert result["status"] == "signed" and result["signature_status"] == "verified"
+    assert result["archive_sha256"] == hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert result["signed_file"] == "documentation.zip"
+    assert result["signature_file"] == "documentation.zip.sig"
+    assert sorted(path.name for path in output.iterdir()) == ["documentation.zip.sig", "release-public-key.pem"]
+    assert [args[1] for args in calls] == ["sign-blob", "verify-blob"]
+    assert all(not path.parent.exists() for path in key_paths)
+    verification = release_signing.verify_release_archive(archive, output / result["signature_file"],
+        output / result["public_key_file"], result["key_fingerprint"])
+    assert verification["status"] == "verified"
+    assert verification["archive_sha256"] == result["archive_sha256"]
+
+
+@pytest.mark.parametrize("tamper", ["archive_tail", "signature", "public_key", "fingerprint"])
+def test_archive_verification_rejects_tampering(archive, tmp_path, crypto_cli, tamper):
+    material, _, _ = crypto_cli
+    output = tmp_path / "output"
+    result = release_signing.sign_release_archive(archive, output, material)
+    signature, public = output / result["signature_file"], output / result["public_key_file"]
+    fingerprint = result["key_fingerprint"]
+    if tamper == "archive_tail":
+        archive.write_bytes(archive.read_bytes() + b"tampered after 64 KiB")
+    elif tamper == "signature":
+        signature.write_bytes(base64.b64encode(b"invalid"))
+    elif tamper == "public_key":
+        public.write_bytes(ec.generate_private_key(ec.SECP256R1()).public_key().public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
+    else:
+        fingerprint = "sha256:" + "0" * 64
+    assert release_signing.verify_release_archive(archive, signature, public, fingerprint)["status"] == "verification_failed"
+
+
+@pytest.mark.parametrize("archive_first", [False, True])
+def test_archive_and_manifest_share_immutable_key_and_retry(release, archive, crypto_cli, archive_first):
+    manifest, output = release
+    material, calls, _ = crypto_cli
+    operations = [(release_signing.sign_release_manifest, manifest),
+                  (release_signing.sign_release_archive, archive)]
+    if archive_first:
+        operations.reverse()
+    assert operations[0][0](operations[0][1], output, material)["status"] == "signed"
+    retained = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
+    assert operations[1][0](operations[1][1], output, material)["status"] == "signed"
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in retained} == retained
+    (output / "signing.json").write_text('{"status":"signed"}')
+    retained = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
+    calls.clear()
+    for sign, source in operations:
+        assert sign(source, output, (material[0], {}))["status"] == "signed"
+    assert [args[1] for args in calls] == ["verify-blob", "verify-blob"]
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()} == retained
+
+
+def test_archive_signing_rejects_replacing_shared_public_key(release, archive, crypto_cli):
+    manifest, output = release
+    material, calls, _ = crypto_cli
+    assert release_signing.sign_release_manifest(manifest, output, material)["status"] == "signed"
+    (output / release_signing.PUBLIC_KEY_FILENAME).write_bytes(b"damaged-shared-key")
+    retained = {path: path.read_bytes() for path in output.iterdir()}
+    calls.clear()
+    assert release_signing.sign_release_archive(archive, output, material)["status"] == "verification_failed"
+    assert {path: path.read_bytes() for path in output.iterdir()} == retained
+    assert not calls
+
+
+def test_changed_archive_preserves_manifest_outputs_and_can_retry(release, archive, crypto_cli, monkeypatch):
+    manifest, output = release
+    material, _, _ = crypto_cli
+    assert release_signing.sign_release_manifest(manifest, output, material)["status"] == "signed"
+    retained = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
+    command = signing._command
+
+    def change_archive(args, env):
+        result = command(args, env)
+        if args[1] == "verify-blob":
+            archive.write_bytes(archive.read_bytes() + b"changed during signing")
+        return result
+
+    monkeypatch.setattr(signing, "_command", change_archive)
+    assert release_signing.sign_release_archive(archive, output, material)["status"] == "verification_failed"
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()} == retained
+    monkeypatch.setattr(signing, "_command", command)
+    assert release_signing.sign_release_archive(archive, output, material)["status"] == "signed"
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in retained} == retained
+
+
+def test_archive_retry_rejects_and_preserves_tampered_complete_outputs(archive, tmp_path, crypto_cli):
+    material, calls, _ = crypto_cli
+    output = tmp_path / "output"
+    assert release_signing.sign_release_archive(archive, output, material)["status"] == "signed"
+    archive.write_bytes(archive.read_bytes() + b"changed")
+    retained = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()}
+    calls.clear()
+    assert release_signing.sign_release_archive(archive, output, material)["status"] == "verification_failed"
+    assert [args[1] for args in calls] == ["verify-blob"]
+    assert {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in output.iterdir()} == retained
 
 
 @pytest.mark.parametrize("tamper", ["manifest", "documentation_digest", "signature", "public_key", "fingerprint"])

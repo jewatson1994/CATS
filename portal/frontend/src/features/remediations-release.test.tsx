@@ -10,7 +10,7 @@ const authorization = 'I authorize publishing this release documentation to the 
 const documentation = {
   status:'published',sha256:'documentation-hash',revision:'release-1',
   manifest:{snapshot:{service_id:7,service_key:'example',source_version_id:17,source_version:'V7',remediation:{remediation_id:22,job_key:'job-7',candidate_digest:'sha256:candidate',validation:{validation_id:11,request_id:'request-11',validator_id:'validator-2'}},source_execution_id:9,source_execution_key:'scan-9'},documentation:{digest:'documentation-hash',bytes:1234},artifacts:[{reference:'registry.example/app@sha256:artifact',digest:'sha256:artifact'}]},
-  files:{'documentation.zip':'sha256:docs','release-manifest.json':'sha256:manifest','VERIFY.txt':'sha256:instructions','release-manifest.sig':'sha256:signature','release-public-key.pem':'sha256:key'},
+  files:{'documentation.zip':'sha256:docs','release-manifest.json':'sha256:manifest','VERIFY.txt':'sha256:instructions','documentation.zip.sig':'sha256:archive-signature','release-manifest.sig':'sha256:signature','release-public-key.pem':'sha256:key'},
   signing:{status:'signed',key_fingerprint:'sha256:trusted-key'},
   publications:[{reference:'registry.example/app@sha256:docs',digest:'sha256:docs',subject:'registry.example/app@sha256:artifact',association_mode:'compatibility_tag',status:'published'}],
 };
@@ -83,6 +83,7 @@ it('renders structured release progress, exact publication identities, and autho
   expect(release.getByRole('link',{name:'Download release documentation'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/documentation.zip');
   expect(release.getByRole('link',{name:'Download release manifest'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/release-manifest.json');
   expect(release.getByRole('link',{name:'Download verification instructions'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/VERIFY.txt');
+  expect(release.getByRole('link',{name:'Download documentation ZIP signature'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/documentation.zip.sig');
   expect(release.getByRole('link',{name:'Download release signature'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/release-manifest.sig');
   expect(release.getByRole('link',{name:'Download release public key'})).toHaveAttribute('href','/services/example/remediations/job-7/deliveries/41/release-public-key.pem');
   const publications=release.getByRole('list',{name:'Documentation publications'});
@@ -103,6 +104,7 @@ it('uses the manifest digest when the receipt has no duplicate digest and offers
   expect(release.getByText('documentation-hash')).toBeInTheDocument();
   expect(release.getByText('Unsigned')).toBeInTheDocument();
   expect(release.getByRole('link',{name:'Download verification instructions'})).toBeInTheDocument();
+  expect(release.queryByRole('link',{name:'Download documentation ZIP signature'})).not.toBeInTheDocument();
   expect(release.queryByRole('link',{name:'Download release signature'})).not.toBeInTheDocument();
   expect(release.queryByRole('link',{name:'Download release public key'})).not.toBeInTheDocument();
 });
@@ -112,6 +114,7 @@ it('does not offer optional verification files absent from the retained receipt'
   const release=within(screen.getByRole('region',{name:'Release documentation'}));
   expect(release.getByRole('link',{name:'Download release manifest'})).toBeInTheDocument();
   expect(release.queryByRole('link',{name:'Download verification instructions'})).not.toBeInTheDocument();
+  expect(release.queryByRole('link',{name:'Download documentation ZIP signature'})).not.toBeInTheDocument();
   expect(release.queryByRole('link',{name:'Download release signature'})).not.toBeInTheDocument();
   expect(release.queryByRole('link',{name:'Download release public key'})).not.toBeInTheDocument();
 });

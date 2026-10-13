@@ -1,10 +1,10 @@
 # Signed release documentation
 
-Release documentation travels with the immutable deployment identity. A release contains `documentation.zip`, `release-manifest.json`, verification instructions, and, when signing is enabled, `release-manifest.sig` and `release-public-key.pem`. Signing is local, uses the configured Cosign key, and does not contact a public transparency log. A successful registry upload alone does not establish a valid signature or successful deployment validation; retain each outcome separately.
+Release documentation travels with the immutable deployment identity. A release contains `documentation.zip`, `release-manifest.json`, verification instructions, and, when signing is enabled, `documentation.zip.sig`, `release-manifest.sig` and `release-public-key.pem`. Signing is local, uses the configured Cosign key, and does not contact a public transparency log. A successful registry upload alone does not establish a valid signature or successful deployment validation; retain each outcome separately.
 
 ## Implementation and package layout
 
-The retained-candidate Deliver workflow shares the Export All archive writer and configured PPSM, POAM and Asset List workbook builders. `release_exports.py` projects the selected scan's retained evidence; `release_documentation.py` caches immutable snapshots and manifests; `release_signing.py` invokes the existing Cosign/key infrastructure; `release_oci.py` handles standard Distribution uploads and retrieval. `delivery_execution.py` provides process-safe execution locks. Existing delivery records hold checkpoints and receipts, without a new database table. The React Deliver panel shows contents, authorization, progress, references and downloads.
+The retained-candidate Deliver workflow uses the same permission-scoped Export All builder as the All download, including configured PPSM, POAM and Asset List workbooks. `service_exports.py` builds the exports; `release_exports.py` writes and retains the archive; `release_documentation.py` caches immutable snapshots and manifests; `release_signing.py` invokes the existing Cosign/key infrastructure; `release_oci.py` handles standard Distribution uploads and retrieval. `delivery_execution.py` provides process-safe execution locks. Existing delivery records hold checkpoints and receipts, without a new database table. The React Deliver panel shows contents, authorization, progress, references and downloads.
 
 Standard and Offline bundles include these files under `release/`:
 
@@ -13,11 +13,12 @@ release/
   documentation.zip
   release-manifest.json
   VERIFY.txt
+  documentation.zip.sig      # signed releases
   release-manifest.sig       # signed releases
   release-public-key.pem     # signed releases
 ```
 
-The documentation archive contains configured `ppsm.xlsx`, `poam.xlsx`, `asset_list.xlsx`, `findings.xlsx`, `mitigations.xlsx`, available `diagrams.zip` and `sbom-components.json`, plus `raw-scan-evidence.json`, `release-metadata.json`, `remediation-summary.json`, `candidate-validation.json` and `documentation-manifest.json`. Unavailable downloads are represented by explicitly named `.unavailable.txt` entries. Raw scan evidence is a sanitized retained projection; source files, secrets and logs are excluded.
+The documentation archive is the ZIP produced by Export All: configured `ppsm.xlsx`, `poam.xlsx`, `asset_list.xlsx`, `findings.xlsx`, `mitigations.xlsx`, available `diagrams.zip` and `sbom-components.json`, and `cats-service.zip` when the exporting user has `bundle.export`. Missing evidence is represented by explicitly named `.unavailable.txt` entries. Release metadata and the entry inventory live in the separate `release-manifest.json`, leaving the ZIP contents identical in scope to Export All.
 
 This integration serves retained remediation candidates. There is no new standalone service-publication endpoint, and ordinary Export All remains a download workflow. Existing scan and patch-worker architecture is unchanged. Signing and registry transport are implemented, but production readiness still requires the deployment-host checks below.
 
@@ -28,6 +29,7 @@ Set these in the main deployment environment; both shipped Compose files forward
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `CATS_RELEASE_DOC_MAX_BYTES` | `268435456` | Positive byte limit for the Export All documentation archive and its uncompressed generated content. OCI transport allows another 2 MiB for release metadata, signatures and its empty config. |
+| `CATS_BUNDLE_MAX_BYTES` | `104857600` | Combined expanded manifest and payload limit, and compressed-size limit, for portable service/evidence bundles. There is no separate 64 KiB manifest cap. |
 | `CATS_OCI_TOKEN_REALMS` | empty | Comma-separated HTTPS origins allowed to receive the destination credentials when obtaining a registry bearer token. The registry's own origin is always allowed. |
 
 For example, a registry at `https://registry.example` with a separate token service at `https://auth.registry.example/token` needs `CATS_OCI_TOKEN_REALMS=https://auth.registry.example`. This grants trust to that **origin**, including its port, rather than only the example path. Add only operator-approved token services. Empty is the safest default for registries that authenticate on their own origin.
@@ -38,7 +40,7 @@ The private signing key and password remain in encrypted configuration. Only the
 
 The active delivery endpoint is `POST /services/{service_key}/remediations/{job_key}/delivery`. OCI delivery requires both service-scoped `artifact.publish` and `service.export` permissions, an approved destination and explicit authorization to disclose the release security documentation to that registry audience (`authorize_documentation=yes`). Bundle delivery uses `service.export`. Configured signing also requires the applicable `artifact.sign` permission. Existing validation and release-policy gates still apply. This endpoint delivers a retained candidate; it does not trigger a new remediation scan.
 
-Authorized users with `service.export` can retrieve retained `documentation.zip`, `release-manifest.json`, `VERIFY.txt`, and, for signed releases, `release-manifest.sig` and `release-public-key.pem` through `GET /services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/<filename>`. The server checks ownership and retained-file integrity before serving these files. Signature/key attachments are also present in the delivered OCI artifact or bundle for independent verification.
+Authorized users with `service.export` can retrieve retained `documentation.zip`, `release-manifest.json`, `VERIFY.txt`, and, for signed releases, `documentation.zip.sig`, `release-manifest.sig` and `release-public-key.pem` through `GET /services/{service_key}/remediations/{job_key}/deliveries/{attempt_id}/<filename>`. The server checks ownership and retained-file integrity before serving these files. Signature/key attachments are also present in the delivered OCI artifact or bundle for independent verification.
 
 ## Identities and retained evidence
 
@@ -46,9 +48,9 @@ The release manifest uses schema `cats.release/v1`. It binds the documentation a
 
 For bundles, the signed manifest binds the embedded deployment content, rendered evidence and image archive identities. The outer bundle hash is computed after packaging and retained in the delivery receipt, outside the bundle. Verify both the receipt's bundle hash and the signed internal manifest when both are available.
 
-`documentation.zip` contains the Export All snapshot, its `documentation-manifest.json` inventory, and available evidence. Explicit unavailable-evidence entries are part of the export; their presence does not assert that missing evidence was generated or validation passed. Documentation describes the selected snapshot and release, not subsequent service edits.
+`documentation.zip` captures current service data and configured templates when the release snapshot is first generated, including current POAM records and inventory. Its detached signature directly authenticates those exact ZIP bytes. The separate signed release manifest binds the ZIP digest to the deployment artifacts and records its inventory, remediation baseline and deployment validation results. The source execution/version identifies the remediation baseline; it does not restrict the export to historical scan data. No new scan is performed. Explicit unavailable-evidence entries do not assert that missing evidence was generated or validation passed.
 
-Historical gaps are explicit. `documentation-manifest.json` records `unavailable.operational_poam` because mutable POAM approvals, exceptions, due dates and manual mitigations have no historical snapshot; the worksheets therefore contain source-scan recommendations. `unavailable.imported_inventory` identifies mutable imported inventory that cannot establish historical scan evidence. The portable exchange bundle is represented by an unavailable `cats-service.zip` inventory entry and `cats-service.zip.unavailable.txt`, because the current exchange exporter cannot restrict that bundle to the retained execution. These flags describe absent historical evidence; they do not mean that the current service lacks those records. Other missing source evidence is likewise flagged, with headings-only worksheets where appropriate.
+Portable bundle manifests larger than 64 KiB are accepted during export, import and OCI attachment. Existing total archive-size, expanded-size and JSON-structure limits still apply.
 
 Retries reuse retained release bytes. A new snapshot, manifest, signature or other attachment produces a new documentation revision. A partial result preserves any known uploaded immutable reference even when later retrieval or signature verification fails. Keep these references for diagnosis and retry; do not reinterpret a partial result as a complete release.
 
@@ -79,6 +81,9 @@ cd release-documents
 openssl pkey -pubin -in release-public-key.pem -outform DER -out release-public-key.der
 openssl dgst -sha256 release-public-key.der
 cosign verify-blob --key release-public-key.pem \
+  --signature documentation.zip.sig --offline --insecure-ignore-tlog=true \
+  documentation.zip
+cosign verify-blob --key release-public-key.pem \
   --signature release-manifest.sig --offline --insecure-ignore-tlog=true \
   release-manifest.json
 ```
@@ -100,13 +105,14 @@ print(json.dumps(manifest['artifacts'], indent=2))
 PY
 ```
 
-Then verify the documentation inventory's file hashes after safely extracting the archive. A supplied `SHA256SUMS` is useful for transport checks, but the signed manifest and trusted signing key are the authenticity boundary. Unsigned releases can have valid hashes while providing no publisher signature assurance.
+Then verify the file hashes in `release-manifest.json` under `snapshot.entries` after safely extracting the archive. A supplied `SHA256SUMS` is useful for transport checks, but the signed manifest and trusted signing key are the authenticity boundary. Unsigned releases can have valid hashes while providing no publisher signature assurance.
 
 ## Internal helper contracts
 
 - `app.release_oci.publish_documentation(files, subject, env)` accepts safe attachment basenames mapped to local paths, an immutable OCI SHA-256 subject, and the authorized destination's environment. Required files are `documentation.zip` and `release-manifest.json`; optional text/checksum/signature/public-key attachments are supported. It uploads an OCI image manifest with artifact type `application/vnd.cats.release.documentation.v1`, verifies the manifest and every blob by digest, and checks referrers discovery. Older registries receive a compatible manifest retaining explicit subject annotations.
 - Successful publication returns `status=published`, `publication_status=published`, `verification_status=verified`, `reference`, `digest`, `subject`, `revision`, `association_mode`, `compatibility_reference` and file descriptors. `revision` here hashes the attachment inventory and is distinct from the canonical release-manifest revision. On failure, the sanitized result retains publication identity when known. Callers must evaluate verification and signature outcomes separately.
 - `app.release_oci.verify_documentation(reference, subject, env)` re-fetches the immutable documentation manifest and blobs and checks association/inventory hashes. It verifies content integrity, not a detached signature.
+- `app.release_signing.sign_release_archive(archive_path, output_dir, signing_material)` signs exact Export All ZIP bytes; `verify_release_archive(archive_path, signature_path, public_key_path, expected_fingerprint=None)` verifies that detached signature. Both use the shared release public key.
 - `app.release_signing.sign_release_manifest(manifest_path, output_dir, signing_material)` signs exact manifest bytes and verifies the detached signature before reporting success. `verify_release_manifest(manifest_path, signature_path, public_key_path, expected_fingerprint=None)` supports an explicit trusted fingerprint. Disabled signing is reported as unsigned; verification failure is never reported as signed.
 - `app.remediation_delivery.deliver(..., checkpoint=None)` calls an optional persistence callback with a fresh `artifact_identities` list after each established immutable artifact identity and signature outcome. Exact Helm packages are retained under the candidate's `delivery-packages` directory and checksum-checked before retry, so repackaging timestamps do not change an otherwise unchanged publication.
 

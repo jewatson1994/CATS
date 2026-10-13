@@ -101,7 +101,8 @@ The portal uses these claims:
 | `groups` | CATS group/service scope | `groups` |
 | `realm_access.roles` | CATS role mapping | `realm_access.roles` |
 
-The ID token and user-info response should include at least `sub`, `preferred_username` or `email`, and the required role/group claims.
+The validated ID token must include the required role/group claims. UserInfo can
+fill missing display attributes; CATS does not use it to grant permissions.
 
 In Keycloak, add a **Client scope** or client-specific protocol mappers:
 
@@ -113,7 +114,9 @@ In Keycloak, add a **Client scope** or client-specific protocol mappers:
 4. Add to ID token: enabled.
 5. Add to access token: enabled.
 6. Add to userinfo: enabled.
-7. Decide whether to include the full group path. The portal strips leading and trailing `/` characters, but the CATS group name should still match the final group name.
+7. Decide whether to include the full group path. Configured claim mappings use
+   exact values, including `/` when full paths are enabled. Discovery handles
+   this setting automatically.
 
 ### Username mapper
 
@@ -131,7 +134,43 @@ Keycloak normally emits realm roles in `realm_access.roles`. Client roles are em
 resource_access.cats-portal.roles
 ```
 
-The portal accepts both locations. Keep the role names stable and map them explicitly in the environment configuration.
+The portal accepts both locations. Enable **Add to ID token** and **Multivalued**
+on the role mapper. Keep role names stable and map them through CATS settings.
+
+### Discover existing groups and roles in CATS
+
+You can reuse existing Keycloak memberships without matching their names to CATS
+roles or groups:
+
+1. Save the issuer, client ID and secret in **Settings → Identity & Access →
+   OIDC identity provider** (environment-based connections also work).
+2. In Keycloak, enable **Client authentication** and **Service accounts roles**
+   for that client. Assign its service account the standard `realm-management`
+   read roles `view-users`, `view-clients`, and `view-realm`, or equivalent
+   fine-grained permissions. Ensure the service-account token's role scope
+   includes those permissions. Discovery does not require `realm-admin` or
+   write permissions.
+3. Configure group/role mappers to include their claims in the **ID token**.
+   CATS checks client-specific mappers, default client scopes, and optional
+   client scopes explicitly requested in the saved OIDC scopes.
+4. In **OIDC Claim Mapping**, click **Discover groups and roles**. CATS detects
+   Keycloak from the issuer URL, reads nested groups, realm roles, and roles
+   belonging to the configured login client, and lists supported mappings.
+5. Filter the results, click **Map to CATS**, choose the CATS role and global,
+   group, or service scope, and save. Each user's next login applies matching
+   assignments. Discovery alone never changes permissions.
+
+Use **Refresh groups and roles** after provider changes. CATS reports missing
+read permissions and ID-token mappers. Custom mappers and other providers still
+support manual mappings. Suggestions reflect mapper configuration; client scope
+restrictions and user membership determine what appears in a user's token.
+Discovery respects the configured trusted CA bundle and server-side issuer,
+including deployments with a separate public browser issuer. It does not follow
+redirects with credentials. Bounded requests and responses prevent an oversized
+directory from monopolizing a worker; if a limit is reached, use manual mappings.
+
+The group-name matching and environment examples below describe the legacy
+fallback, used only when no configured claim mappings exist.
 
 ## 6. Create the Keycloak groups
 

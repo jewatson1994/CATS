@@ -60,6 +60,18 @@ mappings grant no OIDC role. Existing CATS permissions still decide access on
 the server. Local role assignments remain independent. Changing mappings is
 audited; raw tokens and private keys are not displayed.
 
+For Keycloak, select **Discover groups and roles** to read existing realm groups,
+realm roles, and roles belonging to the configured CATS client. Filter the list
+and select **Map to CATS** to populate the claim fields, then choose the CATS role
+and scope and save. Discovery uses the saved OIDC connection, requires global
+administration, and does not grant access by itself. The client must have service
+accounts enabled and read access to the Keycloak directory and client settings.
+Only supported membership mappers enabled in the ID token on the client, its
+default scopes, or explicitly requested optional scopes produce suggestions.
+Missing permissions or mappers produce setup guidance. Custom mappers and other
+OIDC providers can still use manual claim mappings. Membership changes take
+effect on the user's next login.
+
 Legacy environment-variable role maps remain available when no configured
 claim mappings exist. Existing assignments created before assignment-source
 tracking cannot be distinguished automatically from manual assignments and

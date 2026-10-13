@@ -27,7 +27,7 @@ def test_projected_export_database_residency():
             db.execute(insert(FindingObservation), [dict(finding_id=i+1, execution_id=1, image='image',
                 package='package', evidence={'retained': 'x'*100}) for i in range(start,end)])
         db.commit(); db.expunge_all()
-        tree = ast.parse((Path(__file__).parents[1]/'app/main.py').read_text(encoding='utf-8-sig'))
+        tree = ast.parse((Path(__file__).parents[1]/'app/service_exports.py').read_text(encoding='utf-8-sig'))
         function = next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_service_findings_book')
         function.decorator_list=[]
         function.args.defaults=[ast.Constant(None) for _ in function.args.defaults]

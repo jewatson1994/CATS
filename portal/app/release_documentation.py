@@ -1,8 +1,9 @@
 """Immutable release documents shared by OCI and deployment bundle delivery.
 
 Only the delivery executor calls generation; request handlers read bounded receipts.
-The signed manifest binds the documentation digest and deployable identities. A
-bundle's outer digest is recorded after assembly to avoid a self-referential hash.
+The signed Export All ZIP is retained unchanged. A signed manifest also binds the
+documentation digest and deployable identities. A bundle's outer digest is
+recorded after assembly to avoid a self-referential hash.
 """
 from __future__ import annotations
 
@@ -22,7 +23,8 @@ from .models import DeploymentValidationRun
 from .deployment_bundle import file_digest
 from .remediation_delivery import retained_candidate, candidate_provenance
 from .release_exports import write_documentation, _candidate_results
-from .release_signing import sign_release_manifest, verify_release_manifest
+from .release_signing import (sign_release_manifest, verify_release_manifest,
+                              sign_release_archive, verify_release_archive)
 from .purpose_exports import template_for_service
 from .service_oci import destination_trust, validate_destination
 from .secrets import decrypt_secret
@@ -81,7 +83,9 @@ def prepare(db, record, auth, root, artifacts, mode, signing_material):
             DeploymentValidationRun.service_id == record.service_id,
             DeploymentValidationRun.execution_id == record.source_execution_id
         ).order_by(DeploymentValidationRun.id).limit(101))]
-    key = _identity({"source_execution_id": record.source_execution_id,
+    key = _identity({"export_format": "cats-export-all-v1",
+                     "bundle_export": auth.has("bundle.export", record.service_id),
+                     "source_execution_id": record.source_execution_id,
                      "source_version_id": record.source_version_id,
                      "candidate": record.artifact_digest, "templates": templates,
                      "validation": _candidate_results(record.validation_results or {}),
@@ -114,7 +118,8 @@ def prepare(db, record, auth, root, artifacts, mode, signing_material):
     if not identities:
         raise ValueError("Release documentation requires deployable artifact identities")
     manifest = {"schema": "cats.release/v1", "generated_at": snapshot["generated_at"],
-                "snapshot": {**snapshot["manifest"], "remediation": candidate_provenance(record)},
+                "snapshot": {**snapshot["manifest"], "remediation": candidate_provenance(record),
+                             "deployment_validation": validations},
                 "documentation": {"file": "documentation.zip", "digest": snapshot["digest"], "bytes": snapshot["bytes"]},
                 "delivery_mode": mode, "artifacts": identities,
                 "signer": {"fingerprint": signing_material[0].get("signing_fingerprint"),
@@ -137,12 +142,22 @@ def prepare(db, record, auth, root, artifacts, mode, signing_material):
             verified = verify_release_manifest(manifest_path, directory / "release-manifest.sig",
                                                directory / "release-public-key.pem",
                                                expected_fingerprint=signing.get("key_fingerprint"))
+            archive_verified = verify_release_archive(documentation, directory / "documentation.zip.sig",
+                                                       directory / "release-public-key.pem",
+                                                       expected_fingerprint=signing.get("key_fingerprint"))
             if verified.get("status") != "verified":
                 raise ReleaseDocumentationError("Retained release signature verification failed", verified)
+            if archive_verified.get("status") != "verified":
+                raise ReleaseDocumentationError("Retained documentation ZIP signature verification failed", archive_verified)
     else:
         signing = sign_release_manifest(manifest_path, directory, signing_material)
         if signing["status"] == "verification_failed":
             raise ReleaseDocumentationError("Release signature verification failed", signing)
+        if signing.get("status") == "signed":
+            archive_signing = sign_release_archive(documentation, directory, signing_material)
+            if archive_signing.get("status") != "signed":
+                raise ReleaseDocumentationError("Documentation ZIP signature verification failed", archive_signing)
+            signing = {**signing, "archive": archive_signing}
         _write(signature_path, signing)
     if manifest["signer"]["required"] and signing.get("status") != "signed":
         raise ValueError("Mandatory release signing did not complete")
@@ -153,17 +168,20 @@ def prepare(db, record, auth, root, artifacts, mode, signing_material):
             "Check release-manifest.json snapshot service/version and every deployable artifact digest.\n"
             "Compute SHA-256 of documentation.zip and compare to documentation.digest in release-manifest.json.\n"
             "Signed releases: obtain the approved public-key fingerprint independently of this download.\n"
+            "cosign verify-blob --key release-public-key.pem --signature documentation.zip.sig "
+            "--insecure-ignore-tlog=true --offline documentation.zip\n"
             "cosign verify-blob --key release-public-key.pem --signature release-manifest.sig "
             "--insecure-ignore-tlog=true --offline release-manifest.json\n"
             "Unsigned releases provide integrity identifiers only, not authenticity.\n"
             "Bundle: release manifest binds embedded deployment/source tree, rendered.yaml and image archives; "
             "the outer bundle digest and final validation receipt are recorded after assembly in CATS.\n"
-            "Source scan evidence describes the pre-remediation baseline; remediation and candidate validation "
-            "are identified separately. No new scan was performed to generate this documentation.\n",
+            "documentation.zip is Export All captured from current service data at generation time. "
+            "The source execution in the release manifest identifies the remediation baseline, not the "
+            "scope of every exported entry. No new scan was performed to generate this documentation.\n",
             encoding="utf-8")
     files = {"documentation.zip": documentation, "release-manifest.json": manifest_path, "VERIFY.txt": instructions}
     if signing.get("status") == "signed":
-        files.update({name: directory / name for name in ("release-manifest.sig", "release-public-key.pem")})
+        files.update({name: directory / name for name in ("documentation.zip.sig", "release-manifest.sig", "release-public-key.pem")})
     receipt = {"status": "ready", "sha256": snapshot["digest"], "revision": revision,
                "storage_key": f"{key}/{revision}", "manifest": manifest, "signing": signing,
                "files": {name: file_digest(path) for name, path in files.items()}, "publications": []}
@@ -178,7 +196,7 @@ def retained_files(record, root, receipt):
     directory = parent / key
     files = {}
     for name, digest in receipt.get("files", {}).items():
-        if name not in {"documentation.zip", "release-manifest.json", "VERIFY.txt", "release-manifest.sig", "release-public-key.pem"}:
+        if name not in {"documentation.zip", "release-manifest.json", "VERIFY.txt", "documentation.zip.sig", "release-manifest.sig", "release-public-key.pem"}:
             raise ValueError("Invalid retained release file")
         path = directory.parent / name if name == "documentation.zip" else directory / name
         if any(p.is_symlink() for p in (path, *path.parents)) or file_digest(path) != digest:

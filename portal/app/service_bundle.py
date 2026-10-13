@@ -10,8 +10,8 @@ import json
 from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
 from .schemas import ExecutionPayload
+from .exchange_limits import bundle_bytes
 
-LIMIT = 100 * 1024 * 1024
 EXCLUSIONS = ["credentials and global configuration", "users, roles, group assignments and sessions",
     "Helm sources and editable artifact revisions", "rendered manifests and free-form finding evidence",
     "approval and remediation history", "custom templates and manual metadata/inventory"]
@@ -36,36 +36,43 @@ def portable_payload(raw):
 
 
 def export_bundle(executions):
+    from .service_transfer import load_json
+    limit = bundle_bytes()
     payloads = [portable_payload(e.raw_payload) for e in executions]
     if not payloads:
         raise ValueError("No scan evidence to export")
     body = encode({"executions": payloads})
-    if len(body) > LIMIT:
-        raise ValueError("Bundle exceeds 100 MiB expanded limit")
+    if len(body) > limit:
+        raise ValueError("Bundle exceeds configured expanded-byte limit")
     manifest = {"format": "cats-evidence-bundle", "schema_version": 1,
         "service_key": payloads[0]["service"]["id"],
         "versions": sorted({p["service"]["version"] for p in payloads}),
         "excluded": EXCLUSIONS,
         "files": {"evidence.json": {"sha256": sha256(body).hexdigest(), "bytes": len(body)}}}
+    manifest_body = encode(manifest)
+    if len(body) + len(manifest_body) > limit:
+        raise ValueError("Bundle exceeds configured expanded-byte limit")
+    load_json(manifest_body)
     output = BytesIO()
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
-        archive.writestr("manifest.json", encode(manifest))
+        archive.writestr("manifest.json", manifest_body)
         archive.writestr("evidence.json", body)
+    if output.tell() > limit:
+        raise ValueError("Bundle exceeds configured compressed-byte limit")
     return output.getvalue()
 
 
 def parse_bundle(data):
-    from .exchange_limits import bundle_bytes
     from .service_transfer import load_json
     limit = bundle_bytes()
     if len(data) > limit:
-        raise ValueError("Bundle exceeds 100 MiB compressed limit")
+        raise ValueError("Bundle exceeds configured compressed-byte limit")
     try:
         with ZipFile(BytesIO(data)) as archive:
             members = archive.infolist()
             if len(members) != 2 or {m.filename for m in members} != {"manifest.json", "evidence.json"}:
                 raise ValueError("Bundle must contain exactly manifest.json and evidence.json")
-            if sum(m.file_size for m in members) > limit + 65536 or archive.getinfo("manifest.json").file_size > 65536:
+            if sum(m.file_size for m in members) > limit:
                 raise ValueError("Bundle exceeds expanded limit")
             if any(m.flag_bits & 1 or ((m.external_attr >> 16) & 0o170000) not in (0, 0o100000) for m in members):
                 raise ValueError("Encrypted or special archive entries are not allowed")

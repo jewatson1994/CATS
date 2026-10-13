@@ -1,4 +1,4 @@
-"""Detached, offline signatures for release manifests, using portal signing keys.
+"""Detached, offline signatures for release artifacts, using portal signing keys.
 
 The caller constructs the manifest (including documentation and artifact digests).
 This module signs its exact bytes and never sends key material to patch workers.
@@ -16,6 +16,8 @@ from pathlib import Path
 from . import signing
 
 SIGNATURE_FILENAME = "release-manifest.sig"
+ARCHIVE_FILENAME = "documentation.zip"
+ARCHIVE_SIGNATURE_FILENAME = "documentation.zip.sig"
 PUBLIC_KEY_FILENAME = "release-public-key.pem"
 FAILURE_REASON = "Release signature creation or offline verification failed. Check the signing key and local Cosign installation."
 
@@ -27,10 +29,11 @@ def _verify(cosign: str, manifest: Path, signature: Path, public: Path) -> None:
     ], signing.clean_environment(dict(os.environ)))
 
 
-def _signed_metadata(content: bytes, fingerprint: str) -> dict:
+def _signed_metadata(content: bytes, fingerprint: str, signature_name: str, digest_name: str,
+                     signed_file: str) -> dict:
     return {"status": "signed", "signature_status": "verified", "key_fingerprint": fingerprint,
-            "manifest_sha256": hashlib.sha256(content).hexdigest(),
-            "signature_file": SIGNATURE_FILENAME, "public_key_file": PUBLIC_KEY_FILENAME,
+            digest_name: hashlib.sha256(content).hexdigest(), "signed_file": signed_file,
+            "signature_file": signature_name, "public_key_file": PUBLIC_KEY_FILENAME,
             "verified_at": datetime.now(timezone.utc).isoformat(),
             "generator": "cosign", "transparency_log": False}
 
@@ -44,11 +47,28 @@ def verify_release_manifest(
 Without a pinned fingerprint, verification proves only that the supplied key
 signed the manifest, not the identity of the release publisher.
 """
+    return _verify_release_blob(manifest_path, signature_path, public_key_path, expected_fingerprint,
+                                "manifest_sha256", "release-manifest.json")
+
+
+def verify_release_archive(
+    archive_path: str | Path, signature_path: str | Path, public_key_path: str | Path,
+    expected_fingerprint: str | None = None,
+) -> dict:
+    """Verify exact ZIP bytes offline, optionally pinning an independently trusted key."""
+    return _verify_release_blob(archive_path, signature_path, public_key_path, expected_fingerprint,
+                                "archive_sha256", ARCHIVE_FILENAME)
+
+
+def _verify_release_blob(
+    source_path: str | Path, signature_path: str | Path, public_key_path: str | Path,
+    expected_fingerprint: str | None, digest_name: str, signed_file: str,
+) -> dict:
     try:
         cosign = shutil.which("cosign")
         if not cosign:
             raise ValueError("Cosign unavailable")
-        manifest, signature, public = map(Path, (manifest_path, signature_path, public_key_path))
+        manifest, signature, public = map(Path, (source_path, signature_path, public_key_path))
         pem, fingerprint = signing.public_key(public.read_bytes())
         if expected_fingerprint is not None and fingerprint != expected_fingerprint:
             raise ValueError("Fingerprint mismatch")
@@ -57,12 +77,12 @@ signed the manifest, not the identity of the release publisher.
         with tempfile.TemporaryDirectory(prefix="cats-release-verify-") as folder:
             root = Path(folder)
             content = manifest.read_bytes()
-            (root / "manifest.json").write_bytes(content)
+            (root / signed_file).write_bytes(content)
             (root / "manifest.sig").write_bytes(signature.read_bytes())
             (root / "public.pem").write_text(pem, encoding="utf-8")
-            _verify(cosign, root / "manifest.json", root / "manifest.sig", root / "public.pem")
+            _verify(cosign, root / signed_file, root / "manifest.sig", root / "public.pem")
         return {"status": "verified", "key_fingerprint": fingerprint,
-                "manifest_sha256": hashlib.sha256(content).hexdigest(),
+                digest_name: hashlib.sha256(content).hexdigest(), "signed_file": signed_file,
                 "generator": "cosign", "transparency_log": False}
     except Exception:
         # Tool output and exceptions can contain secrets. Keep them private.
@@ -81,6 +101,23 @@ Output names are relative basenames for embedding in release download metadata.
 Complete existing outputs are reused only after verification against the current
 key. An incomplete pair can be recreated when no signing.json receipt exists.
 """
+    return _sign_release_blob(manifest_path, output_dir, signing_material, SIGNATURE_FILENAME,
+                              "manifest_sha256", "release-manifest.json")
+
+
+def sign_release_archive(
+    archive_path: str | Path, output_dir: str | Path,
+    signing_material: tuple[dict, dict],
+) -> dict:
+    """Sign the complete Export All ZIP, sharing the retained release public key."""
+    return _sign_release_blob(archive_path, output_dir, signing_material, ARCHIVE_SIGNATURE_FILENAME,
+                              "archive_sha256", ARCHIVE_FILENAME)
+
+
+def _sign_release_blob(
+    source_path: str | Path, output_dir: str | Path, signing_material: tuple[dict, dict],
+    signature_name: str, digest_name: str, signed_file: str,
+) -> dict:
     config, credentials = signing_material
     if config.get("signing_enabled") is not True:
         return {"status": "unsigned", "reason": "Release signing is not configured."}
@@ -90,25 +127,33 @@ key. An incomplete pair can be recreated when no signing.json receipt exists.
         cosign = shutil.which("cosign")
         if not cosign:
             raise ValueError("Cosign unavailable")
-        source, destination = Path(manifest_path), Path(output_dir)
+        source, destination = Path(source_path), Path(output_dir)
         content = source.read_bytes()
         pem, fingerprint = signing.public_key(config["signing_public_key"].encode())
         if fingerprint != config["signing_fingerprint"]:
             raise ValueError("Fingerprint mismatch")
         if any(path.is_symlink() for path in (destination, *destination.parents)):
             raise ValueError("Unsafe signing output path")
-        targets = [destination / name for name in (SIGNATURE_FILENAME, PUBLIC_KEY_FILENAME)]
+        targets = [destination / name for name in (signature_name, PUBLIC_KEY_FILENAME)]
         if any(path.is_symlink() or (path.exists() and not path.is_file()) for path in targets):
             raise ValueError("Unsafe signing output file")
         retained = {path: path.read_bytes() for path in targets if path.exists()}
         if len(retained) == 2:
-            verified = verify_release_manifest(source, *targets, expected_fingerprint=fingerprint)
+            verified = _verify_release_blob(source, *targets, fingerprint, digest_name, signed_file)
             if (verified.get("status") != "verified"
-                    or verified.get("manifest_sha256") != hashlib.sha256(content).hexdigest()
+                    or verified.get(digest_name) != hashlib.sha256(content).hexdigest()
                     or source.read_bytes() != content
                     or any(path.read_bytes() != data for path, data in retained.items())):
                 raise ValueError("Retained signature verification failed")
-            return _signed_metadata(content, fingerprint)
+            return _signed_metadata(content, fingerprint, signature_name, digest_name, signed_file)
+        # A public key shared with another signed artifact is immutable. A matching
+        # key can also survive an interrupted first attempt without being rewritten.
+        public_target = targets[1]
+        reuse_public = public_target in retained and retained[public_target] == pem.encode()
+        other_signature = destination / (SIGNATURE_FILENAME if signature_name == ARCHIVE_SIGNATURE_FILENAME
+                                          else ARCHIVE_SIGNATURE_FILENAME)
+        if (other_signature.exists() or other_signature.is_symlink()) and not reuse_public:
+            raise ValueError("Shared signing key is missing or does not match")
         receipt = destination / "signing.json"
         if receipt.exists() or receipt.is_symlink():
             raise ValueError("Receipted signing outputs are incomplete")
@@ -119,7 +164,7 @@ key. An incomplete pair can be recreated when no signing.json receipt exists.
         with tempfile.TemporaryDirectory(prefix="cats-release-sign-") as folder:
             root = Path(folder)
             key, public = root / "cosign.key", root / PUBLIC_KEY_FILENAME
-            manifest, signature = root / "manifest.json", root / SIGNATURE_FILENAME
+            manifest, signature = root / signed_file, root / signature_name
             manifest.write_bytes(content)
             public.write_text(pem, encoding="utf-8")
             # Create with restrictive permissions from the outset on POSIX.
@@ -138,7 +183,7 @@ key. An incomplete pair can be recreated when no signing.json receipt exists.
                 env.pop("COSIGN_PASSWORD", None)
             _verify(cosign, manifest, signature, public)
             if source.read_bytes() != content:
-                raise ValueError("Manifest changed while signing")
+                raise ValueError("Release artifact changed while signing")
             detached = signature.read_bytes()
             if not detached:
                 raise ValueError("Empty signature")
@@ -149,16 +194,21 @@ key. An incomplete pair can be recreated when no signing.json receipt exists.
                 raise ValueError("Signing receipt appeared during signing")
             if any(path.exists() or path.is_symlink() for path in targets if path not in retained):
                 raise ValueError("Signing outputs appeared during signing")
+            if (other_signature.exists() or other_signature.is_symlink()) and not reuse_public:
+                raise ValueError("Shared signature appeared during signing")
             for target, data in retained.items():
                 if target.is_symlink() or target.read_bytes() != data:
                     raise ValueError("Signing outputs changed during signing")
-                target.unlink()
-            for name, data in ((SIGNATURE_FILENAME, detached), (PUBLIC_KEY_FILENAME, pem.encode())):
+                if target != public_target or not reuse_public:
+                    target.unlink()
+            for name, data in ((signature_name, detached), (PUBLIC_KEY_FILENAME, pem.encode())):
                 target = destination / name
+                if target == public_target and reuse_public:
+                    continue
                 with target.open("xb") as stream:
                     published.append(target)
                     stream.write(data)
-        return _signed_metadata(content, fingerprint)
+        return _signed_metadata(content, fingerprint, signature_name, digest_name, signed_file)
     except Exception:
         for target in published:
             target.unlink(missing_ok=True)

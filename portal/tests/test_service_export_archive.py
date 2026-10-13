@@ -6,7 +6,7 @@ from zipfile import ZipFile
 from openpyxl import load_workbook
 from sqlalchemy import select
 
-from app.models import AuditEvent, Execution, Service, utcnow
+from app.models import AuditEvent, Execution, Service, ServiceMetadata, utcnow
 from app.purpose_exports import CATALOG, default_template
 from test_portal import SessionLocal, add_user, csrf, new_client, setup_function
 from test_purpose_exports import _service
@@ -81,6 +81,19 @@ def test_missing_evidence_is_explained_and_bundle_permission_is_respected():
         assert b'No architecture evidence' in archive.read('diagrams.zip.unavailable.txt')
         assert b'No retained SBOM' in archive.read('sbom-components.json.unavailable.txt')
         assert 'asset_list.xlsx' in archive.namelist()
+
+
+def test_all_download_accepts_portable_manifest_over_64k():
+    _service()
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == 'export-test'))
+        db.add(ServiceMetadata(service_id=service.id, values={
+            f"api_key_{index:04d}_{'x' * 80}": "sensitive" for index in range(1000)}))
+        db.commit()
+    with _archive(new_client()) as archive:
+        with ZipFile(BytesIO(archive.read('cats-service.zip'))) as bundle:
+            assert bundle.getinfo('manifest.json').file_size > 65536
+            assert bundle.testzip() is None
 
 
 def test_all_obeys_service_scope():

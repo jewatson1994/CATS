@@ -257,10 +257,10 @@ def export_service(db, service, username):
         "warning": "Import restores service inputs and enters Assessment Pending. Run a fresh local assessment. Credentials, trust configuration and image layers must be supplied locally; generated assessment output is intentionally excluded. Hashes are not signatures.",
         "files": {"service.json": {"bytes": len(body), "sha256": sha256(body).hexdigest()}}}
     manifest_body = encode(manifest)
-    if len(manifest_body) > 65536:
-        raise ValueError("Service bundle manifest exceeds 64 KiB; reduce retained redaction detail")
+    if len(body) + len(manifest_body) > bundle_bytes():
+        raise ValueError("Service bundle exceeds configured expanded-byte limit")
     # Never emit a bundle that this installation itself cannot import.
-    validate_state(load_json(body), manifest)
+    validate_state(load_json(body), load_json(manifest_body))
     output = BytesIO()
     with ZipFile(output, "w", ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", manifest_body)
@@ -317,7 +317,7 @@ def parse_service(data):
                 raise ValueError("Expected exactly manifest.json and service.json")
             if any(x.flag_bits & 1 or ((x.external_attr >> 16) & 0o170000) not in (0, 0o100000) for x in members):
                 raise ValueError("Encrypted or special archive members are not supported")
-            if sum(x.file_size for x in members) > bundle_bytes() + 65536 or archive.getinfo("manifest.json").file_size > 65536:
+            if sum(x.file_size for x in members) > bundle_bytes():
                 raise ValueError("Bundle exceeds expanded-byte limit")
             manifest = load_json(archive.read("manifest.json"))
             signatures = {schema_signature(), schema_signature(pre_service_versions=True)}

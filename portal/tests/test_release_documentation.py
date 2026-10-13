@@ -60,9 +60,9 @@ def test_prepare_real_archive_binds_candidate_documentation_and_source(candidate
     assert manifest["snapshot"]["remediation"]["candidate_digest"] == record.artifact_digest
     assert manifest["artifacts"] == artifacts
     with ZipFile(files["documentation.zip"]) as archive:
-        raw = json.loads(archive.read("raw-scan-evidence.json"))
-        assert raw["findings"][0]["cve"] == "CVE-OLD"
-        assert "helm_source_files" not in raw
+        sbom = json.loads(archive.read("sbom-components.json"))
+        assert sbom["components"] == [{"name": "new-component"}]
+        assert "raw-scan-evidence.json" not in archive.namelist()
     assert documentation.retained_files(record, root, receipt) == files
     assert {name: file_digest(path) for name, path in files.items()} == receipt["files"]
 
@@ -166,18 +166,49 @@ def test_cached_signed_release_is_verified_on_reuse(candidate, monkeypatch):
         (directory / "release-public-key.pem").write_bytes(b"fake public key for mock verification")
         return {"status": "signed", "key_fingerprint": "test-key"}
     monkeypatch.setattr(documentation, "sign_release_manifest", sign)
+    def sign_archive(archive, directory, material):
+        (directory / "documentation.zip.sig").write_bytes(b"archive signature")
+        return {"status": "signed", "key_fingerprint": "test-key"}
+    monkeypatch.setattr(documentation, "sign_release_archive", sign_archive)
     files, receipt = _prepare(candidate, signing=signing)
-    assert {"release-manifest.sig", "release-public-key.pem"} <= files.keys()
+    assert {"documentation.zip.sig", "release-manifest.sig", "release-public-key.pem"} <= files.keys()
     calls = []
     def verify(*args, **kwargs):
         calls.append((args, kwargs))
         return {"status": "verified"}
     monkeypatch.setattr(documentation, "verify_release_manifest", verify)
+    monkeypatch.setattr(documentation, "verify_release_archive", verify)
     assert _prepare(candidate, signing=signing)[1] == receipt
-    assert len(calls) == 1 and calls[0][1]["expected_fingerprint"] == "test-key"
+    assert len(calls) == 2 and calls[0][1]["expected_fingerprint"] == "test-key"
+    monkeypatch.setattr(documentation, "verify_release_archive", lambda *args, **kwargs: {"status": "verification_failed"})
+    with pytest.raises(ValueError, match="Retained documentation ZIP signature verification failed"):
+        _prepare(candidate, signing=signing)
+    monkeypatch.setattr(documentation, "verify_release_archive", verify)
     monkeypatch.setattr(documentation, "verify_release_manifest", lambda *args, **kwargs: {"status": "verification_failed"})
     with pytest.raises(ValueError, match="Retained release signature verification failed"):
         _prepare(candidate, signing=signing)
+
+
+def test_archive_signing_failure_does_not_create_success_receipt(candidate, monkeypatch):
+    monkeypatch.setattr(documentation, "sign_release_manifest", lambda *args: {"status": "signed"})
+    monkeypatch.setattr(documentation, "sign_release_archive", lambda *args: {"status": "verification_failed"})
+    with pytest.raises(ValueError, match="Documentation ZIP signature verification failed"):
+        _prepare(candidate, signing=({"signing_enabled": True, "signing_fingerprint": "test-key"}, {}))
+    assert not list(candidate[3].rglob("signing.json"))
+
+
+def test_snapshot_cache_respects_bundle_export_permission(candidate):
+    _, _, auth, _, _ = candidate
+    auth.user = SimpleNamespace(username="exporter")
+    auth.has = lambda permission, service_id: True
+    privileged, _ = _prepare(candidate)
+    auth.has = lambda permission, service_id: permission == "service.export"
+    restricted, _ = _prepare(candidate)
+    assert privileged["documentation.zip"] != restricted["documentation.zip"]
+    with ZipFile(privileged["documentation.zip"]) as archive:
+        assert "cats-service.zip" in archive.namelist()
+    with ZipFile(restricted["documentation.zip"]) as archive:
+        assert "cats-service.zip" not in archive.namelist()
 
 
 def test_publication_checkpoints_partial_results_and_retry_replaces_each_subject(candidate, monkeypatch):
@@ -243,8 +274,8 @@ def test_changed_remediation_summary_and_validation_rows_revise_snapshot(candida
     passed_files, passed = _prepare(candidate)
     assert len({changed["storage_key"], running["storage_key"], passed["storage_key"]}) == 3
     assert original_files["documentation.zip"].read_bytes() == original_bytes
-    with ZipFile(passed_files["documentation.zip"]) as archive:
-        assert json.loads(archive.read("candidate-validation.json"))[0]["status"] == "PASSED"
+    manifest = json.loads(passed_files["release-manifest.json"].read_bytes())
+    assert manifest["snapshot"]["deployment_validation"][0]["status"] == "PASSED"
 
 
 def test_failed_receipt_publication_leaves_no_partial_json(tmp_path, monkeypatch):
