@@ -11,6 +11,7 @@ describe('unified administration navigation', () => {
     [['config.manage'], '/admin/configuration', ['Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Dependency Watchlist']],
     [['audit.view'], '/admin/general-policy', ['General Policy']],
     [['user.manage'], '/admin', ['Accounts & roles']],
+    [['release.destination.manage'], '/admin/approved-release-destinations', ['Release Destinations']],
   ])('opens the first allowed section for %j', (permissions, href, sections) => {
     const data = {current_user, can: Object.fromEntries((permissions as string[]).map(permission => [permission, {'*': true}]))};
     render(<Shell data={data}><AdminTabs data={data} selected="accounts"/></Shell>);

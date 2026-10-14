@@ -100,7 +100,7 @@ def canonical_source(path: Path, root: Path) -> str:
         return str(path.resolve())
 
 
-def path_value(value: str, source: Path, roots: list[Path], extraction_root: Path) -> tuple[Path | None, str]:
+def path_value(value: str, source: Path, roots: list[Path], extraction_root: Path, *, values_file: bool = False) -> tuple[Path | None, str]:
     value = value.strip().strip("\"'")
     if not value or len(value) > 1024 or value.startswith(("{{", "$", "#")):
         return None, ""
@@ -122,7 +122,10 @@ def path_value(value: str, source: Path, roots: list[Path], extraction_root: Pat
                 continue
             if not inside(resolved, roots + [extraction_root]):
                 continue
-            if ((resolved / "Chart.yaml").is_file() or
+            if values_file:
+                if resolved.is_file():
+                    return resolved, value
+            elif ((resolved / "Chart.yaml").is_file() or
                     (resolved.is_file() and resolved.name.lower().endswith((".tgz", ".tar.gz", ".zip")))):
                 return resolved, value
         except (OSError, RuntimeError):
@@ -351,8 +354,13 @@ def main() -> int:
                                    "version": dependency.get("version"), "discovery_method": "Chart.yaml dependency", "source_file": canonical_source(chart_yaml, root),
                                    "source_path": str(chart_yaml.resolve()), "yaml_path": "dependencies", "context": {},
                                    "confidence": "HIGH", "resolution_status": "DECLARED_DEPENDENCY"})
-        document_root = chart_path if chart.get("discovery_method") == "packaged chart" else (root if chart.get("parent") is None else chart_path)
-        for source_file, document_index, document in read_yaml_files(document_root):
+        document_roots = [root if chart.get("parent") is None else chart_path]
+        # Deployment declarations alongside archives supply their instance
+        # values. Also inspect the extracted chart, excluded from root walks.
+        if chart.get("discovery_method") == "packaged chart" and chart_path not in document_roots:
+            document_roots.append(chart_path)
+        documents = (document for document_root in document_roots for document in read_yaml_files(document_root))
+        for source_file, document_index, document in documents:
             # Chart.yaml/Chart.lock declare dependency edges, not deployable
             # chart occurrences. In particular an OCI repository is not a
             # complete artifact reference.
@@ -422,7 +430,7 @@ def main() -> int:
     # recursive walk. Vendored directories are already in ``charts``; this
     # also marks an exact packaged dependency when it was discovered above.
     chart_by_id = {item["chart_id"]: item for item in charts.values()}
-    # A filesystem chart can be only the source for explicit instances. Keep
+    # A filesystem or packaged chart can be the source for explicit instances. Keep
     # that source in the graph inventory, but do not emit an uninstantiated
     # render entry alongside the instance entries.
     instantiated_paths = {item.get("path") for item in charts.values() if item.get("instance")}
@@ -430,7 +438,7 @@ def main() -> int:
         item["source_only"] = bool(
             not item.get("instance")
             and item.get("path") in instantiated_paths
-            and item.get("discovery_method") == "filesystem"
+            and item.get("discovery_method") in {"filesystem", "packaged chart"}
         )
     for reference in references:
         if reference.get("discovery_method") != "Chart.yaml dependency":
@@ -491,19 +499,22 @@ def main() -> int:
             inline_path = inline_dir / f"{entry['chart_id']}.yaml"
             inline_path.write_text(yaml.safe_dump(values, sort_keys=False), encoding="utf-8")
             entry["values"] = [str(inline_path)]
-        elif isinstance(values, str):
-            values_path, _ = path_value(values, Path(source_path or root), roots, extraction_root)
-            if values_path and values_path.is_file():
-                entry["values"] = [str(values_path)]
-        elif isinstance(values, list):
+        elif isinstance(values, (str, list)):
             resolved_values = []
-            for value in values:
+            values_errors = []
+            for value in ([values] if isinstance(values, str) else values):
                 if isinstance(value, str):
-                    values_path, _ = path_value(value, Path(source_path or root), roots, extraction_root)
-                    if values_path and values_path.is_file():
+                    values_path, _ = path_value(value, Path(source_path or root), roots, extraction_root, values_file=True)
+                    if values_path:
                         resolved_values.append(str(values_path))
+                    else:
+                        values_errors.append(f"Values file not found inside the uploaded artifact: {value}")
+                else:
+                    values_errors.append("Values file references must be strings")
             if resolved_values:
                 entry["values"] = resolved_values
+            if values_errors:
+                entry["values_errors"] = values_errors
         if isinstance(context.get("release"), str):
             entry["release"] = context["release"]
         if isinstance(context.get("namespace"), str):

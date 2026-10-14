@@ -144,6 +144,9 @@ def handle(ctx, payload):
     from .delivery_execution import delivery_lock
     token = worker_context.set(ctx)
     try:
+        if ctx.job.kind == "cyber_release_publish":
+            from .cyber_approvals import publish_job
+            return publish_job(ctx, payload)
         if ctx.job.kind == "remediation_plan":
             return _handle(ctx, payload)
         # A lease-expired process can still be alive. The OS lock prevents its
@@ -165,6 +168,8 @@ def maintenance():
     from .remediation_jobs import enqueue_record
     from .delivery_execution import delivery_lock
     with main.SessionLocal() as db:
+        from .cyber_approvals import reconcile_jobs
+        reconcile_jobs(db)
         records = db.scalars(select(RemediationExecution).where(
             (RemediationExecution.status.in_(["queued", "running"])) |
             (RemediationExecution.verification_status.in_(["queued", "running"])) |

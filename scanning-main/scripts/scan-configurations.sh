@@ -485,7 +485,7 @@ discover_local_components() {
 
 process_chart_entry() {
   local entry_json="$1" path reference name release namespace dependency_mode include_crds framework declared_by declared_enabled
-  local rendered safe chart_name values_file set_value chart_workspace chart_source_identity chart_identity_digest normalized_identity chart_instance_id
+  local rendered safe chart_name values_file values_error set_value chart_workspace chart_source_identity chart_identity_digest normalized_identity chart_instance_id
   local -a helm_command
 
   path="$(jq -r '.path // empty' <<< "$entry_json")"
@@ -544,6 +544,12 @@ process_chart_entry() {
   if [ -z "$chart_instance_id" ]; then
     chart_instance_id="$(jq -cS --arg source "$chart_source_identity" --arg release "$release" --arg namespace "$namespace" \
       '{source:$source,release:$release,namespace:$namespace,values:(.values // []),set:(.set // [])}' <<< "$entry_json" | sha256sum | awk '{print $1}')"
+  fi
+  values_error="$(jq -r '(.values_errors // []) | join("; ")' <<< "$entry_json")"
+  if [ -n "$values_error" ]; then
+    update_chart_graph_status "$chart_instance_id" "$path" "Render Failed" "values" "$values_error"
+    record_chart_failure "$name" "$values_error"
+    return
   fi
   # Discover declared children even if dependency resolution or rendering
   # later fails; useful inventory and Missing Evidence must not be erased by a

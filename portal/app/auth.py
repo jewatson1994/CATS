@@ -389,6 +389,9 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
 
 
 PERMISSIONS = {
+    "approval.request": "Request Cyber approval of a complete service snapshot",
+    "approval.decide": "Approve, deny and revoke Cyber release requests",
+    "release.destination.manage": "Configure approved-release OCI destinations",
     "validator.view": "View managed validators",
     "validator.create": "Create managed validators",
     "validator.provision": "Bootstrap and enroll managed validators",
@@ -435,8 +438,9 @@ PERMISSIONS = {
 SYSTEM_ROLES = {
     "Administrator": [permission for permission in PERMISSIONS if permission != "scan.ingest"],
     "Assessor": ["service.view", "service.export", "audit.view"],
-    "Service Manager": ["service.view", "service.export", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
+    "Service Manager": ["approval.request", "service.view", "service.export", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
     "Cybersecurity": [
+        "approval.request", "approval.decide",
         "validator.view", "validator.create", "validator.provision", "validator.test",
         "validator.self_test", "validator.rotate_certificate", "validator.upgrade", "validator.remove",
         "artifact.sign", "artifact.publish",
@@ -450,7 +454,7 @@ SYSTEM_ROLES = {
 
 # These operate on shared application state, never one service. config.manage
 # has a separate can_manage_group boundary for explicitly group-owned settings.
-APPLICATION_PERMISSIONS = {"user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
+APPLICATION_PERMISSIONS = {"release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
     permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
 PBKDF2_ITERATIONS = 600_000
