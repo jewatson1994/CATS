@@ -1,4 +1,5 @@
 """Confirmation-level portability, conflict, rollback and legacy regressions."""
+from export_job_helpers import completed_export
 from datetime import timedelta
 
 from sqlalchemy import select, func
@@ -30,7 +31,7 @@ def test_metadata_selected_replace_and_stale_preview():
         db.flush()
         db.add(ServiceMetadata(service_id=target.id, values={"classification": "Old"}))
         db.commit()
-    data = client.get("/services/payments-service/bundle.zip").content
+    data = completed_export(client, "/services/payments-service/bundle.zip").content
     first = preview(client, data, "existing-target", "replace_metadata")
     second = preview(client, data, "existing-target", "replace_metadata")
     assert confirm(client, first).status_code == 303
@@ -45,10 +46,10 @@ def test_metadata_selected_replace_and_stale_preview():
 def test_portable_bundle_never_restores_scan_history_as_current_findings():
     client = new_client()
     seed(client)
-    old = client.get("/services/payments-service/bundle.zip").content
+    old = completed_export(client, "/services/payments-service/bundle.zip").content
     assert confirm(client, preview(client, old, "history-target")).status_code == 303
     seed(client, "1.5", "CVE-NEW", 1)
-    all_versions = client.get("/services/payments-service/bundle.zip").content
+    all_versions = completed_export(client, "/services/payments-service/bundle.zip").content
     # V3 carries authoritative inputs only. Adding history cannot revive source findings.
     assert preview(client, all_versions, "history-target", "add_history").status_code == 200
     with SessionLocal() as db:
@@ -88,7 +89,7 @@ def test_legacy_v1_remains_importable_as_new_service_only():
 def test_bundle_confirmation_replay_and_create_race():
     client = new_client()
     seed(client)
-    data = client.get("/services/payments-service/bundle.zip").content
+    data = completed_export(client, "/services/payments-service/bundle.zip").content
     first = preview(client, data, "race-target")
     second = preview(client, data, "race-target")
     assert confirm(client, first).status_code == 303

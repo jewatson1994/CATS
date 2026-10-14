@@ -1,3 +1,4 @@
+from export_job_helpers import completed_export
 from io import BytesIO
 import os
 import re
@@ -52,7 +53,9 @@ def csrf(client):
 def confirmed_remediation(client):
     preview = client.get("/services/payments-service/remediations/plan")
     assert preview.status_code == 200, preview.text
-    plan = preview.json()
+    from remediation_job_helpers import drain_plan
+    with SessionLocal() as db:
+        plan = drain_plan(db, preview.json())
     return client.post("/services/payments-service/remediations/start", data={
         "csrf_token": csrf(client), "remediation_mode": "automated", "decisions": "{}",
         "source_execution_id": plan["source_execution_id"], "plan_digest": plan["plan_digest"],
@@ -370,10 +373,16 @@ def test_oidc_claim_mapping_preserves_scope_and_local_roles():
         assert auth.has("service.edit", service.id)
         assert not auth.has("service.edit", other.id)
         assert not auth.has("config.manage")
-        import pytest
-        with pytest.raises(ValueError):
-            provision_oidc_user(db, {"sub": "subject-2", "preferred_username": "unmapped-user",
-                "custom": {"nested": {"roles": "none"}}})
+        unmapped = provision_oidc_user(db, {"sub": "subject-2", "preferred_username": "unmapped-user",
+            "custom": {"nested": {"roles": "none"}}})
+        # Managed OIDC identity provisioning permits login without granting scope.
+        assert not unmapped.role_assignments
+        assert not unmapped.oidc_eligibilities
+        unmapped_auth = AuthContext(unmapped, UserSession(token_hash="unmapped", csrf_token="unmapped",
+            user_id=unmapped.id, expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+        assert not unmapped_auth.has("service.edit", service.id)
+        assert not unmapped_auth.has("service.edit", other.id)
+        assert not unmapped_auth.has("config.manage")
 
 
 def test_security_data_upload_is_authorized_and_audited(tmp_path, monkeypatch):
@@ -744,7 +753,8 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
         "spec": {"template": {"spec": {"containers": [{"name": "payments", "image": "registry/payments:1"}]}}},
     }]}
     assert client.post("/api/v1/pipeline-results", json=data, headers=pipeline_headers).status_code == 201
-    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    from remediation_job_helpers import inline_record_worker
+    inline_record_worker(monkeypatch)
     response = confirmed_remediation(client)
     assert response.status_code == 303
     with SessionLocal() as db:
@@ -881,7 +891,8 @@ def test_remediation_submits_exact_candidate_images_to_remote_validator(monkeypa
     monkeypatch.setattr(validator_client, "validate", fake_validate)
     monkeypatch.setattr(portal_main.validator_management, "select_configuration",
                         lambda _db, _manual, _kind: {"endpoint": "https://validator.internal"})
-    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    from remediation_job_helpers import inline_record_worker
+    inline_record_worker(monkeypatch)
     response = confirmed_remediation(client)
     assert response.status_code == 303
     assert not submitted  # Remediation retains the candidate; validation is a separate action.
@@ -957,7 +968,8 @@ def test_remediation_bundle_contains_manifest_archive_and_fresh_scan_evidence(mo
         return validation
     monkeypatch.setattr(portal_main, "_run_remediation_image_patches", fake_patch)
     monkeypatch.setattr(portal_main, "_validate_materialized_candidate", fake_static)
-    monkeypatch.setattr(portal_main.REMEDIATION_WORKERS, "submit", lambda function, *args: function(*args))
+    from remediation_job_helpers import inline_record_worker
+    inline_record_worker(monkeypatch)
     response = confirmed_remediation(client)
     assert response.status_code == 303
     with SessionLocal() as db:
@@ -1272,10 +1284,10 @@ def test_configuration_finding_exception_and_poam_use_first_class_workflows():
         assert policy_exception is not None
         assert entry.policy_finding_id == policy_finding_id and entry.status == "active"
         policy_exception_id = policy_exception.id
-    finding_export = load_workbook(BytesIO(cyber.get("/services/payments-service/export.xlsx").content))
+    finding_export = load_workbook(BytesIO(completed_export(cyber, "/services/payments-service/export.xlsx").content))
     assert "Configuration Findings" in finding_export.sheetnames
     assert "KSV014" in [cell.value for cell in finding_export["Configuration Findings"]["A"]]
-    poam_export = load_workbook(BytesIO(cyber.get("/poam/services/payments-service/export.xlsx").content))["POA&M"]
+    poam_export = load_workbook(BytesIO(completed_export(cyber, "/poam/services/payments-service/export.xlsx").content))["POA&M"]
     assert "KSV014" in [cell.value for cell in poam_export["F"]]
     poam_service_page = cyber.get("/poam/services/payments-service")
     assert "KSV014" in json.dumps(page_data(poam_service_page))
@@ -2167,7 +2179,7 @@ def test_poam_is_scoped_and_requires_cybersecurity_approval():
     }, follow_redirects=False).status_code == 303
     with SessionLocal() as db:
         assert db.get(PoamEntry, entries[0].id).status == "active"
-    export = cyber.get("/poam/services/payments-service/export.xlsx")
+    export = completed_export(cyber, "/poam/services/payments-service/export.xlsx")
     assert export.status_code == 200
     export_sheet = load_workbook(BytesIO(export.content))["POA&M"]
     assert "Updated authorization evidence" in [cell.value for cell in export_sheet["D"]]
@@ -2238,17 +2250,17 @@ def test_excel_export_remains_valid():
     overview_page = page_data(client.get("/services/payments-service?overview=true"))
     assert overview_page["can"]["service.export"][str(overview_page["view"]["service"]["id"])]
     assert overview_page["view"]["service"]["service_key"] == "payments-service"
-    diagram = client.get("/services/payments-service/helm-diagram.svg")
+    diagram = completed_export(client, "/services/payments-service/helm-diagram.svg")
     assert diagram.status_code == 200
     assert diagram.headers["content-type"].startswith("image/svg+xml")
     assert "Helm rendering" in diagram.text
     assert "Ports / protocols" in diagram.text
     assert service_page["view"]["last_execution"] is not None
     assert service_page["findings"][0]["cve"] == "CVE-2026-0001"
-    response = client.get("/services/payments-service/export.xlsx")
+    response = completed_export(client, "/services/payments-service/export.xlsx")
     assert response.status_code == 200
     assert load_workbook(BytesIO(response.content))["Findings"]["A2"].value == "CVE-2026-0001"
-    package = client.get("/services/payments-service/export.xlsx?include_diagrams=true")
+    package = completed_export(client, "/services/payments-service/export.xlsx?include_diagrams=true")
     assert package.status_code == 200
     assert package.headers["content-type"].startswith("application/zip")
     with ZipFile(BytesIO(package.content)) as archive:
@@ -2273,7 +2285,7 @@ def test_architecture_reflow_endpoint_and_canonical_legacy_export():
     assert client.get(url + "&layout_width=0").status_code == 422
     assert client.get(url + "&layout_width=10001").status_code == 422
     assert TestClient(app).get(url + "&layout_width=1000", follow_redirects=False).status_code in {303, 401, 403}
-    diagram = client.get("/services/payments-service/helm-diagram.svg")
+    diagram = completed_export(client, "/services/payments-service/helm-diagram.svg")
     assert "CATS Architecture" in diagram.text
     assert "application-7" in diagram.text
 
@@ -2352,7 +2364,7 @@ def test_service_export_contains_authoritative_overview_sheets_and_provenance():
         "missing_evidence": [{"type": "Chart", "item": "worker", "reason": "chart not found", "source_file": "charts/root/values.yaml"}],
     }
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
-    response = client.get("/services/export-service/export.xlsx")
+    response = completed_export(client, "/services/export-service/export.xlsx")
     assert response.status_code == 200
     workbook = load_workbook(BytesIO(response.content), read_only=True)
     required = {"Summary", "Containers", "Helm Charts", "Artifacts", "Missing Evidence", "Ports & Protocols", "Accounts", "Dependencies", "Render Warnings", "Raw Findings", "Vulnerabilities", "Simplified Findings", "Configuration Findings", "POA&Ms", "Exceptions", "Mitigations", "Activity"}
@@ -2377,7 +2389,7 @@ def test_service_export_accepts_singleton_recursive_helm_evidence():
         }]},
     }
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
-    response = client.get("/services/singleton-export/export.xlsx?include_diagrams=true")
+    response = completed_export(client, "/services/singleton-export/export.xlsx?include_diagrams=true")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/zip")
 
@@ -2386,7 +2398,7 @@ def test_service_poc_is_displayed_and_exported():
     client = new_client(); ingest(client)
     page = client.get("/services/payments-service")
     assert page_data(page)["view"]["service"]["poc"] == "cats-test-poc@example.invalid"
-    workbook = load_workbook(BytesIO(client.get("/exports/services.xlsx").content))
+    workbook = load_workbook(BytesIO(completed_export(client, "/exports/services.xlsx").content))
     assert "POC" in [cell.value for cell in workbook["Service Snapshot"][1]]
 
 
@@ -3063,7 +3075,7 @@ def test_focused_findings_export_projects_current_observations_without_evidence(
         statements.append(sql)
     event.listen(engine, 'before_cursor_execute', capture)
     try:
-        response = client.get('/services/payments-service/exports/findings.xlsx')
+        response = completed_export(client, '/services/payments-service/exports/findings.xlsx')
     finally:
         event.remove(engine, 'before_cursor_execute', capture)
     assert response.status_code == 200

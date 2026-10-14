@@ -22,6 +22,7 @@ import {Page as ServiceArtifacts} from './features/service-artifacts';
 const loaders: Record<string, () => Promise<any>> = {
   './features/admin': () => import('./features/admin'),
   './features/audit': () => import('./features/audit'),
+  './features/jobs': () => import('./features/jobs'),
   './features/compliance': () => import('./features/compliance'),
   './features/compliance_frameworks': () => import('./features/compliance_frameworks'),
   './features/configuration': () => import('./features/configuration'),
@@ -65,6 +66,7 @@ export function lazyComponent<P extends object>(module: string, name: string,
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
 const Patch = lazyPage('./features/patch', 'Page');
+const Jobs = lazyPage('./features/jobs', 'Page');
 const SelfService = lazyPage('./features/self_service', 'Page');
 const PublicResults = lazyPage('./features/public_results', 'Page');
 const PatchResults = lazyPage('./features/patch_results', 'Page');
@@ -104,7 +106,7 @@ export function preloadPages() {
 }
 
 const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
-  '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
+  '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
@@ -124,7 +126,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   service_overview: ServiceOverview, service_activity: ServiceActivity, service_history: ServiceHistory,
   service_dependencies: ServiceDependencies, service_artifacts: ServiceArtifacts, service_validation: ServiceValidation,
   service_definitions: ServiceDefinitions, exchange: Exchange, purpose_export_template: PurposeExportTemplate,
-  remediations: Remediations, service_remediations: ServiceRemediations, remediation_report: RemediationReport, requests: Requests,
+  jobs: Jobs, remediations: Remediations, service_remediations: ServiceRemediations, remediation_report: RemediationReport, requests: Requests,
   service_architecture: ServiceArchitecture,
   admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,

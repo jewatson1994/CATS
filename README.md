@@ -13,6 +13,7 @@ The React interface provides service workspaces, scan results, remediation views
 | Workspace | Purpose |
 | --- | --- |
 | Services | Filter the Service Security Matrix; switch Active, Staged, or Archived, choose page size, and inspect versioned service evidence. |
+| Jobs | Inspect durable scans, remediation plans/executions, exports, and administrator provisioning operations. |
 | Scan | Assess images, Docker image archives, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
@@ -37,7 +38,7 @@ Assignments can be global, group-scoped, or service-scoped, and permissions comb
 
 ## Install and start
 
-The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, and **PostgreSQL**. Portal, its private control listener, and both workers use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
+The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, **remediation-worker**, **export-worker**, **provisioning-worker**, and **PostgreSQL**. Portal, its private control listener, and all workers use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
 
 You need Docker Engine or Docker Desktop running Linux containers, Docker Compose v2, and a built CATS image. Run the following from the repository root.
 
@@ -57,7 +58,7 @@ cp .env.example .env
 ${EDITOR:-vi} .env
 ```
 
-Replace the database and bootstrap passwords, pipeline and worker tokens, encryption-key placeholder, and prepared-release path. Set `CATS_IMAGE` to your exact image tag. **For an existing installation, update your current environment file instead of replacing it.** Preserve the database volume and encryption key.
+Replace the database and bootstrap passwords, pipeline and worker tokens, and encryption-key placeholder. Set `CATS_IMAGE` to your exact image tag. **For an existing installation, update your current environment file instead of replacing it.** Preserve the database volume and encryption key.
 
 Generate the Fernet key using a Python environment with the portal dependencies:
 
@@ -67,13 +68,13 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Setting | Meaning |
 | --- | --- |
-| `CATS_IMAGE` | Image used by portal, portal-control, and both workers, for example `cats:1.3`. |
+| `CATS_IMAGE` | Image used by portal, portal-control, and all workers, for example `cats:1.3`. |
 | `CATS_SCAN_WORKER_TOKEN` | Unique random token of at least 32 characters shared with the private control listener; replace the example placeholder. |
 | `CATS_SCAN_REGISTRY_AUTH_SOURCE` | Existing registry-auth directory; defaults to `./scan-registry-auth`. |
 | `CATS_PORT` | Browser-facing port; defaults to `8080`. |
 | `CATS_BOOTSTRAP_USERNAME` / `CATS_BOOTSTRAP_PASSWORD` | Initial local administrator credentials. |
 | `CATS_CONFIG_ENCRYPTION_KEY` | Stable key for stored secrets; retain it across upgrades. |
-| `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` | Host directory of the prepared validator release, mounted read-only. Use an absolute path in deployment templates. |
+| `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` | Optional legacy staged-release directory. Leave blank for automatic preparation when Provision is clicked. |
 | `CATS_IDENTITY_MODE` | `local`, `both`, or `oidc`; external OIDC fields start blank. |
 | `CATS_DEV_AUTH_BYPASS` | Defaults to `false`; enable only deliberately for isolated development. |
 | `SESSION_COOKIE_SECURE` | Set to `true` when serving the portal over HTTPS. |
@@ -86,7 +87,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 .\build.bat
 ```
 
-Enter the version you want to build. The utility builds the scanner base and CATS image, prepares verified validator image archives, recreates portal, portal-control, patch-worker, and scan-worker, and verifies the deployed image identities. It uses the **current checkout**, including the current UI. Docker must be running. The versioned image selection applies to that rebuild; update `CATS_IMAGE` in your environment file for future Compose runs.
+Enter the version you want to build. The utility builds the scanner base and CATS image, recreates portal, portal-control, and all five workers, and verifies the deployed image identities. It uses the **current checkout**, including the current UI. Docker must be running. The versioned image selection applies to that rebuild; update `CATS_IMAGE` in your environment file for future Compose runs.
 
 **Connected release build without deployment:**
 
@@ -94,7 +95,7 @@ Enter the version you want to build. The utility builds the scanner base and CAT
 python scripts/build-cats-release.py --cats-version 1.3 --tag cats:1.3
 ```
 
-This builds the unified runtime, acquires the configured Kind image when needed, and prepares a Docker-host validator release. Set `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` to the directory printed at completion. `--profile runtime` skips release preparation; use it only when you already have the required release inputs. See [release inputs](docs/managed-validator-release-inputs.md) for the full contract.
+This builds the unified runtime. HQ prepares the exact validator runtime and pinned Kind dependency when **Provision** is clicked. The optional `--prepare-validator-release` flag exports a legacy staged release; it is not required. See [durable workers and on-demand provisioning](docs/durable-workers.md) for dependencies, resource limits, and upgrade instructions.
 
 **Image transfer to a disconnected host:**
 
@@ -103,7 +104,7 @@ docker save --output cats-1.3.tar cats:1.3
 docker load --input cats-1.3.tar
 ```
 
-Also transfer PostgreSQL and required validator/node image archives or release inputs. Exporting the CATS image alone does not export the database, runtime volumes, or mounted release directory.
+Make PostgreSQL and the pinned Kind node image available in local Docker storage or approved internal repositories. Exporting the CATS image alone does not export the database or runtime volumes. HQ prepares and verifies the validator payload automatically from those inputs.
 
 ### 3. Start and verify
 
@@ -120,10 +121,10 @@ docker compose ps
 Open **http://localhost:8080** (or your configured port) and sign in with your local account. The project name is `cats`, so root and main-template deployments refer to the same stack.
 
 ```sh
-docker compose logs -f portal portal-control scan-worker patch-worker
+docker compose logs -f portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker
 ```
 
-For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
 
 Before production use, complete the [scan-worker target-host acceptance checks](docs/dedicated-scan-worker.md). The [architecture review](docs/scan-worker-architecture-review-2026-10-09.md) records measured results, existing test failures, and deployment validation still required. Rebuild the image and update Compose together.
 
@@ -132,7 +133,7 @@ Before production use, complete the [scan-worker target-host acceptance checks](
 | Files | Use |
 | --- | --- |
 | `compose.yaml` + `.env.example` | Repository-root runtime and Windows rebuild utility. |
-| `templates/compose.main.yaml` + `templates/main.env.example` | Deployment with an explicitly selected image and absolute prepared-release path. |
+| `templates/compose.main.yaml` + `templates/main.env.example` | Deployment with an explicitly selected image; staged validator releases are optional. |
 | `compose.validator.yml` | Source-built validator on a dedicated Linux amd64 sandbox. |
 | `templates/compose.validator.yaml` + `templates/validator.env.example` | Matching validator deployment template and trust settings. |
 | `portal/.env.example` | Reference for direct portal development; the root Compose setup uses `.env.example`. |
@@ -158,7 +159,7 @@ flowchart LR
     Validator --> Runtime[Helm runtime and cleanup evidence]
 ```
 
-The patch-worker has Docker-host access. The scan-worker has no Docker socket or database credentials; it exchanges jobs and evidence through the private control listener. The validator uses host networking and the Docker socket on a dedicated sandbox VM; it must not share a production host. Its validation API uses mTLS, while its administrator interface uses HTTPS. Restrict both interfaces to their intended networks.
+The patch-worker and isolated provisioning-worker have Docker-host access. The portal has no Docker socket. The scan-worker has no Docker socket or database credentials; it exchanges jobs and evidence through the private control listener. The validator uses host networking and the Docker socket on a dedicated sandbox VM; it must not share a production host. Its validation API uses mTLS, while its administrator interface uses HTTPS. Restrict both interfaces to their intended networks.
 
 Use an HTTPS reverse proxy for shared deployments, keep development bypass disabled, and retain access/audit controls. Configure private registries, trusted CAs, and signing through administration. Signing records the published digest and verification evidence; it does not replace vulnerability or runtime assessment.
 

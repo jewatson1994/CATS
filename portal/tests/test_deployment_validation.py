@@ -906,3 +906,13 @@ def test_stale_cleanup_deletes_only_owned_exact_names():
     assert result["deleted"] == ["cats-validation-old"]
     assert set(result["failed"]) == {"production-cluster", "cats-validation-../bad"}
     assert len(calls) == 4
+
+
+def test_isolated_api_port_fallback_recognizes_docker_29_empty_binding():
+    from app.deployment_validation import CommandResult, _missing_isolated_api_port
+    prefix = 'failed to get api server port: docker inspect 6443/tcp: '
+    assert _missing_isolated_api_port(CommandResult(1, '', prefix + 'index of untyped nil'))
+    assert _missing_isolated_api_port(CommandResult(1, '', prefix + 'reflect: slice index out of range'))
+    assert not _missing_isolated_api_port(CommandResult(1, '', 'reflect: slice index out of range'))
+    assert not _missing_isolated_api_port(CommandResult(1, '', prefix + 'permission denied'))
+    assert not _missing_isolated_api_port(CommandResult(0, '', prefix + 'reflect: slice index out of range'))

@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app import main
+from remediation_job_helpers import completed_plan
 from app.candidate_worker import validate_request
 from app.models import RemediationExecution
 from app.remediation import candidate_files
@@ -91,7 +92,7 @@ def test_plan_endpoint_and_confirm_allow_independent_patch_work(workflow, monkey
         "findings": [{"image": "registry.example/app:1", "cve": "CVE-test"}]}
     db.commit()
     original = deepcopy(execution.raw_payload)
-    preview = main.remediation_plan(service.service_key, db=db, auth=auth)
+    preview = completed_plan(service.service_key, db=db, auth=auth)
     assert preview["source_safety"]["blocked_charts"] == ["bad"]
     assert "sensitive-content" not in json.dumps(preview)
     args = dict(csrf_token="token", remediation_mode="automated", decisions="{}", plan_digest=preview["plan_digest"],

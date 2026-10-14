@@ -142,7 +142,8 @@ def remediation_portal(monkeypatch, tmp_path):
     for name in ("REMEDIATION_JOB_ROOT", "PATCH_JOB_ROOT"):
         monkeypatch.setattr(main, name, tmp_path / name.lower())
     monkeypatch.setattr(main, "remediation_enabled", lambda _db: True)
-    monkeypatch.setattr(main, "REMEDIATION_WORKERS", SimpleNamespace(submit=lambda fn, *args: fn(*args)))
+    from remediation_job_helpers import inline_record_worker
+    inline_record_worker(monkeypatch)
     patched = []
     validated = []
 
@@ -228,11 +229,13 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
 
     tab = client.get("/services/catalog?remediations=true&tab=pipeline", headers=page)
     assert tab.status_code == 200
-    assert tab.json()["data"]["remediation_preview"]["error"] is None
+    assert tab.json()["data"]["remediation_preview"]["pending"] is True
     preview = client.get("/api/v1/services/catalog/remediation-preview")
-    assert preview.status_code == 200 and preview.json()["error"] is None and preview.json()["images"] == 2
-
-    plan = client.get("/services/catalog/remediations/plan").json()
+    assert preview.status_code == 200 and preview.json()["pending"] is True
+    from remediation_job_helpers import drain_plan
+    with SessionLocal() as db:
+        plan = drain_plan(db, preview.json())
+    assert client.get("/api/v1/services/catalog/remediation-preview").json()["images"] == 2
     assert {image["original"]: image["classification"] for image in plan["images"]} == {
         "registry.example/catalog-api:2.4.1": "REVIEW REQUIRED", "registry.example/catalog-worker:2.4.1": "REVIEW REQUIRED"}
 
@@ -333,7 +336,12 @@ def test_remediation_tab_survives_a_failing_plan_preview(remediation_portal, mon
     # The tab never waits for the preview; the deferred preview reports the failure.
     assert response.json()["data"]["remediation_preview"]["pending"] is True
     preview = client.get("/api/v1/services/catalog/remediation-preview")
-    assert preview.status_code == 200 and "could not be built" in preview.json()["error"]
+    assert preview.status_code == 200 and preview.json()["pending"] is True
+    from app import durable_jobs, remediation_worker
+    job = durable_jobs.claim(("remediation_plan",), "test", main.SessionLocal)
+    durable_jobs.execute(job, remediation_worker.handle, main.SessionLocal)
+    result = client.get(f"/api/v1/jobs/{job.id}").json()
+    assert result["error"] and result["status"] in {"queued", "failed"}
 
 
 def test_plan_builds_when_sources_include_kustomization_and_lists():

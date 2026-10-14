@@ -1,5 +1,7 @@
 # Connected managed-validator release build
 
+> Managed provisioning now prepares the exact unified runtime on demand when **Provision** is clicked. Manual staging and Build Payload are optional legacy paths. See [the current worker and provisioning guide](durable-workers.md).
+
 Run from the repository root on a connected machine with a Linux-container Docker
 engine and Python:
 

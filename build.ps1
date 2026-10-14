@@ -79,22 +79,6 @@ try {
         catch { throw 'Registry config.json must contain a valid JSON object.' }
     }
     $env:CATS_SCAN_REGISTRY_AUTH_SOURCE = $registryAuthSource
-    $python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
-    $pythonArgs = @()
-    if (-not (Test-Path -LiteralPath $python)) {
-        if (Get-Command py -ErrorAction SilentlyContinue) {
-            $python = "py"
-            $pythonArgs = @("-3")
-        }
-        elseif (Get-Command python -ErrorAction SilentlyContinue) {
-            $python = "python"
-        }
-        else {
-            throw "Python 3 is required to export verified validator image archives. Install Python 3 and retry."
-        }
-    }
-
-
     # ---------------------------------------------------------
     # Stage 1 - Build scanner/base image
     # ---------------------------------------------------------
@@ -143,20 +127,6 @@ try {
     Write-Host ""
 
     # ---------------------------------------------------------
-    Write-Host "Preparing verified validator image archives..." -ForegroundColor Yellow
-    $releasePython = $python
-    $nodeReference = & $releasePython @pythonArgs -c "import sys; sys.path.insert(0, 'portal'); from app.deployment_validation import ValidationConfig; print(ValidationConfig.kind_node_image)"
-    if ($LASTEXITCODE -ne 0) { throw "Could not resolve the trusted Kind image." }
-    docker image inspect $nodeReference *> $null
-    if ($LASTEXITCODE -ne 0) {
-        docker pull $nodeReference
-        if ($LASTEXITCODE -ne 0) { throw "Could not acquire the pinned Kind image." }
-    }
-    $releaseDirectory = Join-Path $PSScriptRoot ('.release-cache/managed-validator/' + [guid]::NewGuid().ToString('N'))
-    & $releasePython @pythonArgs (Join-Path $PSScriptRoot 'scripts/prepare-docker-validator-release.py') --cats-image $expectedImage --output $releaseDirectory --activate-env (Join-Path $PSScriptRoot '.env')
-    if ($LASTEXITCODE -ne 0) { throw "Validator release preparation failed." }
-    $env:CATS_MANAGED_VALIDATOR_RELEASE_SOURCE = $releaseDirectory
-
     # Stage 3 - Deploy the EXACT image we just built
     # ---------------------------------------------------------
 
@@ -173,14 +143,14 @@ try {
         -d `
         --force-recreate `
         --wait `
-        portal portal-control patch-worker scan-worker
+        portal portal-control patch-worker scan-worker remediation-worker export-worker provisioning-worker
 
     if ($LASTEXITCODE -ne 0) {
         throw "Docker Compose recreation failed."
     }
 
     Write-Host ""
-    Write-Host "Portal, control listener, patch-worker, and scan-worker recreated successfully." -ForegroundColor Green
+    Write-Host "Portal and all six worker/control services recreated successfully." -ForegroundColor Green
     Write-Host ""
 
     # ---------------------------------------------------------
@@ -190,78 +160,22 @@ try {
     Write-Host "[4/4] Verifying deployed CATS images..." -ForegroundColor Yellow
     Write-Host ""
 
-    $portalContainer = docker @composeArgs ps -q portal
-
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($portalContainer)) {
-        throw "Could not locate the portal container."
-    }
-
-    $workerContainer = docker @composeArgs ps -q patch-worker
-
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($workerContainer)) {
-        throw "Could not locate the patch-worker container."
-    }
-
-    $scanWorkerContainer = docker @composeArgs ps -q scan-worker
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($scanWorkerContainer)) {
-        throw "Could not locate the scan-worker container."
-    }
-    $scanWorkerImage = docker inspect $scanWorkerContainer --format "{{.Config.Image}}"
-    if ($LASTEXITCODE -ne 0 -or $scanWorkerImage -ne $expectedImage) {
-        throw "Scan-worker image mismatch or inspection failed. Expected '$expectedImage'."
-    }
-
-    $controlContainer = docker @composeArgs ps -q portal-control
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($controlContainer)) {
-        throw "Could not locate the portal-control container."
-    }
-    $controlImage = docker inspect $controlContainer --format "{{.Config.Image}}"
-    if ($LASTEXITCODE -ne 0 -or $controlImage -ne $expectedImage) {
-        throw "Portal-control image mismatch or inspection failed. Expected '$expectedImage'."
-    }
-
-    $portalImage = docker inspect $portalContainer --format "{{.Config.Image}}"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not inspect the portal container."
-    }
-
-    $workerImage = docker inspect $workerContainer --format "{{.Config.Image}}"
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not inspect the patch-worker container."
-    }
-
-    Write-Host "Deployment Verification" -ForegroundColor Cyan
-    Write-Host "----------------------------------------"
-    Write-Host "Expected:     $expectedImage"
-    Write-Host "Portal:       $portalImage"
-    Write-Host "Patch Worker: $workerImage"
-    Write-Host "Scan Worker:  $scanWorkerImage"
-    Write-Host "----------------------------------------"
-    Write-Host ""
-
-    if ($portalImage -ne $expectedImage) {
-        throw "Portal image mismatch. Expected '$expectedImage' but found '$portalImage'."
-    }
-
-    if ($workerImage -ne $expectedImage) {
-        throw "Patch-worker image mismatch. Expected '$expectedImage' but found '$workerImage'."
-    }
-
-    foreach ($container in @($portalContainer, $controlContainer, $workerContainer, $scanWorkerContainer)) {
+    $services = @('portal', 'portal-control', 'patch-worker', 'scan-worker', 'remediation-worker', 'export-worker', 'provisioning-worker')
+    foreach ($service in $services) {
+        $container = docker @composeArgs ps -q $service
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($container)) {
+            throw "Could not locate the $service container."
+        }
+        $deployedImage = docker inspect $container --format "{{.Config.Image}}"
+        if ($LASTEXITCODE -ne 0 -or $deployedImage -ne $expectedImage) {
+            throw "$service image mismatch or inspection failed. Expected '$expectedImage'."
+        }
         $deployedImageId = docker inspect $container --format "{{.Image}}"
-        if ($LASTEXITCODE -ne 0) {
-            throw "Could not inspect the deployed image for container '$container'."
+        if ($LASTEXITCODE -ne 0 -or $deployedImageId -ne $expectedImageId) {
+            throw "$service is using an older or different image. Expected '$expectedImageId'."
         }
-        if ($deployedImageId -ne $expectedImageId) {
-            throw "Container '$container' is using an older or different image. Expected '$expectedImageId' but found '$deployedImageId'."
-        }
+        Write-Host "$service : $deployedImage ($deployedImageId)" -ForegroundColor Green
     }
-
-    $releaseCheck = "import os; from app.managed_validator_release import load_release; r=load_release(); assert r['cats_image']['image_id'] == os.environ['EXPECTED_CATS_IMAGE_ID'], 'Validator release image mismatch'; print('HQ validator release verified.')"
-    docker exec -e "EXPECTED_CATS_IMAGE_ID=$expectedImageId" $portalContainer /opt/cats-venv/bin/python -c $releaseCheck
-    if ($LASTEXITCODE -ne 0) { throw "HQ validator release readiness verification failed." }
 
     Write-Host "Image verification successful." -ForegroundColor Green
     Write-Host ""
@@ -280,8 +194,6 @@ try {
     Write-Host "========================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "Expected Image : $expectedImage" -ForegroundColor Cyan
-    Write-Host "Portal         : $portalImage" -ForegroundColor Green
-    Write-Host "Patch Worker   : $workerImage" -ForegroundColor Green
     Write-Host ""
 
 }

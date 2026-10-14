@@ -14,7 +14,6 @@ from app.models import Execution, RemediationExecution, Service, User
 def test_retry_keeps_original_execution_after_new_release(monkeypatch):
     client = new_client()
     client.post("/admin/configuration/remediation", data={"csrf_token": csrf(client), "enabled": "true"})
-    monkeypatch.setattr(main.REMEDIATION_WORKERS, "submit", lambda *args: None)
     now = datetime.now(timezone.utc)
     first = payload("original-remediation-scan", now, [])
     assert client.post("/api/v1/pipeline-results", json=first, headers=pipeline_headers).status_code == 201

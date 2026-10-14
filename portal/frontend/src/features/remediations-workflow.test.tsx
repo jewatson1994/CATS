@@ -138,7 +138,7 @@ it.each(['vulnerability','configuration'] as const)('preserves %s finding scope 
   container.querySelector('dialog')!.setAttribute('open','');
   fireEvent.click(screen.getByText('Build plan'));
   await screen.findByText('Review proposed changes');
-  expect(requestJson).toHaveBeenCalledWith(`/services/example/remediations/plan?finding_type=${finding_type}&finding_id=42`);
+  expect(requestJson).toHaveBeenCalledWith(`/services/example/remediations/plan?finding_type=${finding_type}&finding_id=42`, expect.objectContaining({signal:expect.any(AbortSignal)}));
   fireEvent.click(screen.getByText('Final review'));
   const fields=new FormData(container.querySelector('form')!);
   expect(fields.get('finding_type')).toBe(finding_type);
@@ -176,4 +176,46 @@ it.each(['staged','publishing'])('locks delivery choices and submission while th
   expect(submit).toBeDisabled();
   expect(fireEvent.submit(submit.closest('form')!)).toBe(false);
   expect(screen.getByText(/Delivery is in progress/)).toBeInTheDocument();
+});
+
+
+it('shows durable queued and running progress before reviewing the completed plan', async () => {
+  vi.useFakeTimers({shouldAdvanceTime:true});
+  vi.mocked(requestJson)
+    .mockResolvedValueOnce({job_id:'durable-plan',status:'queued',stage:'Waiting for preparation',progress:0,status_url:'/api/v1/jobs/durable-plan'})
+    .mockResolvedValueOnce({id:'durable-plan',status:'running',stage:'Resolving retained evidence',progress:35,elapsed_seconds:12})
+    .mockResolvedValueOnce({id:'durable-plan',status:'completed',result:{plan}});
+  const {container}=render(<Remediate data={data()}/>);container.querySelector('dialog')!.setAttribute('open','');
+  fireEvent.click(screen.getByText('Build plan'));
+  await act(async () => {await Promise.resolve();});
+  expect(screen.getByRole('status')).toHaveTextContent('queued');
+  expect(screen.getByRole('link',{name:'View Jobs'})).toHaveAttribute('href','/jobs');
+  await act(async () => {vi.advanceTimersByTime(1600);});
+  expect(screen.getByRole('status')).toHaveTextContent('running');
+  expect(screen.getByRole('status')).toHaveTextContent('35%');
+  expect(screen.getByRole('status')).toHaveTextContent('12s elapsed');
+  await act(async () => {vi.advanceTimersByTime(1600);});
+  expect(screen.getByText('Review proposed changes')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Final review'));
+  expect(screen.getByRole('button',{name:'Execute remediation'})).toBeDisabled();
+  expect(new FormData(container.querySelector('form')!).get('source_execution_id')).toBe('17');
+  expect(new FormData(container.querySelector('form')!).get('plan_digest')).toBe('plan-7');
+});
+
+it('leaving planning aborts polling and returning reads the retained completed plan', async () => {
+  vi.useFakeTimers({shouldAdvanceTime:true});
+  vi.mocked(requestJson).mockResolvedValueOnce({job_id:'durable-plan',status:'queued',pending:true});
+  const first=render(<Remediate data={data()}/>);first.container.querySelector('dialog')!.setAttribute('open','');
+  fireEvent.click(screen.getByText('Build plan'));
+  await act(async () => {await Promise.resolve();});
+  const options=vi.mocked(requestJson).mock.calls[0][1];
+  first.unmount();
+  expect(options?.signal?.aborted).toBe(true);
+  await act(async () => {vi.advanceTimersByTime(5000);});
+  expect(requestJson).toHaveBeenCalledTimes(1);
+  vi.mocked(requestJson).mockResolvedValueOnce({...plan,job_id:'durable-plan',status:'completed',pending:false});
+  const second=render(<Remediate data={data()}/>);second.container.querySelector('dialog')!.setAttribute('open','');
+  fireEvent.click(screen.getByText('Build plan'));
+  await act(async () => {await Promise.resolve();});
+  expect(screen.getByText('Review proposed changes')).toBeInTheDocument();
 });

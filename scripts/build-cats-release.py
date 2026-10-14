@@ -36,16 +36,17 @@ def main():
     parser.add_argument('--image', choices=['unified', 'portal'], default='unified')
     parser.add_argument('--profile', choices=['release', 'development', 'runtime'], default='release')
     parser.add_argument('--scanner-base', help='Use an already built, offline-capable scanner base')
+    parser.add_argument('--prepare-validator-release', action='store_true', help='Optional legacy staged validator export; Provision prepares its own payload by default')
     parser.add_argument('--cache-dir', type=pathlib.Path, default=ROOT / '.release-cache/managed-validator')
     args = parser.parse_args()
     if not shutil.which('docker'):
         parser.exit(1, 'Docker CLI is unavailable. Install/start a Linux-container Docker engine to build the release.\n')
     subprocess.run(['docker', 'info'], check=True, stdout=subprocess.DEVNULL)
-    if args.profile == 'release' and args.image != 'unified':
+    if args.prepare_validator_release and args.image != 'unified':
         parser.error('Docker-host releases require the unified CATS runtime image')
     for command in commands(args, None):
         subprocess.run(command, check=True, cwd=ROOT)
-    if args.profile == 'release':
+    if args.prepare_validator_release:
         sys.path.insert(0, str(ROOT / 'portal'))
         from app.deployment_validation import ValidationConfig
         node = ValidationConfig.kind_node_image

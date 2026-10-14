@@ -232,6 +232,12 @@ services:
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
 
       CATS_MANAGED_VALIDATOR_RELEASE_DIR: /opt/cats/managed-validator-release
+      CATS_JOB_QUEUE_CAPACITY: ${CATS_JOB_QUEUE_CAPACITY:-200}
+      CATS_JOB_LEASE_SECONDS: ${CATS_JOB_LEASE_SECONDS:-120}
+      CATS_EXPORT_JOB_ROOT: /data/export-jobs
+      CATS_EXPORT_MAX_BYTES: ${CATS_EXPORT_MAX_BYTES:-268435456}
+      CATS_EXPORT_DISK_BYTES: ${CATS_EXPORT_DISK_BYTES:-4294967296}
+      CATS_EXPORT_RETENTION_HOURS: ${CATS_EXPORT_RETENTION_HOURS:-24}
 
       PIPELINE_API_TOKEN: ${PIPELINE_API_TOKEN:?Set PIPELINE_API_TOKEN in .env}
 
@@ -487,11 +493,10 @@ services:
     # ---------------------------------------------------------
 
     volumes: &portal_volumes
-      # Required by current CATS Docker/kind/scanning operations.
-      - type: bind
-        source: ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:?Set an absolute path to the prepared validator release directory}
-        target: /opt/cats/managed-validator-release
-        read_only: true
+      # Legacy staged releases are optional; the default volume starts empty.
+      - ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-validator_staged_release}:/opt/cats/managed-validator-release:ro
+      - validator_data:/app/data
+      - export_jobs:/data/export-jobs
 
       - patch_jobs:/tmp/cats-patch-jobs
 
@@ -574,6 +579,74 @@ services:
     restart: unless-stopped
 
 
+  remediation-worker:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.remediation_worker"]
+    environment: &background_environment
+      <<: *portal_environment
+      CATS_DB_POOL_SIZE: 2
+      CATS_DB_MAX_OVERFLOW: 0
+      CATS_DB_BACKGROUND_POOL_SIZE: 2
+      CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+    volumes: *portal_volumes
+    cpus: ${CATS_REMEDIATION_CPUS:-1.0}
+    mem_limit: ${CATS_REMEDIATION_MEMORY:-2g}
+    pids_limit: 256
+    stop_grace_period: 30s
+    depends_on:
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  export-worker:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.export_worker"]
+    environment:
+      <<: *background_environment
+      TMPDIR: /data/export-jobs
+    volumes: *portal_volumes
+    cpus: ${CATS_EXPORT_CPUS:-1.0}
+    mem_limit: ${CATS_EXPORT_MEMORY:-1g}
+    pids_limit: 128
+    stop_grace_period: 30s
+    depends_on:
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  provisioning-worker:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.provisioning_worker"]
+    environment:
+      <<: *background_environment
+      CATS_PROVISIONING_CACHE: /app/data/validator-releases
+      CATS_PROVISIONING_CACHE_MAX_BYTES: ${CATS_PROVISIONING_CACHE_MAX_BYTES:-34359738368}
+      CATS_PROVISIONING_CATS_IMAGE: ${CATS_PROVISIONING_CATS_IMAGE:-}
+      CATS_PROVISIONING_CATS_SOURCE: ${CATS_PROVISIONING_CATS_SOURCE:-}
+      CATS_PROVISIONING_NODE_SOURCE: ${CATS_PROVISIONING_NODE_SOURCE:-}
+      CATS_PROVISIONING_INTERNAL_REGISTRIES: ${CATS_PROVISIONING_INTERNAL_REGISTRIES:-}
+      CATS_PROVISIONING_INTERNAL_PACKAGE_HOSTS: ${CATS_PROVISIONING_INTERNAL_PACKAGE_HOSTS:-}
+      CATS_PROVISIONING_DOCKER_PACKAGES: ${CATS_PROVISIONING_DOCKER_PACKAGES:-}
+      DOCKER_CONFIG: /run/registry-auth
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - validator_data:/app/data
+      - ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-./scan-registry-auth}:/run/registry-auth:ro
+      - validator_payloads:/app/data/validator-payloads
+      - ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-validator_staged_release}:/opt/cats/managed-validator-release:ro
+    cpus: ${CATS_PROVISIONING_CPUS:-1.0}
+    mem_limit: ${CATS_PROVISIONING_MEMORY:-2g}
+    pids_limit: 256
+    stop_grace_period: 30s
+    depends_on:
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+
 
 # ===========================================================
 # Persistent Volumes
@@ -598,6 +671,12 @@ volumes:
   security_trivy_db:
 
   validator_payloads:
+
+  validator_data:
+
+  validator_staged_release:
+
+  export_jobs:
 
 networks:
   default:

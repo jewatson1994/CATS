@@ -34,7 +34,7 @@ describe('remediation candidate lifecycle', () => {
       const workspace = {...data,can:{'service.edit':{'7':true}},can_remediate:true,remediation_enabled:true,remediation_preview:{pending:true},remediation_jobs:[],poams:[],tab:'pipeline'};
       render(<Service data={workspace}/>);
       expect(screen.getByText('Remediation candidates')).toBeInTheDocument();
-      expect(screen.getByText('Preparing the remediation plan preview…')).toBeInTheDocument();
+      expect(screen.getByRole('status')).toHaveTextContent('Preparing remediation preview');
       expect(await screen.findByText(/3 service images · 1 retained Helm charts · 2 mapped configuration changes · 4 configuration items/)).toBeInTheDocument();
       expect(String((fetchMock.mock.calls[0] as any[])[0])).toContain('/api/v1/services/example/remediation-preview');
     } finally { vi.unstubAllGlobals(); }

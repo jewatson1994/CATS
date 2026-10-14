@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app import main
+from remediation_job_helpers import completed_plan
 from app.models import Execution, Finding, FindingObservation, RemediationExecution
 from app.remediation import plan_digest
 from test_remediation_workflow_routes import workflow
@@ -38,7 +39,7 @@ def test_plan_and_worker_share_supplemental_image_inventory_and_digest(workflow,
     db, service, execution, auth, _, _ = workflow
     observation(workflow)
     original = deepcopy(execution.raw_payload)
-    preview = main.remediation_plan(service.service_key, db=db, auth=auth)
+    preview = completed_plan(service.service_key, db=db, auth=auth)
     _, worker_plan = main._retained_remediation_plan(db, service, execution, job_key='R-different-job')
     assert [row['original'] for row in preview['images']] == ['registry.example/app:1']
     assert preview['images'] == worker_plan['images']
@@ -59,12 +60,12 @@ def test_plan_and_worker_share_supplemental_image_inventory_and_digest(workflow,
 
 
 @pytest.mark.parametrize('change', ['source_file', 'unmapped_image', 'observed_digest', 'metadata'])
-def test_source_changes_after_review_reject_confirmation(workflow, change):
+def test_source_changes_after_review_are_rejected_by_worker_before_effects(workflow, monkeypatch, change):
     db, service, execution, auth, submitted, _ = workflow
     _, observed = observation(workflow)
     execution.raw_payload = {**execution.raw_payload, 'source_files': {'README.txt': 'approved content'}}
     db.commit()
-    preview = main.remediation_plan(service.service_key, db=db, auth=auth)
+    preview = completed_plan(service.service_key, db=db, auth=auth)
     if change == 'source_file':
         execution.raw_payload = {**execution.raw_payload, 'source_files': {'README.txt': 'changed content'}}
     elif change == 'unmapped_image':
@@ -74,11 +75,18 @@ def test_source_changes_after_review_reject_confirmation(workflow, change):
     else:
         execution.raw_payload = {**execution.raw_payload, 'source_metadata': {'changed': True}}
     db.commit()
-    with pytest.raises(HTTPException) as error:
-        confirm(workflow, preview)
-    assert error.value.status_code == 409
-    assert not submitted
-    assert db.scalar(select(RemediationExecution)) is None
+    # Confirmation enqueues immediately; expensive source revalidation belongs
+    # to the worker and must reject drift before any patch/publication effect.
+    confirm(workflow, preview)
+    record = db.scalar(select(RemediationExecution))
+    patched = []
+    monkeypatch.setattr(main, '_run_remediation_image_patches', lambda *_: patched.append(True))
+    monkeypatch.setattr(main, '_cleanup_completed_remediations', lambda _db: None)
+    main._run_remediation_job(record.id)
+    db.expire_all()
+    assert not patched
+    assert record.status == 'failed'
+    assert record.failure_reason == 'Remediation failed during snapshot: ValueError'
 
 
 @pytest.mark.parametrize('change', ['source_file', 'unmapped_image', 'observed_digest'])
@@ -87,7 +95,7 @@ def test_source_changes_after_confirmation_stop_before_any_patch(workflow, monke
     _, observed = observation(workflow)
     execution.raw_payload = {**execution.raw_payload, 'source_files': {'README.txt': 'approved content'}}
     db.commit()
-    preview = main.remediation_plan(service.service_key, db=db, auth=auth)
+    preview = completed_plan(service.service_key, db=db, auth=auth)
     confirm(workflow, preview)
     job = db.scalar(select(RemediationExecution))
     if change == 'source_file':
@@ -115,7 +123,7 @@ def test_vulnerability_scope_rejects_finding_absent_from_chosen_execution(workfl
     db.commit()
     finding, _ = observation(workflow, execution=older)
     with pytest.raises(HTTPException) as error:
-        main.remediation_plan(service.service_key, db=db, auth=auth,
+        completed_plan(service.service_key, db=db, auth=auth,
                               finding_type='vulnerability', finding_id=finding.id)
     assert error.value.status_code == 422
     _, retained = main._retained_remediation_plan(db, service, older, 'vulnerability', finding.id)

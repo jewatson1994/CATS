@@ -7,6 +7,7 @@ const primaryNav: [string, string, (path: string) => boolean][] = [
   ['/cybersecurity', 'Cybersecurity', path => path.startsWith('/cybersecurity')],
   ['/scan', 'Scan', path => path === '/scan' || path.startsWith('/api/public/jobs/')],
   ['/sbom', 'SBOM', path => path === '/sbom'],
+  ['/jobs', 'Jobs', path => path === '/jobs'],
   ['/patch', 'Patch', path => path === '/patch' || path.startsWith('/api/public/patch-jobs/')],
   ['/remediations', 'Remediations', path => path === '/remediations' || path === '/requests' || path.startsWith('/poam')],
 ];

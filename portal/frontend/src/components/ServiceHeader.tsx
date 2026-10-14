@@ -46,6 +46,7 @@ function ServiceExportMenu({root, includeBundle}: {root: string; includeBundle: 
   return <details ref={menu} className="actions-menu service-export-menu">
     <summary className="secondary-button">Export<Icon name="chevron"/></summary>
     <div className="actions-menu-popover">
+      <p className="service-export-label">Exports run in the background. Track progress and download in <a href="/jobs">Jobs</a>.</p>
       <a className="service-export-all" href={`${root}/exports/all.zip`}>
         <span><strong>All</strong><small>Individual exports in one download</small></span>
         <span className="export-file-type" aria-hidden="true">ZIP</span>

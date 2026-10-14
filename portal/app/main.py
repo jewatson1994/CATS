@@ -50,6 +50,7 @@ import yaml
 
 from .database import Base, background_engine, engine, get_db, SessionLocal
 from . import scan_coordination
+from .durable_jobs import DurableJob
 from . import scan_protocol
 from .performance import PerformanceMiddleware, install_sqlalchemy_diagnostics
 from .authorization_revision import cache_scope, current_revision as current_authorization_revision, session_identity
@@ -100,6 +101,7 @@ from .schemas import ExecutionPayload
 from .policy_data import epss_scores, intelligence_status, kev_cves, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
+from .export_jobs import queued_export
 from .purpose_exports import CATALOG as PURPOSE_CATALOG, NAMES as PURPOSE_NAMES, default_template as purpose_default_template, template_for as purpose_template_for, template_policy as purpose_template_policy, template_for_service as purpose_template_for_service, policy_key as purpose_policy_key, validate_template as validate_purpose_template, setting_key as purpose_setting_key, workbook_for as purpose_workbook_for
 from .helm_diagram import build_helm_diagram
 from .architecture import build_architecture_graph
@@ -410,8 +412,6 @@ async def app_lifespan(_app: FastAPI):
     # Recovery is a safety obligation even when administrators disable new runs.
     validator_management.recover_operations()
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
-    REMEDIATION_WORKERS.submit(_recover_retained_candidate_validations)
-    REMEDIATION_WORKERS.submit(_recover_release_deliveries)
     async def monitor_validators():
         while True:
             try:
@@ -448,6 +448,10 @@ from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
 app.include_router(account_router)
+from .jobs_view import router as jobs_router
+from .export_jobs import router as export_jobs_router
+app.include_router(jobs_router)
+app.include_router(export_jobs_router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
 # Registered once, inside GZip: it measures uncompressed response bytes (the
@@ -553,7 +557,8 @@ PATCH_WORKER_URL = os.getenv("CATS_PATCH_WORKER_URL", "").rstrip("/")
 PATCH_WORKER_TOKEN = os.getenv("CATS_PATCH_WORKER_TOKEN", "")
 REMEDIATION_JOB_ROOT = Path(os.getenv("CATS_REMEDIATION_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-remediation-jobs"))
 REMEDIATION_JOB_ROOT.mkdir(parents=True, exist_ok=True)
-REMEDIATION_WORKERS = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("CATS_REMEDIATION_WORKERS", "2"))))
+# Remediation work is consumed exclusively by app.remediation_worker.
+from . import remediation_jobs
 DEPLOYMENT_VALIDATION_WORKERS = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("CATS_DEPLOYMENT_VALIDATION_WORKERS", "1"))))
 
 
@@ -5286,6 +5291,9 @@ def _validate_materialized_candidate(candidate_dir: Path, payload: dict, plan: d
 
 def _run_remediation_image_patches(db: Session, record: RemediationExecution, service: Service, plan: dict) -> None:
     """Run the existing patch worker for each distinct service image."""
+    remediation_jobs.check_worker()
+    if remediation_jobs.worker_context.get() is not None and not PATCH_WORKER_URL:
+        raise ValueError("Configure CATS_PATCH_WORKER_URL; remediation-worker requires the existing patch-worker service")
     configuration = get_global_configuration(db)
     registries = [item for item in parse_json(configuration.get("oci_registries"), []) if isinstance(item, dict)]
     staging = [item for item in registries if item.get("use_for_remediation") is True]
@@ -5368,6 +5376,7 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
         destination_user, destination_password = credentials(destination_registry) if patch_mode == "push" else ("", "")
         _audit_signing_request(db, patch_key, record.requested_by_id, config)
         try:
+            remediation_jobs.check_worker()
             _run_patch_job(patch_key, {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
                                        "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password})
         except Exception as exc:
@@ -5418,6 +5427,7 @@ def _remediation_audit(db: Session, record: RemediationExecution, action: str, *
 
 
 def _remediation_stage(record: RemediationExecution, name: str, status: str, detail: str = "") -> None:
+    remediation_jobs.check_worker()
     stages = dict(record.stages or {})
     previous = stages.get(name) or {}
     current = utcnow()
@@ -5505,6 +5515,7 @@ def _publish_remediation_charts(db: Session, packaged_charts: list[tuple[Path, d
                 try:
                     from .remediation_safety import assert_chart_archive_safe
                     assert_chart_archive_safe(archive.read_bytes())
+                    remediation_jobs.check_worker()
                     push = subprocess.run([helm_binary, "push", str(archive), target], env=environment,
                         capture_output=True, text=True, timeout=300, check=False)
                     if push.returncode:
@@ -6096,10 +6107,8 @@ def validate_remediation_candidate(service_key: str, job_key: str, csrf_token: s
         if db.scalar(select(DeliveryAttempt.id).where(DeliveryAttempt.remediation_id == record.id,
                 DeliveryAttempt.status.in_(["queued", "running", "staged", "publishing"]))):
             raise HTTPException(409, detail="Wait for the active delivery before validating this candidate")
-        try:
-            retained_candidate(record, REMEDIATION_JOB_ROOT)
-        except ValueError as exc:
-            raise HTTPException(409, detail=str(exc)) from None
+        if not record.artifact_path or not record.artifact_digest:
+            raise HTTPException(409, detail="No retained candidate is available")
         if (record.validation_results or {}).get("status") == "BLOCKING":
             raise HTTPException(409, detail="Blocking static defects require a corrected candidate")
         prior = (record.validation_results or {}).get("deployment") or {}
@@ -6108,8 +6117,7 @@ def validate_remediation_candidate(service_key: str, job_key: str, csrf_token: s
         record.workflow_inputs = {key: value for key, value in (record.workflow_inputs or {}).items() if key != "validation_skipped"}
         record.verification_status = "queued"
         _remediation_stage(record, "deployment_validation", "queued")
-        db.commit()
-        REMEDIATION_WORKERS.submit(_run_retained_remediation_validation, record.id)
+        remediation_jobs.enqueue_record(db, record, "remediation_validate", requested_by_id=auth.user.id)
     return RedirectResponse(f"/services/{service_key}/remediations/{job_key}", status_code=303)
 
 
@@ -6171,10 +6179,6 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
                        retry_of_id: int | None = None, workflow_inputs: dict | None = None) -> RemediationExecution:
     if not remediation_enabled(db):
         raise HTTPException(403, detail="Remediation is disabled by the administrator")
-    retention = cleanup_remediation_artifacts(db, REMEDIATION_JOB_ROOT)
-    db.commit()
-    if retention["over_quota"]:
-        raise HTTPException(409, detail="Retained remediation storage is full; allow active jobs to finish before retrying")
     if output_mode not in {"publish", "bundle"}:
         raise HTTPException(422, detail="Choose OCI publish or downloadable bundle")
     # A write lock also serializes confirmations on SQLite, where FOR UPDATE is ignored.
@@ -6192,12 +6196,13 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
         prior = db.get(RemediationExecution, retry_of_id)
         if not prior or prior.service_id != service.id:
             raise HTTPException(404, detail="Remediation retry source is unavailable")
-        latest = db.get(Execution, prior.source_execution_id) if prior.source_execution_id else db.scalar(
-            select(Execution).where(Execution.service_id == service.id, Execution.execution_key == prior.rollback_reference))
+        source_query = select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id)
+        latest = db.scalar(source_query.where(Execution.id == prior.source_execution_id) if prior.source_execution_id else
+                           source_query.where(Execution.execution_key == prior.rollback_reference))
         if not latest or latest.service_id != service.id:
             raise HTTPException(422, detail="The retained remediation source is unavailable; retry cannot use a newer scan")
     else:
-        latest = db.scalar(select(Execution).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
+        latest = db.scalar(select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id).order_by(Execution.scanned_at.desc()))
     if not latest:
         raise HTTPException(422, detail="The service has no assessment execution to remediate")
     if workflow_inputs and latest.id != workflow_inputs.get("source_execution_id"):
@@ -6232,8 +6237,7 @@ def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding
     record_audit(db, auth, "remediation.queued", "remediation_execution", record.id,
                  service_id=service.id, job_key=job_key, finding_type=finding_type, finding_id=finding_id,
                  output_mode=output_mode, retry_of_id=retry_of_id)
-    db.commit()
-    REMEDIATION_WORKERS.submit(_run_remediation_job, record.id)
+    remediation_jobs.enqueue_record(db, record, "remediation_execute")
     return record
 
 
@@ -6356,8 +6360,7 @@ def remediation_plan(service_key: str, db: Session = Depends(get_db),
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
-    execution, plan = _source_remediation_plan(db, service, finding_type, finding_id)
-    return {**_public_remediation_plan(db, execution, plan), "plan_digest": plan_digest(plan)}
+    return remediation_jobs.request_plan(db, service, auth.user.id, finding_type, finding_id)
 
 
 @app.post("/services/{service_key}/remediations/start")
@@ -6370,6 +6373,8 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
     # Direct internal callers use the same defaults as HTTP form parsing.
     finding_type = finding_type if isinstance(finding_type, str) and finding_type else None
     finding_id = finding_id if isinstance(finding_id, int) else None
+    if finding_id is None:
+        finding_type = None
     if confirmed != "yes":
         raise HTTPException(422, "Explicit confirmation of the remediation plan is required")
     try:
@@ -6388,9 +6393,8 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
     replay = _confirmed_remediation(db, service.id, auth.user.id, replay_inputs)
     if replay:
         return RedirectResponse(f"/services/{service_key}/remediations/{replay.job_key}", status_code=303)
-    execution, plan = _source_remediation_plan(db, service, finding_type, finding_id)
-    if execution.id != source_execution_id or not secrets.compare_digest(plan_digest.encode(), globals()["plan_digest"](plan).encode()):
-        raise HTTPException(409, "The source plan changed; rebuild it before executing")
+    execution, plan = remediation_jobs.confirmed_plan(db, service, source_execution_id,
+        plan_digest, finding_type, finding_id)
     if sorted(exclusions) != sorted(plan.get("source_safety", {}).get("blocked_charts", [])):
         raise HTTPException(422, {"code": "source_review_required", "source_safety": plan.get("source_safety", {}),
             "message": "Explicitly confirm the listed chart exclusions for partial remediation, or repair and reassess source."})
@@ -6398,7 +6402,7 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
         approved = resolve_decisions(plan, remediation_mode, choices, auth.user.id)
     except (ValueError, TypeError):
         raise HTTPException(422, "Invalid or incomplete remediation decisions") from None
-    public_plan = _public_remediation_plan(db, execution, approved)
+    public_plan = approved
     inputs = {"remediation_mode": remediation_mode, "decisions": choices, "source_execution_id": source_execution_id,
               "plan_digest": plan_digest, "workflow_version": 2, "excluded_charts": exclusions, **replay_inputs,
               "confirmed_by": auth.user.id, "confirmed_at": utcnow().isoformat(), "approved_plan": public_plan,
@@ -6445,10 +6449,8 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
     _check_delivery_policy(db, record, output_mode)
     if output_mode != "bundle" and (record.validation_results or {}).get("status") == "BLOCKING":
         raise HTTPException(409, detail="Candidate has blocking static validation defects")
-    try:
-        retained_candidate(record, REMEDIATION_JOB_ROOT)
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from None
+    if not record.artifact_path or not record.artifact_digest:
+        raise HTTPException(409, "No retained candidate is available")
     if record.status in {"queued", "running"}:
         raise HTTPException(409, "Remediation is still running")
     if output_mode != "bundle" and record.remediation_status not in {"complete", "partial"}:
@@ -6483,9 +6485,10 @@ def _queue_delivery(db, record, actor_id, output_mode, destination_id="", verify
             "download_url": f"/services/{record.service.service_key}/remediations/{record.job_key}/candidate.zip"}
     _remediation_audit(db, record, "remediation.delivery_requested", attempt_id=attempt.id, actor_id=actor_id,
                        destination=public, provenance=attempt.result["provenance"])
-    db.commit()
     if output_mode != "bundle":
-        REMEDIATION_WORKERS.submit(_run_delivery_attempt, attempt.id)
+        remediation_jobs.enqueue_record(db, record, "remediation_deliver", attempt_id=attempt.id, requested_by_id=actor_id)
+    else:
+        db.commit()
     return attempt
 
 
@@ -6606,7 +6609,10 @@ def _recover_release_deliveries():
                     _remediation_audit(db, record, "remediation.delivery_interrupted", attempt_id=attempt_id)
                 db.commit()
     for attempt_id in queued:
-        REMEDIATION_WORKERS.submit(_run_delivery_attempt, attempt_id)
+        with SessionLocal() as db:
+            attempt = db.get(DeliveryAttempt, attempt_id)
+            remediation_jobs.enqueue_record(db, db.get(RemediationExecution, attempt.remediation_id),
+                                            "remediation_deliver", attempt_id=attempt_id)
 
 
 def _run_delivery_attempt(attempt_id):
@@ -6669,6 +6675,7 @@ def _execute_delivery_attempt(attempt_id):
             from .deployment_bundle import file_digest
             signing_config, signing_credentials = _portal_signing_material(db, auth, "push", record.service)
             def checkpoint(progress):
+                remediation_jobs.check_worker()
                 attempt.result = {**(attempt.result or {}), **progress}
                 db.commit()
             checkpoint({"release_stage": "publishing_artifacts"})
@@ -6982,7 +6989,8 @@ def service_remediation_preview(service_key: str, db: Session = Depends(get_db),
         raise HTTPException(404)
     if not auth.has("remediation.execute", service.id):
         raise HTTPException(403)
-    return JSONResponse(jsonable_encoder(_service_remediation_preview(db, service)), headers={"Cache-Control": "no-store"})
+    return JSONResponse(jsonable_encoder(remediation_jobs.request_plan(db, service, auth.user.id, preview=True)),
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/v1/services/{service_key}/deployment-validations/{run_key}/status")
@@ -7296,6 +7304,7 @@ def cybersecurity_service_history(service_key: str, request: Request, db: Sessio
 
 
 @app.get("/exports/services.xlsx")
+@queued_export("services")
 def export_services(db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     now = utcnow()
     configuration = get_configuration(db)
@@ -8037,15 +8046,7 @@ def service_detail(
                 mitigations = entries
             else:
                 poams = entries
-        if remediations_only:
-            # Content-keyed preview: served from the cache when present, otherwise
-            # the tab renders immediately and the browser loads it on demand.
-            remediation_preview = _service_remediation_preview(db, service, cached_only=True)
-        else:
-            preview_execution = max(service.executions, key=lambda item: aware(item.scanned_at), default=None)
-            loaded_payload = preview_execution.raw_payload if preview_execution and isinstance(preview_execution.raw_payload, dict) else {}
-            remediation_preview = _remediation_preview_counts(db, service, lambda: loaded_payload,
-                                                              [item for item in service.policy_findings if item.active])
+        remediation_preview = {"pending": True}
         return templates.TemplateResponse(request, "service_remediations.html", page_context(auth,
             service=service, view=view, tab=tab, poams=poams, exceptions=exceptions, mitigations=mitigations,
             remediation_jobs=remediation_jobs, can_remediate=remediation_enabled(db) and auth.has("remediation.execute", service.id),
@@ -8726,18 +8727,21 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
 
 
 @app.get("/services/{service_key}/exports/mitigations.xlsx")
+@queued_export("mitigations")
 def export_service_mitigations(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return workbook_response(_service_mitigations_book(service_key, db), f"{service_key}-mitigations.xlsx")
 
 
 @app.get("/services/{service_key}/exports/findings.xlsx")
+@queued_export("findings")
 def export_service_findings(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return workbook_response(_service_findings_book(service_key, db), f"{service_key}-findings.xlsx")
 
 
 @app.get("/services/{service_key}/exports/diagrams.zip")
+@queued_export("diagrams")
 def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return Response(_service_diagrams_bytes(service_key, db), media_type="application/zip", headers={
@@ -8745,6 +8749,7 @@ def export_service_diagrams(service_key: str, db: Session = Depends(get_db),
 
 
 @app.get("/services/{service_key}/exports/sbom.json")
+@queued_export("sbom")
 def export_service_sbom_components(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     return JSONResponse(_service_sbom_components(service_key, db), headers={
@@ -8752,6 +8757,7 @@ def export_service_sbom_components(service_key: str, db: Session = Depends(get_d
 
 
 @app.get("/services/{service_key}/exports/{kind}.xlsx")
+@queued_export("purpose")
 def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(get_db),
                             auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     if kind not in PURPOSE_CATALOG:
@@ -8765,6 +8771,7 @@ def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(g
 
 
 @app.get("/services/{service_key}/exports/all.zip")
+@queued_export("all")
 def export_service_all(service_key: str, db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     """Package the individual downloads, applying the same templates and permissions."""
@@ -8774,12 +8781,13 @@ def export_service_all(service_key: str, db: Session = Depends(get_db),
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    # Spill large archives to disk; this sync route runs outside the event loop.
+    # The worker owns generation; spill within its reserved scratch budget.
     output = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
     try:
         from .service_exports import write_all
         write_all(output, service, db, auth,
-                  bundle_builder=lambda: bundle_export_data(service_key, db, auth))
+                  bundle_builder=lambda: bundle_export_data(service_key, db, auth, commit=False),
+                  max_bytes=max(1, int(os.getenv("CATS_EXPORT_MAX_BYTES", str(256 * 1024 * 1024)))))
         output.seek(0)
     except BaseException:
         output.close()
@@ -8797,6 +8805,7 @@ def export_service_all(service_key: str, db: Session = Depends(get_db),
 
 
 @app.get("/services/{service_key}/export.xlsx")
+@queued_export("workbook")
 def export_service(service_key: str, include_diagrams: bool = False, version: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
     if version:
         raise HTTPException(422, detail="This workbook is current-state only. Use the version-selected spreadsheet exchange for historical exports")
@@ -8866,13 +8875,15 @@ def export_service(service_key: str, include_diagrams: bool = False, version: st
 
 
 @app.get("/services/{service_key}/helm-diagram.svg")
+@queued_export("helm_diagram", permission="service.view")
 def export_service_helm_diagram(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404)
     from .activity_queries import latest_evidence_execution
     latest_execution = latest_evidence_execution(db, service.id)
-    return Response(build_helm_diagram(service, latest_execution), media_type="image/svg+xml")
+    return Response(build_helm_diagram(service, latest_execution), media_type="image/svg+xml",
+                    headers={"Content-Disposition": 'attachment; filename="helm-diagram.svg"'})
 
 
 @app.get("/services/{service_key}/watchlist/{match_id}", response_class=HTMLResponse)
@@ -9379,11 +9390,13 @@ def scoped_poam_export_entries(db: Session, auth: AuthContext, service_id: int |
 
 
 @app.get("/poam/export.xlsx")
+@queued_export("poams")
 def export_all_poams(service: str = "", status_filter: str = "all", due_overdue: bool = False, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     return workbook_response(poam_workbook(scoped_poam_export_entries(db, auth, status_filter=status_filter, service_term=service, due_overdue=due_overdue)), f"cats-poam-{utcnow():%Y%m%d}.xlsx")
 
 
 @app.get("/poam/services/{service_key}/export.xlsx")
+@queued_export("service_poams")
 def export_service_poams(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
@@ -9904,6 +9917,8 @@ def delete_service(
         raise HTTPException(404)
     if confirmation != f"delete {service.name}":
         raise HTTPException(422, detail="Type delete followed by the exact service name to confirm")
+    if db.scalar(select(DurableJob.id).where(DurableJob.service_id == service.id, DurableJob.status.in_(["queued", "running"]))):
+        raise HTTPException(409, detail="Wait for active background jobs to finish or cancel queued plans/exports before deletion")
     patch_jobs = db.scalars(select(PatchExecution).where(PatchExecution.service_id == service.id)).all()
     remediation_jobs = db.scalars(select(RemediationExecution).where(RemediationExecution.service_id == service.id)).all()
     remediation_ids = [job.id for job in remediation_jobs]
@@ -9947,6 +9962,10 @@ def delete_service(
         db.execute(delete(ServiceArtifact).where(ServiceArtifact.id.in_(artifact_ids)))
     from .models import DependencyProjection, DependencyProjectionRow, ExecutionSummary
     deleted_execution_ids = select(Execution.id).where(Execution.service_id == service.id)
+    # Fence removed service work and remove references before retained evidence.
+    # Portfolio exports retain their frozen scope and fail access after deletion.
+    db.execute(delete(DurableJob).where(or_(DurableJob.service_id == service.id,
+        DurableJob.source_execution_id.in_(deleted_execution_ids))))
     # SQLite deployments may disable foreign-key cascades; derived evidence
     # must still be removed alongside its authoritative executions.
     from .models import ExecutionOverview
@@ -11691,6 +11710,12 @@ def delete_user_account(
         )) or 0) == 0:
             raise HTTPException(409, detail="The last global Administrator account cannot be deleted")
     username, display_name = user.username, user.display_name
+    for background_job in db.scalars(select(DurableJob).where(DurableJob.requested_by_id == user.id)):
+        background_job.requested_by_id = None
+        if background_job.status in {"queued", "running"}:
+            background_job.status, background_job.stage = "cancelled", "Requesting account deleted"
+            background_job.cancel_requested, background_job.completed_at = True, utcnow()
+            background_job.lease_token = background_job.lease_until = None
     for event in db.scalars(select(AuditEvent).where(AuditEvent.actor_user_id == user.id)):
         detail = dict(event.detail or {})
         detail.setdefault("actor_username", username)

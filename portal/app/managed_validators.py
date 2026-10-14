@@ -1,10 +1,10 @@
 """HQ-owned validator registry and bounded bootstrap operations.
 
-Only per-validator encrypted mTLS material is persisted; SSH credentials stay
-in a worker closure and are cleared on every exit. No host tool installation.
+Encrypted SSH credentials survive bounded worker retries and are purged at
+terminal completion. The dedicated worker prepares the exact unified runtime
+on demand and may install a verified offline Docker package closure.
 """
 from __future__ import annotations
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import json
 import threading
@@ -16,15 +16,13 @@ from sqlalchemy import select, update
 
 from .auth import require_user, record_audit
 from .database import get_db, SessionLocal
-from .models import ManagedValidator, ManagedValidatorOperation, PortalSetting
+from .models import ManagedValidator, ManagedValidatorOperation, PortalSetting, ValidatorProvisioningAttempt
 from .managed_validator_bootstrap import SSHBootstrap, BootstrapError, validate_target, preflight_failure
-from .managed_validator_pki import create_identity
+from .managed_validator_pki import create_identity, deployment_identity
 from .managed_validator_release import load_release, selftest_request, assert_selftest, SelfTestError
 from . import validator_client
 
 router = APIRouter()
-WORKERS = ThreadPoolExecutor(max_workers=2, thread_name_prefix="managed-validator")
-WORKER_SLOTS = threading.BoundedSemaphore(2)
 READINESS_LOCK = threading.Lock()
 READINESS_CACHE = {"expires": 0.0, "value": None}
 
@@ -62,7 +60,7 @@ def readiness():
             value = {"ready": True, "image_reference": release["cats_image"]["reference"],
                      "image_id": release["cats_image"]["image_id"]}
         except (ValueError, OSError):
-            value = {"ready": False, "reason": "The local Docker-host release is unavailable or invalid. Build a release, set CATS_MANAGED_VALIDATOR_RELEASE_SOURCE to its prepared directory, and redeploy HQ with that directory mounted read-only. Then refresh this page. Provisioning verifies archive digests and image identities before transfer."}
+            value = {"ready": True, "mode": "on-demand", "reason": "Provision prepares the exact CATS runtime and pinned dependencies in the provisioning worker. Missing offline inputs are reported before deployment."}
         READINESS_CACHE.update(expires=time.monotonic() + 30, value=value)
         return dict(value)
 
@@ -78,6 +76,8 @@ def recover_operations():
     with SessionLocal() as db:
         for op in db.scalars(select(ManagedValidatorOperation).where(
                 ManagedValidatorOperation.status == "RUNNING")):
+            if db.get(ValidatorProvisioningAttempt, op.id):
+                continue  # Worker lease recovery owns durable operations.
             op.status = "FAILED"
             op.phase = "INTERRUPTED"
             op.error = "HQ restarted; remote state must be reconciled by Retry or Remove."
@@ -90,7 +90,7 @@ def recover_operations():
         db.commit()
 
 
-def claim_operation(db, row, action):
+def claim_operation(db, row, action, *, credentials=None, acknowledgments=None, operator_id=None):
     op = ManagedValidatorOperation(id=uuid.uuid4().hex, validator_id=row.id, action=action)
     changed = db.execute(update(ManagedValidator).where(ManagedValidator.id == row.id,
         ManagedValidator.active_operation_id.is_(None)).values(active_operation_id=op.id))
@@ -98,16 +98,32 @@ def claim_operation(db, row, action):
         db.rollback()
         raise HTTPException(409, "Another operation is already active for this validator")
     db.add(op)
+    if credentials is not None:
+        from .secrets import encrypt_secret
+        op.status = 'QUEUED'
+        db.add(ValidatorProvisioningAttempt(id=op.id, validator_id=row.id, action=action,
+            operator_id=operator_id, encrypted_credentials=encrypt_secret(json.dumps(credentials)),
+            request=acknowledgments or {}, host_fingerprint=row.fingerprint, attempts=0))
     db.commit()
     db.refresh(row)
     return op
 
 
 def phase(db, op, value):
+    token = db.info.get('provisioning_lease_owner')
+    if token:
+        from .provisioning_worker import owns
+        if not owns(db, op.id, token):
+            raise BootstrapError('Provisioning worker lease was lost')
     db.refresh(op)
     if op.cancel_requested:
         raise BootstrapError("Operation cancelled; inspect remote state before retrying")
     op.phase = value
+    attempt = db.get(ValidatorProvisioningAttempt, op.id)
+    if attempt:
+        attempt.stage = value
+        if not attempt.stages or attempt.stages[-1].get('stage') != value:
+            attempt.stages = [*(attempt.stages or [])[-79:], {'stage': value, 'at': datetime.now(timezone.utc).isoformat()}]
     db.commit()
 
 
@@ -122,13 +138,26 @@ def health_checked(configuration, validator_id):
         "checked_at", "container_runtime_ready", "disk_free_bytes", "active_jobs", "max_jobs", "validation_types", "protocol_versions", "request_schema_versions") if key in result}
 
 
-def run_operation(validator_id, operation_id, credentials, acknowledgments):
-    with SessionLocal() as db:
+def run_operation(validator_id, operation_id, credentials, acknowledgments, *, lease_owner=None, session_factory=None):
+    with (session_factory or SessionLocal)() as db:
+        db.info['provisioning_lease_owner'] = lease_owner
         row, op = db.get(ManagedValidator, validator_id), db.get(ManagedValidatorOperation, operation_id)
         identity = None
         try:
             target = validate_target(row.host, row.ssh_port, row.ssh_username, row.api_port)
+            attempt = db.get(ValidatorProvisioningAttempt, operation_id)
+            def selected_image(image_id):
+                phase(db, op, 'RESOLVING_INPUTS')
+                attempt.request = dict(attempt.request or {}, image_id=image_id)
+                attempt.payload_digest = image_id
+                db.commit()
+            if attempt and (not row.fingerprint_confirmed or attempt.host_fingerprint != row.fingerprint):
+                raise BootstrapError('Confirmed SSH host identity changed; submit a new operation after verifying the fingerprint.')
             action = op.action
+            if action in ('provision', 'rotate') and attempt and (attempt.request or {}).get('validation_id'):
+                # Enrollment already finished. Resume the same remote self-test
+                # instead of replacing a validator that may still be testing.
+                action = 'self-test'
             if action in ("preflight", "provision", "rotate", "remove"):
                 phase(db, op, "CONNECTING")
                 with SSHBootstrap(target, credentials, expected_fingerprint=row.fingerprint) as ssh:
@@ -144,6 +173,23 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments):
                         phase(db, op, "PREFLIGHT")
                         row.preflight = ssh.preflight(owner_id=row.id)
                         db.commit()
+                        prepared_release = None
+                        if action in ('provision', 'rotate') and row.preflight.get('status') == 'unsupported':
+                            checks = row.preflight.get('checks', {})
+                            if not checks.get('docker') and all(checks.get(key) for key in ('platform', 'sudo', 'cpu', 'memory', 'disk', 'port')):
+                                from .validator_runtime_packages import packages_for, install
+                                from .validator_on_demand import prepare_release
+                                phase(db, op, 'RESOLVING_INPUTS')
+                                packages = packages_for(row.preflight['facts'])
+                                prepared_release = prepare_release(expected=(attempt.request or {}).get('image_id') if attempt else None,
+                                    progress=lambda stage: phase(db, op, stage), selected=selected_image if attempt else lambda image: None)
+                                if attempt:
+                                    attempt.request = dict(attempt.request or {}, image_id=prepared_release['cats_image']['image_id'])
+                                    db.commit()
+                                phase(db, op, 'INSTALLING_RUNTIME')
+                                install(ssh, packages)
+                                row.preflight = ssh.preflight(owner_id=row.id)
+                                db.commit()
                         if row.preflight.get("status") not in ("supported", "supported_with_warnings"):
                             raise preflight_failure(row.preflight)
                         if action == "preflight":
@@ -160,11 +206,25 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments):
                                 if current_health.get("active_jobs", 0):
                                     raise BootstrapError("Wait for active validation jobs before replacing the validator")
                             phase(db, op, "VERIFYING_RELEASE")
-                            release = load_release()
+                            if lease_owner:
+                                from .validator_on_demand import prepare_release
+                                release = prepared_release or prepare_release(expected=(attempt.request or {}).get('image_id'),
+                                    progress=lambda stage: phase(db, op, stage), selected=selected_image)
+                                attempt.request = dict(attempt.request or {}, image_id=release['cats_image']['image_id'])
+                                attempt.payload_digest = release['cats_image']['image_id']
+                                db.commit()
+                            else:
+                                release = load_release()  # Compatibility for existing staged integrations.
                             endpoint_host = f"[{row.host}]" if ":" in row.host else row.host
-                            identity = create_identity(row.id, row.host, f"https://{endpoint_host}:{row.api_port}")
+                            if attempt and (attempt.request or {}).get('identity_created') and row.identity and row.configuration:
+                                identity = {'configuration': row.configuration, 'persistence': row.identity,
+                                    'public': row.certificate, 'deployment': deployment_identity(row.configuration, row.identity)}
+                            else:
+                                identity = create_identity(row.id, row.host, f"https://{endpoint_host}:{row.api_port}")
                             row.configuration = identity["configuration"]
                             row.identity, row.certificate = identity["persistence"], identity["public"]
+                            if attempt:
+                                attempt.request = dict(attempt.request or {}, identity_created=True)
                             row.image = {"reference": release["cats_image"]["reference"], "image_id": release["cats_image"]["image_id"]}
                             selected = db.scalar(select(PortalSetting).where(PortalSetting.key == "validator_configuration"))
                             if selected and json.loads(selected.value or "{}").get("managed_validator_id") == row.id:
@@ -201,23 +261,38 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments):
                 phase(db, op, "SELF_TEST")
                 row.last_health = health_checked(row.configuration, row.id)
                 row.last_contact_at = datetime.now(timezone.utc)
-                run_selftest(db, row, op, load_release())
+                if lease_owner:
+                    from .validator_on_demand import prepare_release
+                    release = prepare_release(expected=row.image.get('image_id'), progress=lambda stage: phase(db, op, stage))
+                else:
+                    release = load_release()
+                run_selftest(db, row, op, release)
             phase(db, op, "COMPLETE")
             op.status = "SUCCEEDED"
         except Exception as exc:
             db.rollback()
             row, op = db.get(ManagedValidator, validator_id), db.get(ManagedValidatorOperation, operation_id)
+            if lease_owner:
+                from .provisioning_worker import owns
+                if not owns(db, operation_id, lease_owner):
+                    return
             if isinstance(exc, BootstrapError) and getattr(exc, 'preflight', None) is not None:
                 row.preflight = exc.preflight
             row.status = "DEGRADED" if row.configuration else "FAILED"
             op.status = "CANCELLED" if op.cancel_requested else "FAILED"
             # Only bootstrap errors are authored safe messages; no stderr/SSH exception disclosure.
             op.error = str(exc)[:1000] if isinstance(exc, (BootstrapError, SelfTestError)) else "Operation failed; verify host, release and mTLS configuration."
+            op.error += ' Correlation ID: ' + operation_id
         finally:
             if identity is not None:
                 identity["deployment"].clear()
             credentials.clear()
-            row.active_operation_id = None
+            if lease_owner:
+                from .provisioning_worker import owns
+                if not owns(db, operation_id, lease_owner):
+                    return
+            else:
+                row.active_operation_id = None
             if row.status != "HEALTHY":
                 selected = db.scalar(select(PortalSetting).where(PortalSetting.key == "validator_configuration"))
                 if selected and json.loads(selected.value or "{}").get("managed_validator_id") == row.id:
@@ -229,19 +304,34 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments):
 
 def run_selftest(db, row, op, release):
     declaration, artifact = selftest_request(release)
+    declaration['request_id'] = op.id  # Resume the same remote operation after worker loss.
     def progress(_result):
-        op.phase = "SELF_TEST"
-        db.commit()
+        phase(db, op, "SELF_TEST")
     def cancelled():
         db.refresh(op)
+        token = db.info.get('provisioning_lease_owner')
+        if token:
+            from .provisioning_worker import owns
+            if not owns(db, op.id, token):
+                return True
         return op.cancel_requested
+    attempt = db.get(ValidatorProvisioningAttempt, op.id)
+    def remember(state):
+        phase(db, op, 'SELF_TEST')
+        attempt.request = dict(attempt.request or {}, validation_id=state['validation_id'])
+        db.commit()
+    resume = {}
+    if attempt:
+        resume = {'state_callback': remember,
+                  'resume_validation_id': (attempt.request or {}).get('validation_id')}
     try:
         result = validator_client.validate(row.configuration, declaration,
-            progress_callback=progress, artifact_path=artifact, cancel_requested=cancelled)
+            progress_callback=progress, artifact_path=artifact, cancel_requested=cancelled, **resume)
     except TimeoutError:
         raise SelfTestError("Self-test timed out waiting for a terminal result; verify sandbox cleanup before retrying.") from None
     except Exception:
         raise SelfTestError("Self-test API exchange failed before a usable result was received; check validator connectivity and protocol compatibility.") from None
+    phase(db, op, 'SELF_TEST')
     row.last_self_test = {key: result.get(key) for key in (
         "status", "request_id", "reason_category", "cleanup_status", "helm_result", "resource_summary", "completed_at")}
     db.commit()
@@ -349,34 +439,11 @@ async def operate(validator_id: str, action: str, request: Request, auth=Depends
             raise HTTPException(422, "Acknowledge dedicated-host root-equivalent Docker socket access")
         credentials = {key: values.get(key, "") for key in (
             "auth_method", "password", "private_key", "passphrase", "sudo_password")}
-        if action in ("provision", "rotate"):
-            if not readiness()["ready"]:
-                raise HTTPException(409, "Verified local release is unavailable")
-        if not WORKER_SLOTS.acquire(blocking=False):
-            credentials.clear()
-            raise HTTPException(503, "HQ already has two active validator operations; retry shortly")
         try:
-            op = claim_operation(db, row, action)
-        except Exception:
+            claim_operation(db, row, action, credentials=credentials,
+                acknowledgments=acknowledgments, operator_id=getattr(getattr(auth, 'user', None), 'id', None))
+        finally:
             credentials.clear()
-            WORKER_SLOTS.release()
-            raise
-        queued_validator_id, queued_operation_id = row.id, op.id
-        def execute():
-            try:
-                run_operation(queued_validator_id, queued_operation_id, credentials, acknowledgments)
-            finally:
-                WORKER_SLOTS.release()
-        try:
-            WORKERS.submit(execute)
-        except Exception:
-            WORKER_SLOTS.release()
-            credentials.clear()
-            row.active_operation_id = None
-            op.status, op.error = "FAILED", "HQ operation queue is unavailable"
-            op.finished_at = datetime.now(timezone.utc)
-            db.commit()
-            raise HTTPException(503, "HQ operation queue is unavailable") from None
     record_audit(db, auth, "validator." + action, "managed_validator", row.id)
     db.commit()
     return {"validator": public_record(db, row)}

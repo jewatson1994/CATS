@@ -12,6 +12,7 @@ from sqlalchemy import select, update, func
 from sqlalchemy.exc import IntegrityError
 
 from .auth import require_user, record_audit
+from .export_jobs import queued_export
 from .database import get_db
 from .models import Service, Execution, ExportTemplate, ServiceMetadata, InventoryRecord, ExchangePreview, BundlePreview, PoamEntry, PoamHistory, ServiceTransferProvenance
 from .exchange import META, FIELDS, builtins, validate_template, versions, selected_evidence, context_and_rows, missing_fields, workbook, parse_workbook
@@ -21,12 +22,13 @@ router = APIRouter()
 
 
 @router.get("/services/{service_key}/bundle.zip")
+@queued_export("bundle", permission="bundle.export")
 def bundle_export(service_key: str, db=Depends(get_db), auth=Depends(require_user)):
-    data = bundle_export_data(service_key, db, auth)
+    data = bundle_export_data(service_key, db, auth, commit=False)
     return StreamingResponse(BytesIO(data), media_type="application/zip", headers={"Content-Disposition": 'attachment; filename="cats-service.zip"'})
 
 
-def bundle_export_data(service_key, db, auth):
+def bundle_export_data(service_key, db, auth, *, commit=True):
     from .service_transfer import export_service
     service = service_for(db, auth, service_key, "bundle.export")
     execution_count = db.scalar(select(func.count()).select_from(Execution).where(Execution.service_id == service.id))
@@ -35,7 +37,8 @@ def bundle_export_data(service_key, db, auth):
     except ValueError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
     record_audit(db, auth, "bundle.export", "service", service.id, executions=execution_count, format="service-input-v3")
-    db.commit()
+    if commit:
+        db.commit()
     return data
 
 
@@ -282,6 +285,7 @@ def exchange_page(service_key: str, request: Request, version: str = "", templat
 
 
 @router.get("/services/{service_key}/exchange/{template}/export.xlsx")
+@queued_export("exchange")
 def export_xlsx(service_key: str, template: str, version: str = "", acknowledge_missing: bool = False, db=Depends(get_db), auth=Depends(require_user)):
     definition = template_for(db, template)
     service = service_for(db, auth, service_key, definition["dataset"] + ".export")
@@ -298,7 +302,7 @@ def export_xlsx(service_key: str, template: str, version: str = "", acknowledge_
     book.save(output)
     output.seek(0)
     record_audit(db, auth, "exchange.export", "service", service.id, dataset=definition["dataset"], version=version, rows=len(rows), missing_count=len(missing))
-    db.commit()
+    db.flush()
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="cats-{definition["dataset"]}.xlsx"'})
 
 

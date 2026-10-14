@@ -306,3 +306,16 @@ def test_startup_message_redaction_and_bounds():
     assert "runAsNonRoot" in startup_message("container has runAsNonRoot and image will run as root")
     assert len(startup_message("x" * 3000)) < 2050
     assert startup_message(None) == ""
+
+
+def test_duplicate_submission_reuses_job_and_rejects_changed_declaration(worker):
+    connection, calls, root = worker
+    package = declaration('oci')
+    first = connection.post('/api/v2/validations', json=package)
+    second = connection.post('/api/v2/validations', json=package)
+    assert first.status_code == second.status_code == 202
+    assert first.json()['validation_id'] == second.json()['validation_id']
+    assert len(calls) == 1
+    package['service']['version'] = 'changed'
+    assert connection.post('/api/v2/validations', json=package).status_code == 409
+    assert len(calls) == 1

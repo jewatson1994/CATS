@@ -151,7 +151,7 @@ def test_active_session_observes_scope_changes_without_new_login(store):
             # Authorization now passes; this empty fixture has no source scan.
             allowed = client.get(path, headers={"Accept": "application/json"})
             assert allowed.status_code == 422
-            assert allowed.json()["detail"] == "No source assessment is available"
+            assert allowed.json()["detail"] == "No retained source assessment is available"
             db.delete(grant); db.commit()
             assert client.get(path).status_code == 403
             assert db.get(UserSession, session.id) is not None

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import Session, sessionmaker
 from app import main
+from remediation_job_helpers import completed_plan
 from app.database import Base
 from app.models import Service, User, Execution, RemediationExecution, Role, UserRoleAssignment
 from app.remediation_delivery import DeliveryAttempt
@@ -62,7 +63,15 @@ def workflow(monkeypatch, tmp_path):
     monkeypatch.setattr(main, 'REMEDIATION_JOB_ROOT', tmp_path)
     monkeypatch.setattr(main, 'SessionLocal', factory)
     monkeypatch.setattr(main, 'get_global_configuration', lambda _: {})
-    monkeypatch.setattr(main, 'REMEDIATION_WORKERS', SimpleNamespace(submit=lambda *args: submitted.append(args)))
+    original_enqueue = main.remediation_jobs.enqueue_record
+    def enqueue(db, record, kind, attempt_id=None, requested_by_id=None):
+        job = original_enqueue(db, record, kind, attempt_id, requested_by_id)
+        fn = {"remediation_execute": main._run_remediation_job,
+              "remediation_validate": main._run_retained_remediation_validation,
+              "remediation_deliver": main._run_delivery_attempt}[kind]
+        submitted.append((fn, attempt_id or record.id))
+        return job
+    monkeypatch.setattr(main.remediation_jobs, 'enqueue_record', enqueue)
     destination = {'id':'1','name':'Harbor','endpoint':'https://registry.example','namespace':'apps','scope':'service'}
     monkeypatch.setattr(main.service_oci, 'resolve_destination', lambda _db, _service, selected, _global: {**destination, 'id':selected})
     yield db, service, execution, auth, submitted, tmp_path
@@ -71,7 +80,7 @@ def workflow(monkeypatch, tmp_path):
 
 def start(workflow, **override):
     db, service, execution, auth, _, _ = workflow
-    preview = main.remediation_plan(service.service_key, db=db, auth=auth)
+    preview = completed_plan(service.service_key, db=db, auth=auth)
     args = dict(service_key=service.service_key, csrf_token='token', remediation_mode='automated',
         decisions='{}', plan_digest=preview['plan_digest'], source_execution_id=execution.id,
         confirmed='yes', submission_key=str(uuid.uuid4()), db=db, auth=auth)

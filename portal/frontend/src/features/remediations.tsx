@@ -33,25 +33,37 @@ function useDestinations(data:PageData) {
   },[]);
   return destinations;
 }
-// The plan preview is display-only and may need the newest retained
-// evidence: when the server has not cached it, the tab renders at once and
-// the counts are loaded on demand.
+// Poll persisted jobs; leaving the page only stops polling, never the work.
+async function retainedPlan(url:string, signal:AbortSignal, update:(state:any)=>void, preview=false) {
+  let state = await requestJson<any>(url, {signal});
+  while (state.pending || ['queued','running'].includes(state.status)) {
+    update(state);
+    await new Promise<void>((resolve,reject) => {
+      const stop = () => {window.clearTimeout(timer);reject(new DOMException('Aborted','AbortError'));};
+      const timer = window.setTimeout(() => {signal.removeEventListener('abort',stop);resolve();},1500);
+      if (signal.aborted) stop(); else signal.addEventListener('abort',stop,{once:true});
+    });
+    state = await requestJson<any>(state.status_url || `/api/v1/jobs/${state.job_id || state.id}`, {signal});
+  }
+  if (['failed','cancelled'].includes(state.status)) throw new Error(state.error || 'Plan preparation did not complete. Review Jobs for details.');
+  return state.result ? (preview ? state.result.preview : state.result.plan) : state;
+}
 function PlanPreview({data}:{data:PageData}) {
   const initial = useMemo(() => data.remediation_preview || {}, [data.remediation_preview]);
-  const [state,setState] = useState<{source:any, preview:any, error:string}>({source:initial, preview:initial, error:''});
-  const current = state.source === initial ? state : {source:initial, preview:initial, error:''};
+  const [state,setState] = useState<any>(initial), [error,setError] = useState('');
   useEffect(() => {
-    if (!initial.pending) return;
+    if (!initial.pending) {setState(initial);return;}
     const controller = new AbortController();
-    requestJson<any>(`/api/v1/services/${encodeURIComponent(data.service.service_key)}/remediation-preview`, {signal:controller.signal})
-      .then(preview => setState({source:initial, preview, error:''}))
-      .catch(error => { if (!controller.signal.aborted) setState({source:initial, preview:initial, error:error instanceof Error ? error.message : 'The remediation plan preview could not be loaded.'}); });
+    setState(initial);setError('');
+    retainedPlan(`/api/v1/services/${encodeURIComponent(data.service.service_key)}/remediation-preview`,
+      controller.signal,setState,true).then(setState).catch(error => {
+        if (!controller.signal.aborted) setError(error instanceof Error ? error.message : 'Plan preview could not be loaded.');
+      });
     return () => controller.abort();
   },[initial,data.service.service_key]);
-  const preview = current.preview;
-  if (current.error) return <p role="alert" className="error">{current.error}</p>;
-  if (preview.pending) return <p role="status" aria-live="polite">Preparing the remediation plan preview…</p>;
-  return <>{preview.error && <p role="alert" className="error">{preview.error}</p>}<p>{preview.images} service images · {preview.charts} retained Helm charts · {preview.configuration_changes} mapped configuration changes · {preview.manual_review} configuration items needing review.</p></>;
+  if (error) return <p role="alert" className="error">{error} <a href="/jobs">View Jobs</a></p>;
+  if (state.pending || ['queued','running'].includes(state.status)) return <p role="status" aria-live="polite">{title(state.status || 'queued')} · {state.stage || 'Preparing remediation preview'}{state.progress != null && ` · ${state.progress}%`}{state.elapsed_seconds != null && ` · ${Math.round(state.elapsed_seconds)}s elapsed`} · <a href="/jobs">View Jobs</a></p>;
+  return <>{state.error && <p role="alert" className="error">{state.error}</p>}<p>{state.images} service images · {state.charts} retained Helm charts · {state.configuration_changes} mapped configuration changes · {state.manual_review} configuration items needing review.</p></>;
 }
 const hasProposal = (row:any) => row.new_value !== undefined && row.new_value !== null;
 const targetKey = (row:any) => row.target_id || row.resource;
@@ -115,13 +127,18 @@ export function Remediate({data,finding_type = 'all',finding_id}: {data: PageDat
   const [reviewTab,setReviewTab] = useState('configuration');
   const [confirmed,setConfirmed] = useState(false), [excluded,setExcluded] = useState(false), [submitting,setSubmitting] = useState(false);
   const submission = useRef(false);
+  const planController = useRef<AbortController | null>(null);
+  const [planning,setPlanning] = useState<any>(null);
+  useEffect(() => () => planController.current?.abort(),[]);
   const [submissionKey,setSubmissionKey] = useState(() => crypto.randomUUID());
   const build = async () => {
     if (loading) return;
     setLoading(true); setError(''); setConfirmed(false);
     try {
       const scope = finding_id == null ? '' : `?${new URLSearchParams({finding_type,finding_id:String(finding_id)})}`;
-      const result = await requestJson<any>(`${root}/plan${scope}`);
+      planController.current?.abort();
+      planController.current = new AbortController();
+      const result = await retainedPlan(`${root}/plan${scope}`,planController.current.signal,setPlanning);
       setPlan(result); setSubmissionKey(crypto.randomUUID()); setDecisions(mode === 'automated' ? {} : Object.fromEntries(result.configuration_changes.map((row:any) => [String(row.finding_id), {action: row.editable && hasProposal(row) && row.category !== 'MANUAL_ONLY' ? 'proposed' : 'unresolved'}])));
       setReviewTab('configuration');
       setStep(1);
@@ -134,8 +151,8 @@ export function Remediate({data,finding_type = 'all',finding_id}: {data: PageDat
     submission.current = true; setSubmitting(true);
   }}><Csrf data={data}/>
     <input type="hidden" name="remediation_mode" value={mode}/><input type="hidden" name="decisions" value={JSON.stringify(decisions)}/><input type="hidden" name="plan_digest" value={plan?.plan_digest || ''}/><input type="hidden" name="source_execution_id" value={plan?.source_execution_id || ''}/><input type="hidden" name="finding_type" value={finding_type}/>{finding_id != null && <input type="hidden" name="finding_id" value={finding_id}/>}<input type="hidden" name="submission_key" value={submissionKey}/><input type="hidden" name="confirmed" value={confirmed ? 'yes' : ''}/>
-    <p>{['Plan remediation','Review proposed changes','Confirm remediation'][step]}</p>{finding_id != null && <p>Scope: selected {finding_type} finding. Review its affected artifacts before confirming.</p>}{error && <p className="error" role="alert">{error}</p>}
-    {step === 0 && <><label>Mode<select value={mode} onChange={event => setMode(event.target.value)}><option value="automated">Automated</option><option value="guided">Guided / Manual</option></select></label><p>Automated applies every supported proposal to all editable targets. Guided lets you choose targets and values. Findings without an editable source remain unresolved. Building a plan does not modify artifacts.</p><button type="button" disabled={loading} onClick={build}>{loading ? 'Building plan…' : 'Build plan'}</button></>}
+    <p>{['Plan remediation','Review proposed changes','Confirm remediation'][step]}</p>{finding_id != null && <p>Scope: selected {finding_type} finding. Review its affected artifacts before confirming.</p>}{error && <p className="error" role="alert">{error} <a href="/jobs">View Jobs</a></p>}
+    {step === 0 && <><label>Mode<select value={mode} onChange={event => setMode(event.target.value)}><option value="automated">Automated</option><option value="guided">Guided / Manual</option></select></label><p>Automated applies every supported proposal to all editable targets. Guided lets you choose targets and values. Findings without an editable source remain unresolved. Building a plan does not modify artifacts.</p><button type="button" disabled={loading} onClick={build}>{loading ? 'Building plan…' : 'Build plan'}</button>{loading && <p role="status">{title(planning?.status || 'queued')} · {planning?.stage || 'Waiting for preparation'}{planning?.progress != null && ` · ${planning.progress}%`}{planning?.elapsed_seconds != null && ` · ${Math.round(planning.elapsed_seconds)}s elapsed`} · You can leave this page and return to the retained plan. <a href="/jobs">View Jobs</a></p>}</>}
     {step === 1 && <><ProposedSummary plan={plan} service={data.service}/>{mode === 'automated' && <p>Automatic proposals are shown read-only. Return to Plan and choose Guided / Manual to select individual changes.</p>}<div role="tablist" aria-label="Remediation review">{['configuration','vulnerability'].map(tab => <button key={tab} type="button" role="tab" aria-selected={reviewTab === tab} onClick={() => setReviewTab(tab)}>{tab === 'configuration' ? 'Configuration' : 'Vulnerability'}</button>)}</div>
       <div role="tabpanel" aria-label="Configuration" hidden={reviewTab !== 'configuration'}><p>Review exact source mappings before applying changes. Choose an editable target or All, then apply a proposal or enter a custom value.</p>{!plan.configuration_changes.some((row:any) => row.category !== 'MANUAL_ONLY' && (row.editable || row.target_options?.some((target:any) => target.editable))) && <p>No configuration changes are available.</p>}<FindingPages rows={plan.configuration_changes.filter((row:any) => row.category !== 'MANUAL_ONLY' && (row.editable || row.target_options?.some((target:any) => target.editable)))} render={(row:any) => <fieldset key={row.finding_id} disabled={mode === 'automated'}><ConfigurationDecision row={row} decision={mode === 'automated' ? {action:hasProposal(row) && row.editable ? 'proposed' : 'unresolved'} : decisions[String(row.finding_id)]} choose={value => choose(String(row.finding_id),value)}/></fieldset>}/></div>
       <div role="tabpanel" aria-label="Vulnerability" hidden={reviewTab !== 'vulnerability'}><p>{plan.images.length} image references will be assessed for patching. Copa attempts supported package fixes for each image; post-remediation scans determine what was resolved. No individual CVE selection is required.</p>{!plan.images.length && <p>No retained images are available for patching.</p>}{plan.images.map((image:any,index:number) => <section key={index}><h3>{image.original}</h3><p>Resource: {image.resource || 'Image evidence (no mapped Kubernetes resource)'}</p><p>{image.reason}</p><p>{image.vulnerabilities?.length || 0} retained vulnerability observations{!image.vulnerabilities?.length && ' (absence of retained observations does not prove the image is vulnerability-free)'}</p>{!!image.vulnerabilities?.length && <details><summary>Retained vulnerabilities</summary><ul>{image.vulnerabilities.map((finding:any,i:number) => <li key={i}>{finding.cve || finding.vulnerability_id || 'Vulnerability'} · {finding.severity || 'Unknown'} · {finding.package || finding.package_name || 'Package not recorded'}</li>)}</ul></details>}</section>)}</div>
@@ -218,6 +235,9 @@ function Redeliver({data,root,job}: {data:PageData;root:string;job:any}) {
   const [authorizedDocumentation,setAuthorizedDocumentation] = useState(false);
   const [submitting,setSubmitting] = useState(false);
   const submission = useRef(false);
+  const planController = useRef<AbortController | null>(null);
+  const [planning,setPlanning] = useState<any>(null);
+  useEffect(() => () => planController.current?.abort(),[]);
   const options = (job.workflow?.delivery_options || []).filter((option:any) => option.supported !== false).map((option:any) => option.mode === 'oci' && !can(data,'service.export',data.service.id) ? {...option,available:false,reason:'Publishing release documentation requires service export permission.'} : option);
   const selected = options.find((option:any) => option.mode === output && option.available);
   const deliveryActive = ACTIVE.has(job.delivery_status);

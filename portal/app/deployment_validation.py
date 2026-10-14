@@ -1939,7 +1939,7 @@ class _IsolatedNodeTransport:
 
 def _missing_isolated_api_port(completed: CommandResult) -> bool:
     evidence = completed.stderr + "\n" + completed.stdout
-    return completed.returncode != 0 and "failed to get api server port" in evidence and "6443/tcp" in evidence and "index of untyped nil" in evidence
+    return completed.returncode != 0 and "failed to get api server port" in evidence and "6443/tcp" in evidence and any(marker in evidence for marker in ("index of untyped nil", "slice index out of range"))
 
 
 def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, config: ValidationConfig | None = None, runner: CommandRunner | None = None, progress_callback: Callable[[str], None] | None = None) -> dict[str, Any]:

@@ -4,6 +4,15 @@ from sqlalchemy.schema import CreateTable
 
 
 def upgrade_connection(connection):
+    if 'validator_provisioning_attempts' in inspect(connection).get_table_names():
+        attempt_columns = {c['name'] for c in inspect(connection).get_columns('validator_provisioning_attempts')}
+        for name, definition in {
+            'lease_owner': 'VARCHAR(64)', 'attempts': 'INTEGER DEFAULT 0 NOT NULL',
+            'available_at': 'TIMESTAMP', 'heartbeat_at': 'TIMESTAMP',
+            'request': "JSON DEFAULT '{}' NOT NULL",
+        }.items():
+            if name not in attempt_columns:
+                connection.execute(text(f'ALTER TABLE validator_provisioning_attempts ADD COLUMN {name} {definition}'))
     if "managed_validators" not in inspect(connection).get_table_names():
         return
     columns = {c["name"] for c in inspect(connection).get_columns("managed_validators")}

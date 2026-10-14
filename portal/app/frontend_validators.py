@@ -2,6 +2,7 @@
 from collections.abc import Mapping
 
 _FIELDS = {
+    'mode',
     "id", "name", "host", "ssh_port", "ssh_username", "api_port", "status", "fingerprint",
     "created_at", "updated_at", "last_contact_at", "fingerprint_confirmed", "active_operation_id", "image", "image_id", "reference", "last_seen", "last_health", "health", "last_self_test", "self_test",
     "preflight", "certificate", "history", "operations", "action", "phase", "started_at",

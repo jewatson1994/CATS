@@ -1,7 +1,7 @@
 """Temporary pinned SSH deployment to an existing dedicated Docker-ready host.
 
-No host package installation is permitted. Only two verified image archives,
-private mTLS material and an owned validator container are transferred.
+Transfers verified image archives and private mTLS material. The dedicated
+worker may install a pinned offline Docker package closure before deployment.
 """
 from __future__ import annotations
 
@@ -230,7 +230,7 @@ os_name=$(printf '%s' "$ID" | tr -cd 'a-zA-Z0-9_-')
 os_version=$(printf '%s' "$VERSION_ID" | tr -cd 'a-zA-Z0-9._-')
 architecture=$(uname -m | tr -cd 'a-zA-Z0-9_-')
 platform=false; [ "$ID" = ubuntu ] && { [ "$VERSION_ID" = 22.04 ] || [ "$VERSION_ID" = 24.04 ]; } && [ "$(uname -m)" = x86_64 ] && platform=true
-docker_ok=false; daemon_ok=false; architecture_ok=false; cgroup_ok=false; runtime_ok=false; cgroup_driver_ok=false; socket_ok=false; version=0; disk=0; cgroup_version=unavailable; default_runtime=unavailable; cgroup_driver=unavailable
+docker_ok=false; daemon_ok=false; architecture_ok=false; cgroup_ok=false; runtime_ok=false; cgroup_driver_ok=false; socket_ok=false; version=0; disk=$(df -PB1 /var/lib | awk 'NR==2 {print $4}'); cgroup_version=unavailable; default_runtime=unavailable; cgroup_driver=unavailable
 if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
   daemon_ok=true
   [ "$(docker info --format '{{.OSType}}/{{.Architecture}}')" = linux/x86_64 ] && architecture_ok=true
@@ -275,7 +275,7 @@ printf '{"platform":%s,"docker":%s,"daemon":%s,"architecture_compatible":%s,"cgr
         checks['sudo'] = True
         warnings = [key + ' prerequisite is not satisfied' for key, value in checks.items() if not value]
         if not checks['docker'] or not checks['daemon']:
-            warnings.append('Install or configure Docker 28+ externally before retrying; bootstrap does not install host tools')
+            warnings.append('Provision can install Docker 28+ from configured pinned internal packages; otherwise install it on the target')
         if all(checks.values()):
             for field, threshold, message in (
                     ('cpus', 4, 'Recommend at least 4 CPUs'),
@@ -351,6 +351,8 @@ printf '{"platform":%s,"docker":%s,"daemon":%s,"architecture_compatible":%s,"cgr
         q = shlex.quote
         script = 'workspace=' + q(self.workspace) + '\nroot=' + q(root) + '\nowner=' + q(owner) + '\nname=' + q(name) + r'''
 umask 077
+exec 9>/run/lock/cats-managed-validator.lock
+flock -n 9
 # Do not replace identity or container while strict validation resources remain.
 if docker network ls --filter label=cats.deployment-validation=true --format '{{.ID}}' | grep -q .; then exit 1; fi
 if docker ps -a --filter label=cats.deployment-validation=true --format '{{.ID}}' | grep -q .; then exit 1; fi
@@ -393,6 +395,8 @@ if docker inspect "$name" >/dev/null 2>&1; then docker rm -f "$name" >/dev/null;
         owner = _owner(owner_id)
         q = shlex.quote
         script = 'owner=' + q(owner) + '\nname=' + q('cats-validator-' + owner) + '\nroot=' + q('/var/lib/cats-managed-validator/' + owner) + r'''
+exec 9>/run/lock/cats-managed-validator.lock
+flock -n 9
 # A dedicated host must have no unfinished strict validation resources.
 # Fail closed rather than deleting any cluster without per-validator ownership.
 if docker network ls --filter label=cats.deployment-validation=true --format '{{.ID}}' | grep -q .; then exit 1; fi

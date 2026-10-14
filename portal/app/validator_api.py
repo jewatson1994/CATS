@@ -355,6 +355,15 @@ async def submit_artifact(request: Request):
         else:
             raise HTTPException(415, "Expected binary artifact or OCI declaration")
         with LOCK:
+            declaration_digest = hashlib.sha256(json.dumps(package, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            for previous in JOBS.values():
+                if previous.get('client_identity') == request.state.client_identity and previous.get('request_id') == package['request_id']:
+                    if previous.get('declaration_digest') != declaration_digest:
+                        raise HTTPException(409, 'Request identity already belongs to a different declaration')
+                    # Return the original acknowledgment shape; polling retrieves
+                    # its current state, including an already-completed result.
+                    return {**_request_identity(package), 'validation_id': previous['validation_id'],
+                            'schema_version': package['schema_version'], 'status': 'QUEUED'}
             active = sum(row.get("status") in {"QUEUED", "RUNNING"} for row in JOBS.values())
             if active >= MAX_JOBS * 2 or len(JOBS) >= MAX_RECORDS:
                 raise HTTPException(429, "Validator capacity is full")
@@ -362,6 +371,7 @@ async def submit_artifact(request: Request):
             record = {"validation_id": job_id, "schema_version": package["schema_version"], "status": "QUEUED",
                       **_request_identity(package), "phase": "QUEUED", "created_at": _now(), "cancel_requested": False,
                       "client_identity": request.state.client_identity, "request_identity": _request_identity(package),
+                      "declaration_digest": declaration_digest,
                       "artifact_upload": path.name if path is not None else None}
             JOBS[job_id] = record
             _persist(record)

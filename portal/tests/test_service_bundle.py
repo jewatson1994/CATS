@@ -1,3 +1,4 @@
+from export_job_helpers import completed_export
 from io import BytesIO
 import json
 from zipfile import ZipFile, ZIP_DEFLATED
@@ -15,7 +16,7 @@ def test_multi_version_round_trip_and_collision():
     client = new_client()
     seed(client)
     seed(client, "1.5", "CVE-NEW", 1)
-    response = client.get("/services/payments-service/bundle.zip")
+    response = completed_export(client, "/services/payments-service/bundle.zip")
     assert response.status_code == 200
     manifest, state = parse_service(response.content)
     assert manifest["schema_version"] == 3
@@ -43,7 +44,7 @@ def test_multi_version_round_trip_and_collision():
 def test_bundle_rejects_tampering(mode):
     client = new_client()
     seed(client)
-    data = client.get("/services/payments-service/bundle.zip").content
+    data = completed_export(client, "/services/payments-service/bundle.zip").content
     with ZipFile(BytesIO(data)) as original:
         manifest, evidence = original.read("manifest.json"), original.read("service.json")
     if mode == "hash":
@@ -67,7 +68,7 @@ def test_bundle_transaction_rolls_back(monkeypatch):
     client = new_client()
     seed(client)
     seed(client, "1.5", "CVE-NEW", 1)
-    data = client.get("/services/payments-service/bundle.zip").content
+    data = completed_export(client, "/services/payments-service/bundle.zip").content
     preview = client.post("/exchange/bundles/preview", data={"csrf_token": csrf(client), "target_key": "rollback-service"}, files={"upload": ("bundle.zip", data)})
     token = page_data(preview)["token"]
     calls = []

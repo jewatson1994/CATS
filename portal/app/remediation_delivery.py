@@ -230,6 +230,8 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
         shutil.copyfile(authfile, docker_config)
         docker_config.chmod(0o600)
         def run(args, *, include_stderr=False, **kwargs):
+            from .remediation_jobs import check_worker
+            check_worker()
             completed = subprocess.run(args, capture_output=True, text=True, timeout=600, check=False, **kwargs)
             if completed.returncode:
                 raise ValueError("Registry operation failed; check destination TLS, authentication and repository permission")

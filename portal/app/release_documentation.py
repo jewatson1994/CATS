@@ -232,6 +232,8 @@ def publish(files, receipt, destination, checkpoint):
         raise ValueError("No immutable OCI subject available for documentation")
     with registry_environment(destination) as env:
         for item in identities:
+            from .remediation_jobs import check_worker
+            check_worker()
             result = publish_documentation(files, subject=item["reference"], env=env)
             receipt["publications"] = [r for r in receipt["publications"] if r.get("subject") != item["reference"]] + [result]
             receipt["status"] = "failed" if result.get("status") != "published" else "publishing"

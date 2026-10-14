@@ -20,7 +20,7 @@ from .frontend_admin import project_admin
 from .frontend_policies import policies_data
 
 PAGE_MEDIA_TYPE = "application/vnd.cats.page+json"
-MIGRATED_PAGES = frozenset({"home.html", "login.html", "dashboard.html", "password.html",
+MIGRATED_PAGES = frozenset({"jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
                             "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html", "public_results.html", "patch_results.html", "finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html",
                             "service_overview.html", "service_activity.html", "service_history.html",
                             "service_dependencies.html", "service_artifacts.html", "service_validation.html",

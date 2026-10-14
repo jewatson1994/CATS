@@ -68,6 +68,8 @@ def configured_material(settings, helm_repository_urls=()):
 
 
 def _run(command, *, env=None, binary=False):
+    from .remediation_jobs import check_worker
+    check_worker()
     try:
         result = subprocess.run(command, capture_output=True, text=not binary, timeout=300, check=False, env=env)
     except (OSError, subprocess.TimeoutExpired) as exc:

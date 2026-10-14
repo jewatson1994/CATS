@@ -188,7 +188,7 @@ def test_release_builds_runtime_then_packages_and_activates_docker_release(wrapp
     from app.deployment_validation import ValidationConfig
 
     invoke, _ = wrapper
-    calls = invoke(*(['--tag', tag] if tag else []), node_cached=node_cached)
+    calls = invoke('--prepare-validator-release', *(['--tag', tag] if tag else []), node_cached=node_cached)
     stages = ['engine', 'scanner-build', 'runtime-build', 'node-inspect']
     if not node_cached:
         stages.append('node-pull')
@@ -215,7 +215,7 @@ def test_release_builds_runtime_then_packages_and_activates_docker_release(wrapp
 def test_release_failure_stops_subsequent_build_and_packaging_steps(wrapper, capsys, fail_stage):
     invoke, calls = wrapper
     with pytest.raises(subprocess.CalledProcessError) as failure:
-        invoke(node_cached=False, fail_stage=fail_stage)
+        invoke('--prepare-validator-release', node_cached=False, fail_stage=fail_stage)
     stages = ['engine', 'scanner-build', 'runtime-build', 'node-inspect', 'node-pull', 'package']
     assert [stage for stage, _, _ in calls] == stages[:stages.index(fail_stage) + 1]
     assert failure.value.cmd == calls[-1][1]
@@ -225,7 +225,7 @@ def test_release_failure_stops_subsequent_build_and_packaging_steps(wrapper, cap
 def test_release_rejects_portal_image_before_building(wrapper, capsys):
     invoke, calls = wrapper
     with pytest.raises(SystemExit) as failure:
-        invoke('--image', 'portal')
+        invoke('--image', 'portal', '--prepare-validator-release')
     assert failure.value.code == 2
     assert [stage for stage, _, _ in calls] == ['engine']
     assert 'Docker-host releases require the unified CATS runtime image' in capsys.readouterr().err
@@ -266,3 +266,9 @@ def test_copy_pinned_image_requires_exact_archive_manifest(tmp_path, monkeypatch
     assert calls[-1][-2] == 'docker://node@sha256:' + digest
     with pytest.raises(ValueError, match='digest mismatch'):
         p.copy_pinned_image('docker://test', 'oci-archive:' + str(archive_path) + ':test@sha256:' + '0' * 64, 'test@sha256:' + '0' * 64)
+
+
+def test_default_build_has_no_validator_payload_prerequisite(wrapper):
+    invoke, _ = wrapper
+    calls = invoke(node_cached=False)
+    assert [stage for stage, _, _ in calls] == ['engine', 'scanner-build', 'runtime-build', 'final-inspect']

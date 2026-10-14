@@ -89,15 +89,41 @@ def test_retry_same_candidate_background_without_new_remediation(workflow):
     with pytest.raises(HTTPException) as error: main.validate_remediation_candidate(service.service_key,row.job_key,'token',db,auth)
     assert error.value.status_code==409
 
-@pytest.mark.parametrize('failure',['blocking','tamper','cleanup'])
+@pytest.mark.parametrize('failure',['blocking','cleanup'])
 def test_retry_rejects_unsafe_candidate(workflow,failure):
     db,service,_,auth,submitted,root=workflow; row=candidate(workflow)
     if failure=='blocking': row.validation_results={'status':'BLOCKING'}
-    if failure=='tamper': (root/'R1'/'candidate.zip').write_bytes(b'tampered')
     if failure=='cleanup': row.validation_results={'deployment':{'cleanup_status':'UNKNOWN'}}
     db.commit()
     with pytest.raises(HTTPException) as error: main.validate_remediation_candidate(service.service_key,row.job_key,'token',db,auth)
     assert error.value.status_code==409 and not submitted
+
+
+@pytest.mark.parametrize('tamper_before_enqueue', [True, False])
+def test_validation_worker_rejects_tamper_before_remote_effects(workflow, monkeypatch, tamper_before_enqueue):
+    from app import durable_jobs, remediation_worker
+    db, service, _, auth, submitted, root = workflow
+    row = candidate(workflow)
+    path = root / 'R1' / 'candidate.zip'
+    approved_digest = row.artifact_digest
+    if tamper_before_enqueue:
+        path.write_bytes(b'tampered')
+    # Enqueue checks metadata only; worker must hash the retained bytes immediately
+    # before validation, including changes that occur while the job is queued.
+    assert main.validate_remediation_candidate(service.service_key, row.job_key, 'token', db, auth).status_code == 303
+    assert submitted == [(main._run_retained_remediation_validation, row.id)]
+    if not tamper_before_enqueue:
+        path.write_bytes(b'tampered')
+    monkeypatch.setattr(main.validator_management, 'select_configuration', lambda *_: pytest.fail('Tampered candidate selected validator'))
+    monkeypatch.setattr(validator_client, 'validate', lambda *_args, **_kwargs: pytest.fail('Tampered candidate reached validator'))
+    job = durable_jobs.claim(('remediation_validate',), 'tamper-test', main.SessionLocal)
+    assert job is not None
+    durable_jobs.execute(job, remediation_worker.handle, main.SessionLocal)
+    db.expire_all()
+    assert db.get(durable_jobs.DurableJob, job.id).status == 'failed'
+    assert row.verification_status == 'unavailable'
+    assert row.validation_results['deployment']['cleanup_status'] == 'NOT_REQUIRED'
+    assert row.artifact_digest == approved_digest and row.remediation_status == 'partial'
 
 def test_resume_job_polls_without_duplicate_upload(monkeypatch):
     from test_validator_v2_transport import declaration

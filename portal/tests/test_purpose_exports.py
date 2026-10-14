@@ -1,4 +1,5 @@
 """Purpose-built downloads use server templates without changing the complete workbook."""
+from export_job_helpers import completed_export
 from io import BytesIO
 from zipfile import ZipFile
 
@@ -29,13 +30,13 @@ def test_default_downloads_are_separate_from_complete_workbook():
     _service()
     client = new_client()
     for kind in CATALOG:
-        sheet = _sheet(client.get(f"/services/export-test/exports/{kind}.xlsx"))
+        sheet = _sheet(completed_export(client, f"/services/export-test/exports/{kind}.xlsx"))
         assert sheet.title
         assert [cell.value for cell in sheet[1]] == [c["heading"] for c in default_template(kind) if c["enabled"]]
-    assets = _sheet(client.get("/services/export-test/exports/asset_list.xlsx"))
+    assets = _sheet(completed_export(client, "/services/export-test/exports/asset_list.xlsx"))
     assert assets.max_row == 2
     assert "docker.io/library/nginx:1.27" in [cell.value for cell in assets[2]]
-    assert client.get("/services/export-test/export.xlsx").status_code == 200
+    assert completed_export(client, "/services/export-test/export.xlsx").status_code == 200
 
 
 def test_overview_offers_each_purpose_export():
@@ -60,7 +61,7 @@ def test_asset_export_uses_full_inventory_and_omits_source_credentials():
                                artifact_name="chart", chart_name="demo", chart_version="1.2.3",
                                source_reference="https://user:secret@charts.internal/demo.tgz"))
         db.commit()
-    sheet = _sheet(new_client().get("/services/export-test/exports/asset_list.xlsx"))
+    sheet = _sheet(completed_export(new_client(), "/services/export-test/exports/asset_list.xlsx"))
     assert sheet.max_row == 28  # Header, original image, 25 more images, and chart.
     assert "demo" in [cell.value for cell in sheet[sheet.max_row]]
     assert "secret" not in " ".join(str(cell.value) for row in sheet for cell in row)
@@ -79,14 +80,14 @@ def test_admin_can_reorder_rename_disable_and_reset_template():
         "enabled": [c["field"] for c in columns if c["enabled"]],
     }, follow_redirects=False)
     assert response.status_code == 303, response.text
-    sheet = _sheet(client.get("/services/export-test/exports/ppsm.xlsx"))
+    sheet = _sheet(completed_export(client, "/services/export-test/exports/ppsm.xlsx"))
     assert sheet["A1"].value == "Version at Export"
     with SessionLocal() as db:
         assert db.scalar(select(PortalSetting).where(PortalSetting.key == "purpose_export_template:ppsm"))
         assert db.scalar(select(AuditEvent).where(AuditEvent.action == "export_template.updated"))
     assert client.post("/admin/configuration/export-templates/ppsm/reset",
                        data={"csrf_token": csrf(client)}, follow_redirects=False).status_code == 303
-    assert _sheet(client.get("/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Service"
+    assert _sheet(completed_export(client, "/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Service"
     with SessionLocal() as db:
         assert db.scalar(select(AuditEvent).where(AuditEvent.action == "export_template.reset"))
 
@@ -107,14 +108,14 @@ def test_template_validation_and_csrf():
         "enabled": [c["field"] for c in columns if c["enabled"]],
     })
     assert response.status_code == 403
-    assert client.get("/services/export-test/exports/unknown.xlsx").status_code == 404
+    assert completed_export(client, "/services/export-test/exports/unknown.xlsx").status_code == 404
 
 
 def test_unknown_fields_and_non_admin_are_rejected():
     _service()
     add_user("assessor-export", "Assessor")
     assessor = new_client("assessor-export")
-    assert assessor.get("/services/export-test/exports/poam.xlsx").status_code == 200
+    assert completed_export(assessor, "/services/export-test/exports/poam.xlsx").status_code == 200
     assert assessor.get("/admin/configuration/export-templates/poam").status_code == 403
     assert assessor.post("/admin/configuration/export-templates/poam/reset",
                          data={"csrf_token": csrf(assessor)}).status_code == 403
@@ -152,8 +153,8 @@ def test_group_template_inheritance_default_and_service_export():
         "enabled": [c["field"] for c in columns if c["enabled"]],
     }, follow_redirects=False)
     assert response.status_code == 303, response.text
-    assert _sheet(client.get("/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Parent Service"
-    response = client.get("/services/export-test/exports/all.zip")
+    assert _sheet(completed_export(client, "/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Parent Service"
+    response = completed_export(client, "/services/export-test/exports/all.zip")
     assert response.status_code == 200
     with ZipFile(BytesIO(response.content)) as archive:
         sheet = load_workbook(BytesIO(archive.read("ppsm.xlsx"))).active
@@ -165,7 +166,7 @@ def test_group_template_inheritance_default_and_service_export():
     response = client.post(f"/admin/general-policy/export-templates/ppsm/reset?group_id={child_id}",
                            data={"csrf_token": csrf(client), "mode": "default"}, follow_redirects=False)
     assert response.status_code == 303
-    assert _sheet(client.get("/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Service"
+    assert _sheet(completed_export(client, "/services/export-test/exports/ppsm.xlsx"))["A1"].value == "Service"
     assert client.get(f"/admin/general-policy?group_id={child_id}").status_code == 200
     assert client.post(f"/admin/general-policy/group-parent?group_id={parent_id}",
                        data={"csrf_token": csrf(client), "parent_id": str(child_id)}).status_code == 422

@@ -155,7 +155,7 @@ def test_preflight_reports_individual_failure(monkeypatch, failed):
     assert result['status'] == 'unsupported' and result['checks'][failed] is False
     assert result['warnings'][0] == failed+' prerequisite is not satisfied'
     if failed == 'docker':
-        assert 'externally' in result['warnings'][1]
+        assert 'pinned internal packages' in result['warnings'][1]
 
 
 def test_removal_blocks_unfinished_kind_before_container_delete(monkeypatch):

@@ -29,8 +29,12 @@ def recovery(tmp_path, monkeypatch):
     dispatched = []
     monkeypatch.setattr(main, "SessionLocal", sessions)
     monkeypatch.setattr(main, "REMEDIATION_JOB_ROOT", root)
-    monkeypatch.setattr(main, "REMEDIATION_WORKERS", SimpleNamespace(
-        submit=lambda callback, identity: dispatched.append((callback, identity))))
+    original_enqueue = main.remediation_jobs.enqueue_record
+    def enqueue(db, record, kind, attempt_id=None, requested_by_id=None):
+        result = original_enqueue(db, record, kind, attempt_id, requested_by_id)
+        dispatched.append((main._run_delivery_attempt, attempt_id))
+        return result
+    monkeypatch.setattr(main.remediation_jobs, "enqueue_record", enqueue)
     with sessions() as db:
         service = Service(service_key="recovery-service", name="Recovery service")
         actor = User(username="recovery-user", display_name="Recovery user")
@@ -117,8 +121,8 @@ def test_queued_recovery_dispatches_only_after_releasing_ownership(recovery, mon
         executed.append(identity)
 
     monkeypatch.setattr(main, "_execute_delivery_attempt", execute)
-    monkeypatch.setattr(main, "REMEDIATION_WORKERS", SimpleNamespace(
-        submit=lambda callback, identity: callback(identity)))
+    from remediation_job_helpers import inline_record_worker
+    inline_record_worker(monkeypatch)
     main._recover_release_deliveries()
     assert executed == [attempt_id]
     with recovery.sessions() as db:

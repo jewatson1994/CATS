@@ -118,7 +118,7 @@ def _service_sbom_components(service_key: str, db: Session):
 
 
 
-def write_all(output, service, db, auth, *, bundle_builder=None):
+def write_all(output, service, db, auth, *, bundle_builder=None, max_bytes=None):
     """Write the same permission-scoped ZIP for downloads and retained releases."""
     from .release_exports import write_export_archive
     from .service_transfer import export_service
@@ -140,4 +140,4 @@ def write_all(output, service, db, auth, *, bundle_builder=None):
     return write_export_archive(output, workbook_builders=workbooks,
         evidence_builders={"diagrams.zip": lambda: _service_diagrams_bytes(service.service_key, db),
                            "sbom-components.json": lambda: _service_sbom_components(service.service_key, db)},
-        supplemental_entries=supplemental)
+        supplemental_entries=supplemental, max_bytes=max_bytes)

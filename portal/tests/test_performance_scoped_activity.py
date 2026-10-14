@@ -9,6 +9,7 @@ from starlette.requests import Request
 
 from app import main
 from app.database import Base
+from app.export_jobs import BUILDERS
 from app.models import AuditEvent, Service, utcnow
 
 
@@ -70,7 +71,9 @@ def test_export_audit_scope_preserves_truthy_id_fallback(scoped_db, monkeypatch)
     captured = {}
     monkeypatch.setattr(main, "build_service_workbook", lambda *args, **kwargs: captured.update(kwargs))
     monkeypatch.setattr(main, "workbook_response", lambda *args: None)
-    main.export_service(service.service_key, db=db, auth=SimpleNamespace())
+    # Exercise the worker's registered builder: this regression targets audit
+    # query scoping, while HTTP admission is covered by test_export_jobs.
+    BUILDERS["workbook"](service.service_key, db=db, auth=SimpleNamespace())
     assert [row.id for row in captured["activity_events"]] == expected
     # One candidate with conflicting detail is residual-filtered; unrelated rows
     # never hydrate despite the export retaining its full historical scope.
@@ -92,7 +95,7 @@ def test_snapshot_export_permission_is_in_sql_before_loading(scoped_db, monkeypa
         raise RuntimeError("stop after scoped hydration")
     monkeypatch.setattr(main, "service_view", capture)
     with pytest.raises(RuntimeError, match="scoped hydration"):
-        main.export_services(db=db, auth=SimpleNamespace(accessible_service_ids=lambda permission: {1}))
+        BUILDERS["services"](db=db, auth=SimpleNamespace(accessible_service_ids=lambda permission: {1}))
     assert seen == ["one"]
     # Snapshot export hydrates authorized graphs in disposable batch sessions.
     assert [row.service_key for row in db.identity_map.values() if isinstance(row, Service)] == []
@@ -100,7 +103,7 @@ def test_snapshot_export_permission_is_in_sql_before_loading(scoped_db, monkeypa
     assert "WHERE services.id IN" in service_query
     statements.clear()
     with pytest.raises(HTTPException) as denied:
-        main.export_services(db=db, auth=SimpleNamespace(accessible_service_ids=lambda permission: set()))
+        BUILDERS["services"](db=db, auth=SimpleNamespace(accessible_service_ids=lambda permission: set()))
     assert denied.value.status_code == 403
     assert not any("FROM services" in statement for statement in statements)
 
@@ -116,5 +119,5 @@ def test_export_retains_legacy_python_string_matching(scoped_db, monkeypatch, de
     captured = {}
     monkeypatch.setattr(main, "build_service_workbook", lambda *args, **kwargs: captured.update(kwargs))
     monkeypatch.setattr(main, "workbook_response", lambda *args: None)
-    main.export_service(service.service_key, db=db, auth=SimpleNamespace())
+    BUILDERS["workbook"](service.service_key, db=db, auth=SimpleNamespace())
     assert [row.id for row in captured["activity_events"]] == [expected]

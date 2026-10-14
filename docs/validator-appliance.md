@@ -1,5 +1,7 @@
 # Validator appliance
 
+> Managed provisioning now prepares the exact unified runtime on demand when **Provision** is clicked. Manual staging and Build Payload are optional legacy paths. See [the current worker and provisioning guide](durable-workers.md).
+
 Run this appliance on a dedicated, disposable Linux amd64 VM with Docker Engine and Docker Compose. It combines the mTLS validation API on 8443 and the HTTPS local administrator service on 8444. If either listener exits, the supervisor stops the other and exits unsuccessfully; Compose restarts the appliance. State and administrator records persist in the `validator-state` volume at `/var/lib/cats-validator`.
 
 The Docker socket grants root authority over this VM. Host networking is required so the worker can reach Kind's localhost Kubernetes API. Do not install this appliance on the production host or place production credentials, managed identities, cloud credentials, or sensitive workloads on the VM. Do not mount production kubeconfig files. Delete the disposable VM when its purpose is complete.

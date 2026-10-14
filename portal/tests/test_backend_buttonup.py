@@ -150,23 +150,28 @@ def test_remediation_preview_counts_active_configuration_findings():
     expected = (sum(item.get("classification") == "AUTO-REMEDIABLE" for item in plan["configuration_changes"]),
                 sum(item.get("classification") == "REVIEW REQUIRED" for item in plan["configuration_changes"]))
     assert sum(expected) >= 1
-    main_module = __import__("app.main", fromlist=["_REMEDIATION_PREVIEW_CACHE"])
-    main_module._REMEDIATION_PREVIEW_CACHE.clear()
-    # Not cached yet: the tab renders without reading evidence, and the
-    # browser loads the preview on demand.
+    # The tab renders without reading evidence; the browser requests a durable
+    # plan whose counts become available after worker completion.
     assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]["pending"] is True
     deferred = client.get("/api/v1/services/payments-service/remediation-preview")
     assert deferred.status_code == 200 and deferred.headers["cache-control"] == "no-store"
-    assert (deferred.json()["configuration_changes"], deferred.json()["manual_review"]) == expected
-    for _ in range(2):  # later tab renders are served from the content-keyed preview cache
-        preview = page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]
+    assert deferred.json()["pending"] and deferred.json()["status"] == "queued"
+    from remediation_job_helpers import drain_plan
+    with SessionLocal() as db:
+        drain_plan(db, deferred.json())
+    for _ in range(2):  # repeated visits read the persisted worker result
+        assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]["pending"] is True
+        preview = client.get("/api/v1/services/payments-service/remediation-preview").json()
+        assert preview["job_id"] == deferred.json()["job_id"]
         assert not preview.get("pending") and (preview["configuration_changes"], preview["manual_review"]) == expected
-    # A new policy finding changes the content key: the tab defers again.
+    # A new assessment receives its own bound plan, leaving the old result intact.
     body = helm_payload("preview-2")
     body["policy_findings"] = [{"type": "Configuration", "finding": "KSV-0014", "severity": "High", "scanner": "Trivy",
                                 "target": "Deployment/payments-api", "title": "Root file system is not read-only"}]
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
     assert page_data(client.get("/services/payments-service?remediations=true&tab=pipeline"))["remediation_preview"]["pending"] is True
+    next_preview = client.get("/api/v1/services/payments-service/remediation-preview").json()
+    assert next_preview["pending"] and next_preview["job_id"] != deferred.json()["job_id"]
 
 
 def test_remediation_preview_endpoint_requires_remediation_permission():

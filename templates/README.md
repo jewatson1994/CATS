@@ -15,7 +15,7 @@ docker compose --env-file C:/secure/cats.env -f templates/compose.main.yaml up -
 
 On Linux, use `cp templates/main.env.example /secure/cats.env` and the corresponding `--env-file` path. Protect that file with appropriate filesystem permissions.
 
-Required values include the built `CATS_IMAGE`, unique database/bootstrap passwords, pipeline and worker tokens, a Fernet encryption key, and **an absolute host path** for `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE`. The release build prints the prepared directory. Forward-slash Windows paths such as `C:/cats/releases/validator` work well in environment files. Copy the entire prepared directory when moving hosts.
+Required values include the built `CATS_IMAGE`, unique database/bootstrap passwords, pipeline and worker tokens, and a stable Fernet encryption key. `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` is optional; leave it blank for automatic preparation when Provision is clicked. See [durable workers and on-demand provisioning](../docs/durable-workers.md) for upgrade commands, internal dependencies and resource defaults.
 
 Generate the encryption key with the portal Python environment:
 
