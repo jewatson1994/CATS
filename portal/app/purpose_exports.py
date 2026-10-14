@@ -45,7 +45,7 @@ NAMES = {"poam": "POA&M", "ppsm": "PPSM", "asset_list": "Asset List"}
 DEFAULT_ENABLED = {
     "poam": {"service", "service_id", "finding_id", "finding_type", "finding_title", "severity",
              "poam_title", "poam_status", "due_date", "mitigation", "exception_status"},
-    "ppsm": {"service", "service_id", "port", "protocol", "application", "declared_by", "source_file", "provenance"},
+    "ppsm": {"service", "service_id", "port", "protocol", "application", "declared_by", "source_file", "provenance", "boundary", "fqdn"},
     "asset_list": {"service", "service_id", "asset_type", "asset_name", "image", "digest",
                    "chart", "chart_version", "lifecycle_status", "assessment_status"},
 }
@@ -216,6 +216,7 @@ def _ppsm_rows(db, service, execution):
     rows = [{"service": service.name, "service_id": service.service_key, "port": item.get("port"),
              "protocol": item.get("protocol"), "application": item.get("service"),
              "declared_by": item.get("declared_by"), "source_file": item.get("source_file"),
+             "boundary": item.get("boundary"), "fqdn": item.get("fqdn"), "purpose": item.get("purpose"),
              "provenance": item.get("provenance"), "service_version": version}
             for item in overview["ports"]]
     for record in db.scalars(select(InventoryRecord).where(InventoryRecord.service_id == service.id,

@@ -419,6 +419,17 @@ dialog input:not([type="checkbox"]):not([type="radio"]), dialog select, dialog t
 .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
 dialog > .secondary-button:last-child { margin-top: var(--space-3); }
 
+/* Account dialogs live inside table cells; do not inherit their nowrap layout. */
+.accounts-workspace .accounts-dialog {
+  max-width: calc(100vw - 32px);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.accounts-workspace .account-detail-dialog { width: fit-content; min-width: min(760px, calc(100vw - 32px)); }
+.accounts-dialog form, .accounts-dialog label { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.accounts-dialog .account-record header > *, .accounts-dialog .account-assignment > *, .accounts-dialog .permission-details { min-width: 0; max-width: 100%; }
+.accounts-dialog .account-you { display: inline-block; }
+
 /* ------------------------------------------------------ settings sections */
 .settings-section { margin-bottom: var(--space-4); }
 .settings-section-body { padding: var(--space-5); }

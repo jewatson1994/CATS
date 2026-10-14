@@ -4,6 +4,8 @@ import re
 from collections import defaultdict
 from typing import Any, Callable, Iterable
 
+from .ppsm import enrich_ports
+
 
 _AUTH = re.compile(r"(unauthorized|authentication required|denied|forbidden|no basic auth)", re.I)
 _NOT_FOUND = re.compile(r"(repository.*not found|name unknown|manifest unknown)", re.I)
@@ -187,6 +189,9 @@ def normalize_port(item: Any) -> dict[str, str]:
     source_file = _text(item.get("source_file") or item.get("source_path") or item.get("template"))
     if source_file:
         result["source_file"] = source_file
+    for key in ("boundary", "fqdn", "purpose", "namespace"):
+        if _text(item.get(key)):
+            result[key] = _text(item[key])
     return result
 
 
@@ -458,7 +463,8 @@ def normalize_overview(
         "source": _text(raw.get("source"), "Submitted scan evidence"),
         "description": _text(raw.get("description")),
         "missing_evidence": _unique(missing, ("type", "item", "reason", "source_file")),
-        "ports": _unique((normalize_port(value) for value in _list(raw.get("ports"))), ("port", "protocol", "service", "declared_by")),
+        "ports": _unique(enrich_ports([normalize_port(value) for value in _list(raw.get("ports"))], raw),
+                         ("port", "protocol", "service", "declared_by", "namespace", "source_file", "boundary", "fqdn")),
         "accounts": _unique(normalize_accounts(_list(raw.get("accounts") or raw.get("rbac"))), ("name", "scope", "relationships")),
         "artifacts": artifacts,
         "dependencies": _unique(normalize_dependencies(resolved_dependencies), ("dependency", "used_by", "provides", "images")),

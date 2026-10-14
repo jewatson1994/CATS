@@ -19,6 +19,8 @@ The Assessor role provides scoped service viewing, standard exports, and audit v
 
 Open **Export** and choose Diagrams, PPSM, POA&M, Mitigations, Asset List, Findings, or SBOM components. **All** downloads these individual exports together in one ZIP, including the Portable Service Bundle when you have its separate permission. PPSM, POA&M, and Asset List use the configured export templates, including applicable group overrides. Missing diagram or SBOM evidence is explained in a text file inside the ZIP. Click outside the menu or press Escape to close it.
 
+For Helm assessments with retained rendered resources, PPSM fills **Boundary** from the matching Kubernetes Service's declared exposure and linked Ingress routes. **FQDN** comes from explicit Ingress hosts, ExternalName targets, or Service external-dns hostname annotations; multiple hosts appear on separate lines in the cell. Existing supplied values are preserved. Unknown or ambiguous values stay blank. Boundary describes the chart's declared network exposure, not a verified organizational boundary or proof of internet access; CATS does not assume a cluster DNS suffix. These columns are enabled in the default PPSM template; existing customized templates must enable them to display the values.
+
 The screenshot below shows the earlier menu appearance; the current menu includes file-format badges and the combined ZIP download.
 
 ![Export menu](screenshots/assessor-exports.jpg)

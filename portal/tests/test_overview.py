@@ -194,8 +194,11 @@ def test_rendered_resource_normalizer_resolves_rbac_and_dependency(tmp_path: Pat
     assert service_port["port"] == 443
     assert service_port["target_port"] == 8080
     assert service_port["service"] == "https"
+    assert all(row["namespace"] == "app" for row in normalized["ports"])
     assert "Deployment/api" in service_port["provenance"]
     final = normalize_overview(normalized)
+    final_service_port = next(row for row in final["ports"] if row["declared_by"] == "Service/api")
+    assert final_service_port["boundary"] == "Cluster internal (ClusterIP)"
     accounts = {row["name"]: row for row in final["accounts"]}
     assert "Used by Deployment/api" in accounts["ServiceAccount/runner"]["relationships"]
     assert "Bound by RoleBinding/read" in accounts["ServiceAccount/runner"]["relationships"]

@@ -149,6 +149,7 @@ def main(input_path: str, output_path: str):
                             "protocol": port.get("protocol") or "TCP",
                             "service": port.get("name") or container.get("name") or "Port",
                             "declared_by": name,
+                            "namespace": namespace(item),
                             "provenance": "spec.template.spec.containers[].ports[].containerPort",
                         }
                         if source:
@@ -196,6 +197,7 @@ def main(input_path: str, output_path: str):
                 "protocol": port.get("protocol") or "TCP",
                 "service": service_label,
                 "declared_by": service_name,
+                "namespace": namespace(item),
                 "provenance": "spec.ports[].port" + (
                     f" → {', '.join(unique(target_sources))} containers[].ports[].containerPort"
                     if target_sources else " → spec.ports[].targetPort"
