@@ -486,6 +486,7 @@ def plan_digest(plan: dict[str, Any]) -> str:
     rows = [{key: value for key, value in row.items() if key not in {"timestamp", "job_id"}}
             for row in plan.get("configuration_changes", [])]
     content = {"changes": rows, "images": plan.get("images", []), "before": plan.get("before")}
+    content["source_safety"] = plan.get("source_safety", {})
     if plan.get("source_digest"):
         content["source_digest"] = plan["source_digest"]
     return sha256(json.dumps(content, sort_keys=True, default=str).encode()).hexdigest()
@@ -649,6 +650,8 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
     """Materialize changes only when the uploaded source is available and exact."""
     supplied = payload.get("helm_source_files") or payload.get("source_files") or {}
     files = {str(path): str(content) for path, content in supplied.items()} if isinstance(supplied, dict) else {}
+    from .remediation_safety import assert_sources_safe
+    assert_sources_safe(files)
     resources = rendered_resources(payload)
 
     def target_resource(change):
@@ -740,6 +743,7 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
             writes[address] = write
             edit_values(values_file, values_key, "SET", image["candidate"])
     if files:
+        assert_sources_safe(files)
         return files
     if str(payload.get("artifact_type") or "").lower() not in {"kubernetes", "manifest", "raw"}:
         return {}
@@ -750,7 +754,9 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
                                           change.get("new_value", MISSING))
     manifests = [{key: value for key, value in item.items() if not key.startswith("_cats_")}
                  for item in resources]
-    return {"remediated-manifests.yaml": "---\n" + "\n---\n".join(yaml.safe_dump(item, sort_keys=False).strip() for item in manifests) + "\n"}
+    files = {"remediated-manifests.yaml": "---\n" + "\n---\n".join(yaml.safe_dump(item, sort_keys=False).strip() for item in manifests) + "\n"}
+    assert_sources_safe(files)
+    return files
 
 
 def versioned_charts(files: dict[str, str], job_key: str) -> tuple[dict[str, str], list[dict[str, str]]]:

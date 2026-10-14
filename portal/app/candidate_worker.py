@@ -30,6 +30,8 @@ def validate_request(payload: dict) -> None:
         path = PurePosixPath(name)
         if not name or "\\" in name or ":" in name or path.is_absolute() or ".." in path.parts or any(part.startswith(".cats-") for part in path.parts) or not isinstance(content, str):
             raise ValueError("Unsafe candidate source path")
+    from .remediation_safety import assert_sources_safe
+    assert_sources_safe(files)
     checked_values_files(payload.get("helm_values_files", []), files)
 
 
@@ -71,17 +73,19 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
 
     rendered_text = "\n---\n".join(rendered_parts)
     if rendered_text:
+        from .remediation_safety import assert_sources_safe
+        assert_sources_safe({"rendered.yaml": rendered_text})
         try:
             objects = [item for item in yaml.safe_load_all(rendered_text) if isinstance(item, dict) and item.get("kind")]
             checks["yaml_parsing"] = {"status": "PASS" if objects else "FAIL", "detail": f"Parsed {len(objects)} candidate Kubernetes resources."}
-            expected = Counter(plan["before"].get("resource_identities", []))
+            expected = Counter(plan.get("validation_expected_resources", plan["before"].get("resource_identities", [])))
             actual = Counter(resource_identity(item) for item in objects)
             if chart_roots:
                 # Helm's verification release differs from the original scan's
                 # release, so generated names/namespaces can legitimately differ.
                 # Portal also compares baseline and candidate renders under the
                 # same release to prove exact scope; retain multiplicity here.
-                expected = Counter(str(value).split("/")[-2] for value in plan["before"].get("resource_identities", []) if "/" in str(value))
+                expected = Counter(str(value).split("/")[-2] for value in plan.get("validation_expected_resources", plan["before"].get("resource_identities", [])) if "/" in str(value))
                 actual = Counter(str(item.get("kind")) for item in objects)
             from .remediation_sources import verify_rendered_changes
             checks["intended_changes"] = verify_rendered_changes(objects, plan.get("configuration_changes", []))

@@ -129,7 +129,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,
   compliance: Compliance, compliance_frameworks: ComplianceFrameworks, dependency_watchlist: DependencyWatchlist,
-  request_error: ({data}) => <section className="panel padded" role="alert"><h1>Request could not be completed</h1>
+  request_error: ({data}) => <section className="panel padded" role="alert"><h1>{data.title || 'Request could not be completed'}</h1>
     <p>{data.detail}</p><a href={data.home_url || '/'}>Return to CATS</a></section>,
   boozled: ({data}) => <section className="panel padded" role="alert"><h1>Something went wrong</h1>
     <p>Please try again.</p><a href={data.home_url || '/'}>Return to CATS</a></section>,

@@ -68,11 +68,15 @@ from .helm_archives import extract_chart, compressed_limit
 from .runtime_diagnostics import runtime_failure_details
 from .helm_downloads import DownloadedChart, copy_bounded, close_downloads, check_space
 from .auth import (
-    PERMISSIONS, SESSION_COOKIE, AuthContext, hash_password, record_audit,
+    PERMISSIONS, APPLICATION_PERMISSIONS, SESSION_COOKIE, AuthContext, hash_password, record_audit,
     require_permission, require_user, optional_user, seed_auth, token_hash, utcnow as auth_utcnow,
     verify_password, oidc_enabled, oidc_authorization_url, oidc_exchange_code,
     provision_oidc_user, verify_oidc_id_token,
 )
+from .oidc_diagnostics import (correlation_id as oidc_correlation_id, diagnostic as oidc_diagnostic,
+                               failure_reason as oidc_failure_reason, OidcDiagnosticError,
+                               install_access_log_filter)
+install_access_log_filter()
 from .models import (
     ExceptionRecord, Execution, Finding, FindingObservation, PolicyFinding, ServiceVersion,
     PolicyExceptionRecord, Service, Group,
@@ -217,6 +221,10 @@ with migration_transaction(engine) as connection:
         connection.execute(text("ALTER TABLE user_role_assignments ADD COLUMN group_id INTEGER"))
     if "source" not in {column["name"] for column in inspect(connection).get_columns("user_role_assignments") }:
         connection.execute(text("ALTER TABLE user_role_assignments ADD COLUMN source VARCHAR(20) DEFAULT 'local'"))
+    if "oidc_mapping_id" not in {column["name"] for column in inspect(connection).get_columns("user_role_assignments")}:
+        connection.execute(text("ALTER TABLE user_role_assignments ADD COLUMN oidc_mapping_id INTEGER"))
+    if "scope_mode" not in {column["name"] for column in inspect(connection).get_columns("oidc_claim_mappings")}:
+        connection.execute(text("ALTER TABLE oidc_claim_mappings ADD COLUMN scope_mode VARCHAR(30) DEFAULT 'fixed'"))
     if "group_id" not in {column["name"] for column in inspect(connection).get_columns("portal_settings") }:
         connection.execute(text("ALTER TABLE portal_settings ADD COLUMN group_id INTEGER"))
     if "poam_id" not in {column["name"] for column in inspect(connection).get_columns("workflow_requests") }:
@@ -438,6 +446,8 @@ app.include_router(exchange_router)
 app.include_router(service_oci.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
+from .account_management import router as account_router
+app.include_router(account_router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
 # Registered once, inside GZip: it measures uncompressed response bytes (the
@@ -1475,11 +1485,11 @@ def configurations_for_services(
 
 def manageable_groups(db: Session, auth: AuthContext) -> list[Group]:
     groups = db.scalars(select(Group).order_by(Group.name)).all()
-    if any(a.service_id is None and a.group_id is None and a.role.name == "Administrator" for a in auth.user.role_assignments):
+    if any(a.service_id is None and a.group_id is None and a.role.name == "Administrator" for a in auth.effective_assignments):
         return groups
     allowed = {
-        a.group_id for a in auth.user.role_assignments
-        if a.group_id is not None and a.role.name == "Cybersecurity" and "config.manage" in (a.role.permissions or [])
+        a.group_id for a in auth.effective_assignments
+        if a.group_id is not None and a.service_id is None and a.role.name == "Cybersecurity" and "config.manage" in (a.role.permissions or [])
     }
     return [group for group in groups if group.id in allowed]
 
@@ -2519,7 +2529,12 @@ def oidc_login(request: Request, next: str = "/", db: Session = Depends(get_db))
         ca_bundle = configured_ca_bundle(configuration)
         location = oidc_authorization_url(state, nonce, oidc_config, ca_bundle)
     except Exception as exc:
-        raise HTTPException(503, detail=f"OIDC is not configured: {redact(exc)}") from exc
+        context_token = oidc_correlation_id.set(uuid.uuid4().hex)
+        try:
+            event = oidc_diagnostic("configuration", oidc_failure_reason("configuration", exc))
+        finally:
+            oidc_correlation_id.reset(context_token)
+        raise HTTPException(503, detail=f"OIDC sign-in could not start. Reference: {event['correlation_id']}") from None
     response = RedirectResponse(location, status_code=303)
     response.set_cookie("cats_oidc_state", state, httponly=True, secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true", samesite="lax", max_age=600)
     response.set_cookie("cats_oidc_nonce", nonce, httponly=True, secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true", samesite="lax", max_age=600)
@@ -2529,28 +2544,56 @@ def oidc_login(request: Request, next: str = "/", db: Session = Depends(get_db))
 
 @app.get("/auth/oidc/callback")
 def oidc_callback(request: Request, db: Session = Depends(get_db)):
-    if request.query_params.get("state") != request.cookies.get("cats_oidc_state"):
-        raise HTTPException(400, detail="Invalid OIDC state")
-    error = request.query_params.get("error")
-    if error:
-        return RedirectResponse("/login?error=OIDC%20login%20failed", status_code=303)
-    code = request.query_params.get("code", "")
-    if not code:
-        raise HTTPException(400, detail="OIDC callback did not include an authorization code")
+    context_token = oidc_correlation_id.set(uuid.uuid4().hex)
     try:
+        return _oidc_callback(request, db)
+    except Exception as exc:
+        db.rollback()
+        event = oidc_diagnostic("session_creation", oidc_failure_reason("session_creation", exc))
+        return _oidc_failure_response("OIDC login failed", event["correlation_id"])
+    finally:
+        oidc_correlation_id.reset(context_token)
+
+
+def _oidc_callback(request: Request, db: Session):
+    stage = "state_session"
+    try:
+        state = request.query_params.get("state")
+        expected_state = request.cookies.get("cats_oidc_state")
+        if not state or not expected_state or not secrets.compare_digest(state, expected_state):
+            raise OidcDiagnosticError("state_missing_or_mismatched")
+        nonce = request.cookies.get("cats_oidc_nonce")
+        if not nonce:
+            raise OidcDiagnosticError("nonce_cookie_missing")
+        if request.query_params.get("error"):
+            raise OidcDiagnosticError("provider_authorization_denied")
+        code = request.query_params.get("code", "")
+        if not code:
+            raise OidcDiagnosticError("authorization_code_missing")
+        stage = "configuration"
         oidc_config = parse_json(get_global_configuration(db).get("oidc_configuration"), {})
         if isinstance(oidc_config, dict) and oidc_config.get("client_secret"):
             oidc_config["client_secret"] = decrypt_secret(oidc_config["client_secret"])
         configuration = get_global_configuration(db)
         ca_bundle = configured_ca_bundle(configuration)
+        stage = "token_exchange"
         tokens, discovery = oidc_exchange_code(code, oidc_config, ca_bundle)
-        id_claims = verify_oidc_id_token(tokens, discovery, request.cookies.get("cats_oidc_nonce"), oidc_config, ca_bundle)
+        stage = "token_validation"
+        id_claims = verify_oidc_id_token(tokens, discovery, nonce, oidc_config, ca_bundle)
+        stage = "userinfo"
         access_token = tokens.get("access_token")
         if not access_token:
-            raise ValueError("OIDC token response did not include an access token")
-        userinfo_request = urllib.request.Request(discovery["userinfo_endpoint"], headers={"Authorization": f"Bearer {access_token}"})
+            raise OidcDiagnosticError("access_token_missing")
+        # UserInfo is supplementary. Authorization and identity provisioning use
+        # the validated ID token exclusively, including configurable claim paths.
+        claims = dict(id_claims)
+        endpoint = discovery.get("userinfo_endpoint")
         try:
-            if ca_bundle:
+            if not endpoint:
+                oidc_diagnostic(stage, "endpoint_not_advertised", outcome="skipped")
+                userinfo = {"sub": id_claims.get("sub")}
+            elif ca_bundle:
+                userinfo_request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {access_token}"})
                 import ssl
                 context = ssl.create_default_context()
                 if "BEGIN CERTIFICATE" in ca_bundle:
@@ -2560,15 +2603,11 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
                 with urllib.request.urlopen(userinfo_request, timeout=15, context=context) as response:
                     userinfo = json.load(response)
             else:
+                userinfo_request = urllib.request.Request(endpoint, headers={"Authorization": f"Bearer {access_token}"})
                 with urllib.request.urlopen(userinfo_request, timeout=15) as response:
                     userinfo = json.load(response)
             if not isinstance(userinfo, dict) or userinfo.get("sub") != id_claims.get("sub"):
-                raise ValueError("OIDC UserInfo subject does not match the validated ID token")
-            # Authorization claims must come from the validated ID token.
-            claims = dict(id_claims)
-            for display_claim in ("name", "email", "preferred_username"):
-                if display_claim not in claims and isinstance(userinfo.get(display_claim), str):
-                    claims[display_claim] = userinfo[display_claim]
+                raise OidcDiagnosticError("userinfo_subject_mismatch")
         except urllib.error.HTTPError as exc:
             if exc.code == 401:
                 # UserInfo is supplementary. The ID token has already been
@@ -2576,22 +2615,26 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
                 # claims are a safe fallback for providers that do not permit
                 # this client to call UserInfo.
                 claims = id_claims
+                oidc_diagnostic(stage, "userinfo_not_authorized_using_id_token", outcome="fallback")
             else:
-                raise ValueError(f"OIDC user-info endpoint returned HTTP {exc.code}") from exc
+                raise
+        stage = "account_provisioning"
         user = provision_oidc_user(db, claims, oidc_config)
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        # Never reflect provider responses, token payloads, or configuration
-        # values into the browser.  They may contain credentials or claims.
-        return RedirectResponse("/login?error=OIDC%20login%20failed", status_code=303)
+        event = oidc_diagnostic(stage, oidc_failure_reason(stage, exc))
+        # Safe diagnostics also appear in the existing administrator audit UI.
+        try:
+            record_audit(db, None, "auth.oidc_failed", "authentication", **event)
+            db.commit()
+        except Exception:
+            db.rollback()  # Log diagnostics remain available if the database failed.
+        return _oidc_failure_response("OIDC login failed", event["correlation_id"])
     if not user.enabled:
-        record_audit(db, AuthContext(user, None), "auth.oidc_denied_disabled", "user", user.id)
+        event = oidc_diagnostic("account_status", "account_disabled")
+        record_audit(db, AuthContext(user, None), "auth.oidc_denied_disabled", "user", user.id, **event)
         db.commit()
-        response = RedirectResponse("/login?error=CATS%20account%20is%20disabled", status_code=303)
-        response.delete_cookie("cats_oidc_state")
-        response.delete_cookie("cats_oidc_nonce")
-        response.delete_cookie("cats_oidc_next")
-        return response
+        return _oidc_failure_response("CATS account is disabled", event["correlation_id"])
     now = utcnow()
     user.last_login_at = now
     raw_token = secrets.token_urlsafe(48)
@@ -2599,14 +2642,40 @@ def oidc_callback(request: Request, db: Session = Depends(get_db)):
                           expires_at=now + timedelta(hours=int(os.getenv("SESSION_HOURS", "8"))),
                           user_agent=request.headers.get("user-agent"), source_ip=request.client.host if request.client else None)
     db.add(session)
-    record_audit(db, AuthContext(user, session), "auth.oidc_login", "user", user.id)
+    auth_context = AuthContext(user, session)
+    has_access = any(auth_context.has(permission) or bool(auth_context.accessible_service_ids(permission))
+                     for permission in PERMISSIONS)
+    event = oidc_diagnostic("authorization", "access_assigned" if has_access else "no_assigned_access", outcome="success")
+    record_audit(db, auth_context, "auth.oidc_login", "user", user.id, **event)
     db.commit()
-    response = RedirectResponse(request.cookies.get("cats_oidc_next", "/"), status_code=303)
+    next_path = request.cookies.get("cats_oidc_next", "/")
+    if not next_path.startswith("/") or next_path.startswith("//") or "\\" in next_path:
+        next_path = "/"
+    response = RedirectResponse(next_path if has_access else "/account/access", status_code=303)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
     response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="strict", secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true", max_age=int(os.getenv("SESSION_HOURS", "8")) * 3600)
     response.delete_cookie("cats_oidc_state")
     response.delete_cookie("cats_oidc_nonce")
     response.delete_cookie("cats_oidc_next")
     return response
+
+
+def _oidc_failure_response(message, reference):
+    response = RedirectResponse("/login?" + urllib.parse.urlencode({"error": message + ". Reference: " + reference}), status_code=303)
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    for cookie in ("cats_oidc_state", "cats_oidc_nonce", "cats_oidc_next"):
+        response.delete_cookie(cookie)
+    return response
+
+
+@app.get("/account/access")
+def account_access(request: Request, auth: AuthContext = Depends(require_user)):
+    return templates.TemplateResponse(request, "request_error.html", {
+        "auth": auth, "title": "Signed in successfully",
+        "detail": "Your identity was verified, but no CATS access is assigned. Ask a CATS administrator to review your role eligibility and service or group assignments. Existing sessions receive scope updates on their next request.",
+    }, headers={"Cache-Control": "no-store"})
 
 
 @app.post("/login")
@@ -2623,7 +2692,9 @@ def login(
             "oidc_available": True, "local_available": False,
             "oidc_provider_name": configured_oidc(configuration).get("provider_name") or "OIDC",
         }, status_code=403)
-    valid = bool(user and user.enabled and (not user.locked_until or aware(user.locked_until) <= now))
+    from .account_models import AccountRetirement
+    valid = bool(user and user.enabled and not db.get(AccountRetirement, user.id)
+                 and (not user.locked_until or aware(user.locked_until) <= now))
     valid = valid and verify_password(password, user.password_hash)
     if not valid:
         if user and user.enabled:
@@ -5379,82 +5450,9 @@ def _candidate_workload_images(resources: list[dict]) -> set[str]:
     return images
 
 
-_TEMPLATE_SOURCE_SUFFIXES = (".yaml", ".yml", ".tpl")
-
-
-def _secret_document_has_literal_data(document: str) -> bool:
-    """True when a Kubernetes Secret document carries literal (non-templated) data.
-
-    Helm charts commonly template Secrets whose values come from ``.Values`` or
-    ``lookup`` at install time; such templates contain no secret material and
-    remain transferable. Any literal value under ``data``/``stringData`` (including
-    block scalars) is treated as secret material and refused.
-    """
-    lines = document.splitlines()
-    index = 0
-    while index < len(lines):
-        match = re.match(r"^(\s*)(data|stringData):\s*(.*?)\s*$", lines[index])
-        index += 1
-        if not match:
-            continue
-        indent, inline = len(match.group(1)), match.group(3)
-        if inline and not inline.startswith(("{{", "#")) and inline not in {"{}", "null", "~"}:
-            return True
-        while index < len(lines):
-            line = lines[index]
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("{{"):
-                index += 1
-                continue
-            if len(line) - len(line.lstrip()) <= indent:
-                break
-            key, separator, value = stripped.partition(":")
-            value = value.strip()
-            if separator and value and "{{" not in value and value not in {'""', "''", "null", "~"}:
-                # Block scalars (| or >) hold literal content unless every following line is templated.
-                if value[0] in "|>":
-                    block_indent = len(line) - len(line.lstrip())
-                    block = []
-                    index += 1
-                    while index < len(lines) and (not lines[index].strip() or len(lines[index]) - len(lines[index].lstrip()) > block_indent):
-                        if lines[index].strip():
-                            block.append(lines[index].strip())
-                        index += 1
-                    if any("{{" not in item for item in block):
-                        return True
-                    continue
-                return True
-            index += 1
-    return False
-
-
 def _assert_bundle_sources_safe(files: dict[str, str]) -> None:
-    """Refuse a transferable bundle when retained source may contain secrets.
-
-    Literal secret material is refused: private keys, credential/env files,
-    Secrets with literal data, and secret-named keys with literal values. A Helm
-    template that only declares a Secret populated from values at install time is
-    not secret material and is allowed.
-    """
-    sensitive_keys = {"password", "token", "clientsecret", "apikey", "privatekey", "credential", "secretkey", "secretaccesskey"}
-    for path, content in files.items():
-        normalized_path = path.replace("\\", "/").lower()
-        parts = normalized_path.split("/")
-        templated_source = normalized_path.endswith(_TEMPLATE_SOURCE_SUFFIXES)
-        if any(part == ".env" or part.startswith(".env.") for part in parts) or (
-                not templated_source and any("secret" in part or "credential" in part for part in parts)):
-            raise ValueError("Bundle source contains a secret-bearing file")
-        if re.search(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----", content):
-            raise ValueError("Bundle source contains a private key")
-        for document in re.split(r"(?m)^---\s*$", content):
-            if re.search(r"(?im)^\s*kind:\s*Secret\s*$", document) and _secret_document_has_literal_data(document):
-                raise ValueError("Bundle source contains a Kubernetes Secret with literal data")
-        for line in content.splitlines():
-            key, separator, value = line.partition(":")
-            if separator and key.strip().lower().replace("_", "") in sensitive_keys:
-                actual = value.strip().strip("\"'")
-                if actual and actual.lower() not in {"null", "none"} and not actual.startswith("{{"):
-                    raise ValueError("Bundle source contains a secret-like value")
+    from .remediation_safety import assert_sources_safe
+    assert_sources_safe(files)
 
 
 def _publish_remediation_charts(db: Session, packaged_charts: list[tuple[Path, dict]]) -> None:
@@ -5505,6 +5503,8 @@ def _publish_remediation_charts(db: Session, packaged_charts: list[tuple[Path, d
                     return
             for archive, chart in packaged_charts:
                 try:
+                    from .remediation_safety import assert_chart_archive_safe
+                    assert_chart_archive_safe(archive.read_bytes())
                     push = subprocess.run([helm_binary, "push", str(archive), target], env=environment,
                         capture_output=True, text=True, timeout=300, check=False)
                     if push.returncode:
@@ -5559,6 +5559,8 @@ def _run_remediation_job(record_id: int) -> None:
                 for _, score in [risk_metadata(finding.cve)]
                 if any(item.execution_id == execution.id for item in finding.observations) and score is not None), default=None)
             _remediation_stage(record, "snapshot", "success")
+            from .remediation_safety import approved_payload
+            payload = approved_payload(payload, plan.get("source_safety", {}), inputs.get("excluded_charts", []))
             plan["_source_files"] = payload.get("helm_source_files") or payload.get("source_files") or {}
             _assert_bundle_sources_safe(plan["_source_files"])
             _remediation_stage(record, "patch_images", "running")
@@ -5644,6 +5646,9 @@ def _run_remediation_job(record_id: int) -> None:
                 for name in (("helm_lint", "helm_template") if any(name.endswith("Chart.yaml") for name in baseline_files) else ("yaml_parsing",)))
             baseline_resources = [item for item in yaml.safe_load_all(baseline_result["rendered"]) if isinstance(item, dict) and item.get("kind")]
             (baseline_dir / ".cats-rendered.yaml").write_text(baseline_result["rendered"], encoding="utf-8")
+            if plan.get("source_safety", {}).get("partial"):
+                from .remediation import resource_identity
+                plan["validation_expected_resources"] = [resource_identity(item) for item in baseline_resources]
             validation = _validate_materialized_candidate(candidate_dir, payload, plan, static_validation(payload, plan))
             rendered_path = candidate_dir / ".cats-rendered.yaml"
             rendered = []
@@ -5733,6 +5738,8 @@ def _run_remediation_job(record_id: int) -> None:
             for change, evidence in zip(plan["configuration_changes"], summary["configuration_decisions"]):
                 change["post_scan_result"] = evidence["post_scan_result"]
             record.configuration_changes = plan["configuration_changes"]
+            summary["source_safety"] = plan.get("source_safety", {})
+            summary["completion_scope"] = "partial" if plan.get("source_safety", {}).get("partial") else "complete_source"
             summary_documents = remediation_summary_artifacts(summary, original_files, files)
             validation["summary_of_changes"] = summary
             record.validation_results = validation
@@ -5746,6 +5753,7 @@ def _run_remediation_job(record_id: int) -> None:
                 if sum(path.stat().st_size for path in bundle_sources if path.is_file()) > 8 * 1024 ** 3:
                     raise ValueError("Remediation bundle exceeds the transfer size limit")
             with ZipFile(artifact, "w", ZIP_DEFLATED) as bundle:
+                bundle.writestr("source-safety.json", json.dumps(plan.get("source_safety", {}), indent=2))
                 for document_path, document_content in summary_documents.items():
                     bundle.writestr(document_path, document_content)
                 candidate_manifest = {
@@ -5839,6 +5847,8 @@ def _run_remediation_job(record_id: int) -> None:
                 bundle.writestr("manifest.json", json.dumps(candidate_manifest, indent=2))
             # Retain the completed artifact before subsequent bookkeeping can fail.
             record.artifact_path = str(artifact)
+            from .remediation_safety import assert_candidate_safe
+            assert_candidate_safe(artifact)
             with artifact.open("rb") as artifact_stream:
                 record.artifact_digest = "sha256:" + hashlib.file_digest(artifact_stream, "sha256").hexdigest()
             record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
@@ -5899,9 +5909,12 @@ def _run_remediation_job(record_id: int) -> None:
             else:
                 record.status = "validation_blocked"
                 record.failure_reason = "Blocking static validation defect; retained candidate requires correction"
+            if plan.get("source_safety", {}).get("partial"):
+                record.status = "bundle_partial"
+                record.logs = [*record.logs, "Partial candidate: explicitly excluded charts are listed in source-safety.json; original assessment evidence is unchanged."]
             record.phase = "complete" if record.status != "failed" else "failed"
             record.remediation_status = ("failed" if record.status in {"failed", "not_remediable"} else
-                                         "partial" if review or unresolved_images or not evidence_complete or validation["status"] == "BLOCKING" or any(value != "PASS" for value in scan_statuses) else "complete")
+                                         "partial" if plan.get("source_safety", {}).get("partial") or review or unresolved_images or not evidence_complete or validation["status"] == "BLOCKING" or any(value != "PASS" for value in scan_statuses) else "complete")
             publication_results = [chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings]
             publication_results.extend(bool(image.get("candidate")) and bool(image.get("digest"))
                                        for image in plan["images"])
@@ -6280,10 +6293,6 @@ def _retained_remediation_plan(db, service, execution, finding_type=None, findin
         if finding_type == "vulnerability" and not db.scalar(select(FindingObservation.id).where(
                 FindingObservation.finding_id == finding_id, FindingObservation.execution_id == execution.id).limit(1)):
             raise HTTPException(422, "The selected finding is absent from the retained assessment")
-    try:
-        _assert_bundle_sources_safe(payload.get("helm_source_files") or payload.get("source_files") or {})
-    except ValueError:
-        raise HTTPException(422, "Retained source contains unsupported secret material") from None
     plan = build_plan(payload, findings, job_key)
     observations = db.execute(select(FindingObservation.image, FindingObservation.image_digest)
         .join(Finding).where(Finding.service_id == service.id, FindingObservation.execution_id == execution.id)
@@ -6304,6 +6313,8 @@ def _retained_remediation_plan(db, service, execution, finding_type=None, findin
         "source_version_id": execution.service_version_id,
         "observed_images": [list(item) for item in observations],
     }, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
+    from .remediation_safety import protect_plan
+    protect_plan(plan, payload.get("helm_source_files") or payload.get("source_files") or {})
     return payload, plan
 
 
@@ -6316,7 +6327,7 @@ def _public_remediation_plan(db, execution, plan):
     charts = [{"path": str(path)} for path in files if str(path).replace("\\", "/").endswith("Chart.yaml")] if isinstance(files, dict) else []
     return _redact({"source_execution_id": execution.id,
         "source_version": version.version if version else execution.commit_sha or execution.execution_key,
-        "images": plan.get("images", []), "charts": charts,
+        "images": plan.get("images", []), "charts": charts, "source_safety": plan.get("source_safety", {}),
         "configuration_changes": plan.get("configuration_changes", []), "before": plan.get("before", {}),
         "manual_review": [row for row in plan.get("configuration_changes", []) if row.get("classification") != "AUTO-REMEDIABLE"]})
 
@@ -6352,7 +6363,7 @@ def remediation_plan(service_key: str, db: Session = Depends(get_db),
 @app.post("/services/{service_key}/remediations/start")
 def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mode: str = Form(),
     decisions: str = Form("{}"), plan_digest: str = Form(), source_execution_id: int = Form(),
-    confirmed: str = Form("no"), submission_key: str = Form(""),
+    confirmed: str = Form("no"), submission_key: str = Form(""), excluded_charts: str = Form("[]"),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True)),
     finding_type: str | None = Form(None), finding_id: int | None = Form(None)):
     check_csrf(auth, csrf_token)
@@ -6364,7 +6375,10 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
     try:
         submission_key = str(uuid.UUID(submission_key))
         choices = json.loads(decisions)
-        submission_digest = hashlib.sha256(json.dumps([source_execution_id, plan_digest, remediation_mode, choices, finding_type, finding_id], sort_keys=True).encode()).hexdigest()
+        exclusions = json.loads(excluded_charts) if isinstance(excluded_charts, str) else []
+        if not isinstance(exclusions, list) or any(not isinstance(item, str) for item in exclusions):
+            raise ValueError("Invalid exclusions")
+        submission_digest = hashlib.sha256(json.dumps([source_execution_id, plan_digest, remediation_mode, choices, finding_type, finding_id, exclusions], sort_keys=True).encode()).hexdigest()
     except (ValueError, TypeError, AttributeError):
         raise HTTPException(422, "Invalid confirmation key or remediation decisions") from None
     service = db.scalar(select(Service).where(Service.service_key == service_key))
@@ -6377,13 +6391,16 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
     execution, plan = _source_remediation_plan(db, service, finding_type, finding_id)
     if execution.id != source_execution_id or not secrets.compare_digest(plan_digest.encode(), globals()["plan_digest"](plan).encode()):
         raise HTTPException(409, "The source plan changed; rebuild it before executing")
+    if sorted(exclusions) != sorted(plan.get("source_safety", {}).get("blocked_charts", [])):
+        raise HTTPException(422, {"code": "source_review_required", "source_safety": plan.get("source_safety", {}),
+            "message": "Explicitly confirm the listed chart exclusions for partial remediation, or repair and reassess source."})
     try:
         approved = resolve_decisions(plan, remediation_mode, choices, auth.user.id)
     except (ValueError, TypeError):
         raise HTTPException(422, "Invalid or incomplete remediation decisions") from None
     public_plan = _public_remediation_plan(db, execution, approved)
     inputs = {"remediation_mode": remediation_mode, "decisions": choices, "source_execution_id": source_execution_id,
-              "plan_digest": plan_digest, "workflow_version": 2, **replay_inputs,
+              "plan_digest": plan_digest, "workflow_version": 2, "excluded_charts": exclusions, **replay_inputs,
               "confirmed_by": auth.user.id, "confirmed_at": utcnow().isoformat(), "approved_plan": public_plan,
               "service": {"id": service.service_key, "version": public_plan["source_version"]}}
     with _REMEDIATION_CONFIRMATION_LOCK:
@@ -6502,6 +6519,8 @@ def _run_bundle_delivery(db, record, attempt):
             result, path = remediation_bundles.assemble(record, REMEDIATION_JOB_ROOT, attempt.id, mode, version.version,
                                                        configuration=material, documentation_builder=documentation_builder)
         attempt.artifact_path = path
+        from .remediation_safety import assert_candidate_safe
+        assert_candidate_safe(path)
         attempt.result = {**(attempt.result or {}), **result, "delivery_mode": mode, "verification_requested": True}
         request = {"schema_version": "cats.validation/v2", "request_id": uuid.uuid4().hex, "validation_type": mode,
                    "service": {"id": record.service.service_key, "version": version.version},
@@ -6799,6 +6818,11 @@ def remediation_delivery_bundle(service_key: str, job_key: str, attempt_id: int,
             or (mode == "offline-bundle" and evidence.get("offlineVerified") is not True)
             or not secrets.compare_digest(file_digest(path), digest)):
         raise HTTPException(409, "Final delivery integrity check failed")
+    from .remediation_safety import assert_candidate_safe
+    try:
+        assert_candidate_safe(path)
+    except ValueError:
+        raise HTTPException(409, "Final delivery source requires secret review") from None
     return FileResponse(path, media_type="application/zip", filename=f"cats-{service_key}-{job_key}-{attempt.destination.get('validation_type', 'delivery')}.zip")
 
 
@@ -10242,8 +10266,15 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
     for user in users:
         assignments = []
         permissions = set()
+        user_auth = AuthContext(user, auth.session)
+        effective = user_auth.effective_assignments
         for assignment in user.role_assignments:
-            permissions.update(assignment.role.permissions or [])
+            active = assignment in effective
+            assignment_permissions = [p for p in (assignment.role.permissions or [])
+                                      if (assignment.service_id is None and assignment.group_id is None)
+                                      or p not in APPLICATION_PERMISSIONS]
+            if active:
+                permissions.update(assignment_permissions)
             assignments.append({
                 "role": assignment.role.name,
                 "group": assignment.group.name if assignment.group else "Global",
@@ -10251,8 +10282,16 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
                     "All services in group" if assignment.group else "All services"
                 ),
                 "id": assignment.id,
+                "source": assignment.source,
+                "active": active,
+                "permissions": assignment_permissions if active else [],
             })
-        user_rows.append({"user": user, "assignments": assignments, "permissions": sorted(permissions)})
+        eligible_roles = [{"role": entry.mapping.role.name, "mapping_id": entry.mapping_id,
+                           "active": entry.mapping.enabled, "mode": entry.mapping.scope_mode}
+                          for entry in user.oidc_eligibilities if entry.mapping]
+        user_rows.append({"user": user, "assignments": assignments, "permissions": sorted(permissions),
+                          "eligibility": eligible_roles,
+                          "application_permissions": [p for p in PERMISSIONS if user_auth.has(p)]})
     return templates.TemplateResponse(request, "admin.html", page_context(
         auth, users=users, user_rows=user_rows, roles=roles, services=services, groups=groups,
         group_summaries=group_summaries, permission_catalog=PERMISSIONS, stage_groups=stage_groups,
@@ -10826,7 +10865,7 @@ def save_oidc_claim_mapping(
     csrf_token: str = Form(), mapping_id: int = Form(default=0), action: str = Form(default="save"),
     claim_path: str = Form(default=""), expected_value: str = Form(default=""),
     role_id: int = Form(default=0), scope: str = Form(default=""), scope_id: int = Form(default=0),
-    enabled: bool = Form(default=False), db: Session = Depends(get_db),
+    enabled: bool = Form(default=False), preview_token: str = Form(default=""), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_global_config_scope),
 ):
     check_csrf(auth, csrf_token)
@@ -10836,9 +10875,12 @@ def save_oidc_claim_mapping(
     if action == "delete":
         if mapping is None:
             raise HTTPException(404, detail="OIDC mapping not found")
+        from .managed_scope import retire_mapping_projection
+        retire_mapping_projection(db, mapping)
+        db.flush()
         db.delete(mapping)
         record_audit(db, auth, "oidc.mapping_deleted", "oidc_mapping", mapping_id)
-    elif action == "save":
+    elif action in {"save", "preview"}:
         claim_path = claim_path.strip()
         expected_value = expected_value.strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*", claim_path) or len(claim_path) > 240:
@@ -10847,19 +10889,35 @@ def save_oidc_claim_mapping(
             raise HTTPException(422, detail="Expected claim value is required")
         if not db.get(Role, role_id):
             raise HTTPException(422, detail="Mapped CATS role does not exist")
-        if scope == "global":
+        if scope in {"global", "cats_managed"}:
             service_id = group_id = None
         elif scope == "service" and db.get(Service, scope_id):
             service_id, group_id = scope_id, None
         elif scope == "group" and db.get(Group, scope_id):
             service_id, group_id = None, scope_id
         else:
-            raise HTTPException(422, detail="A valid global, service, or group scope is required")
+            raise HTTPException(422, detail="A valid CATS-managed, global, service, or group scope is required")
+        proposed = dict(claim_path=claim_path, expected_value=expected_value, role_id=role_id,
+                        scope_mode="cats_managed" if scope == "cats_managed" else "fixed",
+                        global_scope=scope == "global", service_id=service_id, group_id=group_id, enabled=enabled)
+        if mapping is not None:
+            from .managed_scope import mapping_preview, retire_mapping_projection
+            preview = mapping_preview(db, mapping, proposed)
+            if action == "preview":
+                return JSONResponse(preview, headers={"Cache-Control": "no-store"})
+            if preview_token != preview["token"]:
+                raise HTTPException(409, detail="Preview the resulting access before saving this mapping; access may have changed")
+            preserve = ((mapping.claim_path, mapping.expected_value, mapping.role_id) == (claim_path, expected_value, role_id)
+                        and scope == "cats_managed" and enabled)
+            retire_mapping_projection(db, mapping, preserve_eligibility=preserve)
+        elif action == "preview":
+            return JSONResponse({"token": "", "users": [], "note": "New mapping: claims are synchronized on the next OIDC login. CATS-managed roles without assigned scope grant no access."})
         if mapping is None:
             mapping = OidcClaimMapping()
             db.add(mapping)
         mapping.claim_path, mapping.expected_value, mapping.role_id = claim_path, expected_value, role_id
         mapping.global_scope, mapping.service_id, mapping.group_id = scope == "global", service_id, group_id
+        mapping.scope_mode = proposed["scope_mode"]
         mapping.enabled = enabled
         db.flush()
         record_audit(db, auth, "oidc.mapping_saved", "oidc_mapping", mapping.id,
@@ -11484,6 +11542,7 @@ def create_role(
 def assign_role(
     user_id: int = Form(), role_id: int = Form(), service_ids: list[int] = Form(default=[]),
     service_id: str = Form(default=""), group_id: str = Form(default=""),
+    assignment_mode: str = Form(default="local"), explicit_global: bool = Form(default=False),
     csrf_token: str = Form(), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("role.manage")),
 ):
@@ -11491,10 +11550,19 @@ def assign_role(
     user, role = db.get(User, user_id), db.get(Role, role_id)
     if not user or not role:
         raise HTTPException(404)
+    if assignment_mode not in {"local", "cats_scope"}:
+        raise HTTPException(422, detail="Unknown assignment mode")
+    if assignment_mode == "cats_scope" and not db.scalar(select(OidcClaimMapping.id).where(
+            OidcClaimMapping.role_id == role_id, OidcClaimMapping.scope_mode == "cats_managed")):
+        raise HTTPException(422, detail="Configure a CATS-managed scope mapping for this role first")
     selected_service_ids = list(dict.fromkeys(service_ids))
     if not selected_service_ids and service_id:
         selected_service_ids = [int(service_id)]
     group_scope = int(group_id) if group_id else None
+    if any(not db.get(Service, selected_id) for selected_id in selected_service_ids) or (group_scope is not None and not db.get(Group, group_scope)):
+        raise HTTPException(422, detail="The selected scope does not exist")
+    if assignment_mode == "cats_scope" and not selected_service_ids and group_scope is None and not explicit_global:
+        raise HTTPException(422, detail="Select services or a group, or explicitly approve global access")
     if selected_service_ids and group_scope is not None:
         if role.name != "Service Manager":
             raise HTTPException(422, detail="Only Service Manager assignments may combine group and service scope")
@@ -11511,12 +11579,14 @@ def assign_role(
                 UserRoleAssignment.service_id == scope,
                 UserRoleAssignment.group_id == group_scope,
             ))
+            if exists and exists.source != assignment_mode:
+                raise HTTPException(409, detail="This role and scope already have another grant source; remove it explicitly before changing its source")
             if not exists:
-                assignment = UserRoleAssignment(user_id=user_id, role_id=role_id, service_id=scope, group_id=group_scope)
+                assignment = UserRoleAssignment(user_id=user_id, role_id=role_id, service_id=scope, group_id=group_scope, source=assignment_mode)
                 db.add(assignment)
                 db.flush()
                 record_audit(db, auth, "role.assigned", "user_role_assignment", assignment.id,
-                             user_id=user_id, role_id=role_id, service_id=scope, group_id=group_scope)
+                             user_id=user_id, role_id=role_id, service_id=scope, group_id=group_scope, source=assignment_mode)
         db.commit()
     except IntegrityError as exc:
         db.rollback()
@@ -11551,6 +11621,9 @@ def toggle_user(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404)
+    from .account_models import AccountRetirement
+    if db.get(AccountRetirement, user.id):
+        raise HTTPException(409, detail="Retired accounts cannot be reactivated")
     if user.id == auth.user.id:
         raise HTTPException(409, detail="You cannot disable your own account")
     user.enabled = not user.enabled
@@ -11570,6 +11643,9 @@ def reset_user_password(
     user = db.get(User, user_id)
     if not user or user.auth_source != "local":
         raise HTTPException(404)
+    from .account_models import AccountRetirement
+    if db.get(AccountRetirement, user.id):
+        raise HTTPException(409, detail="Retired accounts cannot authenticate")
     try:
         user.password_hash = hash_password(temporary_password)
     except ValueError as exc:
@@ -11594,6 +11670,12 @@ def delete_user_account(
     user = db.get(User, user_id)
     if not user:
         raise HTTPException(404, detail="User account not found")
+    from .account_models import AccountRetirement, OidcAccountIdentity
+    if db.scalar(select(AccountRetirement).where(or_(AccountRetirement.user_id == user.id,
+            AccountRetirement.survivor_id == user.id, AccountRetirement.administrator_id == user.id))):
+        raise HTTPException(409, detail="Accounts referenced by a merge must be retained for historical attribution")
+    if db.scalar(select(OidcAccountIdentity).where(OidcAccountIdentity.user_id == user.id)):
+        raise HTTPException(409, detail="Linked accounts must be disabled rather than deleted to preserve identity ownership")
     # Never remove the last global Administrator/break-glass account.
     administrator = db.scalar(select(Role).where(Role.name == "Administrator"))
     if administrator:

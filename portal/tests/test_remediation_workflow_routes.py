@@ -1,6 +1,7 @@
 import hashlib
 import json
 import uuid
+from zipfile import ZipFile
 from types import SimpleNamespace
 import pytest
 from app import candidate_worker
@@ -78,10 +79,17 @@ def start(workflow, **override):
     return main.start_remediation(**args)
 
 
+def safe_archive(path, label='retained content'):
+    with ZipFile(path, 'w') as archive:
+        archive.writestr('candidate/Chart.yaml', 'apiVersion: v2\nname: demo\nversion: 1.0.0\n')
+        archive.writestr('candidate/values.yaml', 'replicas: 1\n')
+        archive.writestr('README.txt', label)
+
+
 def candidate(workflow):
     from app.models import ServiceVersion
     db, service, execution, auth, _, root = workflow
-    path = root / 'R1' / 'candidate.zip'; path.parent.mkdir(); path.write_bytes(b'retained content')
+    path = root / 'R1' / 'candidate.zip'; path.parent.mkdir(); safe_archive(path)
     version = ServiceVersion(service_id=service.id, version='source-version')
     db.add(version); db.flush()
     row = RemediationExecution(job_key='R1', service_id=service.id, requested_by_id=auth.user.id,
@@ -288,7 +296,7 @@ def test_final_bundle_worker_validates_exact_bytes_and_releases_only_verified(wo
     attempt = main._queue_delivery(db, row, auth.user.id, mode)
     assert attempt.status == 'queued' and submitted[-1] == (main._run_delivery_attempt, attempt.id)
     final = root / row.job_key / f'delivery-{attempt.id}.zip'
-    final.write_bytes(b'exact final delivery')
+    safe_archive(final, 'exact final delivery')
     identity = {'id': service.service_key, 'version': version.version}
     result = {'materialized_digest': file_digest(final), 'validation_type': mode, 'service': identity}
     monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration, documentation_builder=None: (result, str(final)))
@@ -327,7 +335,7 @@ def test_final_bundle_missing_validator_fails_closed_preserving_evidence(workflo
     db.add(version); db.flush(); row.source_version_id = version.id; db.commit()
     attempt = main._queue_delivery(db, row, auth.user.id, 'standard-bundle')
     final = root / row.job_key / f'delivery-{attempt.id}.zip'
-    final.write_bytes(b'final')
+    safe_archive(final, 'final')
     monkeypatch.setattr(remediation_bundles, 'assemble', lambda *args, configuration, documentation_builder=None: ({'materialized_digest': file_digest(final)}, str(final)))
     monkeypatch.setattr(validator_client, 'validate', lambda *args, **kwargs: (_ for _ in ()).throw(ValueError('missing config')))
     main._run_delivery_attempt(attempt.id)
@@ -569,7 +577,7 @@ def _release_worker_io(workflow, monkeypatch):
     def deliver(record, destination, attempt_id, delivery_root, signing_material=None, checkpoint=None):
         state['deliveries'].append(attempt_id)
         output = delivery_root / record.job_key / f'delivery-{attempt_id}.zip'
-        output.write_bytes(b'materialized deployment bytes')
+        safe_archive(output, 'materialized deployment bytes')
         checkpoint({'artifact_identities': identities[:1]})
         return {'artifact_identities': identities, 'materialized_digest': 'sha256:' + hashlib.sha256(output.read_bytes()).hexdigest(),
                 'signing_status': 'not_requested', 'values_files': [], 'values_embedded': True}, str(output)

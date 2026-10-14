@@ -112,7 +112,7 @@ def test_callback_errors_do_not_disclose_provider_details(monkeypatch, provider_
     secret = "secret-provider-detail"
     query = "state=valid&" + ("error=" + secret if provider_error else "code=code")
     request = Request({"type": "http", "method": "GET", "path": "/auth/oidc/callback",
-        "query_string": query.encode(), "headers": [(b"cookie", b"cats_oidc_state=valid")]})
+        "query_string": query.encode(), "headers": [(b"cookie", b"cats_oidc_state=valid; cats_oidc_nonce=nonce")]})
     monkeypatch.setattr(main, "get_global_configuration", lambda db: {})
     def fail_exchange(*args):
         raise ValueError(secret)
@@ -120,9 +120,9 @@ def test_callback_errors_do_not_disclose_provider_details(monkeypatch, provider_
     db = Mock()
     response = main.oidc_callback(request, db)
     assert response.status_code == 303
-    assert response.headers["location"] == "/login?error=OIDC%20login%20failed"
+    assert response.headers["location"].startswith("/login?error=OIDC+login+failed.+Reference%3A+")
     assert secret not in response.headers["location"]
-    db.add.assert_not_called()
+    assert db.add.call_args.args[0].action == "auth.oidc_failed"
 
 def test_callback_state_still_verified():
     from app import main
@@ -131,6 +131,6 @@ def test_callback_state_still_verified():
     from unittest.mock import Mock
     request = Request({"type": "http", "method": "GET", "path": "/auth/oidc/callback",
         "query_string": b"state=wrong&code=code", "headers": [(b"cookie", b"cats_oidc_state=valid")]})
-    with pytest.raises(HTTPException) as error:
-        main.oidc_callback(request, Mock())
-    assert error.value.status_code == 400
+    response = main.oidc_callback(request, Mock())
+    assert response.status_code == 303
+    assert "Reference" in response.headers["location"]

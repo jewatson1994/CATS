@@ -1,6 +1,7 @@
 """Regression checks for candidate provenance and retained artifact integrity."""
 from datetime import datetime, timedelta, timezone
 import hashlib
+from zipfile import ZipFile
 
 from sqlalchemy import select
 
@@ -46,7 +47,8 @@ def test_candidate_download_rejects_changed_retained_artifact(tmp_path, monkeypa
     output = tmp_path / job_key
     output.mkdir()
     artifact = output / "remediation-candidate.zip"
-    artifact.write_bytes(b"original candidate")
+    with ZipFile(artifact, 'w') as archive:
+        archive.writestr('candidate/values.yaml', 'replicas: 1\n')
     digest = "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest()
     with SessionLocal() as db:
         service = db.scalar(select(Service))

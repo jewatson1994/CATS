@@ -30,7 +30,9 @@ def project_admin(data, name, context, can=None, formatters=None):
             projected["is_self"] = _field(user, "id") == _field(context.get("current_user"), "id")
             projected["last_login_at"] = _formatted(_field(user, "last_login_at"), formatters.get("cats_datetime"))
             data["user_rows"].append({"user": projected,
-                "assignments": [_fields(item, ("id", "role", "group", "service")) for item in _field(row, "assignments", [])],
+                "assignments": [_fields(item, ("id", "role", "group", "service", "source", "active", "permissions")) for item in _field(row, "assignments", [])],
+                "eligibility": [_fields(item, ("role", "mapping_id", "active", "mode")) for item in _field(row, "eligibility", [])],
+                "application_permissions": strings(_field(row, "application_permissions", [])),
                 "permissions": [key for key in _field(row, "permissions", []) if key in catalog]})
     elif name == "audit.html":
         data.update(_fields(context, ("page", "page_size", "page_count", "pagination_base")))
@@ -82,7 +84,7 @@ def project_admin(data, name, context, can=None, formatters=None):
             data[key] = rows(key, fields)
         data["oidc_mappings"] = []
         for mapping in context.get("oidc_mappings", []):
-            projected = _fields(mapping, ("id", "claim_path", "expected_value", "role_id", "service_id", "group_id", "global_scope", "enabled"))
+            projected = _fields(mapping, ("id", "claim_path", "expected_value", "role_id", "service_id", "group_id", "global_scope", "scope_mode", "enabled"))
             for key in ("role", "service", "group"):
                 projected[key] = _fields(_field(mapping, key), ("id", "name")) if _field(mapping, key) else None
             data["oidc_mappings"].append(projected)

@@ -174,3 +174,13 @@ def test_response_size_limit_is_actionable(monkeypatch):
     monkeypatch.setattr(directory, "MAX_RESPONSE_BYTES", 5)
     with pytest.raises(directory.OidcDirectoryError, match="size limit"):
         directory.discover_oidc_directory(CONFIG)
+
+
+def test_empty_directory_is_successful_and_distinct_from_permission_failure(monkeypatch):
+    install_provider(monkeypatch, {"/groups": [], "/roles": [], "/clients/login-id/roles": []})
+    result = directory.discover_oidc_directory(CONFIG)
+    assert result["candidates"] == []
+    assert result["directory_counts"] == {"groups": 0, "realm_roles": 0, "client_roles": 0}
+    install_provider(monkeypatch, {"/groups": urllib.error.HTTPError("https://example", 403, "secret", {}, None)})
+    with pytest.raises(directory.OidcDirectoryError, match="does not mean the directory is empty"):
+        directory.discover_oidc_directory(CONFIG)

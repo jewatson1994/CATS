@@ -20,12 +20,12 @@ from sqlalchemy import event, inspect, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .models import Group, PortalSetting, Role, Service, ServiceGroup, User, UserRoleAssignment
+from .models import Group, PortalSetting, Role, Service, ServiceGroup, User, UserRoleAssignment, OidcClaimMapping, OidcRoleEligibility
 
 SETTING_KEY = "authorization_revision"
 _FLAG = "cats_authorization_changed"
-_AUTHZ_MODELS = (Role, UserRoleAssignment, Group, ServiceGroup)
-_AUTHZ_TABLES = frozenset({"roles", "user_role_assignments", "groups", "service_groups", "users"})
+_AUTHZ_MODELS = (Role, UserRoleAssignment, Group, ServiceGroup, OidcClaimMapping, OidcRoleEligibility)
+_AUTHZ_TABLES = frozenset({"roles", "user_role_assignments", "groups", "service_groups", "users", "oidc_claim_mappings", "oidc_role_eligibilities"})
 
 
 def _collection_changed(instance, name):

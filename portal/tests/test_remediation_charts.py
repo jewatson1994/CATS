@@ -49,12 +49,12 @@ def test_transfer_bundle_refuses_secret_bearing_source():
     with pytest.raises(ValueError):
         _assert_bundle_sources_safe({"values.yaml": "password: super-secret\n"})
     # A Secret carrying literal data is secret material, whatever the file is called.
-    for literal in ("kind: Secret\nstringData:\n  DB_PASSWORD: replace-me\n",
+    for literal in ("kind: Secret\nstringData:\n  DB_PASSWORD: actual-literal-credential\n",
                     "kind: Secret\ndata:\n  token: c2VjcmV0\n",
                     "kind: Secret\nstringData:\n  config.yaml: |\n    user: admin\n"):
         with pytest.raises(ValueError):
             _assert_bundle_sources_safe({"chart/templates/secret.yaml": literal})
-    for unsafe in ({".env": "A=1"}, {"chart/.env.production": "A=1"}, {"chart/files/credentials.json": "{}"},
+    for unsafe in ({".env": "PASSWORD=actual-credential"}, {"chart/.env.production": "TOKEN=actual-credential"}, {"chart/files/credentials.json": '{"password": "actual-credential"}'},
                    {"chart/templates/tls.yaml": "-----BEGIN PRIVATE KEY-----\nabc\n"}):
         with pytest.raises(ValueError):
             _assert_bundle_sources_safe(unsafe)
@@ -75,7 +75,12 @@ def test_transfer_bundle_allows_secret_templates_without_secret_material():
 
 def test_chart_publication_uses_only_configured_oci_target(monkeypatch, tmp_path):
     archive = tmp_path / "app-1.2.3-cats.rabc123.tgz"
-    archive.write_bytes(b"chart")
+    import io, tarfile
+    with tarfile.open(archive, "w:gz") as output:
+        content = b"name: app\nversion: 1.2.3\n"
+        entry = tarfile.TarInfo("app/Chart.yaml")
+        entry.size = len(content)
+        output.addfile(entry, io.BytesIO(content))
     chart = {"name": "app", "remediated_version": "1.2.3-cats.rabc123"}
     monkeypatch.setattr(portal_main, "get_global_configuration", lambda _db: {
         "oci_registries": json.dumps([{"endpoint": "https://registry.internal", "namespace": "charts",

@@ -48,6 +48,7 @@ def test_success_rejects_swapped_binding_or_missing_deployment_proof(field):
 @pytest.mark.parametrize('static,status,expected',[('PASS','VERIFIED','verified'),('WARNING_UNVERIFIED','VERIFIED','verified'),('WARNING_UNVERIFIED','FAILED','failed')])
 def test_runtime_exact_candidate_independent_states(workflow,monkeypatch,static,status,expected):
     db,_,_,_,_,root=workflow; row=candidate(workflow)
+    original_bytes = (root/'R1'/'candidate.zip').read_bytes()
     row.validation_results={'checks':{'intended_changes':{'status':static}}}; row.delivery_status='download_ready'; row.signing_status='signed'; db.commit()
     monkeypatch.setattr(deployment_bundle,'validate_bundle',lambda path,**kw:{'service':{'id':'demo','version':'1'},'deployment':{'namespace':'cats-validation'}})
     selection=[]; calls=[]
@@ -58,7 +59,7 @@ def test_runtime_exact_candidate_independent_states(workflow,monkeypatch,static,
         return result_for(request,status)
     monkeypatch.setattr(validator_client,'validate',validate)
     main._validate_retained_remediation(db,row)
-    assert selection==['standard-bundle'] and calls[0][2]==b'retained content'
+    assert selection==['standard-bundle'] and calls[0][2]==original_bytes
     assert calls[0][1]==root/'R1'/'candidate.zip' and calls[0][0]['artifact']=={'reference':'R1','digest':row.artifact_digest}
     assert row.verification_status==expected, row.validation_results['deployment']
     assert row.remediation_status=='partial'

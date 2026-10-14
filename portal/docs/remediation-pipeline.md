@@ -8,6 +8,14 @@ Automated accepts deterministic safe changes; Guided lets the operator review th
 
 Candidates retain editable source, image archives, decisions, before/after changes, and post-scan evidence. Partial remediation preserves successful work and unresolved findings. A successful change does not imply every vulnerability was fixed.
 
+## Source secret review
+
+Planning inspects retained source content, not sensitive-looking filenames. Empty values, documented placeholders (such as `replace-me`), simple Helm value references, external Secret references, and environment references do not block a plan. Literal credential values, Secret data, private keys, and unresolved Secret templates require review. Diagnostics expose only the affected chart, file, field path, a fixed reason, and resolution guidance; credential values and parser excerpts are never included.
+
+Affected charts remain visible as blocked opportunities. Safe charts and independent image patching remain available. Confirmation requires an explicit choice to exclude each affected whole root chart, including its dependencies. CATS does not silently remove a required file. The original assessment evidence remains unchanged. Replace literal credentials with external references and reassess to restore a full candidate, or approve a partial candidate with those charts excluded. `source-safety.json`, the approved plan, and the remediation summary retain the exclusion scope; partial remediation is not a complete service release.
+
+The same inspection applies to candidate generation, validation inputs and rendered manifests, retained downloads, acquired chart dependencies, and packaged OCI charts before publication. Uninspectable or malformed source archives fail safely. This is a conservative content check, not a guarantee that arbitrary application-specific data cannot contain a secret; it has no bypass setting. A newly rendered literal secret remains blocked even if the original template only contained references.
+
 ## OCI delivery
 
 Service destinations use encrypted credentials and scoped CA trust. Eligible saved global destinations remain available. Management requires service editing permission; delivery requires remediation permission. Connection tests establish connectivity/authentication, not push permissions.

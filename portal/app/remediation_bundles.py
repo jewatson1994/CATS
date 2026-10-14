@@ -224,7 +224,7 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
                              if name in {"documentation/remediation/summary-of-changes.json",
                                          "documentation/remediation/summary-of-changes.md",
                                          "documentation/remediation/before-after.json",
-                                         "documentation/remediation/changes.patch"}}
+                                         "documentation/remediation/changes.patch", "source-safety.json"}}
             if sum(archive.getinfo(name).file_size for name in documentation_names) > 16 * 1024 ** 2:
                 raise ValueError("Remediation documentation exceeds assembly size limit")
             documentation = {name: archive.read(name) for name in documentation_names}
@@ -262,6 +262,8 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
         rendered = _run(command)
         if rendered.returncode or len(rendered.stdout.encode()) > 16 * 1024 ** 2:
             raise ValueError("Final deployment render failed")
+        from .remediation_safety import assert_sources_safe, assert_source_tree_safe
+        assert_sources_safe({"rendered.yaml": rendered.stdout})
         required = workload_images(rendered.stdout)
         images = [image for image in images if image["reference"] in required]
         if bundle_type == "offline-bundle":
@@ -275,6 +277,7 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
         if any(path.is_symlink() for path in paths) or sum(path.stat().st_size for path in paths if path.is_file()) > 200 * 1024 ** 2:
             raise ValueError("Final chart source tree exceeds safe assembly limits")
         sources = {path.relative_to(source_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
+        assert_source_tree_safe(sources)
         chart_prefix = chart_path.rstrip("/") + "/" if chart_path != "." else ""
         chart_files = {name: "sha256:" + hashlib.sha256(content).hexdigest() for name, content in sources.items()
                        if not chart_prefix or name.startswith(chart_prefix)}

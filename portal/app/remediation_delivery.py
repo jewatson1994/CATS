@@ -47,6 +47,9 @@ def candidate_provenance(record):
     return {"remediation_id": record.id, "job_key": record.job_key, "service_id": record.service_id,
             "source_execution_id": record.source_execution_id, "source_version_id": record.source_version_id,
             "candidate_digest": record.artifact_digest,
+            "source_safety": ((record.workflow_inputs or {}).get("approved_plan") or {}).get("source_safety", {}),
+            "excluded_charts": (record.workflow_inputs or {}).get("excluded_charts", []),
+            "completion_scope": "partial" if (record.workflow_inputs or {}).get("excluded_charts") else "complete_source",
             "validation": {key: deployment.get(key) for key in
                 ("status", "validation_id", "request_id", "validator_id", "artifact_digest", "validation_type", "service")},
             "verification_status": record.verification_status,
@@ -67,6 +70,8 @@ def retained_candidate(record, root):
         digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
     if not record.artifact_digest or not hmac.compare_digest(digest, record.artifact_digest):
         raise ValueError("Retained candidate integrity mismatch")
+    from .remediation_safety import assert_candidate_safe
+    assert_candidate_safe(path)
     return path
 
 
@@ -268,6 +273,8 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 results.append({"kind": "image", "reference": reference, "digest": digest, "identity_type": "oci_manifest"})
                 save_progress()
             files = materialize({name[10:]: (bundle.read(name) if name.endswith(".tgz") else bundle.read(name).decode("utf-8")) for name in names if name.startswith("candidate/") and not name.endswith("/")}, mappings)
+            from .remediation_safety import assert_sources_safe
+            assert_sources_safe({name: content for name, content in files.items() if isinstance(content, str)})
             candidate = work / "candidate"
             candidate.mkdir()
             for relative, content in files.items():
@@ -303,6 +310,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 (candidate / name).write_text(content, encoding="utf-8")
                 run([helm, "lint", str(chart_root)], env=env)
                 rendered = run([helm, "template", "cats-delivery", str(chart_root)], env=env)
+                assert_sources_safe({"rendered.yaml": rendered})
                 for document in yaml.safe_load_all(rendered):
                     collect_images(document)
             if chart_roots and mappings and (set(mappings) & rendered_images or not set(mappings.values()).issubset(rendered_images)):
@@ -351,6 +359,8 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                         staged_receipt = Path(stream.name)
                         json.dump({"file": archive.name, "digest": file_digest(archive)}, stream)
                     staged_receipt.replace(receipt)
+                from .remediation_safety import assert_chart_archive_safe
+                assert_chart_archive_safe(archive.read_bytes())
                 push_args = [helm, "push", str(archive), "oci://" + prefix]
                 if ca:
                     push_args += ["--ca-file", str(ca)]
@@ -378,6 +388,8 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
             output_path = source.parent / f"delivery-{attempt_id}.zip"
             with ZipFile(output_path, "w", ZIP_DEFLATED) as output:
                 output.writestr("lineage.json", json.dumps({"remediation": record.job_key, "content_digest": record.artifact_digest, "artifacts": results, "values_files": values_files}))
+                if "source-safety.json" in bundle.namelist():
+                    output.writestr("source-safety.json", bundle.read("source-safety.json"))
                 for relative, content in files.items():
                     output.writestr("candidate/" + relative, content)
                 for archive in charts:

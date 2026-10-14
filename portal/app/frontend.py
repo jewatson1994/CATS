@@ -223,6 +223,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
     elif name == "password.html":
         data["error"] = _scalar(context.get("error"))
     elif name in {"request_error.html", "boozled.html"}:
+        data["title"] = _scalar(context.get("title"))
         data["detail"] = _scalar(context.get("detail"))
         data["home_url"] = str(context.get("home_url") or "/")
     elif name == "patch.html":

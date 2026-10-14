@@ -15,6 +15,22 @@ const job = {job_key:'job-7',status:'completed',remediation_status:'completed',h
 const data = (workflow:Record<string,unknown>={},extra:Record<string,unknown>={}):PageData => ({service:{id:7,service_key:'example',name:'Example'},csrf_token:'csrf',can:{'remediation.execute':{'7':true},'service.export':{'7':true}},oci_destinations:[{id:3,name:'Approved registry',endpoint:'https://registry.example',repository_prefix:'approved'}],job:{...job,workflow:{stage:'validate',state:'awaiting_validation',validation_outcome:'not_verified',validation_resolved:false,validation_required:true,can_skip_validation:false,approved_plan:plan,delivery_options:options,...workflow},...extra}});
 const activeStage = () => screen.getByRole('list',{name:'Remediation steps'}).querySelector('[aria-current="step"]');
 
+it('requires explicit entire-chart exclusion before starting a partial candidate', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...plan,source_safety:{partial:true,blocked_charts:['auth'],resolution:'Move credentials to an external reference or exclude the chart.',diagnostics:[{chart:'auth',file:'auth/values.yaml',path:'$.password',reason:'literal_credential'}]}});
+  const {container}=render(<Remediate data={data()}/>);container.querySelector('dialog')!.setAttribute('open','');
+  fireEvent.click(screen.getByText('Build plan'));await screen.findByText('Review proposed changes');
+  expect(screen.getByRole('region',{name:'Source secret review'})).toHaveTextContent('auth/values.yaml / $.password / literal credential');
+  fireEvent.click(screen.getByText('Final review'));
+  fireEvent.click(screen.getByLabelText('I authorize execution of this remediation plan.'));
+  expect(screen.getByRole('button',{name:'Execute remediation'})).toBeDisabled();
+  const form=container.querySelector('form')!;
+  expect(fireEvent.submit(form)).toBe(false);
+  expect(new FormData(form).get('excluded_charts')).toBeNull();
+  fireEvent.click(screen.getByLabelText(/I explicitly exclude the listed entire charts/));
+  expect(screen.getByRole('button',{name:'Execute remediation'})).toBeEnabled();
+  expect(new FormData(form).get('excluded_charts')).toBe('["auth"]');
+});
+
 it('requires all planning stages, explicit confirmation and one stable submission key', async () => {
   vi.mocked(requestJson).mockResolvedValue(plan);
   const {container} = render(<Remediate data={data()}/>);

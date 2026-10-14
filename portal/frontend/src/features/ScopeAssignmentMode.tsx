@@ -1,0 +1,3 @@
+export function ScopeAssignmentMode() {
+  return <><label>Grant source<select name="assignment_mode" defaultValue="cats_scope"><option value="cats_scope">CATS-managed scope (requires matching OIDC role)</option><option value="local">Independent local role grant</option></select></label><p>CATS-managed assignments survive login but give no permissions when the role is absent. Each assignment applies only to its selected role. Application-wide permissions require global scope.</p><label><input type="checkbox" name="explicit_global" value="true"/>Explicitly grant global scope when no services or group are selected</label></>;
+}

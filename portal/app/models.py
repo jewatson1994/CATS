@@ -497,6 +497,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     role_assignments: Mapped[list["UserRoleAssignment"]] = relationship(back_populates="user")
+    oidc_eligibilities: Mapped[list["OidcRoleEligibility"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     sessions: Mapped[list["UserSession"]] = relationship(back_populates="user")
 
 
@@ -520,6 +521,8 @@ class UserRoleAssignment(Base):
     service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"), index=True)
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), index=True)
     source: Mapped[str] = mapped_column(String(20), default="local")
+    oidc_mapping_id: Mapped[int | None] = mapped_column(ForeignKey("oidc_claim_mappings.id"), index=True)
+    oidc_mapping: Mapped["OidcClaimMapping | None"] = relationship()
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     user: Mapped["User"] = relationship(back_populates="role_assignments")
     role: Mapped["Role"] = relationship(back_populates="assignments")
@@ -536,11 +539,23 @@ class OidcClaimMapping(Base):
     service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"))
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
     global_scope: Mapped[bool] = mapped_column(Boolean, default=False)
+    scope_mode: Mapped[str] = mapped_column(String(30), default="fixed")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     role: Mapped[Role] = relationship()
     service: Mapped[Service | None] = relationship()
     group: Mapped[Group | None] = relationship()
+
+
+class OidcRoleEligibility(Base):
+    """A last-validated claim match, never an access grant by itself."""
+    __tablename__ = "oidc_role_eligibilities"
+    __table_args__ = (UniqueConstraint("user_id", "mapping_id", name="uq_oidc_eligibility"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    mapping_id: Mapped[int] = mapped_column(ForeignKey("oidc_claim_mappings.id"), index=True)
+    user: Mapped["User"] = relationship(back_populates="oidc_eligibilities")
+    mapping: Mapped[OidcClaimMapping] = relationship()
 
 
 class UserSession(Base):

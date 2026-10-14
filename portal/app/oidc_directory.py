@@ -90,7 +90,7 @@ def discover_oidc_directory(configuration: dict, ca_bundle: str | None = None) -
             elif data is not None and exc.code in {400, 401, 403}:
                 message = "Keycloak rejected directory authentication. Check the client secret and enable service accounts and client authentication for the OIDC client."
             elif exc.code in {401, 403}:
-                message = "Keycloak denied directory access. Give this client's service account read access to groups, realm roles, clients and client scopes (appropriate realm-management view/query permissions)."
+                message = "Keycloak denied directory access; this does not mean the directory is empty. Give this client's service account read access with realm-management view-users, view-clients and view-realm (or equivalent fine-grained read permissions). Realm-admin is not required. Manual claim mapping and normal login remain available."
             else:
                 message = f"Keycloak directory request returned HTTP {exc.code}. Check the issuer and Keycloak Admin REST API availability."
             raise OidcDirectoryError(message) from None
@@ -214,4 +214,5 @@ def discover_oidc_directory(configuration: dict, ca_bundle: str | None = None) -
     for kind, label in (("group", "groups"), ("realm_role", "realm roles"), ("client_role", "client roles")):
         if kind not in covered:
             warnings.append(f"No supported active ID-token mapper was found for {label}. Enable an ID-token mapper (multivalued for roles) on the login client or a requested client scope, or enter the claim mapping manually.")
-    return {"provider": "keycloak", "candidates": sorted(candidates, key=lambda item: (item["kind"], item["label"], item["claim_path"])), "warnings": list(dict.fromkeys(warnings))}
+    return {"provider": "keycloak", "candidates": sorted(candidates, key=lambda item: (item["kind"], item["label"], item["claim_path"])), "warnings": list(dict.fromkeys(warnings)),
+            "directory_counts": {"groups": len(groups), "realm_roles": len(realm_roles), "client_roles": len(client_roles)}}

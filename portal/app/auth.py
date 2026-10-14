@@ -23,7 +23,9 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session, selectinload
 
 from .database import SessionLocal, get_db
-from .models import AuditEvent, Group, OidcClaimMapping, Role, Service, User, UserRoleAssignment, UserSession
+from .oidc_diagnostics import correlation_id
+from .account_models import OidcAccountIdentity, AccountRetirement
+from .models import AuditEvent, Group, OidcClaimMapping, OidcRoleEligibility, Role, Service, User, UserRoleAssignment, UserSession
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +51,9 @@ def _log_timestamp_failure(category: str, claim: str, value, leeway: int):
     safe = _numeric_timestamp(value) and abs(value) < 10**12
     logger.warning(
         "OIDC timestamp validation failed category=%s claim=%s server_utc=%s "
-        "token_timestamp=%s skew_seconds=%s delta_seconds=%s",
+        "token_timestamp=%s skew_seconds=%s delta_seconds=%s correlation_id=%s",
         category, claim, now.isoformat(), value if safe else "unavailable",
-        leeway, value - now.timestamp() if safe else "unavailable",
+        leeway, value - now.timestamp() if safe else "unavailable", correlation_id.get(),
     )
 
 
@@ -227,7 +229,7 @@ def oidc_claim_values(claims: dict, path: str) -> list[str]:
 
 def matching_claim_mappings(claims: dict, mappings: list[OidcClaimMapping]) -> list[OidcClaimMapping]:
     return [mapping for mapping in mappings if mapping.enabled and mapping.expected_value in oidc_claim_values(claims, mapping.claim_path)
-            and bool(mapping.global_scope or mapping.service_id or mapping.group_id)]
+            and bool(getattr(mapping, "scope_mode", "fixed") == "cats_managed" or mapping.global_scope or mapping.service_id or mapping.group_id)]
 
 
 def oidc_role_names(claims: dict, configuration: dict | None = None) -> list[str]:
@@ -273,7 +275,11 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
     linked_username = linked_username or provider_links.get(subject)
     if linked_username is not None and not isinstance(linked_username, str):
         raise ValueError("OIDC account link must reference a CATS username")
-    user = db.scalar(select(User).where(User.external_subject == identity).with_for_update())
+    stored_identity = db.get(OidcAccountIdentity, identity)
+    user = (db.get(User, stored_identity.user_id) if stored_identity else
+            db.scalar(select(User).where(User.external_subject == identity).with_for_update()))
+    if user and linked_username and user.username != str(linked_username).lower():
+        raise ValueError("OIDC identity conflicts with administrator account link")
     legacy = db.scalar(select(User).where(User.external_subject == subject).with_for_update())
     if not user and legacy:
         # Legacy identities lacked an issuer. Require an explicit administrator
@@ -295,7 +301,12 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
             raise ValueError("OIDC user is not provisioned in CATS")
         user = User(username=username[:120], display_name=str(claims.get("name") or username)[:240], auth_source="oidc", must_change_password=False)
         db.add(user); db.flush()
-    user.external_subject = identity
+    if db.get(AccountRetirement, user.id):
+        raise ValueError("Retired CATS account cannot authenticate")
+    if not stored_identity:
+        db.add(OidcAccountIdentity(identity_key=identity, issuer=issuer, subject=subject, user_id=user.id))
+    if not user.external_subject or user.external_subject == subject:
+        user.external_subject = identity
     if not user.enabled:
         # Keep the link and all authorization/history intact. The callback must
         # deny a session independently of successful provider authentication.
@@ -303,6 +314,11 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
         return user
     user.display_name = str(claims.get("name") or claims.get("email") or user.display_name)[:240]
     configured_mappings = db.scalars(select(OidcClaimMapping).order_by(OidcClaimMapping.id)).all()
+    previous_eligibility = {entry.mapping_id for entry in user.oidc_eligibilities}
+    for eligibility in list(user.oidc_eligibilities):
+        db.delete(eligibility)
+    db.flush()
+    db.expire(user, ["oidc_eligibilities"])
     # OIDC grants are a synchronized projection of the current token, not
     # durable entitlements.  Remove the previous projection on every login,
     # including deployments still using the environment-based compatibility
@@ -315,9 +331,17 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
     db.expire(user, ["role_assignments"])
     if configured_mappings:
         desired = matching_claim_mappings(claims, configured_mappings)
+        current_eligibility = {entry.id for entry in desired}
+        if previous_eligibility != current_eligibility:
+            db.add(AuditEvent(actor_user_id=user.id, action="oidc.eligibility_synchronized", target_type="user",
+                             target_id=str(user.id), detail={"source": "oidc", "user_id": user.id,
+                             "previous_mapping_ids": sorted(previous_eligibility), "mapping_ids": sorted(current_eligibility)}))
         assigned = set()
         for mapping in desired:
             if db.get(Role, mapping.role_id) is None:
+                continue
+            db.add(OidcRoleEligibility(user_id=user.id, mapping_id=mapping.id))
+            if mapping.scope_mode == "cats_managed":
                 continue
             identity = (mapping.role_id, mapping.service_id, mapping.group_id, mapping.global_scope)
             if identity in assigned:
@@ -327,11 +351,9 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
                    and a.group_id == mapping.group_id for a in user.role_assignments):
                 continue
             db.add(UserRoleAssignment(user_id=user.id, role_id=mapping.role_id,
-                service_id=mapping.service_id, group_id=mapping.group_id, source="oidc"))
+                service_id=mapping.service_id, group_id=mapping.group_id, source="oidc", oidc_mapping_id=mapping.id))
         db.flush()
-        if not assigned and not db.scalar(select(UserRoleAssignment.id).where(
-                UserRoleAssignment.user_id == user.id, UserRoleAssignment.source == "local")):
-            raise ValueError("OIDC claims did not map to a scoped CATS role")
+        db.expire(user, ["role_assignments", "oidc_eligibilities"])
         return user
     role_by_name = {role.name.lower(): role for role in db.scalars(select(Role))}
     mapping = json.loads(os.getenv("CATS_OIDC_ROLE_MAP", "{}"))
@@ -361,10 +383,8 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
         if not any(a.role_id == role.id and a.group_id is None and a.service_id is None for a in existing_global):
             db.add(UserRoleAssignment(user=user, role=role, source="oidc"))
         assigned = True
-    if not assigned and not db.scalar(select(UserRoleAssignment.id).where(
-            UserRoleAssignment.user_id == user.id, UserRoleAssignment.source == "local")):
-        raise ValueError("OIDC user did not map to a CATS role")
     db.flush()
+    db.expire(user, ["role_assignments", "oidc_eligibilities"])
     return user
 
 
@@ -427,6 +447,11 @@ SYSTEM_ROLES = {
         "service.restore", "audit.view", "config.manage", "scan.ingest", "remediation.execute",
     ],
 }
+
+# These operate on shared application state, never one service. config.manage
+# has a separate can_manage_group boundary for explicitly group-owned settings.
+APPLICATION_PERMISSIONS = {"user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
+    permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
 PBKDF2_ITERATIONS = 600_000
 SESSION_COOKIE = "cats_session"
@@ -505,39 +530,64 @@ class AuthContext:
     def csrf_token(self):
         return self.session.csrf_token
 
-    def has(self, permission: str, service_id: int | None = None) -> bool:
+    @property
+    def effective_assignments(self):
+        eligibilities = getattr(self.user, "oidc_eligibilities", [])
+        eligible_roles = {entry.mapping.role_id for entry in eligibilities
+                          if entry.mapping and entry.mapping.enabled and entry.mapping.scope_mode == "cats_managed"}
+        fixed_scopes = {(entry.mapping.role_id, entry.mapping.service_id, entry.mapping.group_id)
+                        for entry in eligibilities if entry.mapping and entry.mapping.enabled and entry.mapping.scope_mode != "cats_managed"
+                        and (entry.mapping.global_scope or entry.mapping.service_id is not None or entry.mapping.group_id is not None)}
+        effective = []
         for assignment in self.user.role_assignments:
+            if (getattr(assignment, "source", "local") == "cats_scope" and assignment.role_id not in eligible_roles
+                    and (assignment.role_id, assignment.service_id, assignment.group_id) not in fixed_scopes):
+                continue
+            mapping = getattr(assignment, "oidc_mapping", None)
+            if getattr(assignment, "oidc_mapping_id", None) and (not mapping or not mapping.enabled
+                    or mapping.scope_mode == "cats_managed" or mapping.role_id != assignment.role_id
+                    or mapping.service_id != assignment.service_id or mapping.group_id != assignment.group_id):
+                continue
+            effective.append(assignment)
+        return effective
+
+    def has(self, permission: str, service_id: int | None = None) -> bool:
+        for assignment in self.effective_assignments:
             if permission == "scan.ingest" and assignment.role.name == "Administrator":
                 continue
             if permission not in (assignment.role.permissions or []):
                 continue
             if assignment.service_id is None and assignment.group_id is None:
                 return True
+            if permission in APPLICATION_PERMISSIONS:
+                continue
             if assignment.service_id is not None and assignment.service_id == service_id:
                 return True
-            if assignment.group_id is not None and service_id is not None and assignment.group:
+            if assignment.service_id is None and assignment.group_id is not None and service_id is not None and assignment.group:
                 if any(service.id == service_id for service in assignment.group.services):
                     return True
         return False
 
     def accessible_service_ids(self, permission: str) -> set[int] | None:
-        matching = [a for a in self.user.role_assignments if not (permission == "scan.ingest" and a.role.name == "Administrator") and permission in (a.role.permissions or [])]
+        matching = [a for a in self.effective_assignments if not (permission == "scan.ingest" and a.role.name == "Administrator") and permission in (a.role.permissions or [])]
         if any(a.service_id is None and a.group_id is None for a in matching):
             return None
+        if permission in APPLICATION_PERMISSIONS:
+            return set()
         service_ids = {a.service_id for a in matching if a.service_id is not None}
         for assignment in matching:
-            if assignment.group:
+            if assignment.group and assignment.service_id is None:
                 service_ids.update(service.id for service in assignment.group.services)
         return service_ids
 
     def can_manage_group(self, group_id: int | None) -> bool:
         """Check configuration authority for a global or group scope."""
-        for assignment in self.user.role_assignments:
+        for assignment in self.effective_assignments:
             if "config.manage" not in (assignment.role.permissions or []):
                 continue
             if assignment.service_id is None and assignment.group_id is None:
                 return True
-            if group_id is not None and assignment.group_id == group_id:
+            if group_id is not None and assignment.service_id is None and assignment.group_id == group_id:
                 return True
         return False
 
@@ -561,7 +611,7 @@ def optional_user(request: Request, db: Session = Depends(get_db)) -> AuthContex
             .selectinload(Service.groups),
         )
     )
-    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled:
+    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled or db.get(AccountRetirement, session.user_id):
         return None
     session.last_seen_at = utcnow()
     return AuthContext(session.user, session)
@@ -583,7 +633,7 @@ def require_user(request: Request, response: Response, db: Session = Depends(get
             .selectinload(Service.groups)
         )
     ) if supplied else None
-    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled:
+    if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled or db.get(AccountRetirement, session.user_id):
         # Development-only convenience for local UI testing.  The host check
         # prevents this from working when the app is reached by a VM/IP URL.
         dev_bypass = (
@@ -601,7 +651,7 @@ def require_user(request: Request, response: Response, db: Session = Depends(get
                     .selectinload(Group.services).selectinload(Service.groups),
                 )
             )
-            if user and user.enabled:
+            if user and user.enabled and not db.get(AccountRetirement, user.id):
                 # The dependency response is not always the same response object
                 # ultimately returned by a route (notably TemplateResponse). If
                 # the browser therefore does not persist the Set-Cookie header,

@@ -113,7 +113,9 @@ def test_delivery_preserves_ordered_custom_values(tmp_path, monkeypatch):
             embedded = yaml.safe_load((chart / "values.yaml").read_text())
             assert embedded == {"replicas": 3, "nested": {"keep": True, "replace": "final"}, "items": ["final"]}
         if args[1] == "package":
-            (Path(args[args.index("--destination") + 1]) / "api-1.0.0.tgz").write_bytes(b"package")
+            import tarfile
+            with tarfile.open(Path(args[args.index("--destination") + 1]) / "api-1.0.0.tgz", "w:gz") as package:
+                package.add(chart, arcname="api")
         return SimpleNamespace(returncode=0, stdout="", stderr="Digest: sha256:" + "a" * 64 if args[1] == "push" else "")
     monkeypatch.setattr(delivery.subprocess, "run", run)
     result, path = delivery.deliver(record, {"name": "Team", "endpoint": "https://registry.example"}, 1, tmp_path)
