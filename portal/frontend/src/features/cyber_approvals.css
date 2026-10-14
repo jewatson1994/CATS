@@ -1,0 +1,18 @@
+.approval-form {display:grid;gap:1rem;max-width:52rem}
+.approval-form label,.approval-filters label {display:grid;gap:.4rem}
+.approval-form textarea {min-height:6rem}
+.approval-badges,.approval-filters {display:flex;gap:1rem;flex-wrap:wrap;align-items:center}
+.approval-badges {margin-top:1rem}
+.approval-release-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,22rem),1fr));gap:1rem;margin-top:1rem}
+.approval-release-card,.approval-evidence {padding:1rem;border:1px solid var(--border, #7d879433);border-radius:.5rem;margin-bottom:.6rem}
+.approval-release-card h2 {margin-top:0}
+.approval-metadata {display:grid;gap:.65rem}
+.approval-metadata>div {display:grid;grid-template-columns:minmax(8rem,1fr) minmax(0,3fr);gap:1rem}
+.approval-metadata dt {font-weight:600;text-transform:capitalize}
+.approval-metadata dd {margin:0;overflow-wrap:anywhere}
+.approval-json,.approval-ref {white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%;display:block}
+.approval-json {max-height:32rem;overflow:auto;padding:1rem;background:var(--surface-subtle,#7d879410)}
+.approval-form .approval-checkbox {display:flex;align-items:center;gap:.5rem}
+.approval-checkbox input {width:auto}
+.approval-readiness {border-left:3px solid var(--border,#7d8794);padding-left:1rem}
+@media(max-width:600px){.approval-metadata>div{grid-template-columns:1fr;gap:.25rem}}

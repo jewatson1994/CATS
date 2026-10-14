@@ -12,7 +12,7 @@ export interface SelfServiceData {
   mode: 'scan' | 'sbom'; description: string; image_list?: string; chart_url?: string;
   archive_names?: string[]; authenticated_ingest?: boolean;
   authenticated_services?: { service_key: string; name: string }[];
-  service_version_options?: Record<string, string[]>; ingest_service_id?: string; ingest_service_version?: string;
+  service_version_options?: Record<string, string[]>; ingest_service_id?: string; ingest_service_version?: string; ingest_scope?: 'auto' | 'service';
   sbom_output_formats?: Record<string, string>; selected_sbom_formats?: string[];
   cyclonedx_spec_versions?: string[]; cyclonedx_spec_version?: string;
   job_id?: string; job?: ScanJob; status_message?: string;
@@ -30,10 +30,11 @@ export function Page({ data: pageData }: { data: PageData }) {
 function Workspace({ initial }: { initial: SelfServiceData }) {
   const [data, setData] = useState(initial);
   useEffect(() => { setData(initial); }, [initial]);
-  const scope = JSON.stringify([data.mode, data.job_id, data.ingest_service_id, data.ingest_service_version]);
+  const scope = JSON.stringify([data.mode, data.job_id, data.ingest_service_id, data.ingest_service_version, data.ingest_scope]);
   const sbom = data.mode === 'sbom';
   const [service, setService] = useState(data.ingest_service_id || '');
   const [version, setVersion] = useState(data.ingest_service_version || '');
+  const [ingestScope, setIngestScope] = useState(data.ingest_scope || 'auto');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const submission = useRef<AbortController | null>(null);
@@ -135,6 +136,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           {data.authenticated_ingest && <>
             <label htmlFor="ingest-service">Ingest completed scan into <span className="muted">(only services within your role, group, and service scope)</span></label><select id="ingest-service" name="ingest_service_id" value={service} onChange={event => { setService(event.target.value); setVersion(''); }}><option value="">Do not ingest (temporary results only)</option>{data.authenticated_services?.map(item => <option key={item.service_key} value={item.service_key}>{item.name} ({item.service_key})</option>)}</select>
             <label htmlFor="ingest-service-version">Service Version <span className="muted">(select an existing version or enter a new one)</span></label><input id="ingest-service-version" name="ingest_service_version" list="ingest-version-options" maxLength={120} value={version} onChange={event => setVersion(event.target.value)} autoComplete="off" disabled={!service} required={!!service} /><datalist id="ingest-version-options">{(data.service_version_options?.[service] || []).map(value => <option key={value} value={value} />)}</datalist>
+            <label htmlFor="ingest-scope">Assessment scope</label><select id="ingest-scope" name="ingest_scope" value={ingestScope} onChange={event => setIngestScope(event.target.value as 'auto' | 'service')} disabled={!service} aria-describedby="ingest-scope-help"><option value="auto">Automatic (a single image updates that image only)</option><option value="service">Full service assessment</option></select>
+            <small id="ingest-scope-help" className="muted">Choose Full service assessment only when these inputs cover the whole service, including services made of one image. A newer assessment can become current and resolve findings absent from the scan. To replace an older image-only assessment, start a new scan with this choice.</small>
           </>}
         </>}
         {sbom && <fieldset className="sbom-options"><legend>Output formats</legend><p className="muted">Select one or more. CATS inventories each image once, then serializes that inventory into every selected format.</p><div className="sbom-format-grid">{Object.entries(data.sbom_output_formats || {}).map(([value, label]) => <label key={value}><input type="checkbox" name="sbom_formats" value={value} defaultChecked={data.selected_sbom_formats?.includes(value)} /> <span>{label}</span></label>)}</div><label htmlFor="cyclonedx-spec-version">CycloneDX specification version<select id="cyclonedx-spec-version" name="cyclonedx_spec_version" defaultValue={data.cyclonedx_spec_version}>{data.cyclonedx_spec_versions?.map(value => <option key={value} value={value}>{value}</option>)}</select></label></fieldset>}

@@ -117,6 +117,7 @@ from .trusted_ca import ephemeral_trust, write_additive_bundle
 from .runtime_version import deployed_version
 from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
 from .remediation_summary import build_summary as build_remediation_summary, artifacts as remediation_summary_artifacts
+from . import cyber_approvals
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -444,6 +445,7 @@ app.include_router(validator_management.router)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
 app.include_router(service_oci.router)
+app.include_router(cyber_approvals.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -3081,7 +3083,6 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     service_version = db.scalar(select(ServiceVersion).where(
         ServiceVersion.service_id == service.id, ServiceVersion.version == version_label,
     ))
-    version_created = service_version is None
     if service_version is None:
         service_version = ServiceVersion(service_id=service.id, version=version_label)
         db.add(service_version)
@@ -3105,11 +3106,12 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         Execution.scan_scope == "service",
     ).order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if previous_current_version_id else None
     # A delayed upload of an older release is historical evidence, even when
-    # that release has never been seen before. Arrival order is not release order.
+    # that release has never been seen before. A newer service scan can also
+    # reactivate a previously retained version; first-seen order is not release order.
     may_promote = (
         previous_current_version_id is None
         or previous_current_version_id == service_version.id
-        or (version_created and scan_scope == "service" and (
+        or (scan_scope == "service" and (
             latest_current_execution is None
             or aware(payload.scanned_at) > aware(latest_current_execution.scanned_at)
         ))
@@ -3312,7 +3314,7 @@ def _public_job_projection(job: dict) -> dict:
     return public_projection(job, provenance)
 
 
-def self_service_context(request: Request, mode: str, image_list: str = "", chart_url: str = "", status_message: str | None = None, job_id: str | None = None, auth: AuthContext | None = None, services: list[Service] | None = None, ingest_service_id: str = "", archive_names: list[str] | None = None, sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", ingest_service_version: str = ""):
+def self_service_context(request: Request, mode: str, image_list: str = "", chart_url: str = "", status_message: str | None = None, job_id: str | None = None, auth: AuthContext | None = None, services: list[Service] | None = None, ingest_service_id: str = "", archive_names: list[str] | None = None, sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", ingest_service_version: str = "", ingest_scope: str = "auto"):
     with PUBLIC_JOB_LOCK:
         job_snapshot = dict(PUBLIC_JOBS.get(job_id, {})) if job_id else {}
     if job_snapshot:
@@ -3339,6 +3341,7 @@ def self_service_context(request: Request, mode: str, image_list: str = "", char
                                     for service in (services or [])},
         "ingest_service_id": ingest_service_id,
         "ingest_service_version": ingest_service_version,
+        "ingest_scope": ingest_scope,
         "status_message": status_message, "job_id": job_id, "job": job_snapshot,
         "sbom_output_formats": SBOM_OUTPUT_FORMATS,
         "selected_sbom_formats": sbom_formats or ["cyclonedx-json"],
@@ -3848,7 +3851,7 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto") -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     chart_urls = [url.strip() for url in (chart_urls or []) if url.strip()]
@@ -3884,7 +3887,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     from .scan_access import admission_policy
     security = admission_policy(owner_user_id, service_db_id)
     skipped_charts = list(definition_skipped or [])
-    payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
+    payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
     payload.update(security)
     if owner_user_id is None:
         if not capability_token:
@@ -3948,6 +3951,7 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
     archive_names: list[str] = []
     ingest_service_id = ""
     ingest_service_version = ""
+    ingest_scope = "auto"
     if job_id:
         _authorized_public_job(job_id, auth, request)
         job_input = PUBLIC_JOB_ROOT / job_id / "input" / "images.txt"
@@ -3963,6 +3967,7 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
             archive_names = [str(name) for name in (job.get("archive_names") or [])]
             ingest_service_id = str(job.get("ingest_service_id") or "")
             ingest_service_version = str(job.get("ingest_service_version") or "")
+            ingest_scope = str(job.get("ingest_scope") or "auto")
     services = []
     if auth and auth.accessible_service_ids("scan.ingest") != set():
         scoped = auth.accessible_service_ids("scan.ingest")
@@ -3970,15 +3975,17 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
         services = list(db.scalars(query))
         if scoped is not None:
             services = [service for service in services if service.id in scoped]
-    return self_service_context(request, "scan", image_list=image_list, chart_url=chart_url, archive_names=archive_names, job_id=job_id, auth=auth, services=services, ingest_service_id=ingest_service_id, ingest_service_version=ingest_service_version)
+    return self_service_context(request, "scan", image_list=image_list, chart_url=chart_url, archive_names=archive_names, job_id=job_id, auth=auth, services=services, ingest_service_id=ingest_service_id, ingest_service_version=ingest_service_version, ingest_scope=ingest_scope)
 
 
 @app.post("/scan", response_class=HTMLResponse)
-async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), ingest_scope: str = Form("auto"), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
     import secrets
     capability_token = secrets.token_urlsafe(32) if auth is None else None
     chart_archives = []
     try:
+        if ingest_scope not in {"auto", "service"}:
+            raise HTTPException(422, "Choose automatic scope or a full service assessment")
         chart_uploads = [chart_archive] if chart_archive and chart_archive.filename else []
         # FastAPI accepts repeated chart_archive fields as a list; inspect the
         # request form as well so the HTML multi-file input remains compatible
@@ -4047,7 +4054,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                                     trusted_ca_certificates=trusted_cas, definition_sources=definition_sources, definition_components=definition_components,
                                     owner_user_id=auth.user.id if auth else None,
                                     definition_skipped=definition_skipped, definition_summary=definition_summary,
-                                    ingest_service_version=ingest_service_version, capability_token=capability_token)
+                                    ingest_service_version=ingest_service_version, capability_token=capability_token, ingest_scope=ingest_scope)
     except HTTPException as exc:
         scoped = auth.accessible_service_ids("scan.ingest") if auth else set()
         services = list(db.scalars(select(Service).order_by(Service.name))) if scoped != set() else []
@@ -4055,7 +4062,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
             services = [service for service in services if service.id in scoped]
         return self_service_context(request, "scan", image_list, chart_url, str(exc.detail), auth=auth,
                                     services=services, ingest_service_id=ingest_service_id,
-                                    ingest_service_version=ingest_service_version)
+                                    ingest_service_version=ingest_service_version, ingest_scope=ingest_scope)
     finally:
         close_downloads(chart_archives)
     # Redirect after a successful submission so refreshing the browser only
@@ -4489,6 +4496,7 @@ def ingest_public_scan(
     job_id: str,
     service_id: str,
     request: Request,
+    scan_scope: str | None = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_user),
 ):
@@ -4516,6 +4524,9 @@ def ingest_public_scan(
         raise HTTPException(status_code=404, detail="Service not found")
     if not auth.has("scan.ingest", service.id):
         raise HTTPException(status_code=403, detail="The service is outside your scope")
+    selected_scope = scan_scope or str(job.get("ingest_scope") or "auto")
+    if selected_scope not in {"auto", "service"}:
+        raise HTTPException(422, "Choose automatic scope or a full service assessment")
     ingest_started = time.perf_counter()
     stage_started = ingest_started
     ingest_stage = "read_result"
@@ -4565,21 +4576,20 @@ def ingest_public_scan(
         with PUBLIC_JOB_LOCK:
             job_input_images = [line.strip() for line in str(PUBLIC_JOBS.get(job_id, {}).get("image_list") or "").splitlines() if line.strip()]
             selected_service_version = str(PUBLIC_JOBS.get(job_id, {}).get("ingest_service_version") or "").strip()
-        candidate_images = {
-            str(item.get("image") or "").strip()
-            for item in (data.get("findings") or [])
-            if isinstance(item, dict) and str(item.get("image") or "").strip()
-        }
-        # A one-image public scan is authoritative only for that image. A
-        # multi-image result remains a service-scope execution unless its
-        # producer explicitly supplied a scope.
+        # Only an explicitly image-only job can infer image scope. A chart
+        # scan remains service evidence even when only one image has findings.
         if data.get("scan_scope") not in {"service", "image", "evidence"}:
             data["scan_scope"] = "service"
-        if not candidate_images and len(job_input_images) == 1:
-            candidate_images = set(job_input_images)
-        if data.get("scan_scope") == "service" and len(candidate_images) == 1 and not data.get("skipped_images") and not data.get("skipped_charts"):
+        image_only_job = bool(job_input_images) and not (
+            source_files or job.get("chart_url") or job.get("chart_names")
+            or job.get("archive_names") or data.get("artifact_type") == "helm"
+        )
+        if selected_scope == "service" and not definition_context:
+            data["scan_scope"] = "service"
+            data.pop("scope_image", None)
+        if selected_scope != "service" and data.get("scan_scope") == "service" and image_only_job and len(set(job_input_images)) == 1 and not data.get("skipped_images") and not data.get("skipped_charts"):
             data["scan_scope"] = "image"
-            data["scope_image"] = next(iter(candidate_images))
+            data["scope_image"] = job_input_images[0]
         data["service"] = {
             **data.get("service", {}),
             "id": service.service_key,
@@ -9915,6 +9925,9 @@ def delete_service(
     ))
     if not service:
         raise HTTPException(404)
+    if db.scalar(select(cyber_approvals.CyberApproval.id).where(
+        cyber_approvals.CyberApproval.service_id == service.id).limit(1)):
+        raise HTTPException(409, detail="This service has retained Cyber approval records. Archive it to preserve its approval history.")
     if confirmation != f"delete {service.name}":
         raise HTTPException(422, detail="Type delete followed by the exact service name to confirm")
     if db.scalar(select(DurableJob.id).where(DurableJob.service_id == service.id, DurableJob.status.in_(["queued", "running"]))):
@@ -11709,6 +11722,10 @@ def delete_user_account(
             UserRoleAssignment.user_id != user.id,
         )) or 0) == 0:
             raise HTTPException(409, detail="The last global Administrator account cannot be deleted")
+    if db.scalar(select(cyber_approvals.CyberApproval.id).where(or_(
+        cyber_approvals.CyberApproval.requested_by_id == user.id,
+        cyber_approvals.CyberApproval.decided_by_id == user.id)).limit(1)):
+        raise HTTPException(409, detail="This account has retained Cyber approval records. Disable it to preserve approval history.")
     username, display_name = user.username, user.display_name
     for background_job in db.scalars(select(DurableJob).where(DurableJob.requested_by_id == user.id)):
         background_job.requested_by_id = None
@@ -11751,3 +11768,19 @@ def delete_user_account(
     db.delete(user)
     db.commit()
     return RedirectResponse("/admin", status_code=303)
+
+
+@app.get("/cyber-approvals")
+def cyber_approvals_page(request: Request, auth: AuthContext = Depends(require_user)):
+    return templates.TemplateResponse(request, "cyber_approvals.html", page_context(auth))
+
+
+@app.get("/approved-releases")
+def approved_releases_page(request: Request, auth: AuthContext = Depends(require_user)):
+    return templates.TemplateResponse(request, "approved_releases.html", page_context(auth))
+
+
+@app.get("/admin/approved-release-destinations")
+def approved_release_destinations_page(request: Request, auth: AuthContext = Depends(require_user)):
+    cyber_approvals._permission(auth, "release.destination.manage")
+    return templates.TemplateResponse(request, "approved_release_destinations.html", page_context(auth))

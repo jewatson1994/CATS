@@ -61,3 +61,17 @@ it('populates a selected history response independently and does not request his
   await screen.findByText('No service scan history is available yet.');
   expect(fetch).toHaveBeenCalledTimes(3);
 });
+
+it('loads retained history when portfolio data is embedded directly in the page', async () => {
+  const fetch = vi.fn().mockResolvedValue(json({service_key:'api',name:'API',versions:[],trend:[
+    {execution_id:1,version:'1.5',scanned_at:'2026-10-14T12:00:00Z',complete:true,counts:{High:3},total:3},
+  ]}));
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{metrics:{services:1,scanned:1},rows:[],services:[{service_key:'api',name:'API'}]}}/>);
+  expect(screen.getByText('1 / 1')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Loading service history');
+  expect(await screen.findByRole('list', {name:'Recent service scans'})).toHaveTextContent('1.5');
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0][0]).toContain('/api/dashboard/cybersecurity/services/api/history');
+  expect(screen.queryByText('No service scan history is available yet.')).not.toBeInTheDocument();
+});

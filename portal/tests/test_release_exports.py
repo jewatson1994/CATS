@@ -43,6 +43,7 @@ def source():
         newer = ServiceVersion(service_id=service.id, version="2.0")
         db.add(newer)
         db.flush()
+        service.current_version_id = newer.id
         db.add(Execution(service_id=service.id, service_version_id=newer.id, execution_key="new-scan",
             scanned_at=datetime(2026, 1, 1, tzinfo=timezone.utc), complete=True,
             raw_payload={"findings": [{"cve": "CVE-NEW", "severity": "Critical"}],

@@ -55,7 +55,7 @@ interface SecurityData extends PageData {
 export function Page({ data: pageData }: { data: PageData }) {
   const {data, error, retry} = useDashboard(pageData);
   if (!data) return <><PageHeader title="Cybersecurity"/><section className="panel" aria-busy={!error}>{error ? <ErrorState title="Dashboard data could not be loaded" onRetry={retry} retryLabel="Retry dashboard">{error}</ErrorState> : <Loading label="Loading dashboard data…"/>}</section></>;
-  return <Portfolio data={data} asynchronous={Boolean(pageData.dashboard_url)}/>;
+  return <Portfolio data={data} asynchronous={!Array.isArray(data.history)}/>;
 }
 function Portfolio({data: pageData, asynchronous}: {data: PageData; asynchronous: boolean}) {
   const data = pageData as SecurityData;

@@ -20,7 +20,7 @@ from .frontend_admin import project_admin
 from .frontend_policies import policies_data
 
 PAGE_MEDIA_TYPE = "application/vnd.cats.page+json"
-MIGRATED_PAGES = frozenset({"jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
+MIGRATED_PAGES = frozenset({"cyber_approvals.html", "approved_releases.html", "approved_release_destinations.html", "jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
                             "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html", "public_results.html", "patch_results.html", "finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html",
                             "service_overview.html", "service_activity.html", "service_history.html",
                             "service_dependencies.html", "service_artifacts.html", "service_validation.html",
@@ -92,7 +92,7 @@ def _service_data(data, context, can, formatters):
     service_data["groups"] = [_fields(group, ("id", "name")) for group in _field(service, "groups", [])]
     service_id = _field(service, "id")
     for permission in ("service.edit", "service.delete", "archive.request", "exception.request",
-                       "exception.revoke", "poam.request", "remediation.execute", "service.export", "bundle.export"):
+                       "exception.revoke", "poam.request", "remediation.execute", "service.export", "bundle.export", "approval.request", "approval.decide"):
         data["can"][permission] = {str(service_id): bool(can(permission, service_id)) if callable(can) else False}
     data["view"] = _fields(view, ("version", "compliant", "archive"))
     data["view"]["service"] = service_data
@@ -164,7 +164,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},
         "permissions": {permission: bool(can(permission)) if callable(can) else False
-                        for permission in ("user.manage", "config.manage", "audit.view")},
+                        for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
         "pending_poam_count": _scalar(context.get("pending_poam_count", 0)),
         "actionable_notifications": [_fields(item, ("label", "service"))
@@ -238,7 +238,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
             "error", "started_at", "finished_at", "created_at"))
     elif name == "self_service.html":
         data.update(_fields(context, ("mode", "description", "image_list", "chart_url",
-            "authenticated_ingest", "ingest_service_id", "ingest_service_version", "cyclonedx_spec_version",
+            "authenticated_ingest", "ingest_service_id", "ingest_service_version", "ingest_scope", "cyclonedx_spec_version",
             "job_id", "status_message")))
         data["authenticated_services"] = [_fields(service, ("service_key", "name"))
                                            for service in context.get("authenticated_services", [])]

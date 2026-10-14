@@ -20,7 +20,7 @@ def check_worker():
         context.check()
 
 
-KINDS = ("remediation_plan", "remediation_execute", "remediation_validate", "remediation_deliver")
+KINDS = ("cyber_release_publish", "remediation_plan", "remediation_execute", "remediation_validate", "remediation_deliver")
 
 
 def _source(db, service_id, source_id=None):

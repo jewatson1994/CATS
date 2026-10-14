@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import shutil
+import subprocess
 import tarfile
 
 import pytest
@@ -63,6 +64,93 @@ def test_arbitrary_yaml_key_resolving_to_chart_is_high_confidence(tmp_path):
     graph, entries = discover(tmp_path)
     assert any(item.get("name") == "backend" and item.get("discovery_source_file") == "config.yml" for item in entries)
     assert any(item.get("reference") == "./components/backend/chart" and item.get("confidence") == "HIGH" for item in graph["references"])
+
+
+@pytest.mark.parametrize("values", ["production.yaml", ["production.yaml", "../overrides.yaml"]])
+def test_values_files_reach_render_entries_in_declared_order(tmp_path, values):
+    chart(tmp_path, "app", "app")
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "production.yaml").write_text("cluster: {name: production}\n", encoding="utf-8")
+    (tmp_path / "overrides.yaml").write_text("replicas: 2\n", encoding="utf-8")
+    (config / "release.yaml").write_text(MODULE.yaml.safe_dump({
+        "services": {"production": {"chart": "../app", "values": values}},
+    }), encoding="utf-8")
+    _, entries = discover(tmp_path)
+    entry, = [item for item in entries if item.get("instance") == "production"]
+    expected = [str(config / "production.yaml")]
+    if isinstance(values, list):
+        expected.append(str(tmp_path / "overrides.yaml"))
+    assert entry["values"] == expected
+    assert not entry.get("values_errors")
+
+
+def test_unavailable_values_files_are_explicit_errors(tmp_path):
+    chart(tmp_path, "app", "app")
+    (tmp_path / "present.yaml").write_text("replicas: 2\n", encoding="utf-8")
+    (tmp_path / "release.yaml").write_text(MODULE.yaml.safe_dump({
+        "services": {"production": {"chart": "./app", "values": ["present.yaml", "missing.yaml", "../outside.yaml"]}},
+    }), encoding="utf-8")
+    _, entries = discover(tmp_path)
+    entry, = [item for item in entries if item.get("instance") == "production"]
+    assert entry["values"] == [str(tmp_path / "present.yaml")]
+    assert len(entry["values_errors"]) == 2
+    assert "missing.yaml" in entry["values_errors"][0]
+    assert "../outside.yaml" in entry["values_errors"][1]
+
+
+def test_configured_packaged_chart_does_not_render_again_with_defaults(tmp_path):
+    source = chart(tmp_path, "source", "monitoring")
+    with tarfile.open(tmp_path / "monitoring.tgz", "w:gz") as handle:
+        handle.add(source, arcname="monitoring")
+    shutil.rmtree(source)
+    (tmp_path / "release.yaml").write_text(MODULE.yaml.safe_dump({
+        "services": {"monitoring": {"chart": "./monitoring.tgz", "values": {"cluster": {"name": "production"}}}},
+    }), encoding="utf-8")
+    graph, entries = discover(tmp_path)
+    entry, = entries
+    assert entry["instance"] == "monitoring"
+    assert MODULE.yaml.safe_load(Path(entry["values"][0]).read_text()) == {"cluster": {"name": "production"}}
+    assert any(item.get("source_only") and item["discovery_method"] == "packaged chart" for item in graph["charts"])
+
+
+def test_values_file_outside_artifact_is_rejected(tmp_path):
+    artifact = tmp_path / "artifact"
+    chart(artifact, "app", "app")
+    (tmp_path / "private.yaml").write_text("replicas: 2\n", encoding="utf-8")
+    (artifact / "release.yaml").write_text(MODULE.yaml.safe_dump({
+        "services": {"production": {"chart": "./app", "values": "../private.yaml"}},
+    }), encoding="utf-8")
+    _, entries = discover(artifact)
+    entry, = entries
+    assert not entry.get("values")
+    assert "../private.yaml" in entry["values_errors"][0]
+
+
+@pytest.mark.skipif(not shutil.which("helm"), reason="Helm is required for the render regression")
+def test_discovered_values_satisfy_required_helm_settings(tmp_path):
+    app = chart(tmp_path, "app", "app")
+    (app / "values.yaml").write_text("cluster: {}\n", encoding="utf-8")
+    (app / "templates" / "deployment.yaml").write_text(
+        'apiVersion: v1\nkind: ConfigMap\nmetadata:\n'
+        '  name: {{ required "A Cluster name is required!" .Values.cluster.name | quote }}\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "production.yaml").write_text("cluster: {name: production}\n", encoding="utf-8")
+    (tmp_path / "release.yaml").write_text(MODULE.yaml.safe_dump({
+        "services": {"production": {"chart": "./app", "values": "production.yaml"}},
+    }), encoding="utf-8")
+    default_render = subprocess.run(["helm", "template", "app", str(app)], capture_output=True, text=True)
+    assert default_render.returncode != 0
+    assert "A Cluster name is required!" in default_render.stderr
+    _, entries = discover(tmp_path)
+    entry, = entries
+    command = ["helm", "template", entry["release"], entry["path"]]
+    for values_file in entry["values"]:
+        command.extend(["-f", values_file])
+    configured_render = subprocess.run(command, capture_output=True, text=True)
+    assert configured_render.returncode == 0, configured_render.stderr
+    assert 'name: "production"' in configured_render.stdout
 
 
 def test_unrelated_urls_do_not_become_helm_artifacts(tmp_path):

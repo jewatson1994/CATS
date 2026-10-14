@@ -75,7 +75,7 @@ class JobCancelled(Exception):
 
 
 def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
-           source_execution_id=None, version="", dedupe_key=None, max_attempts=3):
+           source_execution_id=None, version="", dedupe_key=None, max_attempts=3, commit=True):
     if dedupe_key:
         existing = db.scalar(select(DurableJob).where(DurableJob.dedupe_key == dedupe_key))
         if existing:
@@ -93,6 +93,10 @@ def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
         source_execution_id=source_execution_id, version=version,
         dedupe_key=dedupe_key, max_attempts=max(1, min(5, max_attempts)))
     db.add(row)
+    if not commit:
+        # Keep job admission atomic with the caller's decision and job binding.
+        db.flush()
+        return row
     try:
         db.commit()
     except IntegrityError:

@@ -17,6 +17,8 @@ The React interface provides service workspaces, scan results, remediation views
 | Scan | Assess images, Docker image archives, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
+| Approvals | Request Cyber review of an immutable Current Service or CATS Remediated snapshot, then record an approval or denial with rationale. |
+| Approved Releases | Retrieve published, signed artifacts and verified offline bundles; inspect publication failures, retries, and revocation history. |
 | Architecture | Explore topology derived from rendered Kubernetes resources and export SVG or workbook data. |
 | Patch and Remediations | Patch supported Linux images with Copa, rescan candidates, download artifacts, or publish and optionally sign immutable digests. |
 | Deployment Validation | Validate retained Helm artifacts in disposable kind clusters and preserve runtime evidence separately from static assessment. |
@@ -24,6 +26,8 @@ The React interface provides service workspaces, scan results, remediation views
 | Administration | Configure accounts, OIDC, access, registries, trust, validators, signing, and security data sources. |
 
 Scan downloads include an offline HTML overview, an Excel workbook, SBOMs, raw scanner reports, normalized findings, and a manual DefectDojo import bundle. Connected and disconnected workflows are supported when their required images, charts, databases, and tools are available.
+
+For Cyber approval, configure **Administration → Release Destinations** and global signing under **Settings**, then choose **Request Cyber Approval** from a service. The top-level **Approvals** queue records decisions; **Approved Releases** exposes publication status and retained artifacts. Publication reuses the existing remediation worker and requires no additional Compose service. See the [Cyber approvals and approved releases guide](docs/cyber-approved-releases.md) for permissions, registry setup, offline import prerequisites, signature trust, and deployment overrides.
 
 ## Role training
 
@@ -183,6 +187,7 @@ Offline operation requires locally supplied inputs and usable scanner databases.
 ## Guides
 
 - [Service remediation](docs/remediation.md) and [remediation pipeline](portal/docs/remediation-pipeline.md)
+- [Cyber approvals and approved releases](docs/cyber-approved-releases.md): review, destination setup, signed publication, offline import, and revocation history.
 - [Deployment Validation](portal/docs/deployment-validation.md)
 - [Durable workers and on-demand provisioning](docs/durable-workers.md): background jobs, resource settings, dependencies, and upgrades.
 - [Validator appliance](docs/validator-appliance.md) and [managed validator acceptance](docs/managed-validator-completion-report.md)
