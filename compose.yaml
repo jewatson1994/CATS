@@ -579,7 +579,7 @@ services:
     restart: unless-stopped
 
 
-  remediation-worker:
+  remediation-worker: &background_worker
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
     command: ["python", "-m", "app.remediation_worker"]
@@ -600,25 +600,17 @@ services:
     restart: unless-stopped
 
   export-worker:
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: []
+    <<: *background_worker
     command: ["python", "-m", "app.export_worker"]
     environment:
       <<: *background_environment
       TMPDIR: /data/export-jobs
-    volumes: *portal_volumes
     cpus: ${CATS_EXPORT_CPUS:-1.0}
     mem_limit: ${CATS_EXPORT_MEMORY:-1g}
     pids_limit: 128
-    stop_grace_period: 30s
-    depends_on:
-      portal:
-        condition: service_healthy
-    restart: unless-stopped
 
   provisioning-worker:
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: []
+    <<: *background_worker
     command: ["python", "-m", "app.provisioning_worker"]
     environment:
       <<: *background_environment
@@ -639,12 +631,6 @@ services:
       - ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-validator_staged_release}:/opt/cats/managed-validator-release:ro
     cpus: ${CATS_PROVISIONING_CPUS:-1.0}
     mem_limit: ${CATS_PROVISIONING_MEMORY:-2g}
-    pids_limit: 256
-    stop_grace_period: 30s
-    depends_on:
-      portal:
-        condition: service_healthy
-    restart: unless-stopped
 
 
 

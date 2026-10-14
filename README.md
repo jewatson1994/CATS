@@ -124,7 +124,9 @@ Open **http://localhost:8080** (or your configured port) and sign in with your l
 docker compose logs -f portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker
 ```
 
-For upgrades, select the new `CATS_IMAGE` and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker`. This preserves named volumes. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+For upgrades, update the image and Compose file together, select the new `CATS_IMAGE`, and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker`. This preserves named volumes. Keep `validator_payloads`, `validator_data` (managed-validator state/cache), and `export_jobs` (generated downloads). Follow the [worker upgrade guide](docs/durable-workers.md#upgrade-an-existing-installation) if an older installation kept validator state only inside the portal container. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+
+The three new workers reuse common Compose settings, wait for portal health, and process jobs stored in PostgreSQL. No message broker or additional published ports are required. Remediation, export, and provisioning progress appears in **Jobs**; completed exports provide a download link there.
 
 Before production use, complete the [scan-worker target-host acceptance checks](docs/dedicated-scan-worker.md). The [architecture review](docs/scan-worker-architecture-review-2026-10-09.md) records measured results, existing test failures, and deployment validation still required. Rebuild the image and update Compose together.
 
@@ -147,11 +149,18 @@ flowchart LR
     Browser[Browser or API client] --> Portal[CATS portal]
     Pipeline[CI pipeline or cats CLI] --> Portal
     Portal --> DB[(PostgreSQL)]
-    Portal --> Queue[(Durable scan jobs)]
+    Portal --> Queue[(Durable jobs in PostgreSQL)]
     Control[Private portal-control] --> Queue
     Scanner[Dedicated scan worker] --> Control
     Control --> DB
-    Portal --> Worker[Patch worker]
+    Remediation[Remediation worker] --> Queue
+    Export[Export worker] --> Queue
+    Provisioning[Provisioning worker] --> Queue
+    Remediation --> Worker[Patch worker]
+    Remediation --> Validator[Dedicated validator sandbox]
+    Export --> Downloads[Generated downloads]
+    Portal --> Downloads
+    Provisioning --> Validator
     Portal --> Validator[Dedicated validator sandbox]
     Portal -. Optional OIDC .-> Identity[External identity provider]
     Scanner --> Evidence[SBOMs and assessment artifacts]
@@ -175,6 +184,7 @@ Offline operation requires locally supplied inputs and usable scanner databases.
 
 - [Service remediation](docs/remediation.md) and [remediation pipeline](portal/docs/remediation-pipeline.md)
 - [Deployment Validation](portal/docs/deployment-validation.md)
+- [Durable workers and on-demand provisioning](docs/durable-workers.md): background jobs, resource settings, dependencies, and upgrades.
 - [Validator appliance](docs/validator-appliance.md) and [managed validator acceptance](docs/managed-validator-completion-report.md)
 - [Signed release documentation](docs/signed-release-documentation.md): immutable OCI attachments, Standard/Offline bundles, verification, and recovery.
 - [Signing](portal/SIGNING.md)
@@ -207,4 +217,4 @@ pnpm test
 pnpm build
 ```
 
-Build frontend assets before launching the Python portal directly; container builds already do so. Keep PostgreSQL state, the encryption key, and required release inputs through upgrades, and upgrade portal and worker together.
+Build frontend assets before launching the Python portal directly; container builds already do so. Direct development also needs the worker processes for queued remediation, export, and provisioning operations. Keep PostgreSQL state, the encryption key, and required release inputs through upgrades, and upgrade portal, portal-control, and all five workers together.

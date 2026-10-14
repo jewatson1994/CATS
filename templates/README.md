@@ -4,7 +4,7 @@ These templates deploy the current runtime and its separate validator sandbox. R
 
 ## Main CATS
 
-The main template runs PostgreSQL, portal, the private portal-control listener, patch-worker, and scan-worker under the project name `cats`. It uses an already-built image and does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
+The main template runs PostgreSQL, portal, the private portal-control listener, patch-worker, scan-worker, remediation-worker, export-worker, and provisioning-worker under the project name `cats`. All CATS services use the same already-built image; this template does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
 
 ```powershell
 Copy-Item templates/main.env.example C:/secure/cats.env
@@ -23,10 +23,17 @@ Generate the encryption key with the portal Python environment:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Update the image selection and recreate portal, portal-control, patch-worker, and scan-worker together for upgrades; retain database volumes and the encryption key.
+The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Upgrade the image and Compose file together; retain database volumes and the encryption key. After selecting the new image in your existing environment file, recreate all CATS services:
+
+```sh
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker
+```
+
+The three new workers share common Compose settings through YAML anchors and wait for portal health before starting. PostgreSQL stores their durable jobs; no message broker or additional published ports are needed. Preserve `validator_payloads`, `validator_data` (managed-validator state and preparation cache), and `export_jobs` (generated downloads). `validator_staged_release` is an empty fallback volume when no legacy release directory is selected. See the [upgrade guide](../docs/durable-workers.md#upgrade-an-existing-installation) before replacing a deployment that kept validator state only inside the portal container.
 
 
-The scan-worker requires its own random `CATS_SCAN_WORKER_TOKEN` of at least 32 characters, shared with the control listener. Worker APIs are available only on `http://portal-control:8001` inside the private network; do not publish this port. The worker has no PostgreSQL credentials or Docker socket. Its root broker has only the capabilities needed to launch isolated scanner subprocesses under a separate UID/GID (base 10002), with a read-only root filesystem and a disk workspace for large artifacts.
+The scan-worker requires its own random `CATS_SCAN_WORKER_TOKEN` of at least 32 characters, shared with the control listener. Scan-worker APIs are available only on `http://portal-control:8001` inside the private network; do not publish this port. The scan-worker has no PostgreSQL credentials or Docker socket. Its root broker has only the capabilities needed to launch isolated scanner subprocesses under a separate UID/GID (base 10002), with a read-only root filesystem and a disk workspace for large artifacts. The three new workers use PostgreSQL directly; only provisioning-worker has Docker-host access for preparing validator payloads. The existing patch-worker also retains Docker-host access.
 
 Before direct Compose startup, create the registry-auth directory and set `CATS_SCAN_REGISTRY_AUTH_SOURCE` to its absolute path. The bind is read-only and missing-path creation is disabled. An empty directory supports public sources; private sources require pull-only Docker `auths` entries scoped to approved repositories. The release script creates/checks the directory, but the template commands above do not. Credentials are copied only for referenced hosts in authorized authenticated service scans. Anonymous submissions are disabled by default; enabling `CATS_SCAN_ALLOW_ANONYMOUS` does not grant service credentials.
 
@@ -34,7 +41,7 @@ Scan inputs/results use plain tar envelopes; bounded submission preparation and 
 
 Follow [the dedicated worker guide](../docs/dedicated-scan-worker.md) for controls, credential rotation, storage/generation lifecycle, retention, and the target-host validation checklist. Compose rendering proves configuration consistency; validate actual scanner tools, large disk-backed artifacts, private OCI, offline imports, restart/cancellation, resource/network enforcement, and Portal latency on the deployment host before claiming operational readiness.
 
-The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires explicit image and release-directory selections; the root file retains local-development fallbacks. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
+The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires an explicit image selection; the root file defaults to `cats:local`. Staged validator release directories are optional in both. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
 
 ## Signed release documentation
 
@@ -54,6 +61,8 @@ docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d 
 For the repository-root stack, use `docker compose up -d --no-deps --force-recreate --wait portal portal-control` after editing `.env`. For direct Portal development, restart the process with the updated environment.
 
 `CATS_REMEDIATION_REQUIRE_VALIDATION=true` requires validation bound to the candidate before OCI or deployable bundle delivery. Keep this default unless your deployment deliberately permits skipping validation. This delivery policy is separate from `CATS_DEPLOYMENT_VALIDATION_ENABLED`; see [the remediation wizard guide](../docs/remediation-wizard.md) for the workflow and deployment requirements.
+
+For changes to remediation policy or other settings shared with background workers, recreate the full CATS service list shown above so every process receives the updated environment.
 
 ## Validator sandbox
 
@@ -82,4 +91,4 @@ CATS submits and polls validation jobs; the validator does not call back into pr
 
 ## Maintaining the templates
 
-Keep root and template Compose service definitions synchronized. Their intended differences are the main template's required image/release path and the validator template's relative build context. Environment examples contain placeholders only; do not commit live settings, credentials, or private keys.
+Keep root and template Compose service definitions synchronized, including the shared worker anchors. Their intended differences are the main template's required image selection and the validator template's relative build context. Keep `.env.example` and `main.env.example` worker settings aligned. Environment examples contain placeholders only; do not commit live settings, credentials, or private keys.
