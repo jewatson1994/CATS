@@ -35,3 +35,10 @@ See [service remediation](../remediation.md) and [pipeline details](../../portal
 ## Exercise
 
 Select a training ingestion target, draft a justified exception request, and identify the independent reviewer. Explain what evidence is needed after remediation to establish successful deployment.
+
+
+### Choose assessment scope when ingesting a public scan
+
+Automatic scope treats a scan containing one image and no charts as an image-only update. It preserves other service images and does not promote a different service version. Choose **Full service assessment** only when the submitted inputs cover the entire service; this also supports services consisting of one image. A newer full-service assessment can become current and resolve findings that are absent from the scan. Select the intended Service Version before starting.
+
+If an earlier single-image scan was retained under a historical version, start a new scan of the complete service, choose that version and Full service assessment. Existing scan IDs are immutable and retrying their ingestion does not rewrite their scope. Pipeline clients can submit a new execution ID with `scan_scope: service`; public-job clients can explicitly select `scan_scope=service` on the ingest endpoint before first ingestion. Historical imports and intentional image-only updates remain historical.

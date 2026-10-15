@@ -5,6 +5,8 @@ import {Icon} from './ui';
 const primaryNav: [string, string, (path: string) => boolean][] = [
   ['/', 'Services', path => path === '/' || path.startsWith('/services/')],
   ['/cybersecurity', 'Cybersecurity', path => path.startsWith('/cybersecurity')],
+  ['/cyber-approvals', 'Approvals', path => path.startsWith('/cyber-approvals')],
+  ['/approved-releases', 'Approved Releases', path => path.startsWith('/approved-releases')],
   ['/scan', 'Scan', path => path === '/scan' || path.startsWith('/api/public/jobs/')],
   ['/sbom', 'SBOM', path => path === '/sbom'],
   ['/jobs', 'Jobs', path => path === '/jobs'],
@@ -42,8 +44,8 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
           <a key={index} href="/requests">{item.label}<small>{item.service}</small></a>)}
           <a className="notification-all" href="/requests">View all requests</a></> : <span className="muted">No action required.</span>}
       </div></details>
-      {(can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view')) &&
-        <a className="admin-entry" aria-label="Administration" title="Administration" href={can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration' : '/admin/general-policy'}><Icon name="gear"/></a>}
+      {(can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage')) &&
+        <a className="admin-entry" aria-label="Administration" title="Administration" href={can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration' : can(data, 'audit.view') ? '/admin/general-policy' : '/admin/approved-release-destinations'}><Icon name="gear"/></a>}
       <details className="user-menu"><summary>{user.display_name}<Icon name="chevron"/></summary><div className="menu-popover">
         <details className="appearance-menu"><summary>Appearance</summary><form method="post" action="/account/appearance">
           <input type="hidden" name="csrf_token" value={data.csrf_token}/><input type="hidden" name="next_path" value={window.location.pathname + window.location.search}/>

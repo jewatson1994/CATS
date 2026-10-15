@@ -64,7 +64,8 @@ def _service_findings_book(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+    latest_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id,
+        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
         .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
     def export_rows():
         observations = db.execute(select(Finding.cve, Finding.severity, Finding.active,
@@ -92,9 +93,10 @@ def _service_diagrams_bytes(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    from .activity_queries import latest_evidence_execution
-    latest = latest_evidence_execution(db, service.id, architecture=True)
-    if latest is None:
+    latest = db.scalar(select(Execution).where(Execution.service_id == service.id,
+        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
+        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    if latest is None or not latest.raw_payload:
         raise HTTPException(422, detail="No architecture evidence is available to diagram")
     graph = build_architecture_graph(latest.raw_payload or {})
     output = BytesIO()
@@ -109,8 +111,9 @@ def _service_sbom_components(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    from .activity_queries import latest_evidence_execution
-    latest = latest_evidence_execution(db, service.id)
+    latest = db.scalar(select(Execution).where(Execution.service_id == service.id,
+        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
+        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
     if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
         raise HTTPException(422, detail="No retained SBOM component evidence is available")
     return {"format": "cats-retained-sbom-components-v1", "service": service_key,

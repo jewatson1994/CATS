@@ -20,6 +20,7 @@ import {Page as ServiceArtifacts} from './features/service-artifacts';
 
 /** Infrequent or administrative pages load as separate local chunks. */
 const loaders: Record<string, () => Promise<any>> = {
+  './features/cyber_approvals': () => import('./features/cyber_approvals'),
   './features/admin': () => import('./features/admin'),
   './features/audit': () => import('./features/audit'),
   './features/jobs': () => import('./features/jobs'),
@@ -66,6 +67,9 @@ export function lazyComponent<P extends object>(module: string, name: string,
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
 const Patch = lazyPage('./features/patch', 'Page');
+const CyberApprovals = lazyPage('./features/cyber_approvals', 'Page');
+const ApprovedReleases = lazyPage('./features/cyber_approvals', 'Releases');
+const ApprovedReleaseDestinations = lazyPage('./features/cyber_approvals', 'Destinations');
 const Jobs = lazyPage('./features/jobs', 'Page');
 const SelfService = lazyPage('./features/self_service', 'Page');
 const PublicResults = lazyPage('./features/public_results', 'Page');
@@ -106,6 +110,7 @@ export function preloadPages() {
 }
 
 const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
+  '/cyber-approvals', '/approved-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
@@ -118,6 +123,7 @@ export const isPageRoute = (path: string) => routes.has(path) || [
   /^\/admin\/(configuration|general-policy)\/export-templates\/(poam|ppsm|assets)$/,
 ].some(pattern => pattern.test(path));
 const pages: Record<string, ComponentType<{data: PageData}>> = {
+  cyber_approvals: CyberApprovals, approved_releases: ApprovedReleases, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
   self_service: SelfService, patch: Patch, cybersecurity: Cybersecurity,
   service: Service, service_simplified: Service,

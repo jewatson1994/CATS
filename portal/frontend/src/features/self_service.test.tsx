@@ -89,4 +89,15 @@ describe('self service workspace', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Ingested into selected service.'));
     expect(mocks.request.mock.calls.filter(([path]) => path.includes('/ingest?'))).toHaveLength(2);
   });
+  it('defaults to safe automatic scope and submits an explicit full service choice', async () => {
+    render(<Page data={data} />);
+    const scope = screen.getByLabelText('Assessment scope');
+    expect(scope).toHaveValue('auto');
+    fireEvent.change(scope, {target: {value: 'service'}});
+    fireEvent.submit(screen.getByRole('button', {name: 'Start scan'}).closest('form')!);
+    await waitFor(() => expect(mocks.request).toHaveBeenCalled());
+    expect((mocks.request.mock.calls[0][1].body as FormData).get('ingest_scope')).toBe('service');
+    expect(screen.getByText(/only when these inputs cover the whole service/)).toBeInTheDocument();
+  });
+
 });
