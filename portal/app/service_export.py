@@ -80,7 +80,7 @@ def _sheet(workbook: Workbook, name: str, headers: list[str], rows: Iterable[Ite
     sheet = workbook.create_sheet(name)
     sheet.append(headers)
     for row in rows:
-        sheet.append(list(row))
+        sheet.append([("'" + value) if isinstance(value, str) and value.startswith(("=", "+", "-", "@")) else value for value in row])
     _format_sheet(sheet)
     return sheet
 
@@ -234,6 +234,16 @@ def build_service_workbook(
     for raw in overview["artifacts"]:
         artifact_rows.append([raw.get("type"), raw.get("artifact"), raw.get("version"), raw.get("registry"), raw.get("repository"), raw.get("digest"), _source(raw), raw.get("discovered_from")])
     _sheet(workbook, "Artifacts", ["Type", "Name", "Version / Tag", "Registry", "Repository", "Digest", "Source File", "Relationship / Declared By"], artifact_rows)
+
+    compose = raw_overview.get("compose")
+    if isinstance(compose, dict):
+        _sheet(workbook, "Compose Services", ["Service", "Image", "Configuration Status", "Image Scan", "Source Files", "Configuration (redacted)"], [
+            [item.get("name"), item.get("image"), item.get("status"), item.get("image_scan"), "\n".join(item.get("source_files") or []), json.dumps(item.get("configuration") or {}, sort_keys=True)]
+            for item in compose.get("services", [])])
+        _sheet(workbook, "Compose Coverage", ["Metric", "Value"], [[key, value] for key, value in (compose.get("coverage") or {}).items()])
+        _sheet(workbook, "Compose Input Issues", ["Code", "Service", "Source", "Message", "Blocking"], [
+            [item.get("code"), item.get("service"), item.get("source"), item.get("message"), item.get("blocking")]
+            for item in compose.get("issues", [])])
 
     _sheet(workbook, "Missing Evidence", ["Type", "Item", "Why Missing", "Source File"], [[row.get("type"), row.get("item"), row.get("reason"), row.get("source_file") or "—"] for row in overview["missing_evidence"]])
     raw_ports = raw_overview.get("ports")

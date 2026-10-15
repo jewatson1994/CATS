@@ -175,7 +175,7 @@ def claim(worker_id):
         db.commit()
         return {"job_id": row.id, "attempt_id": attempt_id, "attempt_token": token,
                 "lease_until": row.lease_until.isoformat(), "input_digest": row.input_digest, "service_key": row.service_key,
-                "service_version": row.service_version, "job": {key: value for key, value in row.payload.items() if key in {"job_kind", "image_list", "chart_url", "skipped_charts", "sbom_formats", "cyclonedx_spec_version", "definition_component", "definition_components"}}}
+                "service_version": row.service_version, "job": {key: value for key, value in row.payload.items() if key in {"job_kind", "image_list", "chart_url", "skipped_charts", "sbom_formats", "cyclonedx_spec_version", "definition_component", "definition_components", "compose_enabled", "compose_files", "compose_profiles", "compose_preview", "credential_policy"}}}
 
 
 def fenced(db, job_id, attempt_id, token, *, completed=False, worker_id=None):

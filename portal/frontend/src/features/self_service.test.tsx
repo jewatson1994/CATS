@@ -10,8 +10,67 @@ const data: SelfServiceData = {
   service_version_options: { a: ['1'], b: ['2'] }, ingest_service_id: 'a', ingest_service_version: '1',
 };
 describe('self service workspace', () => {
-  afterEach(cleanup);
+  afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   beforeEach(() => { mocks.job = null; mocks.request.mockReset().mockResolvedValue({page: 'self_service', data}); mocks.retry.mockReset(); });
+
+  it('forwards the clicked preview submitter and preserves selected Compose files after submission', async () => {
+    const NativeFormData = globalThis.FormData;
+    const formData = vi.spyOn(globalThis, 'FormData').mockImplementation(function(form?: HTMLFormElement, submitter?: HTMLElement | null) { return new NativeFormData(form, submitter); });
+    render(<Page data={data} />);
+    const uploads = screen.getByLabelText(/Docker Compose files and companions/) as HTMLInputElement;
+    const files = [new File(['services: {}'], 'compose.yaml', {type: 'application/yaml'}), new File(['TAG=1'], '.env'), new File(['bundle'], 'project.zip')];
+    fireEvent.change(uploads, {target: {files}});
+    fireEvent.change(screen.getByLabelText(/Compose file order/), {target: {value: 'compose.yaml\ncompose.prod.yaml'}});
+    fireEvent.change(screen.getByLabelText(/Compose profiles/), {target: {value: 'production,monitoring'}});
+    const button = screen.getByRole('button', {name: 'Preview Compose'});
+    fireEvent.click(button);
+    await waitFor(() => expect(button).toBeEnabled());
+    expect(formData).toHaveBeenCalledWith(button.closest('form'), button);
+    expect((formData.mock.calls[0][0] as HTMLFormElement).querySelector<HTMLInputElement>('[name="compose_uploads"]')?.files).toEqual(files);
+    const body = mocks.request.mock.calls[0][1].body as FormData;
+    expect(body.get('compose_preview')).toBe('true');
+    expect(body.get('compose_files')).toBe('compose.yaml\ncompose.prod.yaml');
+    expect(body.get('compose_profiles')).toBe('production,monitoring');
+    expect(uploads).toHaveAttribute('multiple');
+    expect(uploads).not.toHaveAttribute('accept');
+    expect(screen.getByLabelText(/Docker Compose files and companions/)).toBe(uploads);
+    expect(uploads.files).toEqual(files);
+    fireEvent.click(screen.getByRole('button', {name: 'Start scan'}));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect((mocks.request.mock.calls[1][1].body as FormData).get('compose_preview')).toBe('false');
+  });
+  it.each(['complete', 'incomplete'])('shows %s preview inventory without ingesting or presenting scan exports', async status => {
+    mocks.job = {status, phase: 'compose_discovery', compose_preview: true, summary: {compose: {
+      complete: status === 'complete', images: ['nginx:1'],
+      services: [{name: 'web', image: 'nginx:1', status: 'image_and_build', source_files: ['compose.yaml'], configuration: {environment: {TOKEN: '[REDACTED]'}}}],
+      issues: [{code: 'build_ignored', message: '<script>unsafe()</script>', service: 'web', source: 'compose.yaml', blocking: false}],
+    }}};
+    render(<Page data={{...data, job_id: 'preview-' + status, progress_phases: [['prepare_inputs', 'Prepare inputs'], ['compose_discovery', 'Compose discovery'], ['scan_sboms', 'SBOM scan']]}} />);
+    await waitFor(() => expect(mocks.request).toHaveBeenCalled());
+    expect(mocks.request.mock.calls.some(([url]) => url.includes('/ingest?'))).toBe(false);
+    expect(screen.getByRole('region', {name: 'Compose inventory'})).toHaveTextContent('web');
+    expect(screen.getByText('image and build')).toBeInTheDocument();
+    expect(screen.getByText(/TOKEN/)).toHaveTextContent('[REDACTED]');
+    expect(document.querySelector('script')).toBeNull();
+    expect(screen.queryByText('Detailed results')).not.toBeInTheDocument();
+    expect(screen.queryByText('Download Excel')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open HTML overview')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', {name: 'Download artifacts'})).toBeInTheDocument();
+    expect(screen.getByRole('status')).not.toHaveTextContent('vulnerability result');
+    expect(screen.queryByText('SBOM scan')).not.toBeInTheDocument();
+  });
+  it('cancels a running preview through the existing job endpoint', async () => {
+    mocks.job = {status: 'running', phase: 'compose_discovery', compose_preview: true};
+    render(<Page data={{...data, job_id: 'preview-cancel'}} />);
+    fireEvent.click(screen.getByRole('button', {name: 'Cancel preview'}));
+    await waitFor(() => expect(mocks.retry).toHaveBeenCalled());
+    expect(mocks.request).toHaveBeenCalledWith('/api/public/jobs/preview-cancel/cancel', {method: 'POST'});
+  });
+  it('does not expose Compose controls in SBOM mode', () => {
+    render(<Page data={{...data, mode: 'sbom'}} />);
+    expect(screen.queryByLabelText(/Docker Compose files and companions/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Preview Compose'})).not.toBeInTheDocument();
+  });
   it('preserves submission failures and permits destination changes and repeated retries without remounting', async () => {
     mocks.request.mockResolvedValueOnce({page: 'self_service', data: {...data, status_message: 'Acquisition failed'}})
       .mockRejectedValueOnce(new Error('Worker unavailable'))

@@ -14,7 +14,7 @@ The React interface provides service workspaces, scan results, remediation views
 | --- | --- |
 | Services | Filter the Service Security Matrix; switch Active, Staged, or Archived, choose page size, and inspect versioned service evidence. |
 | Jobs | Inspect durable scans, remediation plans/executions, exports, and administrator provisioning operations. |
-| Scan | Assess images, Docker image archives, and Helm inputs without creating a persistent service. |
+| Scan | Assess images, Docker image archives, Docker Compose applications, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
 | Approvals | Request Cyber review of an immutable Current Service or CATS Remediated snapshot, then record an approval or denial with rationale. |
@@ -185,6 +185,8 @@ Permanent service deletion requires global `service.delete`, a reason, and exact
 Offline operation requires locally supplied inputs and usable scanner databases. Security-source freshness and missing evidence remain part of the assessment. See [cybersecurity and validation](docs/cybersecurity-and-validation.md) and [disconnected delivery limits](docs/schrodinger-deliveries.md).
 
 ## Guides
+
+- [Docker Compose ingestion](docs/compose-ingestion.md): ordered files, profiles, previews, image associations, private registries, and limitations.
 
 - [Service remediation](docs/remediation.md) and [remediation pipeline](portal/docs/remediation-pipeline.md)
 - [Cyber approvals and approved releases](docs/cyber-approved-releases.md): review, destination setup, signed publication, offline import, and revocation history.

@@ -3334,7 +3334,7 @@ def self_service_context(request: Request, mode: str, image_list: str = "", char
     progress_phases = (
         [("prepare_inputs", "Prepare"), ("generate_sboms", "Generate")]
         if mode == "sbom"
-        else [("prepare_inputs", "Prepare"), ("generate_sboms", "SBOM"), ("scan_sboms", "Scan"), ("configuration_scan", "Configuration"), ("report_results", "Report")]
+        else [("prepare_inputs", "Prepare"), ("compose_discovery", "Compose"), ("generate_sboms", "SBOM"), ("scan_sboms", "Scan"), ("configuration_scan", "Configuration"), ("report_results", "Report")]
     )
     return templates.TemplateResponse(request, "self_service.html", {
         "current_user": auth.user if auth else None, "csrf_token": auth.csrf_token if auth else "", "can": auth.has if auth else (lambda _permission: False),
@@ -3856,9 +3856,15 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto") -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
+    compose_uploads = compose_uploads or []
+    compose_files = [name.strip() for name in (compose_files or []) if name.strip()]
+    compose_profiles = [name.strip() for name in (compose_profiles or []) if name.strip()]
+    if compose_preview:
+        ingest_service_id = None
+        ingest_service_version = ""
     chart_urls = [url.strip() for url in (chart_urls or []) if url.strip()]
     definition_sources = [url.strip() for url in (definition_sources or []) if url.strip()]
     if job_kind not in {"scan", "sbom"}:
@@ -3871,10 +3877,14 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         raise HTTPException(status_code=400, detail="Select at least one SBOM format")
     if cyclonedx_spec_version not in CYCLONEDX_SPEC_VERSIONS:
         raise HTTPException(status_code=400, detail="Unsupported CycloneDX specification version")
-    if job_kind == "sbom" and (chart_archives or chart_urls):
+    if job_kind == "sbom" and (chart_archives or chart_urls or compose_uploads or compose_files or compose_profiles or compose_preview):
         raise HTTPException(status_code=400, detail="SBOM generation accepts container images or image archives")
-    if not lines and not chart_archives and not chart_urls and not image_archive and not definition_sources and not definition_component and not definition_components:
-        detail = "Provide an image reference or image archive" if job_kind == "sbom" else "Provide an image reference, image archive, or Helm chart"
+    if compose_preview and not compose_uploads:
+        raise HTTPException(status_code=400, detail="Upload Compose files or a bundle to preview")
+    if (compose_files or compose_profiles) and not compose_uploads:
+        raise HTTPException(status_code=400, detail="Upload Compose files or a bundle to use Compose options")
+    if not lines and not chart_archives and not chart_urls and not image_archive and not definition_sources and not definition_component and not definition_components and not compose_uploads:
+        detail = "Provide an image reference or image archive" if job_kind == "sbom" else "Provide an image reference, image archive, Helm chart, or Compose files"
         raise HTTPException(status_code=400, detail=detail)
     if len(lines) > int(os.getenv("CATS_PUBLIC_MAX_IMAGES", "50")):
         raise HTTPException(status_code=413, detail="Too many image references")
@@ -3892,7 +3902,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     from .scan_access import admission_policy
     security = admission_policy(owner_user_id, service_db_id)
     skipped_charts = list(definition_skipped or [])
-    payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []), "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
+    payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []) + [name for _, name in compose_uploads], "compose_enabled": bool(compose_uploads), "compose_files": compose_files, "compose_profiles": compose_profiles, "compose_preview": compose_preview, "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
     payload.update(security)
     if owner_user_id is None:
         if not capability_token:
@@ -3933,14 +3943,26 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
                     if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
                         raise HTTPException(507, "Insufficient scan staging capacity")
                     target.write(chunk)
+        if compose_uploads:
+            from .compose_ingestion import ComposeInputError, stage_uploads
+            try:
+                stage_uploads(job_input, compose_uploads)
+            except ComposeInputError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from None
         from .scan_artifacts import pack, digest
         (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         envelope = job_input.parent / "input.tar.gz"
         pack(job_input, envelope, {"job_id": job_id})
-        # The checked envelope now owns uploaded image bytes. Retain only small
+        # The checked envelope now owns uploaded image and Compose bytes. Retain only small
         # request metadata and immutable chart sources for subsequent ingestion.
         if (job_input / "image-archives").exists():
             shutil.rmtree(job_input / "image-archives")
+        compose_root = job_input / ".cats-compose"
+        if compose_root.exists():
+            # stage_uploads creates this fixed child inside the checked input directory.
+            if not compose_root.resolve().is_relative_to(job_input.resolve()):
+                raise HTTPException(422, "Invalid Compose staging directory")
+            shutil.rmtree(compose_root)
         _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=digest(envelope))
     except BaseException:
         if job_input.parent.exists(): shutil.rmtree(job_input.parent)
@@ -3986,8 +4008,13 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
 @app.post("/scan", response_class=HTMLResponse)
 async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), ingest_scope: str = Form("auto"), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
     import secrets
+    ingest_scope = ingest_scope if isinstance(ingest_scope, str) else "auto"
     capability_token = secrets.token_urlsafe(32) if auth is None else None
     chart_archives = []
+    compose_uploads = []
+    compose_files = []
+    compose_profiles = []
+    compose_preview = False
     try:
         if ingest_scope not in {"auto", "service"}:
             raise HTTPException(422, "Choose automatic scope or a full service assessment")
@@ -3996,6 +4023,14 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
         # request form as well so the HTML multi-file input remains compatible
         # with clients that submit multiple parts.
         form = await request.form()
+        compose_uploads = [(upload.file, upload.filename) for upload in form.getlist("compose_uploads")
+                           if hasattr(upload, "file") and getattr(upload, "filename", None)]
+        compose_files = [line.strip() for line in str(form.get("compose_files") or "").splitlines() if line.strip()]
+        compose_profiles = [name.strip() for name in re.split(r"[,\r\n]+", str(form.get("compose_profiles") or "")) if name.strip()]
+        compose_preview = str(form.get("compose_preview") or "").lower() in {"true", "1", "on"}
+        if compose_preview:
+            ingest_service_id = ""
+            ingest_service_version = ""
         chart_uploads = [value for value in form.getlist("chart_archives") if hasattr(value, "read") and getattr(value, "filename", None)] or chart_uploads
         # Starlette already spools multipart files to disk. Keep that seekable
         # stream through synchronous staging instead of allocating another copy.
@@ -4050,7 +4085,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                     definition_skipped.append(_public_chart_skip_entry(component["logical_name"], component["reason"]))
                     continue
                 definition_components.append(component)
-            if not definition_components and not image_list.strip() and not image_archive and not chart_archives and not chart_url.strip():
+            if not definition_components and not image_list.strip() and not image_archive and not chart_archives and not chart_url.strip() and not compose_uploads:
                 failures = "; ".join(definition_skipped[:3])
                 if len(definition_skipped) > 3:
                     failures += f"; and {len(definition_skipped) - 3} more"
@@ -4059,7 +4094,8 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                                     trusted_ca_certificates=trusted_cas, definition_sources=definition_sources, definition_components=definition_components,
                                     owner_user_id=auth.user.id if auth else None,
                                     definition_skipped=definition_skipped, definition_summary=definition_summary,
-                                    ingest_service_version=ingest_service_version, capability_token=capability_token, ingest_scope=ingest_scope)
+                                    ingest_service_version=ingest_service_version, capability_token=capability_token, ingest_scope=ingest_scope,
+                                    compose_uploads=compose_uploads, compose_files=compose_files, compose_profiles=compose_profiles, compose_preview=compose_preview)
     except HTTPException as exc:
         scoped = auth.accessible_service_ids("scan.ingest") if auth else set()
         services = list(db.scalars(select(Service).order_by(Service.name))) if scoped != set() else []
@@ -4070,6 +4106,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                                     ingest_service_version=ingest_service_version, ingest_scope=ingest_scope)
     finally:
         close_downloads(chart_archives)
+        close_downloads(compose_uploads)
     # Redirect after a successful submission so refreshing the browser only
     # reloads the existing job rather than replaying the POST and starting a
     # second scan.
@@ -4354,6 +4391,39 @@ def _write_public_scan_workbook(output_dir: Path, workbook_path: Path) -> None:
             item.get("target"), item.get("namespace"), item.get("description"), item.get("remediation"),
         ])
     format_sheet(config)
+
+    overview = payload.get("service_overview") or {}
+    compose = overview.get("compose") if isinstance(overview, dict) else None
+    if isinstance(compose, dict):
+        def safe_cell(value):
+            if isinstance(value, (dict, list)):
+                value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+            if isinstance(value, str) and value.startswith(("=", "+", "-", "@")):
+                return "'" + value
+            return value
+
+        def compose_sheet(title, headers, rows):
+            sheet = workbook.create_sheet(title)
+            sheet.append(headers)
+            for row in rows:
+                sheet.append([safe_cell(value) for value in row])
+            format_sheet(sheet)
+
+        compose_sheet("Compose Services", ["Service", "Image", "Status", "Image Scan", "Source Files", "Configuration"], (
+            [item.get("name"), item.get("image"), item.get("status"), item.get("image_scan"),
+             "\n".join(item.get("source_files") or []), item.get("configuration")]
+            for item in compose.get("services") or [] if isinstance(item, dict)
+        ))
+        coverage = compose.get("coverage") if isinstance(compose.get("coverage"), dict) else {}
+        compose_sheet("Compose Coverage", ["Field", "Value"], [
+            ["Discovery complete", bool(compose.get("complete"))],
+            ["Unique images", compose.get("images") or []],
+            *([key, value] for key, value in coverage.items()),
+        ])
+        compose_sheet("Compose Issues", ["Code", "Message", "Service", "Source", "Blocking"], (
+            [item.get("code"), item.get("message"), item.get("service"), item.get("source"), item.get("blocking")]
+            for item in compose.get("issues") or [] if isinstance(item, dict)
+        ))
     workbook.save(workbook_path)
 
 
@@ -4519,6 +4589,8 @@ def ingest_public_scan(
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
         job = PUBLIC_JOBS[job_id]
+    if job.get("compose_preview"):
+        raise HTTPException(status_code=409, detail="Compose previews cannot be ingested; start a scan first")
     result_path = PUBLIC_JOB_ROOT / job_id / "output" / "portal-result.json"
     if (result_path.parent / "scan-failure.json").exists():
         raise HTTPException(status_code=409, detail="A required scanner phase failed; this scan cannot be ingested. Review the retained scan logs.")
@@ -4587,9 +4659,9 @@ def ingest_public_scan(
             data["scan_scope"] = "service"
         image_only_job = bool(job_input_images) and not (
             source_files or job.get("chart_url") or job.get("chart_names")
-            or job.get("archive_names") or data.get("artifact_type") == "helm"
+            or job.get("archive_names") or job.get("compose_enabled") or data.get("artifact_type") == "helm"
         )
-        if selected_scope == "service" and not definition_context:
+        if (selected_scope == "service" or job.get("compose_enabled")) and not definition_context:
             data["scan_scope"] = "service"
             data.pop("scope_image", None)
         if selected_scope != "service" and data.get("scan_scope") == "service" and image_only_job and len(set(job_input_images)) == 1 and not data.get("skipped_images") and not data.get("skipped_charts"):
