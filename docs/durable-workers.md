@@ -79,7 +79,8 @@ The provisioning worker:
 1. Connects with the explicitly trusted host key and checks OS, architecture,
    capacity and runtime prerequisites.
 2. Resolves the immutable image ID of its own running unified CATS container
-   (or configured immutable runtime) and the application's pinned Kind node image.
+   (or configured immutable runtime) and the Kind node base configured by
+   `CATS_DEPLOYMENT_KIND_NODE_IMAGE` (the shipped pin when unset).
 3. Acquires missing inputs only from approved internal digest references, prepares
    image archives and the isolated node recipe on demand, verifies checksums and
    records provenance. A matching verified cache can be reused.
@@ -88,8 +89,8 @@ The provisioning worker:
 5. Configures mTLS and enrollment, runs the actual self-test and cleanup, and only
    then reports **Healthy**.
 
-The cache identity includes runtime image, node image, architecture and recipe
-hash. Changing any of them requires preparation again. Attempts persist the chosen
+The cache identity includes runtime image, node image ID, full configured node
+reference (including version tag and digest), architecture and recipe hash. Changing any of them requires preparation again. Attempts persist the chosen
 runtime identity before lengthy work; retries do not silently select another
 image. The existing per-validator operation guard prevents simultaneous actions.
 On recovery, the worker reconciles the target and enrollment before continuing.
@@ -109,16 +110,64 @@ Otherwise configure internal sources:
 ```dotenv
 CATS_PROVISIONING_INTERNAL_REGISTRIES=harbor.internal.example
 CATS_PROVISIONING_CATS_SOURCE=harbor.internal.example/cats/runtime@sha256:<digest>
-CATS_PROVISIONING_NODE_SOURCE=harbor.internal.example/cats/kindest-node@sha256:<required-digest>
+CATS_DEPLOYMENT_KIND_NODE_IMAGE=harbor.internal.example/cats/kindest-node:v<kubernetes-version>@sha256:<node-digest>
+CATS_PROVISIONING_NODE_SOURCE=harbor.internal.example/cats/kindest-node:v<kubernetes-version>@sha256:<node-digest>
 ```
 
 These are configuration examples; replace the placeholders with actual immutable
-identities. The node mirror must preserve the application's required digest.
+identities. `CATS_DEPLOYMENT_KIND_NODE_IMAGE` is the expected base image, optional
+version tag, and required immutable SHA256 digest. When unset or blank, the
+shipped `kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`
+pin remains the default. Use the registry manifest/index digest, not Docker's
+local image/config ID. To accept a different Harbor digest, change this setting;
+changing only `CATS_PROVISIONING_NODE_SOURCE` does not change the expected pin.
+
+`CATS_PROVISIONING_NODE_SOURCE` is optional when the exact expected image is
+already local. Otherwise set it to the same Harbor reference, as above, or to a
+mirror with exactly the same digest. Its host (including port if applicable)
+must appear in `CATS_PROVISIONING_INTERNAL_REGISTRIES`. A mismatched digest or
+unapproved source is rejected even with a warm cache; there is no public pull
+fallback. Local inspection must also confirm the expected repository digest.
 The Docker daemon needs internal registry TLS trust. The provisioning worker
 uses the existing read-only registry authentication directory through
 `DOCKER_CONFIG`; configure its `config.json` for authenticated internal pulls.
 `CATS_PROVISIONING_CATS_IMAGE` is normally blank (use the worker's exact image);
 an override must be an immutable image ID or repository digest.
+
+### Apply a custom Kind pin
+
+After installing a CATS image containing this fix, update the three node-related
+settings above in HQ's `.env`, then recreate these services to load them:
+
+```sh
+docker compose up -d --force-recreate --wait portal portal-control provisioning-worker
+```
+
+The provisioning worker inherits the expected pin from the existing shared
+Compose environment. A pin-only change needs no CATS image rebuild. Wait for
+active provisioning operations to finish before changing it. Click **Provision**
+for the target validator after recreation; an existing validator is not changed
+just by editing HQ's `.env`. The existing payload builder derives and archives
+the isolated node image from the verified base, records that base in the manifest,
+and deploys the exact derived image as the validator runtime's node setting.
+Changing the base reference, version or digest invalidates the affected cache
+entry automatically; no cache deletion is needed. Optional staged payloads must
+be regenerated for the new pin, or disable `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE`
+to return to on-demand preparation.
+
+Use a linux/amd64 Kind node image compatible with the **Kind binary in the
+selected CATS runtime**. Kind only guarantees the node images published with that
+Kind release; see [Kind node image compatibility](https://kind.sigs.k8s.io/docs/design/node-image/).
+Preparation probes the exact runtime's `kind version` and node's `kubeadm version`,
+checks a conventional `vX.Y.Z` tag against kubeadm, and rejects an unsupported
+isolated-network entrypoint. These checks do not prove that every Kind/Kubernetes
+pair works: the existing deployed self-test creates a real cluster using the
+bundled binary and selected derived node, deploys the test workload, and verifies
+cleanup before reporting **Healthy**. A failure leaves provisioning failed and
+reports the relevant check. For Kind creation failures, check VM resources and
+select a node image published for the bundled Kind release, or rebuild CATS with
+a compatible Kind binary and provision again. No second payload builder or
+alternate provisioning flow is required.
 
 For targets without Docker 28+, configure
 `CATS_PROVISIONING_INTERNAL_PACKAGE_HOSTS` and

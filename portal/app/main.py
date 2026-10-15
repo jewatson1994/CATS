@@ -139,6 +139,8 @@ with migration_transaction(engine) as connection:
     scan_coordination.upgrade_connection(connection)
     upgrade_connection(connection)
     upgrade_validators(connection)
+    from .cyber_approval_migrations import upgrade_connection as upgrade_approvals
+    upgrade_approvals(connection)
     upgrade_projection(connection)
     dependency_queries.upgrade_dependency_schema(connection)
     posture.ensure_rows(connection)
@@ -513,7 +515,10 @@ async def expected_http_error(request: Request, exc: StarletteHTTPException):
         return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
     descriptions = {403: "You do not have permission to access this page or perform this action.",
                     404: "The requested page or item was not found."}
-    detail = descriptions.get(exc.status_code, str(exc.detail) if isinstance(exc.detail, str) else "The request could not be completed.")
+    # Structured errors carry a user-facing message; never stringify their
+    # remaining diagnostic fields into the browser response.
+    message = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
+    detail = descriptions.get(exc.status_code, message if isinstance(message, str) else "The request could not be completed.")
     return templates.TemplateResponse(request, "request_error.html",
                                       {"detail": detail, "home_url": request.url_for("dashboard")},
                                       status_code=exc.status_code, headers=exc.headers)

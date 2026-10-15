@@ -48,8 +48,8 @@ def main():
         subprocess.run(command, check=True, cwd=ROOT)
     if args.prepare_validator_release:
         sys.path.insert(0, str(ROOT / 'portal'))
-        from app.deployment_validation import ValidationConfig
-        node = ValidationConfig.kind_node_image
+        from app.managed_validator_release import configured_node_pin
+        node = configured_node_pin()
         if subprocess.run(['docker', 'image', 'inspect', node], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
             subprocess.run(['docker', 'pull', node], check=True)
         output = args.cache_dir.resolve() / uuid.uuid4().hex

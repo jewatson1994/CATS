@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from app.deployment_bundle import build_helm_archive, file_digest, image_archive_identity
-from app.deployment_validation import ValidationConfig
 from app.managed_validator_release import SCHEMA, load_release
 
 
@@ -44,13 +43,19 @@ def image_archive(path, reference, *, containerd=False, corrupt=False):
 
 
 @pytest.mark.parametrize('containerd', [False, True])
-def test_release_verifies_real_image_archives(tmp_path, containerd):
+@pytest.mark.parametrize('custom', [False, True])
+def test_release_verifies_real_image_archives(tmp_path, containerd, custom, monkeypatch):
+    from app.managed_validator_bootstrap import BootstrapError
+    monkeypatch.delenv('CATS_DEPLOYMENT_KIND_NODE_IMAGE', raising=False)
+    if custom:
+        monkeypatch.setenv('CATS_DEPLOYMENT_KIND_NODE_IMAGE', 'harbor.internal/node:v1.35.0@sha256:' + 'c' * 64)
     (tmp_path / 'images').mkdir()
     cats_reference = 'cats:test'
     cats_path = tmp_path / 'images/cats.tar'
     cats_id = image_archive(cats_path, cats_reference, containerd=containerd)
     node_path = tmp_path / 'images/node.tar'
-    node_reference = ValidationConfig.kind_node_image
+    from app.managed_validator_release import configured_node_pin
+    node_reference = configured_node_pin()
     node_id = image_archive(node_path, node_reference.split("@")[0], containerd=containerd)
     build_helm_archive(tmp_path / 'selftest.zip', {'Chart.yaml': 'apiVersion: v2\nname: selftest\nversion: 1.0.0\n',
         'templates/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: selftest\nspec:\n  containers:\n  - name: cats\n    image: cats:test\n'},
@@ -61,6 +66,10 @@ def test_release_verifies_real_image_archives(tmp_path, containerd):
         'selftest': {'file': 'selftest.zip', 'sha256': file_digest(tmp_path / 'selftest.zip'), 'image_reference': cats_reference}}
     (tmp_path / 'manifest.json').write_text(json.dumps(manifest))
     assert load_release(tmp_path)['cats_image']['image_id'] == cats_id
+    with monkeypatch.context() as changed:
+        changed.setenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", "harbor.internal/node@sha256:" + "d" * 64)
+        with pytest.raises(BootstrapError, match="CATS_DEPLOYMENT_KIND_NODE_IMAGE"):
+            load_release(tmp_path)
     specification = importlib.util.spec_from_file_location('docker_release_preparation', Path(__file__).resolve().parents[2] / 'scripts/prepare-docker-validator-release.py')
     preparation = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(preparation)
@@ -95,3 +104,39 @@ def test_expected_identity_cannot_bypass_archive_integrity(tmp_path, containerd)
     image_archive(path, 'cats:test', containerd=containerd, corrupt=True)
     with pytest.raises(ValueError, match='layer integrity mismatch'):
         image_archive_identity(path, 'cats:test', expected_identity=identity)
+
+
+@pytest.mark.parametrize("custom", [False, True])
+def test_existing_recipe_records_and_deploys_exact_configured_base(tmp_path, monkeypatch, custom):
+    from app import validator_release_recipe as recipe
+    from app.managed_validator_bootstrap import BootstrapError, validate_release
+    monkeypatch.delenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", raising=False)
+    if custom:
+        monkeypatch.setenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", "harbor.internal/node:v1.35.0@sha256:" + "c" * 64)
+    pin = recipe.configured_node_pin()
+    image_id = image_archive(tmp_path / "fixture.tar", "fixture")
+    row = {"Id": image_id, "Architecture": "amd64", "Os": "linux",
+           "Config": {"Labels": {"org.opencontainers.image.title": "CATS"}}}
+    monkeypatch.setattr(recipe, "inspect", lambda ref: row)
+    derived = "cats-kind-isolated:" + image_id.split(":")[1]
+    def isolated(ref):
+        assert ref == image_id
+        return derived, row
+    monkeypatch.setattr(recipe, "isolated_node_image", isolated)
+    probes = []
+    monkeypatch.setattr(recipe, "validate_node_tools", lambda *args: probes.append(args))
+    def run(command, **kwargs):
+        if command[1] == "save":
+            image_archive(Path(command[3]), command[4])
+    monkeypatch.setattr(recipe, "run", run)
+    result = recipe.prepare(tmp_path / "release", image_id, node_image=image_id)
+    assert probes == [(image_id, image_id, pin)]
+    assert result["node_image"]["base_reference"] == pin
+    assert result["node_image"]["reference"] == derived
+    release = load_release(tmp_path / "release")
+    images = validate_release(release)
+    assert images["node"]["reference"] == derived
+    assert images["node"]["image_id"] == image_id
+    monkeypatch.setenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", "harbor.internal/node@sha256:" + "d" * 64)
+    with pytest.raises(BootstrapError, match="CATS_DEPLOYMENT_KIND_NODE_IMAGE"):
+        load_release(tmp_path / "release")

@@ -76,7 +76,7 @@ def test_selftest_diagnostics_do_not_expose_remote_errors():
 
 
 def test_selftest_reports_known_failure_category():
-    with pytest.raises(ValueError, match="Kind cluster creation failed"):
+    with pytest.raises(ValueError, match="Kind cluster creation failed.*CATS_DEPLOYMENT_KIND_NODE_IMAGE.*compatible Kind binary"):
         assert_selftest({"status": "ERROR", "reason_category": "KIND_CREATION_FAILURE"})
 
 

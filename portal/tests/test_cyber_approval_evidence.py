@@ -18,6 +18,8 @@ def seeded():
     body = payload('approval-source', datetime.now(timezone.utc), ['CVE-1'])
     body['helm_source_files'] = {'app/Chart.yaml': 'apiVersion: v2\nname: app\nversion: 1.0.0\n',
         'app/values.yaml': 'replicaCount: 2\n', 'app/templates/deployment.yaml': 'retained template bytes'}
+    for finding in body['findings']:
+        finding['image'] = 'registry.example/app:1'
     body['sbom_components'] = [{'name': 'pkg', 'version': '1', 'image': 'registry.example/app:1'}]
     body['helm_values_files'] = ['app/values.yaml']
     body['service_overview'] = {'images': [{'image': 'registry.example/app:1', 'digest': D}],
@@ -41,6 +43,7 @@ def test_ready_uses_exact_scan_and_preserves_chart_values_and_inventory(tmp_path
         service = db.scalar(select(Service))
         ready = evidence.readiness(db, service)
         assert ready['ready'], ready['blockers']
+        assert not any('Image identity was not retained' in note for note in ready['review_notes'])
         snapshot = evidence.freeze(db, service, SimpleNamespace(), ready, tmp_path)
         assert snapshot['artifacts'][0]['reference'] == 'registry.example/app@' + D
         assert snapshot['evidence']['digest'] == evidence.file_digest(snapshot['evidence']['path'])
@@ -55,8 +58,8 @@ def test_ready_uses_exact_scan_and_preserves_chart_values_and_inventory(tmp_path
 
 
 @pytest.mark.parametrize('mutation,expected', [
-    ('digest', 'digest'), ('render', 'rendered'), ('skip', 'Missing'),
-    ('dependency', 'dependency'), ('image', 'immutable'), ('chart', 'matched'),
+    ('digest', 'digest'), ('skip', 'Missing'),
+    ('dependency', 'dependency'), ('chart', 'matched'),
 ])
 def test_missing_or_mismatched_evidence_blocks(mutation, expected):
     seeded()
@@ -64,10 +67,8 @@ def test_missing_or_mismatched_evidence_blocks(mutation, expected):
         service = db.scalar(select(Service))
         execution = db.scalar(select(Execution))
         body = json.loads(json.dumps(execution.raw_payload))
-        if mutation == 'render': body['service_overview']['rendered_resources'] = []
         if mutation == 'skip': body['skipped_charts'] = [{'chart': 'lost', 'reason': 'download failed'}]
         if mutation == 'dependency': body['helm_source_files']['app/Chart.yaml'] += 'dependencies:\n- name: lost\n  version: 1.0.0\n  repository: https://example.test\n'
-        if mutation == 'image': body['service_overview']['images'][0].pop('digest')
         if mutation == 'chart': body['service_overview']['charts'].append({'name': 'missing', 'version': '2'})
         execution.raw_payload = body
         db.flush()
@@ -110,7 +111,8 @@ def test_candidate_requires_matching_retained_verified_evidence():
 
 
 @pytest.mark.parametrize('corrupt', [False, True])
-def test_candidate_freeze_binds_verified_sources_and_labels_baseline(tmp_path, monkeypatch, corrupt):
+@pytest.mark.parametrize('unverified', [False, True])
+def test_candidate_freeze_binds_verified_sources_and_labels_baseline(tmp_path, monkeypatch, corrupt, unverified):
     from app import main
     from app.models import RemediationExecution
     import hashlib
@@ -124,7 +126,8 @@ def test_candidate_freeze_binds_verified_sources_and_labels_baseline(tmp_path, m
         source = json.loads(json.dumps(execution.raw_payload))
         files = {'candidate/' + name: content.encode() for name, content in source['helm_source_files'].items()}
         files['scans/rendered-after.yaml'] = yaml.safe_dump_all(source['service_overview']['rendered_resources']).encode()
-        files['scans/trivy-config-after.json'] = b'{"Results": []}'
+        if not unverified:
+            files['scans/trivy-config-after.json'] = b'{"Results": []}'
         manifest = {'source_execution_id': execution.id, 'source_version_id': service.current_version_id,
             'values_files': ['app/values.yaml'], 'images': [],
             'deployment_manifest': {'deployment': {'chartPath': 'candidate/app'},
@@ -139,9 +142,9 @@ def test_candidate_freeze_binds_verified_sources_and_labels_baseline(tmp_path, m
             archive.writestr('manifest.json', json.dumps(manifest))
         record = RemediationExecution(job_key='candidatejob', service_id=service.id, requested_by_id=1,
             source_execution_id=execution.id, source_version_id=service.current_version_id,
-            status='validated', remediation_status='complete', verification_status='verified',
+            status='validated', remediation_status='complete', verification_status='failed' if unverified else 'verified',
             artifact_path=str(candidate), artifact_digest=evidence.file_digest(candidate),
-            scan_results={'configuration': {'status': 'PASS'}, 'vulnerabilities': {'status': 'PASS'}},
+            scan_results={'configuration': {'status': 'SKIP' if unverified else 'PASS'}, 'vulnerabilities': {'status': 'FAIL' if unverified else 'PASS'}},
             after_snapshot={'findings': [{'cve': 'CVE-CANDIDATE', 'status': 'remaining'}]})
         db.add(record); db.commit()
         ready = evidence.readiness(db, service, 'cats_remediated', record.id)
@@ -150,14 +153,16 @@ def test_candidate_freeze_binds_verified_sources_and_labels_baseline(tmp_path, m
             return
         assert ready['ready'], ready['blockers']
         snapshot = evidence.freeze(db, service, SimpleNamespace(), ready, tmp_path / 'frozen')
-        assert snapshot['evidence_scope'] == 'verified-remediation-candidate'
-        assert snapshot['overview']['source'] == 'Verified remediation candidate'
+        assert snapshot['evidence_scope'] == 'remediation-candidate'
+        assert snapshot['overview']['source'] == 'CATS Remediated candidate'
         assert snapshot['findings']['summary'] == record.after_snapshot
-        assert snapshot['findings']['configuration'] == {'Results': []}
+        assert snapshot['findings']['configuration'] == (None if unverified else {'Results': []})
+        if unverified:
+            assert any('verification: failed' in note for note in snapshot['review_notes'])
         with ZipFile(snapshot['evidence']['path']) as archive:
             assert 'current-service-baseline/all.zip' in archive.namelist()
-            assert 'verified-candidate/evidence.xlsx' in archive.namelist()
-            assert archive.read('verified-candidate/candidate.zip') == candidate.read_bytes()
+            assert 'candidate/evidence.xlsx' in archive.namelist()
+            assert archive.read('candidate/candidate.zip') == candidate.read_bytes()
 
 
 def test_freeze_detects_new_scan_arriving_during_export(tmp_path, monkeypatch):
@@ -243,3 +248,156 @@ def test_large_vendored_chart_inventory_is_complete_and_packaged(tmp_path, monke
         assert len(charts[0]['dependencies']) == 90
         with tarfile.open(charts[0]['path']) as archive:
             assert len([name for name in archive.getnames() if name.endswith('/Chart.yaml')]) == 91
+
+
+@pytest.mark.parametrize('retained_digest', [D, 'registry.example/app@' + D])
+def test_repeated_finding_image_digests_produce_one_artifact(retained_digest):
+    seeded()
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution))
+        body = json.loads(json.dumps(execution.raw_payload))
+        body['service_overview']['images'][0]['digest'] = retained_digest
+        body['findings'] = [dict(body['findings'][0], image='registry.example/app:1',
+            image_digest=retained_digest, cve=f'CVE-{i}') for i in range(250)]
+        execution.raw_payload = body
+        db.flush()
+        result = evidence.readiness(db, db.scalar(select(Service)))
+        assert result['ready'], result['blockers']
+        images = [item for item in result['artifacts'] if item['kind'] == 'image']
+        assert len(images) == 1
+        assert images[0]['reference'] == 'registry.example/app@' + D
+
+
+@pytest.mark.parametrize('digest,message', [
+    ('bad-digest', 'Invalid retained image digest'),
+    ('sha256:' + 'b' * 64, 'Conflicting retained image digests'),
+    ('other.example/app@' + D, 'Retained image digest repository does not match'),
+])
+def test_repeated_image_errors_are_unique_and_still_block_approval(digest, message):
+    seeded()
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution))
+        body = json.loads(json.dumps(execution.raw_payload))
+        body['findings'] = [dict(body['findings'][0], image='registry.example/app:1',
+            image_digest=digest, cve=f'CVE-{i}') for i in range(250)]
+        # A separate affected image must retain its own diagnostic.
+        body['findings'].append(dict(body['findings'][0], image='registry.example/other:1',
+            image_digest='bad-digest'))
+        execution.raw_payload = body
+        db.flush()
+        result = evidence.readiness(db, db.scalar(select(Service)))
+        assert not result['ready']
+        assert result['blockers'].count(message + ': registry.example/app:1') == 1
+        assert 'Invalid retained image digest: registry.example/other:1' in result['blockers']
+        assert len(result['blockers']) == len(set(result['blockers']))
+
+
+@pytest.mark.parametrize('reference,retained', [
+    ('tsuru/nginx-operator:0.17.0', 'docker.io/tsuru/nginx-operator'),
+    ('nginx:1', 'docker.io/library/nginx'),
+    ('docker.io/nginx:1', 'index.docker.io/library/nginx'),
+    ('localhost:5000/team/app:1', 'localhost:5000/team/app'),
+])
+def test_repository_digest_accepts_same_image_and_docker_hub_aliases(reference, retained):
+    pinned, digest = evidence._identity(reference, retained + '@' + D)
+    assert digest == D
+    assert pinned.endswith('@' + D)
+
+
+@pytest.mark.parametrize('retained', [
+    'registry.example/app@sha256:short',
+    'registry.example/app@sha256:' + 'b' * 64,
+    'registry.example/other@' + D,
+    'other.example/app@' + D,
+    'registry.example/app@@' + D,
+])
+def test_repository_digest_rejects_invalid_or_inconsistent_identity(retained):
+    with pytest.raises(ValueError):
+        evidence._identity('registry.example/app@' + D, retained)
+
+
+@pytest.mark.parametrize('legacy_digest', [False, True])
+def test_tag_only_vulnerable_image_can_be_submitted_without_helm_or_config(tmp_path, monkeypatch, legacy_digest):
+    seeded()
+    monkeypatch.setattr('app.service_exports.write_all', fake_export)
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        execution = db.scalar(select(Execution))
+        body = json.loads(json.dumps(execution.raw_payload))
+        body.pop('helm_source_files')
+        body.pop('helm_values_files')
+        reference = 'tsuru/nginx-operator:0.17.0'
+        body['service_overview'] = {'images': [{'image': reference}]}
+        body['findings'] = [dict(body['findings'][0], image=reference,
+            image_digest=reference if legacy_digest else None, cve=f'CVE-{i}') for i in range(250)]
+        execution.raw_payload = body
+        db.flush()
+        ready = evidence.readiness(db, service)
+        assert ready['ready'], ready['blockers']
+        assert len(ready['artifacts']) == 1
+        assert ready['artifacts'][0]['resolve_at_publication']
+        assert sum('Image identity' in note for note in ready['review_notes']) == 1
+        assert any('No Helm charts' in note for note in ready['review_notes'])
+        assert any('Configuration coverage' in note for note in ready['review_notes'])
+        snapshot = evidence.freeze(db, service, SimpleNamespace(), ready, tmp_path)
+        assert len(snapshot['findings']['vulnerabilities']) == 250
+        assert snapshot['review_notes'] == ready['review_notes']
+
+
+@pytest.mark.parametrize('missing', [None, 'sbom/image1.json', 'scans/image1-grype-after.json', 'images/image1.tar'])
+def test_image_only_candidate_retains_archive_and_findings_without_runtime_pass(tmp_path, monkeypatch, missing):
+    from app import main
+    from app.models import RemediationExecution
+    import hashlib
+    seeded()
+    monkeypatch.setattr(main, 'REMEDIATION_JOB_ROOT', tmp_path)
+    monkeypatch.setattr('app.service_exports.write_all', fake_export)
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        execution = db.scalar(select(Execution))
+        archive_bytes = b'retained candidate image'
+        files = {'images/image1.tar': archive_bytes, 'sbom/image1.json': b'{"artifacts": []}',
+            'scans/image1-grype-after.json': b'{"matches": [{"vulnerability": {"id": "CVE-REMAINING"}}]}'}
+        manifest = {'source_execution_id': execution.id, 'source_version_id': service.current_version_id,
+            'images': [{'original': 'registry.example/app:1', 'remediated': 'local/candidate:patched',
+                'archive_path': 'images/image1.tar', 'artifact_sha256': hashlib.sha256(archive_bytes).hexdigest(),
+                'evidence': {'grype': 'complete', 'sbom': 'complete'}}]}
+        folder = tmp_path / 'imagecandidate'
+        folder.mkdir()
+        candidate = folder / 'candidate.zip'
+        with ZipFile(candidate, 'w') as archive:
+            archive.writestr('manifest.json', json.dumps(manifest))
+            for name, content in files.items():
+                if name != missing:
+                    archive.writestr(name, content)
+        record = RemediationExecution(job_key='imagecandidate', service_id=service.id, requested_by_id=1,
+            source_execution_id=execution.id, source_version_id=service.current_version_id,
+            status='failed', remediation_status='complete', verification_status='failed',
+            artifact_path=str(candidate), artifact_digest=evidence.file_digest(candidate),
+            scan_results={'images': {'image1': {}}, 'vulnerabilities': {'status': 'FAIL'}},
+            after_snapshot={'findings': [{'cve': 'CVE-REMAINING'}]})
+        db.add(record); db.commit()
+        ready = evidence.readiness(db, service, 'cats_remediated', record.id)
+        if missing:
+            assert not ready['ready']
+            return
+        assert ready['ready'], ready['blockers']
+        snapshot = evidence.freeze(db, service, SimpleNamespace(), ready, tmp_path / 'frozen')
+        item = next(item for item in snapshot['artifacts'] if item.get('format') == 'docker-archive')
+        assert Path(item['path']).read_bytes() == archive_bytes
+        assert snapshot['findings']['vulnerability_scans']['image1']['matches'][0]['vulnerability']['id'] == 'CVE-REMAINING'
+        assert any('No Helm charts' in note for note in snapshot['review_notes'])
+
+
+def test_absent_rendered_output_is_review_note_when_chart_sources_are_retained():
+    seeded()
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution))
+        body = json.loads(json.dumps(execution.raw_payload))
+        body['service_overview']['rendered_resources'] = []
+        execution.raw_payload = body
+        db.commit()
+        ready = evidence.readiness(db, db.scalar(select(Service)))
+        assert ready['ready'], ready['blockers']
+        assert 'Rendered deployment evidence is unavailable.' in ready['review_notes']
+        assert any(item['kind'] == 'chart' for item in ready['artifacts'])

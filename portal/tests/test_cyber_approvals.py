@@ -319,3 +319,42 @@ def test_accounts_referenced_by_approval_history_must_be_retained(db, monkeypatc
     assert 'Disable' in blocked.value.detail
     assert db.get(User, user.id) is not None
     assert getattr(db.get(approvals.CyberApproval, identity), attribution) == user.id
+
+
+def test_request_automatically_uses_eligible_default(db):
+    chosen = approvals.ApprovedReleaseDestination(name='Default', endpoint='https://default.example',
+        namespace='approved', group_ids=[], is_default=True)
+    db.add(chosen); db.commit()
+    result = asyncio.run(approvals.request_approval(request({'service_key': 'one', 'variant': 'current_service'}), db, auth()))
+    assert result['destination']['id'] == chosen.id
+
+
+def test_request_without_publication_setup_can_be_reviewed_then_bound_at_decision(db, monkeypatch):
+    destination = db.get(approvals.ApprovedReleaseDestination, 1)
+    destination.enabled = False
+    db.commit()
+    monkeypatch.setattr(approvals.signing, 'configuration', lambda _: {})
+    result = asyncio.run(approvals.request_approval(request({'service_key': 'one'}), db, auth()))
+    row = db.get(approvals.CyberApproval, result['id'])
+    assert row.destination_id is None and row.status == 'pending'
+    retained = copy.deepcopy(row.snapshot['evidence'])
+    with pytest.raises(HTTPException, match='destination'):
+        decide(db, row.id)
+    destination.enabled = True
+    db.commit()
+    with pytest.raises(HTTPException, match='signing'):
+        asyncio.run(approvals.decide(row.id, request({'decision':'approved', 'rationale':'Risk reviewed', 'destination_id':1}), db, auth()))
+    monkeypatch.setattr(approvals.signing, 'configuration', lambda _: {'enabled':True, 'private_key':'key', 'public_key':'pub', 'fingerprint':'configured'})
+    asyncio.run(approvals.decide(row.id, request({'decision':'approved', 'rationale':'Risk reviewed', 'destination_id':1}), db, auth()))
+    assert row.destination_id == 1 and row.status == 'approved'
+    assert row.snapshot['evidence'] == retained
+    assert row.snapshot['signing_fingerprint'] == 'configured'
+    assert row.snapshot_digest == approvals.digest(row.snapshot)
+
+
+def test_no_destination_or_signing_does_not_block_denial(db, monkeypatch):
+    db.get(approvals.ApprovedReleaseDestination, 1).enabled = False
+    db.commit()
+    monkeypatch.setattr(approvals.signing, 'configuration', lambda _: {})
+    result = asyncio.run(approvals.request_approval(request({'service_key':'one'}), db, auth()))
+    assert decide(db, result['id'], 'denied')['status'] == 'denied'

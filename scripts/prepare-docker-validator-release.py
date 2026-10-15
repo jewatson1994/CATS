@@ -10,7 +10,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "portal"))
-from app.deployment_validation import ValidationConfig
+from app.managed_validator_release import configured_node_pin
 from app.deployment_bundle import build_helm_archive, file_digest
 from app.managed_validator_release import SCHEMA, load_release
 
@@ -69,7 +69,7 @@ def prepare(output, cats_image):
     output.mkdir(parents=True, exist_ok=False)
     (output / "images").mkdir()
     cats = inspect(cats_image)
-    node_ref = ValidationConfig.kind_node_image
+    node_ref = configured_node_pin()
     node_ref, node = isolated_node_image(node_ref)  # Local pinned base only; no registry fallback.
     if any(row.get("Architecture") != "amd64" or row.get("Os") != "linux" for row in (cats, node)):
         raise ValueError("V1 validator images must be linux/amd64")
@@ -87,7 +87,7 @@ def prepare(output, cats_image):
         subprocess.run(["docker", "save", "--output", str(output / filename), save_ref], check=True)
         manifest[key] = {"reference": ref, "image_id": row["Id"], "file": filename, "sha256": file_digest(output / filename)}
         if key == "node_image":
-            manifest[key]["base_reference"] = ValidationConfig.kind_node_image
+            manifest[key]["base_reference"] = configured_node_pin()
     pod = """apiVersion: v1
 kind: Pod
 metadata:

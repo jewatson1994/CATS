@@ -127,13 +127,18 @@ def test_missing_input_does_not_pull_without_approved_source(monkeypatch):
 
 def test_on_demand_reuses_only_matching_verified_inputs(tmp_path, monkeypatch):
     monkeypatch.delenv('CATS_MANAGED_VALIDATOR_RELEASE_DIR', raising=False)
+    monkeypatch.delenv('CATS_DEPLOYMENT_KIND_NODE_IMAGE', raising=False)
     monkeypatch.setenv('CATS_PROVISIONING_CATS_IMAGE', 'sha256:' + 'a'*64)
     monkeypatch.setenv('CATS_PROVISIONING_CACHE', str(tmp_path))
-    monkeypatch.setattr(demand, 'resolve_image', lambda ref, source=None: {'Id': 'sha256:' + ('a' if ref.startswith('sha256:') else 'b')*64, 'Size': 1})
+    resolved = []
+    def resolve(ref, source=None):
+        resolved.append(ref)
+        return {'Id': 'sha256:' + ('a' if ref.startswith('sha256:') else 'b')*64, 'Size': 1}
+    monkeypatch.setattr(demand, 'resolve_image', resolve)
     built, verified = [], []
     def prepare(path, image, **kwargs):
         path.mkdir()
-        built.append(image)
+        built.append((image, kwargs))
     monkeypatch.setattr(demand.recipe, 'prepare', prepare)
     monkeypatch.setattr(demand, 'load_release', lambda path: verified.append(Path(path)) or {'_directory': str(path)})
     first = demand.prepare_release()
@@ -141,6 +146,25 @@ def test_on_demand_reuses_only_matching_verified_inputs(tmp_path, monkeypatch):
     assert len(verified) == 3  # verify before publication, after publication and reuse
     provenance = json.loads((Path(first['_directory']) / 'provenance.json').read_text())
     assert provenance['cats_image_id'] == 'sha256:' + 'a'*64 and provenance['recipe_sha256']
+    from app.deployment_validation import ValidationConfig
+    assert provenance['node_pin'] == ValidationConfig.kind_node_image
+    assert resolved[-1] == ValidationConfig.kind_node_image
+    assert built[0][1] == {'node_image': 'sha256:' + 'b'*64, 'node_pin': ValidationConfig.kind_node_image}
+    # Even when two pins inspect to the same image ID, their cache keys differ.
+    previous = first
+    for pin in ('harbor.internal/node:v1.35.0@sha256:' + 'c'*64,
+                'harbor.internal/node:v1.35.0@sha256:' + 'd'*64,
+                'harbor.internal/node:v1.35.1@sha256:' + 'd'*64):
+        monkeypatch.setenv('CATS_DEPLOYMENT_KIND_NODE_IMAGE', pin)
+        current = demand.prepare_release()
+        assert current != previous
+        count = len(built)
+        assert demand.prepare_release() == current and len(built) == count
+        assert built[-1][1]['node_pin'] == pin
+        assert resolved[-1] == pin
+        assert json.loads((Path(current['_directory']) / 'provenance.json').read_text())['node_pin'] == pin
+        previous = current
+    assert len(built) == 4
 
 
 def test_missing_runtime_package_catalog_has_actionable_failure(monkeypatch, tmp_path):

@@ -287,3 +287,74 @@ def test_source_credentials_and_trust_are_host_scoped_and_temporary(tmp_path, mo
         assert sources["source.example"]["SSL_CERT_FILE"] == "source-ca.pem"
         assert sources["other.example"]["SSL_CERT_FILE"] == "other-ca.pem"
     assert not config.exists()
+
+
+@pytest.mark.parametrize('retry', [False, True])
+def test_tag_only_image_is_resolved_signed_and_retry_keeps_first_digest(environment, monkeypatch, tmp_path, retry):
+    item = environment.approval.snapshot['artifacts'][0]
+    original = item['digest']
+    environment.source.data['manifests']['latest'] = environment.source.data['manifests'][original]
+    item.update(reference='source.example/app:latest', digest=None, resolve_at_publication=True)
+    environment.approval.snapshot_digest = release_oci._digest(publication.canonical(environment.approval.snapshot))
+    checkpoints = []
+    if retry:
+        original_graph = publication._Transport.graph
+        monkeypatch.setattr(publication._Transport, 'graph', lambda *a, **k: (_ for _ in ()).throw(ValueError('registry unavailable')))
+        with pytest.raises(publication.PublicationError) as failure:
+            publish(environment, checkpoints)
+        environment.approval.publication = failure.value.receipt
+        assert environment.approval.publication['resolved_images']['0'] == original
+        environment.source.data['manifests']['latest'] = b'tag now points to different bytes'
+        monkeypatch.setattr(publication._Transport, 'graph', original_graph)
+    receipt = publish(environment, checkpoints)
+    artifact = receipt['artifacts'][0]
+    assert artifact['digest'] == original
+    assert artifact['identity_resolution'] == 'publication'
+    assert artifact['scan_identity_retained'] is False
+    assert artifact['signature']
+    output = tmp_path / 'tag-offline'
+    with ZipFile(receipt['bundle_path']) as bundle:
+        bundle.extractall(output)
+    publication.verify_local(output, environment.fingerprint)
+
+
+def test_retained_image_archive_is_published_and_signed_by_destination_digest(environment, monkeypatch, tmp_path):
+    archive = tmp_path / 'candidate-image.tar'
+    archive.write_bytes(b'fixture retained docker archive')
+    source_digest = environment.approval.snapshot['artifacts'][0]['digest']
+    environment.approval.snapshot['artifacts'][0] = {'kind':'image', 'reference':'local/candidate:patched',
+        'path':str(archive), 'digest':publication.file_digest(archive), 'format':'docker-archive'}
+    environment.approval.snapshot_digest = release_oci._digest(publication.canonical(environment.approval.snapshot))
+    original_command = subprocess.run
+    def command(args, **kwargs):
+        if args[:2] != ['skopeo', 'copy']:
+            return original_command(args, **kwargs)
+        assert args[-2] == 'docker-archive:' + str(archive)
+        destination = args[-1].removeprefix('docker://').rsplit(':', 1)[0]
+        host, repository = destination.split('/', 1)
+        target = environment.Registry(host, repository)
+        target.data['manifests'].update(environment.source.data['manifests'])
+        target.data['blobs'].update(environment.source.data['blobs'])
+        Path(args[args.index('--digestfile') + 1]).write_text(source_digest)
+        return SimpleNamespace(stdout=b'')
+    monkeypatch.setattr(subprocess, 'run', command)
+    @contextmanager
+    def destination_env(destination):
+        yield {'DOCKER_CONFIG':str(tmp_path)}
+    monkeypatch.setattr(publication, 'registry_environment', destination_env)
+    receipt = publish(environment, [])
+    assert receipt['artifacts'][0]['source_digest'] == publication.file_digest(archive)
+    assert receipt['artifacts'][0]['digest'] == source_digest
+    assert receipt['artifacts'][0]['signature']
+
+
+@pytest.mark.parametrize('reference', ['https://registry.example/a:1', 'a@@sha256:'+'a'*64, 'a//b:1', 'a:', 'a b'])
+def test_tag_reference_rejects_malformed_values(reference):
+    with pytest.raises(ValueError):
+        publication.image_source(reference)
+
+
+@pytest.mark.parametrize('reference,expected', [('nginx', ('docker.io','library/nginx','latest')),
+    ('team/app:1', ('docker.io','team/app','1')), ('localhost:5000/team/app:2', ('localhost:5000','team/app','2'))])
+def test_tag_reference_normalizes_registry_repository_and_tag(reference, expected):
+    assert publication.image_source(reference) == expected

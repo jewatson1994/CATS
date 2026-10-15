@@ -27,7 +27,7 @@ The React interface provides service workspaces, scan results, remediation views
 
 Scan downloads include an offline HTML overview, an Excel workbook, SBOMs, raw scanner reports, normalized findings, and a manual DefectDojo import bundle. Connected and disconnected workflows are supported when their required images, charts, databases, and tools are available.
 
-For Cyber approval, configure **Administration → Release Destinations** and global signing under **Settings**, then choose **Request Cyber Approval** from a service. The top-level **Approvals** queue records decisions; **Approved Releases** exposes publication status and retained artifacts. Publication reuses the existing remediation worker and requires no additional Compose service. See the [Cyber approvals and approved releases guide](docs/cyber-approved-releases.md) for permissions, registry setup, offline import prerequisites, signature trust, and deployment overrides.
+For Cyber approval, choose **Request Cyber Approval** from a service, select the current service or a CATS Remediated candidate, and submit. Missing retained evidence blocks submission; remaining vulnerabilities and absent configuration/Helm coverage are reviewed by Cyber. Administrators configure **Administration → Release Destinations** and global signing under **Settings** before Cyber approves publication. The top-level **Approvals** queue records decisions; **Approved Releases** exposes publication status and retained artifacts. Publication reuses the existing remediation worker and requires no additional Compose service. See the [Cyber approvals and approved releases guide](docs/cyber-approved-releases.md) for permissions, registry setup, offline import prerequisites, signature trust, and deployment overrides.
 
 ## Role training
 
@@ -108,7 +108,7 @@ docker save --output cats-1.3.tar cats:1.3
 docker load --input cats-1.3.tar
 ```
 
-Make PostgreSQL and the pinned Kind node image available in local Docker storage or approved internal repositories. Exporting the CATS image alone does not export the database or runtime volumes. HQ prepares and verifies the validator payload automatically from those inputs.
+Make PostgreSQL and the pinned Kind node image available in local Docker storage or approved internal repositories. Exporting the CATS image alone does not export the database or runtime volumes. HQ prepares and verifies the validator payload automatically from those inputs. Set `CATS_DEPLOYMENT_KIND_NODE_IMAGE` to override the expected Kind image/version and digest; an optional `CATS_PROVISIONING_NODE_SOURCE` must have the same digest. See [custom Kind pins and service recreation](docs/durable-workers.md#apply-a-custom-kind-pin).
 
 ### 3. Start and verify
 
