@@ -81,3 +81,13 @@ it('polls the summary while validation runs and stops at a terminal state', asyn
   expect(fetch).toHaveBeenCalledTimes(2);
   expect(new URL(fetch.mock.calls[0][0]).searchParams.get('summary')).toBe('true');
 });
+
+it('shows persisted Compose services and declared configuration safely', () => {
+  render(<Page data={fixture({overview_data: {compose: {complete: true, images: ['nginx:stable'], services: [{name: 'web', image: 'nginx:stable', status: 'image_declared', source_files: ['compose.yaml'], configuration: {command: '<script>hello</script>', environment: {TOKEN: '[REDACTED]'}}}], issues: []}}})}/>);
+  const inventory = screen.getByRole('region', {name: 'Compose inventory'});
+  expect(inventory).toHaveTextContent('web');
+  expect(inventory).toHaveTextContent('compose.yaml');
+  expect(inventory).toHaveTextContent('[REDACTED]');
+  expect(inventory).toHaveTextContent('<script>hello</script>');
+  expect(inventory.querySelector('script')).toBeNull();
+});

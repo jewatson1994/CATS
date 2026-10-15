@@ -1,5 +1,6 @@
 """Read-only evidence projection and overview action metadata for React pages."""
 from collections.abc import Mapping
+from .frontend_compose import compose_data
 
 
 def project_secondary(data, name, context, can=None, formatters=None):
@@ -21,6 +22,7 @@ def project_secondary(data, name, context, can=None, formatters=None):
         result["warnings"] = rows(_field(value, "warnings", []), ("message", "chart", "source", "original_error"))
         for projected, warning in zip(result["warnings"], _field(value, "warnings", []) or []):
             projected["unrecognized_images"] = strings(_field(warning, "unrecognized_images", []))
+        result["compose"] = compose_data(_field(value, "compose"))
         return result
     def chart_graph(value):
         return {"charts": rows(_field(value, "charts", []), ("chart", "instance", "version", "parent_chart_name", "parent",

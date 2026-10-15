@@ -1,5 +1,6 @@
 """Public result projections deliberately exclude worker credentials and paths."""
 from collections.abc import Mapping
+from .frontend_compose import compose_data
 
 
 def fields(source, names):
@@ -25,6 +26,7 @@ def public_results_data(context):
         data['simplified_rows'].append(item)
     overview = context.get('overview_data') or {}
     data['overview_data'] = fields(overview, ('source', 'description'))
+    data['overview_data']['compose'] = compose_data(overview.get('compose'))
     for key, names in {'missing_evidence': ('type', 'item', 'reason', 'source_file'), 'ports': ('port', 'protocol', 'service', 'declared_by', 'provenance'), 'accounts': ('name', 'scope', 'relationships'), 'artifacts': ('type', 'registry', 'repository', 'artifact', 'version', 'discovered_from', 'digest')}.items():
         data['overview_data'][key] = rows(overview.get(key), names)
     data['overview_data']['warnings'] = []

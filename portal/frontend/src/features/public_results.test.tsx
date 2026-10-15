@@ -5,6 +5,12 @@ afterEach(cleanup);
 const finding = {type:'Vulnerability',finding:'cve-2026-1234',scanner:'Grype',severity:'High',state:'Active',image:'app:1',target:'openssl',kev:'No',epss:0.125,details:'<script>alert(1)</script>',remediation:'Upgrade'};
 const base = {job:{job_id:'test'},service:{name:'Example'},vulnerability_count:1,configuration_count:1,rows:[finding,{...finding,type:'Configuration',finding:'CFG-1'}],simplified_rows:[{type:'Vulnerability',finding_ids:[finding.finding],finding_indices:[0],count:1,severity:'High',image:'app:1',remediation:'Upgrade'}],overview_data:{source:'Submitted scan evidence'}};
 describe('public scan results', () => {
+  it('shows the safe Compose inventory in the overview', () => {
+    render(<Page data={{...base, service_overview: {compose: {complete: true, images: ['app:1'], services: [{name: 'app', image: 'app:1', status: 'ready', configuration: {command: '<script>alert(1)</script>'}}]}}}} />);
+    expect(screen.getByRole('region', {name: 'Compose inventory'})).toHaveTextContent('app:1');
+    expect(screen.getByText(/command/)).toHaveTextContent('<script>alert(1)</script>');
+    expect(document.querySelector('script')).toBeNull();
+  });
   it('preserves exports, raw/simplified filters and safe finding detail references', () => {
     const previous = HTMLDialogElement.prototype.showModal;
     HTMLDialogElement.prototype.showModal = vi.fn(function(this:HTMLDialogElement) {this.setAttribute('open','');});

@@ -9,6 +9,7 @@ from starlette.responses import HTMLResponse, JSONResponse
 from .performance import performance_scope
 from starlette.templating import Jinja2Templates
 from .frontend_portfolio import cybersecurity_data
+from .frontend_compose import compose_data
 from .frontend_results import public_results_data, patch_results_data
 from .frontend_governance import project_governance
 from .frontend_service_secondary import project_secondary
@@ -251,10 +252,12 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         data["job"] = _fields(context.get("job", {}), ("status", "phase", "message", "progress",
             "error", "started_at", "finished_at", "created_at"))
         job = context.get("job", {})
+        data["job"]["compose_preview"] = bool(_field(job, "compose_preview", False))
         data["job"]["skipped_charts"] = [_scalar(item) for item in _field(job, "skipped_charts", [])]
         summary = _field(job, "summary", {})
         data["job"]["summary"] = _fields(summary, ("skipped_images", "skipped_charts", "reports", "results", "configuration_findings"))
         data["job"]["summary"]["formats"] = [_scalar(item) for item in _field(summary, "formats", [])]
+        data["job"]["summary"]["compose"] = compose_data(_field(summary, "compose"))
     elif name == "dashboard.html":
         if context.get("dashboard_url"):
             data["dashboard_url"] = context.get("dashboard_url")

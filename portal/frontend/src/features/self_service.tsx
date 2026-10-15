@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { PAGE_MEDIA_TYPE, requestJson, type PageData, type PageEnvelope } from '../api';
 import { useJob, type JobState } from '../hooks/useJob';
+import { ComposeInventory, type ComposeModel } from './compose_inventory';
 
 interface ScanJob extends JobState {
   status: string; started_at?: string | null; finished_at?: string | null; phase?: string;
-  skipped_charts?: string[];
+  skipped_charts?: string[]; compose_preview?: boolean;
   intelligence?: { status: string; databases: Record<string, { version?: string; built?: string; status?: string }> };
-  summary?: { skipped_images?: number; skipped_charts?: number; reports?: number; formats?: string[]; results?: number; configuration_findings?: number };
+  summary?: { skipped_images?: number; skipped_charts?: number; reports?: number; formats?: string[]; results?: number; configuration_findings?: number; compose?: ComposeModel };
 }
 export interface SelfServiceData {
   mode: 'scan' | 'sbom'; description: string; image_list?: string; chart_url?: string;
+  compose_files?: string; compose_profiles?: string; compose_preview?: boolean;
   archive_names?: string[]; authenticated_ingest?: boolean;
   authenticated_services?: { service_key: string; name: string }[];
   service_version_options?: Record<string, string[]>; ingest_service_id?: string; ingest_service_version?: string; ingest_scope?: 'auto' | 'service';
@@ -20,7 +22,7 @@ export interface SelfServiceData {
   current_user?: PageData['current_user']; csrf_token?: string;
 }
 const labels: Record<string, string> = { preparing: 'Preparing', queued: 'Queued', running: 'Running', complete: 'Complete', incomplete: 'Incomplete', error: 'Error', cancelled: 'Cancelled' };
-const phaseLabels: Record<string, string> = { preparing: 'Preparing submission', prepare: 'Preparing scan', transfer: 'Transferring evidence', ingest: 'Ingesting evidence', done: 'Finished', queued: 'Queued', prepare_inputs: 'Prepare inputs', generate_sboms: 'SBOM generation', scan_sboms: 'SBOM scan', configuration_scan: 'Configuration scans', report_results: 'Report results', report_to_portal: 'Portal ingest' };
+const phaseLabels: Record<string, string> = { preparing: 'Preparing submission', prepare: 'Preparing scan', transfer: 'Transferring evidence', ingest: 'Ingesting evidence', done: 'Finished', queued: 'Queued', prepare_inputs: 'Prepare inputs', compose_discovery: 'Discover Compose services', generate_sboms: 'SBOM generation', scan_sboms: 'SBOM scan', configuration_scan: 'Configuration scans', report_results: 'Report results', report_to_portal: 'Portal ingest' };
 const ingestRequests = new Map<string, Promise<unknown>>();
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Please retry.';
 
@@ -36,6 +38,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const [version, setVersion] = useState(data.ingest_service_version || '');
   const [ingestScope, setIngestScope] = useState(data.ingest_scope || 'auto');
   const [submitting, setSubmitting] = useState(false);
+  const [submittingPreview, setSubmittingPreview] = useState(false);
   const [submitError, setSubmitError] = useState('');
   const submission = useRef<AbortController | null>(null);
   useEffect(() => () => submission.current?.abort(), []);
@@ -44,10 +47,12 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
     submission.current?.abort();
     const controller = new AbortController();
     submission.current = controller;
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    setSubmittingPreview(submitter instanceof HTMLButtonElement && submitter.value === 'true');
     setSubmitting(true); setSubmitError('');
     try {
       const response = await requestJson<PageEnvelope>(`/${data.mode}`, {
-        method: 'POST', body: new FormData(event.currentTarget), signal: controller.signal,
+        method: 'POST', body: new FormData(event.currentTarget, submitter), signal: controller.signal,
         headers: { Accept: PAGE_MEDIA_TYPE },
       });
       if (controller.signal.aborted) return;
@@ -70,6 +75,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const base = data.job_id ? `/api/public/jobs/${encodeURIComponent(data.job_id)}` : null;
   const { job: polledJob, error, retry, elapsedSeconds } = useJob<ScanJob>(base, scope);
   const job = polledJob || data.job;
+  const preview = job?.compose_preview ?? data.compose_preview ?? false;
+  const progressPhases = preview ? data.progress_phases.filter(([step]) => ['prepare_inputs', 'compose_discovery'].includes(step)) : data.progress_phases;
   const status = job?.status || 'queued';
   const phase = job?.phase || 'queued';
   const terminal = ['complete', 'incomplete', 'error', 'cancelled'].includes(status);
@@ -90,7 +97,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
     return () => controller.abort();
   }, [sbom, base, terminal, submitting]);
   useEffect(() => {
-    if (sbom || !base || !resultsReady || !ingestTarget) return;
+    if (sbom || preview || !base || !resultsReady || !ingestTarget) return;
     let active = true;
     setIngestState('pending'); setIngestError('');
     let request = ingestRequests.get(scope);
@@ -102,7 +109,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
       if (active) { setIngestState('error'); setIngestError(errorMessage(reason)); }
     });
     return () => { active = false; };
-  }, [sbom, base, resultsReady, ingestTarget, scope, ingestRetry]);
+  }, [sbom, preview, base, resultsReady, ingestTarget, scope, ingestRetry]);
   async function cancel() {
     if (!base) return;
     setCancelling(true); setCancelError('');
@@ -114,7 +121,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const skipped = (summary.skipped_images || 0) + (summary.skipped_charts || 0);
   const showCounts = terminal || phase === 'report_results';
   let statusText = job ? `${labels[status] || status} · ${phaseLabels[phase] || phase.replaceAll('_', ' ')}` : data.status_message || `Waiting for ${sbom ? 'SBOM' : 'scan'} worker…`;
-  if (job && showCounts) statusText = sbom
+  if (preview) statusText = `Compose preview · ${statusText}`;
+  if (job && showCounts && !preview) statusText = sbom
     ? `${labels[status] || status} · ${summary.reports || 0} SBOM document(s) in ${(summary.formats || []).length} format(s)${summary.skipped_images ? `, ${summary.skipped_images} skipped image(s)` : ''}.`
     : `${statusText} · ${summary.results || 0} vulnerability result(s), ${summary.configuration_findings || 0} configuration finding(s)${skipped ? `, ${summary.skipped_images || 0} skipped image(s), ${summary.skipped_charts || 0} skipped chart(s)` : ''}.`;
   const download = (suffix: string, text: string, enabled = true) => <a className={`secondary-button${enabled ? '' : ' is-disabled'}`} href={enabled && base ? `${base}/${suffix}` : undefined} aria-disabled={!enabled || undefined} tabIndex={enabled ? undefined : -1}>{text}</a>;
@@ -123,7 +131,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
     <section className="heading"><div><p className="eyebrow">SELF-SERVICE WORKSPACE</p><h1>{sbom ? 'SBOM' : 'Scan'}</h1><p>{data.description}</p></div></section>
     <section className="self-service-panel panel">
       <h2>{sbom ? 'SBOM generator' : 'Public scan inputs'}</h2>
-      <p className="muted">{sbom ? 'Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.' : 'Provide public images, a Helm chart archive, or both. Results are temporary and are not attached to a portal service.'}</p>
+      <p className="muted">{sbom ? 'Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.' : 'Provide public images, Helm charts, or Docker Compose files. Results are temporary and are not attached to a portal service.'}</p>
       <form className="self-service-form" method="post" action={`/${data.mode}`} encType="multipart/form-data" onSubmit={submit}>
         {data.csrf_token && <input type="hidden" name="csrf_token" value={data.csrf_token} />}
         <label htmlFor="image-list">Images</label><textarea id="image-list" name="image_list" rows={10} defaultValue={data.image_list || ''} placeholder={'docker.io/library/nginx:1.27\nghcr.io/example/app:latest'} />
@@ -132,6 +140,11 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           <label htmlFor="chart-url">Helm chart or repository URLs <span className="muted">(archive, Helm index/repository, or public OCI reference; one per line)</span></label><textarea id="chart-url" name="chart_url" rows={3} defaultValue={data.chart_url || ''} placeholder={'https://prometheus-community.github.io/helm-charts\nhttps://example.invalid/chart-two.tgz'} />
           <label htmlFor="chart-archive">Helm chart archives <span className="muted">(select one or more .tgz, .tar.gz, .tar, or .zip files)</span></label><input id="chart-archive" name="chart_archives" type="file" accept=".tgz,.tar.gz,.tar,.zip" multiple />
           {!!data.archive_names?.length && <p className="muted upload-summary">Submitted archives: {data.archive_names.join(', ')}. Select files again only if starting a new scan.</p>}
+          <label htmlFor="compose-uploads">Docker Compose files and companions <span className="muted">(optional; select YAML/YML, .env files, or .zip/.tar/.tar.gz/.tgz bundles)</span></label><input id="compose-uploads" name="compose_uploads" type="file" multiple aria-describedby="compose-help" />
+          <small id="compose-help" className="muted">Preview discovers services and images without scanning. CATS never builds images or starts containers. Services declaring both image and build scan the declared image. Use a bundle to preserve folders and companion files.</small>
+          <label htmlFor="compose-files">Compose file order <span className="muted">(optional; relative paths, one per line, base first then overrides)</span></label><textarea id="compose-files" name="compose_files" rows={3} defaultValue={data.compose_files || ''} placeholder={'compose.yaml\ncompose.production.yaml'} aria-describedby="compose-order-help" />
+          <small id="compose-order-help" className="muted">Leave blank to select a single standard compose.yaml, compose.yml, docker-compose.yaml, or docker-compose.yml file. If more than one is present, specify the order explicitly.</small>
+          <label htmlFor="compose-profiles">Compose profiles <span className="muted">(optional; comma or newline separated)</span></label><textarea id="compose-profiles" name="compose_profiles" rows={2} defaultValue={data.compose_profiles || ''} placeholder="production, monitoring" />
           <label htmlFor="service-definition">Service definition <span className="muted">(optional)</span></label><input id="service-definition" name="service_definition" type="file" accept=".yaml,.yml" aria-describedby="service-definition-help" /><small id="service-definition-help" className="muted">Upload a service-definition YAML/YML file. CATS will discover and assess every declared component.</small>
           {data.authenticated_ingest && <>
             <label htmlFor="ingest-service">Ingest completed scan into <span className="muted">(only services within your role, group, and service scope)</span></label><select id="ingest-service" name="ingest_service_id" value={service} onChange={event => { setService(event.target.value); setVersion(''); }}><option value="">Do not ingest (temporary results only)</option>{data.authenticated_services?.map(item => <option key={item.service_key} value={item.service_key}>{item.name} ({item.service_key})</option>)}</select>
@@ -141,11 +154,11 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           </>}
         </>}
         {sbom && <fieldset className="sbom-options"><legend>Output formats</legend><p className="muted">Select one or more. CATS inventories each image once, then serializes that inventory into every selected format.</p><div className="sbom-format-grid">{Object.entries(data.sbom_output_formats || {}).map(([value, label]) => <label key={value}><input type="checkbox" name="sbom_formats" value={value} defaultChecked={data.selected_sbom_formats?.includes(value)} /> <span>{label}</span></label>)}</div><label htmlFor="cyclonedx-spec-version">CycloneDX specification version<select id="cyclonedx-spec-version" name="cyclonedx_spec_version" defaultValue={data.cyclonedx_spec_version}>{data.cyclonedx_spec_versions?.map(value => <option key={value} value={value}>{value}</option>)}</select></label></fieldset>}
-        <div className="self-service-actions"><button type="submit" disabled={submitting} aria-busy={submitting}>{submitting ? sbom ? 'Generating…' : 'Starting scan…' : sbom ? 'Generate SBOM' : 'Start scan'}</button>{data.current_user ? <span className="muted">Signed in as {data.current_user.display_name}</span> : !sbom && <a className="secondary-button" href="/login?next=/scan">Use authenticated mode</a>}</div>
+        <div className="self-service-actions"><button type="submit" name="compose_preview" value="false" disabled={submitting} aria-busy={submitting && !submittingPreview}>{submitting && !submittingPreview ? sbom ? 'Generating…' : 'Starting scan…' : sbom ? 'Generate SBOM' : 'Start scan'}</button>{!sbom && <button type="submit" className="secondary-button" name="compose_preview" value="true" formNoValidate disabled={submitting} aria-busy={submitting && submittingPreview}>{submitting && submittingPreview ? 'Starting preview…' : 'Preview Compose'}</button>}{data.current_user ? <span className="muted">Signed in as {data.current_user.display_name}</span> : !sbom && <a className="secondary-button" href="/login?next=/scan">Use authenticated mode</a>}</div>
       </form>
       {submitError && <p role="alert">{submitError}</p>}
       {base ? <div className="scan-progress">
-        <div className="scan-pipeline" aria-label={`${sbom ? 'SBOM generation' : 'Scan'} pipeline`}>{data.progress_phases.map(([step, label]) => {
+        <div className="scan-pipeline" aria-label={`${preview ? 'Compose preview' : sbom ? 'SBOM generation' : 'Scan'} pipeline`}>{progressPhases.map(([step, label]) => {
           const index = data.progress_order.indexOf(step);
           const complete = (index >= 0 && data.progress_order.indexOf(phase) > index) || (status === 'complete' && index >= 0);
           const active = step === phase && status === 'running';
@@ -153,7 +166,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           return <div key={step} className={`scan-pipeline-step${complete ? ' is-complete' : ''}${active ? ' is-active' : ''}${failed ? ' is-error' : ''}`}><span className="scan-pipeline-dot" /><strong>{label}</strong><small>{complete ? 'Complete' : active ? 'Running' : failed ? labels[status] : 'Waiting'}</small></div>;
         })}</div>
         <p className="muted self-service-status" role="status">{statusText}{elapsedSeconds != null && <span> · {Math.floor(elapsedSeconds / 60)}m {Math.floor(elapsedSeconds % 60)}s</span>}{ingestState === 'pending' && ' Ingesting into selected service…'}{ingestState === 'complete' && ' Ingested into selected service.'}</p>
-        {job?.intelligence && <details open={job.intelligence.status !== 'current'}>
+        {summary.compose && <ComposeInventory model={summary.compose} preview={preview} />}
+        {job?.intelligence && !preview && <details open={job.intelligence.status !== 'current'}>
           <summary>Scan intelligence · {job.intelligence.status === 'current' ? 'Current' : 'Review database freshness'}</summary>
           <p className="muted">Each attempt uses a fixed database version. Importing newer intelligence does not change a scan already running; rescan to use the latest version.</p>
           <ul>{Object.entries(job.intelligence.databases).map(([scanner, database]) => <li key={scanner}>{scanner === 'grype' ? 'Grype' : 'Trivy'}: {database.status || 'unavailable'}{database.version && ` · version ${database.version}`}{database.built && ` · built ${database.built}`}</li>)}</ul>
@@ -161,8 +175,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
         {error && <p role="alert">Unable to read scan status. {errorMessage(error)} <button type="button" onClick={retry}>Retry status</button></p>}
         {ingestState === 'error' && <p role="alert">Ingest failed. {ingestError} <button type="button" onClick={() => { ingestRequests.delete(scope); setIngestRetry(value => value + 1); }}>Retry ingestion</button></p>}
         {!sbom && !!job?.skipped_charts?.length && <details><summary>Charts not acquired</summary><ul>{job.skipped_charts.map((entry, index) => <li key={index}>{entry}</li>)}</ul></details>}
-        {terminal && status !== 'cancelled' && <div className="scan-result-actions">{!sbom && <>{download('overview.html', 'Open HTML overview', resultsReady)}{download('results/view', 'Detailed results', resultsReady)}{download('export.xlsx', 'Download Excel', resultsReady)}</>}{download(sbom ? 'sboms' : 'artifacts', sbom ? 'Download SBOMs' : 'Download artifacts')}{download('logs', 'View debug log')}</div>}
-        {['preparing', 'queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : 'Cancel scan'}</button></div>}
+        {terminal && status !== 'cancelled' && <div className="scan-result-actions">{!sbom && !preview && <>{download('overview.html', 'Open HTML overview', resultsReady)}{download('results/view', 'Detailed results', resultsReady)}{download('export.xlsx', 'Download Excel', resultsReady)}</>}{download(sbom ? 'sboms' : 'artifacts', sbom ? 'Download SBOMs' : 'Download artifacts')}{download('logs', 'View debug log')}</div>}
+        {['preparing', 'queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : preview ? 'Cancel preview' : 'Cancel scan'}</button></div>}
         {cancelError && <p role="alert">Unable to cancel scan. {cancelError}</p>}
       </div> : <p className="muted self-service-status">{data.status_message || (sbom ? 'Generated documents are temporary and are not attached to a portal service.' : 'Results are temporary and are not attached to a portal service.')}</p>}
     </section>

@@ -92,9 +92,12 @@ def _counts(value, depth=0):
 def public_projection(job, provenance=None):
     """Explicit public status schema; arbitrary job payload never reaches clients."""
     fields = {"job_id", "job_kind", "status", "phase", "created_at", "started_at", "finished_at",
-              "completed_at", "attempts", "error_code", "retryable"}
+              "completed_at", "attempts", "error_code", "retryable", "compose_preview"}
     result = {key: job[key] for key in fields if key in job}
     result["summary"] = _counts(job.get("summary", {}))
+    compose = job.get("summary", {}).get("compose") if isinstance(job.get("summary"), dict) else None
+    if isinstance(compose, dict):
+        result["summary"]["compose"] = compose
     formats = job.get("summary", {}).get("formats", []) if isinstance(job.get("summary"), dict) else []
     allowed_formats = {"syft-json", "spdx-json", "spdx-tag-value", "cyclonedx-json", "cyclonedx-xml"}
     if isinstance(formats, list):

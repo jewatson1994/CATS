@@ -153,6 +153,25 @@ class Worker:
             archive.unlink()
             output.mkdir(parents=True)
             payload = job["job"]
+            from .compose_scan import prepare_compose, finalize_compose
+            if payload.get("compose_enabled"):
+                phase[0] = "compose_discovery"
+            compose = prepare_compose(inputs, payload)
+            authorized()
+            if compose is not None and (payload.get("compose_preview") or (
+                    not payload.get("image_list") and not payload.get("chart_url")
+                    and not (inputs / "charts").exists() and not (inputs / "image-archives").exists()
+                    and not payload.get("definition_component") and not payload.get("definition_components"))):
+                finalize_compose(output, compose, preview=bool(payload.get("compose_preview")))
+                results = directory / "results.tar.gz"
+                identity = {key: job[key] for key in ("job_id", "attempt_id", "input_digest", "service_key", "service_version")}
+                identity.update(returncode=0, worker_id=self.worker_id, completed_at=time.time())
+                pack(directory / "evidence", results, identity)
+                phase[0] = "transfer"
+                authorized()
+                with results.open("rb") as source:
+                    self.request("PUT", suffix + "/results", headers={**headers, "Content-Type": "application/x-tar"}, data=source, timeout=(5, 300))
+                return
             environment = scan_runtime.sanitized_environment()
             environment["HOME"] = str(directory)
             tmp = directory / "tmp"
@@ -313,6 +332,8 @@ class Worker:
                 with log_path.open(encoding="utf-8", errors="replace") as source, sanitized.open("w", encoding="utf-8") as target:
                     for line in source: target.write(redact(line))
                 os.replace(sanitized, log_path)
+            if compose is not None:
+                finalize_compose(output, compose)
             evidence = directory / "evidence"
             provenance["completed_at"] = time.time()
             provenance["intelligence_status"] = intelligence_status(provenance["databases"], os.environ)

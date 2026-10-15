@@ -81,7 +81,7 @@ class ExecutionPayload(BaseModel):
     # Source files are optional because CI/API producers may submit evidence
     # without an uploaded chart. When present they are preserved for isolated
     # remediation candidates; rendered manifests remain evidence only.
-    artifact_type: str = Field(default="helm", pattern=r"^(helm|kubernetes|manifest|raw|image)$")
+    artifact_type: str = Field(default="helm", pattern=r"^(helm|kubernetes|manifest|raw|image|compose)$")
     helm_source_files: dict[str, str] = Field(default_factory=dict)
     # Ordered, artifact-relative files passed with Helm --values. Producers
     # using non-default values must declare them so runtime validation deploys

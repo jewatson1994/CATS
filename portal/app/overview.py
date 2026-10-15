@@ -460,6 +460,7 @@ def normalize_overview(
             resolved_dependencies.append(dependency)
 
     return {
+        **({"compose": raw["compose"]} if isinstance(raw.get("compose"), dict) else {}),
         "source": _text(raw.get("source"), "Submitted scan evidence"),
         "description": _text(raw.get("description")),
         "missing_evidence": _unique(missing, ("type", "item", "reason", "source_file")),

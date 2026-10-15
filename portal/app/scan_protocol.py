@@ -275,7 +275,7 @@ def _ingest_one():
                 db.refresh(row, with_for_update=True)
                 if row.status == "cancelled":
                     return
-            if row.service_key and payload.get("job_kind") == "scan":
+            if row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview"):
                 from types import SimpleNamespace
                 from .models import Service
                 service = db.scalar(select(Service).where(Service.service_key == row.service_key))
@@ -299,7 +299,7 @@ def _ingest_one():
                                     and not summary.get("skipped_images")
                                     and not summary.get("skipped_charts")) else "incomplete"
             row.payload = {**payload, "status": status, "phase": "done", "summary": summary,
-                           "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan")}
+                           "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview"))}
             row.status = status
             row.finished_at = jobs.now()
             for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id)):
