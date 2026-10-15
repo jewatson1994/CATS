@@ -23,6 +23,7 @@ from .scan_artifacts import digest, pack, unpack, validate_tree
 from .scan_acquisition import _download_public_chart
 from .helm_archives import extract_chart
 from .helm_downloads import close_downloads
+from .scan_registry_auth import RegistryConfigurationError, load_registry_credentials
 
 STOP = threading.Event()
 _UID_LOCK = threading.Lock()
@@ -186,9 +187,8 @@ class Worker:
             auth_dir = directory / "registry-auth"
             auth_dir.mkdir()
             if payload.get("credential_policy") == "service":
-                config = Path(os.getenv("DOCKER_CONFIG", "/opt/catscan/registry-auth")) / "config.json"
-                if config.is_file():
-                    credentials = json.loads(config.read_text(encoding="utf-8"))
+                credentials = load_registry_credentials()
+                if credentials:
                     # Copy only explicitly referenced registries, never site-wide helpers.
                     references = list(str(payload.get("image_list") or "").splitlines())
                     references += [str(component.get("reference") or component.get("repository") or "") for component in payload.get("definition_components", [])]
@@ -364,6 +364,9 @@ class Worker:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             category = "evidence_transfer" if isinstance(exc, requests.RequestException) and status not in (400, 401, 403, 409, 422) else "scanner_execution"
             if isinstance(exc, (ValueError, json.JSONDecodeError)): category = "invalid_output"
+            if isinstance(exc, RegistryConfigurationError):
+                category = "registry_authorization"
+                log_tail[0] = (log_tail[0] + "\nScan preparation failed: " + message).strip()
             if "disk" in message.lower(): category = "insufficient_storage"
             if time.monotonic() > deadline: category = "scanner_timeout"
             if not lost.is_set() and not STOP.is_set():
@@ -426,10 +429,22 @@ def initialize():
 
 
 def main():
+    if "--check-registry-auth" in sys.argv:
+        try:
+            load_registry_credentials()
+        except RegistryConfigurationError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        print("Registry configuration check passed (an absent config.json allows anonymous pulls).")
+        return 0
     if "--healthcheck" in sys.argv or "--readiness" in sys.argv:
         stamp = ROOT / ("readiness" if "--readiness" in sys.argv else "heartbeat")
         return 0 if stamp.exists() and time.time() - stamp.stat().st_mtime < 120 else 1
     initialize()
+    try:
+        load_registry_credentials()
+    except RegistryConfigurationError as exc:
+        logging.getLogger(__name__).error("Registry configuration check failed: %s", exc)
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_args: STOP.set())
     worker = Worker()

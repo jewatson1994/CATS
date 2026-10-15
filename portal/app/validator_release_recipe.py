@@ -1,6 +1,7 @@
 """Save already-local exact images for disconnected managed validator deployment."""
 from __future__ import annotations
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -11,19 +12,35 @@ from .managed_validator_release import SCHEMA, load_release, configured_node_pin
 from .managed_validator_bootstrap import BootstrapError
 
 
-def run(command, **kwargs):
+def run(command, *, failure_message=None, **kwargs):
     # Bound every external operation below the durable worker lease. Never
     # forward Docker logs to portal responses (registry URLs can be sensitive).
     kwargs.setdefault('capture_output', True)
     kwargs.setdefault('timeout', 1800)
-    return subprocess.run(command, **kwargs)
+    try:
+        return subprocess.run(command, **kwargs)
+    except (subprocess.SubprocessError, OSError) as exc:
+        if failure_message is None:
+            raise
+        # Only report controlled metadata, never command arguments or output.
+        if isinstance(exc, subprocess.TimeoutExpired):
+            reason = "timed out"
+        elif isinstance(exc, subprocess.CalledProcessError):
+            reason = f"exit code {exc.returncode}"
+        else:
+            reason = f"OS error {exc.errno}" if exc.errno is not None else "OS error"
+        raise BootstrapError(f"Validator payload preparation: {failure_message} ({reason}).") from None
 
 
 def inspect(reference):
-    result = run(["docker", "image", "inspect", reference], check=True, capture_output=True, text=True)
-    rows = json.loads(result.stdout)
-    if len(rows) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", rows[0].get("Id", "")):
-        raise ValueError("Expected exactly one local image")
+    result = run(["docker", "image", "inspect", reference], check=True, capture_output=True, text=True,
+                 failure_message="cannot inspect the selected local image; check the provisioning worker's Docker access and image cache")
+    try:
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not re.fullmatch(r"sha256:[0-9a-f]{64}", rows[0].get("Id", "")):
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise BootstrapError("Validator payload preparation: Docker did not return one valid local image identity; check the selected image in the worker's Docker cache.") from None
     return rows[0]
 
 
@@ -43,16 +60,23 @@ def isolated_node_image(reference):
         raise BootstrapError("Cannot read the configured Kind node entrypoint. Select a linux/amd64 Kind node image with CATS_DEPLOYMENT_KIND_NODE_IMAGE and provision again.") from None
     patched = patch_isolated_entrypoint(source)
     base_tag = "cats-kind-base:" + base["Id"].split(":")[1]
-    run(["docker", "tag", base["Id"], base_tag], check=True)
-    with tempfile.TemporaryDirectory(prefix="cats-isolated-node-") as directory:
+    run(["docker", "tag", base["Id"], base_tag], check=True,
+        failure_message="cannot tag the local Kind base; check the Docker daemon and image store")
+    with tempfile.TemporaryDirectory(prefix="cats-isolated-node-") as directory, \
+            tempfile.TemporaryDirectory(prefix="cats-buildx-") as buildx_directory:
         context = Path(directory)
         (context / "entrypoint").write_bytes(patched.encode("utf-8"))
         (context / "Dockerfile").write_text("FROM " + base_tag + "\nCOPY --chmod=0755 entrypoint /usr/local/bin/entrypoint\n", encoding="utf-8")
-        run(["docker", "build", "--pull=false", "--network=none", "--iidfile", str(context / "image-id"), str(context)], check=True)
+        run(["docker", "build", "--pull=false", "--network=none", "--iidfile", str(context / "image-id"), str(context)], check=True,
+            # Registry credentials remain in the read-only DOCKER_CONFIG mount.
+            # Buildx needs writable state, kept outside the uploaded build context.
+            env={**os.environ, "BUILDX_CONFIG": buildx_directory},
+            failure_message="cannot build the isolated Kind node; check the provisioning worker's Docker BuildKit/buildx support and daemon storage")
         image_id = (context / "image-id").read_text().strip()
     row = inspect(image_id)
     tag = "cats-kind-isolated:" + row["Id"].split(":")[1]
-    run(["docker", "tag", row["Id"], tag], check=True)
+    run(["docker", "tag", row["Id"], tag], check=True,
+        failure_message="cannot tag the isolated Kind node; check the Docker daemon and image store")
     return tag, row
 
 
@@ -106,19 +130,23 @@ def prepare(output, cats_image, node_image=None, *, node_pin=None):
     validate_node_tools(cats["Id"], node_ref, node_pin)
     node_ref, node = isolated_node_image(node_ref)  # Local pinned base only; no registry fallback.
     if any(row.get("Architecture") != "amd64" or row.get("Os") != "linux" for row in (cats, node)):
-        raise ValueError("V1 validator images must be linux/amd64")
-    if (cats.get("Config") or {}).get("Labels", {}).get("org.opencontainers.image.title") != "CATS":
-        raise ValueError("Expected a CATS release image")
+        raise BootstrapError("Validator payload preparation: both selected images must be linux/amd64; select compatible CATS and Kind node images.")
+    if ((cats.get("Config") or {}).get("Labels") or {}).get("org.opencontainers.image.title") != "CATS":
+        raise BootstrapError("Validator payload preparation: the selected runtime is not labeled as a CATS release image; use the unified CATS image for CATS_PROVISIONING_CATS_IMAGE.")
     # Exercise the exact image locally without host access or network acquisition.
     probe = "import pathlib,shutil,importlib.util; assert pathlib.Path('/app/validator_server.py').is_file(); assert importlib.util.find_spec('app.validator_api'); assert all(shutil.which(x) for x in ('docker','kind','kubectl','helm','bash','tar'))"
-    run(["docker", "run", "--rm", "--cpus", "0.5", "--memory", "256m", "--pids-limit", "64", "--network", "none", "--entrypoint", "/opt/cats-venv/bin/python", cats["Id"], "-c", probe], check=True)
+    run(["docker", "run", "--rm", "--cpus", "0.5", "--memory", "256m", "--pids-limit", "64", "--network", "none", "--entrypoint", "/opt/cats-venv/bin/python", cats["Id"], "-c", probe], check=True,
+        failure_message="CATS runtime probe failed; verify the unified image contains validator_server.py, app.validator_api, Python, Docker, Kind, kubectl, Helm, bash and tar, and that the daemon can run the probe")
     reference = "cats-managed-validator:" + cats["Id"].split(":")[1]
-    run(["docker", "tag", cats["Id"], reference], check=True)
+    run(["docker", "tag", cats["Id"], reference], check=True,
+        failure_message="cannot tag the CATS runtime; check the Docker daemon and image store")
     manifest = {"schema_version": SCHEMA}
     for key, ref, row, filename in (("cats_image", reference, cats, "images/cats.tar"), ("node_image", node_ref, node, "images/node.tar")):
         save_ref = ref.split("@")[0]
-        run(["docker", "tag", row["Id"], save_ref], check=True)
-        run(["docker", "save", "--output", str(output / filename), save_ref], check=True)
+        run(["docker", "tag", row["Id"], save_ref], check=True,
+            failure_message=f"cannot tag {key} for export; check the Docker daemon and image store")
+        run(["docker", "save", "--output", str(output / filename), save_ref], check=True,
+            failure_message=f"cannot export {key}; check provisioning cache permissions, free space and Docker daemon storage")
         manifest[key] = {"reference": ref, "image_id": row["Id"], "file": filename, "sha256": file_digest(output / filename)}
         if key == "node_image":
             manifest[key]["base_reference"] = node_pin

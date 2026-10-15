@@ -94,9 +94,13 @@ it('requires a decision rationale and posts the decision against the retained ap
 });
 
 it('keeps approval distinct from failed publication and permits an authorized retry', async () => {
-  vi.mocked(requestJson).mockResolvedValue({id:22,approval_id:12,service_key:'sample',validity_status:'valid', publish_status:'failed',can_retry:true,publication:{error:'Registry unavailable'},artifacts:[]});
+  vi.mocked(requestJson).mockResolvedValue({id:22,approval_id:12,service_key:'sample',validity_status:'valid', publish_status:'failed',can_retry:true,publication:{error:'Registry unavailable',diagnostic:{stage:'Transferring artifact 1',cause:'Registry access was denied.',http_status:403},correlation_id:'job-123'},artifacts:[]});
   render(<ReleaseDetail data={data} id="22"/>);
   expect(await screen.findByText('Registry unavailable')).toBeInTheDocument();
+  expect(screen.getByText('Transferring artifact 1')).toBeInTheDocument();
+  expect(screen.getByText('Registry access was denied.')).toBeInTheDocument();
+  expect(screen.getByText('403')).toBeInTheDocument();
+  expect(screen.getByText('job-123')).toBeInTheDocument();
   expect(screen.getByText(/Artifact delivery is not complete/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Retry publication'}));
   await waitFor(() => expect(requestJson).toHaveBeenCalledWith('/api/approved-releases/22/retry',expect.objectContaining({method:'POST'})));

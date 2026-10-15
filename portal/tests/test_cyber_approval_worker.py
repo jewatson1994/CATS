@@ -167,3 +167,20 @@ def test_worker_refuses_expired_and_legacy_approvals_before_registry_work(worker
         approvals.publish_job(worker.ctx, {'approval_id': worker.identity})
     assert not worker.calls
     assert state(worker)[0] == 'failed'
+
+
+def test_worker_preserves_publication_diagnostic(worker, monkeypatch):
+    diagnostic = {'stage': 'Transferring artifact 1', 'cause': 'Registry access was denied.', 'http_status': 403}
+    partial = {'status': 'failed', 'error': diagnostic['cause'], 'diagnostic': diagnostic,
+               'artifacts': [{'digest': 'sha256:retained'}]}
+    def fail(db, row, destination, checkpoint):
+        checkpoint(partial)
+        raise publication.PublicationError(partial)
+    monkeypatch.setattr(publication, 'publish', fail)
+    with pytest.raises(JobError, match='Registry access was denied'):
+        approvals.publish_job(worker.ctx, {'approval_id': worker.identity})
+    status, receipt = state(worker)
+    assert status == 'failed'
+    assert receipt['diagnostic'] == diagnostic
+    assert receipt['correlation_id'] == 'job-1'
+    assert receipt['artifacts'] == partial['artifacts']

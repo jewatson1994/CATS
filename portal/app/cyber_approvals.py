@@ -415,7 +415,7 @@ async def save_destination(request: Request, db: Session = Depends(get_db), auth
 
 
 def publish_job(ctx, payload):
-    from .cyber_release_publication import publish
+    from .cyber_release_publication import publish, PublicationError, failure_diagnostic
     from .delivery_execution import delivery_lock
     with delivery_lock(root() / '.locks', int(payload['approval_id'])) as owned:
         if not owned:
@@ -478,10 +478,12 @@ def publish_job(ctx, payload):
             except Exception as exc:
                 db.rollback()
                 row = db.get(CyberApproval, payload['approval_id'])
-                error = str(exc) if isinstance(exc, JobError) else 'Publication failed. Check registry connectivity, trust, signing configuration and retained artifacts, then retry.'
+                diagnostic = exc.receipt.get('diagnostic') if isinstance(exc, PublicationError) else failure_diagnostic(exc, 'Publication worker checks')
+                error = str(exc) if isinstance(exc, (JobError, PublicationError)) else diagnostic['cause']
                 if row and row.job_id == ctx.job.id:
                     row.publish_status = 'failed'
-                    row.publication = {**(row.publication or {}), 'status': 'failed', 'error': error}
+                    row.publication = {**(row.publication or {}), 'status': 'failed', 'error': error,
+                                       'diagnostic': diagnostic, 'correlation_id': ctx.job.id}
                     db.commit()
                 raise JobError(error) from None
 

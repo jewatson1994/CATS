@@ -416,3 +416,34 @@ def test_publication_rejects_legacy_approval_without_registry_writes(environment
     with pytest.raises(publication.PublicationError):
         publish(environment, [])
     assert not any(host == 'approved.example' for host, _ in environment.stores)
+
+@pytest.mark.parametrize('exception,expected', [
+    (release_oci._RegistryError(403), 'Registry access was denied'),
+    (PermissionError('secret /private/key.pem'), 'mount ownership'),
+    (subprocess.CalledProcessError(7, ['tool', 'secret'], stderr=b'secret'), 'tool exited'),
+    (ValueError('secret'), 'Unexpected publication error'),
+])
+def test_publication_failure_retains_safe_stage_and_cause(environment, monkeypatch, exception, expected):
+    def fail(*args, **kwargs):
+        raise exception
+    monkeypatch.setattr(publication._Transport, 'graph', fail)
+    checkpoints = []
+    with pytest.raises(publication.PublicationError) as caught:
+        publish(environment, checkpoints)
+    receipt = caught.value.receipt
+    assert receipt == checkpoints[-1]
+    assert receipt['diagnostic']['stage'] == 'Transferring and verifying artifact 1 of 2'
+    assert expected in receipt['diagnostic']['cause']
+    assert 'secret' not in json.dumps(receipt)
+    if isinstance(exception, release_oci._RegistryError):
+        assert receipt['diagnostic']['http_status'] == 403
+    if isinstance(exception, subprocess.CalledProcessError):
+        assert receipt['diagnostic']['exit_code'] == 7
+
+
+def test_missing_evidence_has_specific_safe_cause(environment):
+    Path(environment.approval.snapshot['evidence']['path']).unlink()
+    with pytest.raises(publication.PublicationError) as caught:
+        publish(environment, [])
+    assert caught.value.receipt['diagnostic'] == {
+        'stage': 'Checking retained evidence', 'cause': 'Frozen release evidence is missing or changed'}

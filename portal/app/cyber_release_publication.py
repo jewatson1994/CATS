@@ -13,6 +13,8 @@ import os
 from pathlib import Path, PureWindowsPath
 import re
 import shutil
+import ssl
+from urllib.error import URLError
 import subprocess
 import tarfile
 import tempfile
@@ -35,6 +37,44 @@ class PublicationError(ValueError):
     def __init__(self, receipt):
         self.receipt = receipt
         super().__init__(receipt["error"])
+
+
+class PublicationValidationError(ValueError):
+    """Only fixed, credential-free validation messages from this module."""
+
+
+def failure_diagnostic(exc, stage):
+    """Never retain exception text, command arguments, output, URLs or file paths."""
+    detail = {"stage": stage, "cause": "Unexpected publication error; inspect the worker using the correlation ID."}
+    reason = exc.reason if isinstance(exc, URLError) else exc
+    if isinstance(exc, PublicationValidationError):
+        detail["cause"] = str(exc)
+    elif isinstance(exc, release_oci._RegistryError):
+        detail["http_status"] = int(exc.status)
+        detail["cause"] = {
+            401: "Registry authentication was rejected. Check the saved registry credentials.",
+            403: "Registry access was denied. Check repository pull/push permissions.",
+            404: "The registry image, manifest or repository was not found.",
+            429: "The registry rate limit was exceeded. Retry later.",
+        }.get(exc.status, "The registry rejected the request.")
+    elif isinstance(reason, ssl.SSLError):
+        detail["cause"] = "TLS verification or negotiation failed. Check the registry certificate and trusted CA."
+    elif isinstance(exc, PermissionError):
+        detail["cause"] = "The worker cannot access a required file or directory. Check mount ownership and permissions."
+    elif isinstance(exc, FileNotFoundError):
+        detail["cause"] = "A required worker file or executable was not found."
+    elif isinstance(exc, (subprocess.TimeoutExpired, TimeoutError)):
+        detail["cause"] = "The publication operation timed out."
+    elif isinstance(exc, subprocess.CalledProcessError):
+        detail["exit_code"] = int(exc.returncode)
+        detail["cause"] = "A publication tool exited unsuccessfully."
+    elif isinstance(exc, (URLError, ConnectionError)):
+        detail["cause"] = "The worker could not connect to the registry or authentication service. Check network access and DNS."
+    elif isinstance(exc, OSError):
+        detail["cause"] = "A worker filesystem or operating system operation failed."
+        if isinstance(exc.errno, int):
+            detail["os_error"] = exc.errno
+    return detail
 
 
 def _public_snapshot(value):
@@ -68,7 +108,7 @@ def _source_environments(settings):
         for row in material.get("image_registries", []):
             host = row["endpoint"].removeprefix("https://").rstrip("/")
             if host in environments:
-                raise ValueError("Source registry configuration is ambiguous")
+                raise PublicationValidationError("Source registry configuration is ambiguous")
             env = dict(base)
             if row.get("ca_file"):
                 env["SSL_CERT_FILE"] = row["ca_file"]
@@ -80,7 +120,7 @@ def _checked_file(value):
     path = Path(value["path"])
     if (not path.is_absolute() or any(p.is_symlink() for p in (path, *path.parents))
             or not path.is_file() or file_digest(path) != value["digest"]):
-        raise ValueError("Frozen release evidence is missing or changed")
+        raise PublicationValidationError("Frozen release evidence is missing or changed")
     return path
 
 
@@ -88,7 +128,7 @@ def _descriptor(item):
     if (not isinstance(item, dict) or not release_oci._DIGEST.fullmatch(item.get("digest", ""))
             or not isinstance(item.get("size"), int) or item["size"] < 0
             or not isinstance(item.get("mediaType"), str)):
-        raise ValueError("Invalid OCI descriptor")
+        raise PublicationValidationError("Invalid OCI descriptor")
     return item
 
 
@@ -104,30 +144,30 @@ class _Transport:
         self.limit = int(env.get("CATS_CYBER_RELEASE_MAX_BYTES", str(20 * 1024**3)))
         self.blob_limit = int(env.get("CATS_CYBER_RELEASE_BLOB_MAX_BYTES", str(1024**3)))
         if self.limit <= 0 or self.blob_limit <= 0:
-            raise ValueError("Release transport limits must be positive")
+            raise PublicationValidationError("Release transport limits must be positive")
 
     def retain(self, descriptor, content):
         _descriptor(descriptor)
         if len(content) != descriptor["size"] or release_oci._digest(content) != descriptor["digest"]:
-            raise ValueError("OCI content digest or size mismatch")
+            raise PublicationValidationError("OCI content digest or size mismatch")
         path = self.blobs / descriptor["digest"][7:]
         if not path.exists():
             self.total += len(content)
             if self.total > self.limit:
-                raise ValueError("Offline release exceeds transport size limit")
+                raise PublicationValidationError("Offline release exceeds transport size limit")
             path.write_bytes(content)
         return path
 
     def graph(self, source, digest, target=None, depth=0, seen=None):
         check_worker()
         if depth > 32:
-            raise ValueError("OCI graph nesting exceeds limit")
+            raise PublicationValidationError("OCI graph nesting exceeds limit")
         seen = set() if seen is None else seen
         if digest in seen:
-            raise ValueError("Cyclic OCI graph")
+            raise PublicationValidationError("Cyclic OCI graph")
         seen = seen | {digest}
         if not release_oci._DIGEST.fullmatch(digest):
-            raise ValueError("Invalid OCI manifest digest")
+            raise PublicationValidationError("Invalid OCI manifest digest")
         _, headers, data = source.request("GET", source.api + "/manifests/" + digest)
         document = json.loads(data)
         descriptor = {"digest": digest, "size": len(data),
@@ -135,37 +175,37 @@ class _Transport:
         self.retain(descriptor, data)
         children = document.get("manifests", [])
         if not isinstance(children, list) or len(children) > 256:
-            raise ValueError("Invalid OCI index")
+            raise PublicationValidationError("Invalid OCI index")
         for child in children:
             _descriptor(child)
             actual = self.graph(source, child["digest"], target, depth + 1, seen)
             if any(actual[k] != child[k] for k in ("digest", "size", "mediaType")):
-                raise ValueError("OCI child descriptor mismatch")
+                raise PublicationValidationError("OCI child descriptor mismatch")
         blobs = ([document["config"]] if "config" in document else []) + document.get("layers", [])
         if not children and not blobs:
-            raise ValueError("Empty OCI artifact graph")
+            raise PublicationValidationError("Empty OCI artifact graph")
         if len(blobs) > 4096:
-            raise ValueError("OCI layer count exceeds limit")
+            raise PublicationValidationError("OCI layer count exceeds limit")
         for item in blobs:
             check_worker()
             _descriptor(item)
             if item["size"] > self.blob_limit:
-                raise ValueError("OCI layer exceeds configured transport size limit")
+                raise PublicationValidationError("OCI layer exceeds configured transport size limit")
             _, _, content = source.request("GET", source.api + "/blobs/" + item["digest"], limit=item["size"])
             self.retain(item, content)
             if target is not None:
                 target.upload(content, item["mediaType"])
                 _, _, retrieved = target.request("GET", target.api + "/blobs/" + item["digest"], limit=item["size"])
                 if retrieved != content:
-                    raise ValueError("Destination OCI blob verification failed")
+                    raise PublicationValidationError("Destination OCI blob verification failed")
         if target is not None:
             status, _, _ = target.request("PUT", target.api + "/manifests/" + digest,
                                          body=data, media_type=descriptor["mediaType"])
             if status != 201:
-                raise ValueError("Destination did not accept immutable manifest")
+                raise PublicationValidationError("Destination did not accept immutable manifest")
             _, _, retrieved = target.request("GET", target.api + "/manifests/" + digest)
             if retrieved != data:
-                raise ValueError("Destination OCI manifest verification failed")
+                raise PublicationValidationError("Destination OCI manifest verification failed")
         return descriptor
 
     def entry(self, descriptor, name):
@@ -177,7 +217,7 @@ class _Transport:
 def _signature(transport, client, reference, config, credentials, env, layout_name):
     result = signing.sign_and_verify(reference, config, credentials, env)
     if result.get("signature_status") != "verified":
-        raise ValueError("Artifact signature verification failed")
+        raise PublicationValidationError("Artifact signature verification failed")
     # The portal pins Cosign 2.x, which uses this interoperable signature tag.
     # A tool/version writing elsewhere fails closed rather than dropping signatures.
     tag = "sha256-" + reference.rsplit("@sha256:", 1)[1] + ".sig"
@@ -202,7 +242,7 @@ def _publish_files(client, files):
     status, _, _ = client.request("PUT", client.api + "/manifests/" + digest,
                                  body=content, media_type=release_oci.MANIFEST_TYPE)
     if status != 201:
-        raise ValueError("Release document publication failed")
+        raise PublicationValidationError("Release document publication failed")
     return digest
 
 
@@ -210,7 +250,7 @@ def image_source(reference):
     """Validate/normalize a container reference, allowing a tag when scan identity is absent."""
     from .overview import parse_image_reference
     if not isinstance(reference, str) or not reference or any(c.isspace() for c in reference) or '://' in reference or reference.count('@') > 1 or '//' in reference or reference.startswith('/') or reference.endswith(('/', ':')):
-        raise ValueError('Invalid retained image reference')
+        raise PublicationValidationError('Invalid retained image reference')
     parsed = parse_image_reference(reference)
     repository = '/'.join(part for part in (parsed['repository'], parsed['artifact']) if part != '—')
     identity = parsed['digest'] if '@' in reference else parsed['version']
@@ -218,7 +258,7 @@ def image_source(reference):
         release_oci._reference(parsed['registry'] + '/' + repository + '@' + identity)
     else:
         if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', identity):
-            raise ValueError('Invalid retained image tag')
+            raise PublicationValidationError('Invalid retained image tag')
         release_oci._reference(parsed['registry'] + '/' + repository + '@sha256:' + '0' * 64)
     return parsed['registry'], repository, identity
 
@@ -228,7 +268,7 @@ def _publish_image_archive(client, item, env, work, index):
     path = _checked_file(item)
     skopeo = shutil.which('skopeo')
     if not skopeo:
-        raise ValueError('Skopeo is required to publish a retained remediation image archive')
+        raise PublicationValidationError('Skopeo is required to publish a retained remediation image archive')
     digestfile = work / f'image-{index}.digest'
     certdir = work / 'image-certs'
     certdir.mkdir(exist_ok=True)
@@ -242,7 +282,7 @@ def _publish_image_archive(client, item, env, work, index):
         env=env, capture_output=True, check=True, timeout=600)
     digest = digestfile.read_text().strip()
     if not release_oci._DIGEST.fullmatch(digest):
-        raise ValueError('Image archive publication did not return an OCI digest')
+        raise PublicationValidationError('Image archive publication did not return an OCI digest')
     return digest
 
 
@@ -254,12 +294,12 @@ def _publish_chart(client, item):
         metadata = [member for member in archive.getmembers()
                     if member.name.count("/") == 1 and member.name.endswith("/Chart.yaml")]
         if len(metadata) != 1 or not metadata[0].isfile() or metadata[0].size > 1024 * 1024:
-            raise ValueError("Retained Helm chart metadata is invalid")
+            raise PublicationValidationError("Retained Helm chart metadata is invalid")
         chart = yaml.safe_load(archive.extractfile(metadata[0]).read())
         if not isinstance(chart, dict) or not all(chart.get(key) for key in ("apiVersion", "name", "version")):
-            raise ValueError("Retained Helm chart metadata is incomplete")
+            raise PublicationValidationError("Retained Helm chart metadata is incomplete")
     if release_oci._digest(content) != item["digest"]:
-        raise ValueError("Frozen Helm chart changed during publication")
+        raise PublicationValidationError("Frozen Helm chart changed during publication")
     config = client.upload(canonical(chart), "application/vnd.cncf.helm.config.v1+json")
     layer = client.upload(content, "application/vnd.cncf.helm.chart.content.v1.tar+gzip")
     encoded = canonical({"schemaVersion": 2, "mediaType": release_oci.MANIFEST_TYPE,
@@ -268,7 +308,7 @@ def _publish_chart(client, item):
     status, _, _ = client.request("PUT", client.api + "/manifests/" + digest,
                                  body=encoded, media_type=release_oci.MANIFEST_TYPE)
     if status != 201:
-        raise ValueError("Approved Helm chart publication failed")
+        raise PublicationValidationError("Approved Helm chart publication failed")
     return digest
 
 
@@ -290,21 +330,22 @@ def publish(db, approval, destination, checkpoint):
             release_validity.require_current(approval)
         checkpoint(deepcopy(receipt))
 
+    stage = "Checking retained evidence"
     try:
         snapshot = deepcopy(approval.snapshot)
         if release_oci._digest(canonical(snapshot)) != approval.snapshot_digest:
-            raise ValueError("Approval snapshot integrity mismatch")
+            raise PublicationValidationError("Approval snapshot integrity mismatch")
         if (approval.status != "approved" or not approval.decided_by_id or not approval.decided_at
                 or not approval.decision_rationale or approval.revoked_at):
-            raise ValueError("A current recorded Cyber approval decision is required")
+            raise PublicationValidationError("A current recorded Cyber approval decision is required")
         release_validity.require_current(approval)
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", approval.release_key):
-            raise ValueError("Invalid release identifier")
+            raise PublicationValidationError("Invalid release identifier")
         evidence = _checked_file(snapshot["evidence"])
         candidate = _checked_file(snapshot["candidate"]) if snapshot.get("candidate") else None
         artifacts = snapshot.get("artifacts")
         if not artifacts or len(artifacts) > 512:
-            raise ValueError("Frozen deployable inventory unavailable")
+            raise PublicationValidationError("Frozen deployable inventory unavailable")
         for item in artifacts:
             if item.get("path") and (item.get("kind") == "chart" or (item.get("kind") == "image" and item.get("format") == "docker-archive")):
                 _checked_file(item)
@@ -314,38 +355,42 @@ def publish(db, approval, destination, checkpoint):
                 continue
             _, _, digest = image_source(item["reference"])
             if not release_oci._DIGEST.fullmatch(digest) or item.get("digest") != digest or item.get("kind") not in {"chart", "image"}:
-                raise ValueError("Frozen deployable identity mismatch")
+                raise PublicationValidationError("Frozen deployable identity mismatch")
+        stage = "Checking signing configuration"
         settings = {row.key: row.value for row in db.scalars(select(PortalSetting))}
         config, credentials = signing.job_material(settings, "push")
         config = {**config, 'approval_annotations': release_validity.annotations(approval.release_key, snapshot['approval_validity'])}
         if config.get("signing_enabled") is not True or not shutil.which("cosign"):
-            raise ValueError("Cyber-approved releases require configured Cosign signing")
+            raise PublicationValidationError("Cyber-approved releases require configured Cosign signing")
         if config["signing_fingerprint"] != snapshot.get("signing_fingerprint"):
-            raise ValueError("Signing identity changed after approval request")
+            raise PublicationValidationError("Signing identity changed after approval request")
         if any(snapshot.get("destination", {}).get(key) != destination.get(key) for key in ("id", "endpoint", "namespace")):
-            raise ValueError("Publication destination differs from approved snapshot")
+            raise PublicationValidationError("Publication destination differs from approved snapshot")
         save()
+        stage = "Preparing publication files"
         output = evidence.parent / "publications" / hashlib.sha256(str(destination["id"]).encode()).hexdigest()[:24]
         output.mkdir(parents=True, exist_ok=True)
         if any(p.is_symlink() for p in (output, *output.parents)):
-            raise ValueError("Unsafe publication output path")
+            raise PublicationValidationError("Unsafe publication output path")
         with tempfile.TemporaryDirectory(prefix=".publication-", dir=output) as temporary:
             root = Path(temporary)
             evidence_copy = root / "evidence.zip"
             shutil.copyfile(evidence, evidence_copy)
             if file_digest(evidence_copy) != snapshot["evidence"]["digest"]:
-                raise ValueError("Frozen evidence changed during copy")
+                raise PublicationValidationError("Frozen evidence changed during copy")
             if candidate:
                 shutil.copyfile(candidate, root / "candidate.zip")
                 if file_digest(root / "candidate.zip") != snapshot["candidate"]["digest"]:
-                    raise ValueError("Frozen candidate changed during copy")
+                    raise PublicationValidationError("Frozen candidate changed during copy")
             documents = {"evidence.zip": evidence_copy}
+            stage = "Signing retained evidence"
             archive_signature = release_signing.sign_release_archive(evidence_copy, root, (config, credentials))
             if archive_signature.get("signature_status") != "verified":
-                raise ValueError("Evidence signing failed")
+                raise PublicationValidationError("Evidence signing failed")
             (root / "documentation.zip.sig").rename(root / "evidence.zip.sig")
             documents["evidence.zip.sig"] = root / "evidence.zip.sig"
             documents["release-public-key.pem"] = root / "release-public-key.pem"
+            stage = "Preparing registry authentication"
             with registry_environment(destination) as environment, _source_environments(settings) as (source_env, source_envs):
                 env = signing.clean_environment(environment)
                 transport = _Transport(root / "oci", env)
@@ -353,6 +398,7 @@ def publish(db, approval, destination, checkpoint):
                 prefix = "/".join(filter(None, (destination.get("namespace", ""), "cyber-approved", approval.release_key.lower())))
                 for index, item in enumerate(artifacts):
                     check_worker()
+                    stage = f"Transferring and verifying artifact {index + 1} of {len(artifacts)}"
                     repository = f"{prefix}/{item['kind']}-{index}"
                     target = release_oci._Client(host, repository, env)
                     if item.get("path"):
@@ -367,7 +413,7 @@ def publish(db, approval, destination, checkpoint):
                             retained = receipt['resolved_images'].get(str(index))
                             if retained:
                                 if not release_oci._DIGEST.fullmatch(retained):
-                                    raise ValueError('Invalid retained publication image identity')
+                                    raise PublicationValidationError('Invalid retained publication image identity')
                                 digest = retained
                             else:
                                 _, _, content = source.request('GET', source.api + '/manifests/' + digest,
@@ -389,6 +435,7 @@ def publish(db, approval, destination, checkpoint):
                                 "repository_suffix": f"{item['kind']}-{index}", "verification_status": "verified"}
                     receipt["artifacts"].append(artifact)
                     save()
+                    stage = f"Signing and verifying artifact {index + 1} of {len(artifacts)}"
                     artifact["signature"] = _signature(transport, target, reference, config, credentials, env, name + "-signature")
                     save()
                 manifest = {"format": "cats-cyber-approved-release-v1", "release_key": approval.release_key,
@@ -407,25 +454,29 @@ def publish(db, approval, destination, checkpoint):
                     manifest["candidate"] = {"path": "candidate.zip", "digest": snapshot["candidate"]["digest"]}
                 manifest_path = root / "release-manifest.json"
                 manifest_path.write_bytes(canonical(manifest))
+                stage = "Signing release manifest"
                 signed = release_signing.sign_release_manifest(manifest_path, root, (config, credentials))
                 if signed.get("signature_status") != "verified":
-                    raise ValueError("Release manifest signing failed")
+                    raise PublicationValidationError("Release manifest signing failed")
                 documents.update({name: root / name for name in ("release-manifest.json", "release-manifest.sig")})
                 client = release_oci._Client(host, prefix + "/release", env)
+                stage = "Publishing release documents"
                 digest = _publish_files(client, documents)
                 descriptor = transport.graph(client, digest)
                 transport.entry(descriptor, "release")
                 reference = f"{host}/{prefix}/release@{digest}"
                 receipt["release"] = {"reference": reference, "digest": digest, "layout_name": "release", "repository_suffix": "release"}
+                stage = "Signing published release"
                 receipt["release"]["signature"] = _signature(transport, client, reference, config, credentials, env, "release-signature")
                 save()
                 (root / "transport.json").write_bytes(canonical({"format": "cats-cyber-transport-v1", "artifacts": receipt["artifacts"] + [receipt["release"]]}))
                 # Bind the transport inventory (including release/signature identities)
                 # in a separate detached signature to avoid a self-referential manifest.
+                stage = "Signing transport inventory"
                 transport_sign = release_signing._sign_release_blob(root / "transport.json", root, (config, credentials),
                                                                    "transport.sig", "transport_sha256", "transport.json")
                 if transport_sign.get("signature_status") != "verified":
-                    raise ValueError("Transport inventory signing failed")
+                    raise PublicationValidationError("Transport inventory signing failed")
                 (root / "verify-import.py").write_text(OFFLINE_SCRIPT, encoding="utf-8")
                 (root / "README.txt").write_text(
                     "Extract into an empty directory. Requires Python 3 and Cosign 2.x.\n"
@@ -442,7 +493,9 @@ def publish(db, approval, destination, checkpoint):
                     "Operators must configure registry access controls, immutability and retention, and deployment signature/admission policies.\n"
                     "Publication alone does not restrict repository access or enforce approved-only deployment.\n",
                     encoding="utf-8")
+                stage = "Verifying offline bundle"
                 verify_local(root, config["signing_fingerprint"])
+                stage = "Packaging offline bundle"
                 archive = root / "offline-bundle.zip"
                 with ZipFile(archive, "w", ZIP_DEFLATED, allowZip64=True) as bundle:
                     for path in sorted(root.rglob("*")):
@@ -450,7 +503,7 @@ def publish(db, approval, destination, checkpoint):
                             bundle.write(path, path.relative_to(root).as_posix())
                 with ZipFile(archive) as bundle:
                     if bundle.testzip() is not None:
-                        raise ValueError("Offline archive verification failed")
+                        raise PublicationValidationError("Offline archive verification failed")
                 bundle_digest = file_digest(archive)
                 target = output / (bundle_digest[7:] + ".zip")
                 os.replace(archive, target)
@@ -460,7 +513,8 @@ def publish(db, approval, destination, checkpoint):
                 save()
         return receipt
     except Exception as exc:
-        receipt.update(status="failed", error="Cyber release publication did not complete. Verify retained evidence, signing keys, registry access and worker tools before retrying.")
+        diagnostic = failure_diagnostic(exc, stage)
+        receipt.update(status="failed", diagnostic=diagnostic, error=f"{stage}: {diagnostic['cause']}")
         save()
         raise PublicationError(receipt) from exc
 

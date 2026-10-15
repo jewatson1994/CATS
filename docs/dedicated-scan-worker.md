@@ -16,6 +16,26 @@ Only authenticated service scans with the required service permission receive th
 
 The worker uses a stable `CATS_SCAN_WORKER_ID` (default `scan-worker`). A single shared token is bound to this identity. For multiple workers or rotation, configure `CATS_SCAN_WORKER_CREDENTIALS` on the control listener as a JSON mapping from worker ID to `current` and optional `previous` tokens; each worker uses its own ID and token. Remove the previous token after the overlap window. Deploy across hosts only with protected transport and a restricted control network.
 
+### Registry access preflight
+
+For default rootful Docker deployments, the host registry-auth directory and `config.json` should be owned by `root:root`, with directory mode `700` and file mode `600`. With user namespaces, use the mapped broker UID. The worker deliberately lacks capabilities that bypass file permissions. Do not make credentials world-readable or add capabilities to work around access errors.
+
+Before replacing containers, check access using the new image and the actual Compose mount:
+
+```bash
+docker compose run --rm --no-deps --entrypoint /opt/cats-venv/bin/python scan-worker -m app.scan_worker --check-registry-auth
+```
+
+For an existing container:
+
+```bash
+docker compose exec -T scan-worker /opt/cats-venv/bin/python -m app.scan_worker --check-registry-auth
+```
+
+Substitute your deployment's service name if it uses `scan_worker`. The check reads and validates the configuration without printing credentials or changing host permissions. An absent `config.json` permits anonymous pulls. The local `build.ps1` runs this preflight before replacing services.
+
+Container recreation preserves host file ownership, but credential rotation, `docker login`, file replacement, or a new host can change it. Repeat the check after those operations. The worker also checks at startup and logs an actionable error while keeping public scans available. Service scans recheck access; configuration failures appear in the job error and debug log even when the scanner has not started.
+
 ## Controls and storage
 
 | Setting | Compose/default value | Purpose |
