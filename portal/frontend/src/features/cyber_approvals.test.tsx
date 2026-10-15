@@ -15,27 +15,24 @@ it('blocks a request when evidence is missing and exposes the specific blocker',
   expect(screen.getByRole('button', {name:'Request Cyber Approval'})).toBeDisabled();
 });
 
-it('freezes the selected destination with the request and includes CSRF', async () => {
+it('submits only the selected variant and includes CSRF', async () => {
   vi.mocked(requestJson).mockResolvedValueOnce(ready).mockResolvedValueOnce({id:12});
   render(<RequestApproval data={data} serviceKey="sample"/>);
   await screen.findByText('Ready for Cyber review');
-  fireEvent.change(screen.getByLabelText('Request context'), {target:{value:'Release for review'}});
+  expect(screen.getAllByRole('combobox')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', {name:'Request Cyber Approval'}));
   expect(await screen.findByRole('link', {name:'Review request #12'})).toHaveAttribute('href','/cyber-approvals?id=12');
   const [url, options] = vi.mocked(requestJson).mock.calls[1];
   expect(url).toBe('/api/cyber-approvals');
   expect(options?.headers).toMatchObject({'X-CSRF-Token':'csrf'});
-  expect(JSON.parse(String(options?.body))).toEqual({service_key:'sample',variant:'current_service',destination_id:2,rationale:'Release for review'});
+  expect(JSON.parse(String(options?.body))).toEqual({service_key:'sample',variant:'current_service'});
 });
 
-it('requires retained remediation provenance before submitting CATS Remediated', async () => {
+it('selects the retained candidate directly in the variant selector', async () => {
   vi.mocked(requestJson).mockResolvedValue(ready);
   render(<RequestApproval data={data} serviceKey="sample"/>);
   await screen.findByText('Ready for Cyber review');
-  fireEvent.change(screen.getByLabelText('Release variant'),{target:{value:'cats_remediated'}});
-  await screen.findByText('Remediation 1');
-  expect(screen.getByRole('button',{name:'Request Cyber Approval'})).toBeDisabled();
-  fireEvent.change(screen.getByLabelText('Remediation provenance'),{target:{value:'rem-1'}});
+  fireEvent.change(screen.getByLabelText('Release variant'),{target:{value:'cats_remediated:rem-1'}});
   await waitFor(() => expect(requestJson).toHaveBeenLastCalledWith(expect.stringContaining('remediation_id=rem-1'),expect.anything()));
   await waitFor(() => expect(screen.getByRole('button',{name:'Request Cyber Approval'})).toBeEnabled());
 });
@@ -93,4 +90,24 @@ it('shows revoked releases as audit records and suppresses retries', async () =>
   expect(await screen.findByRole('alert')).toHaveTextContent('no longer authorized for deployment');
   expect(screen.getByText('Retained artifacts and evidence are shown for audit history.')).toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'Retry publication'})).not.toBeInTheDocument();
+});
+
+
+it('permits evidence-complete requests when risks or publication setup need Cyber review', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...ready, destinations:[], review_notes:['No Helm charts', 'Unverified deployment', 'Configure signing']});
+  render(<RequestApproval data={data} serviceKey="sample"/>);
+  await screen.findByText('Ready for Cyber review');
+  expect(screen.getByRole('button', {name:'Request Cyber Approval'})).toBeEnabled();
+  expect(screen.getAllByRole('combobox')).toHaveLength(1);
+});
+
+it('shows coverage limitations and remaining candidate vulnerabilities to Cyber', async () => {
+  vi.mocked(requestJson).mockResolvedValue({id:12, status:'pending',variant:'cats_remediated', snapshot:{
+    review_notes:['No Helm charts were supplied.', 'Deployment verification failed.'],
+    findings:{vulnerability_scans:{image1:{matches:[{vulnerability:{id:'CVE-REMAINING'}}]}}}}});
+  render(<ApprovalDetail data={data} id="12"/>);
+  expect(await screen.findByText('No Helm charts were supplied.')).toBeInTheDocument();
+  expect(screen.getByText('Deployment verification failed.')).toBeInTheDocument();
+  expect(screen.getByRole('heading', {name:'Vulnerability findings'})).toBeInTheDocument();
+  expect(screen.getAllByText(/CVE-REMAINING/).length).toBeGreaterThan(0);
 });

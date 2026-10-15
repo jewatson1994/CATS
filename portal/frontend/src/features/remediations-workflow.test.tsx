@@ -29,6 +29,11 @@ it('requires explicit entire-chart exclusion before starting a partial candidate
   fireEvent.click(screen.getByLabelText(/I explicitly exclude the listed entire charts/));
   expect(screen.getByRole('button',{name:'Execute remediation'})).toBeEnabled();
   expect(new FormData(form).get('excluded_charts')).toBe('["auth"]');
+  expect(fireEvent.submit(form)).toBe(true);
+  expect(screen.getByRole('button',{name:/Starting remediation/})).toBeDisabled();
+  expect(new FormData(form).getAll('excluded_charts')).toEqual(['["auth"]']);
+  expect(new FormData(form).get('confirmed')).toBe('yes');
+  expect(fireEvent.submit(form)).toBe(false);
 });
 
 it('requires all planning stages, explicit confirmation and one stable submission key', async () => {
@@ -52,7 +57,7 @@ it('requires all planning stages, explicit confirmation and one stable submissio
   expect(key).toMatch(/^[a-f\d-]{36}$/i);
   expect(new FormData(form).get('confirmed')).toBe('yes');
   expect(fireEvent.submit(form)).toBe(true);
-  expect(screen.getByRole('button',{name:'Starting remediation…'})).toBeDisabled();
+  expect(screen.getByRole('button',{name:/Starting remediation/})).toBeDisabled();
   expect(fireEvent.submit(form)).toBe(false);
   expect(form.querySelector('[name="submission_key"]')).toHaveValue(key);
 });

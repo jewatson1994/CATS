@@ -13,6 +13,7 @@ import os
 from pathlib import Path, PureWindowsPath
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -205,6 +206,46 @@ def _publish_files(client, files):
     return digest
 
 
+def image_source(reference):
+    """Validate/normalize a container reference, allowing a tag when scan identity is absent."""
+    from .overview import parse_image_reference
+    if not isinstance(reference, str) or not reference or any(c.isspace() for c in reference) or '://' in reference or reference.count('@') > 1 or '//' in reference or reference.startswith('/') or reference.endswith(('/', ':')):
+        raise ValueError('Invalid retained image reference')
+    parsed = parse_image_reference(reference)
+    repository = '/'.join(part for part in (parsed['repository'], parsed['artifact']) if part != '—')
+    identity = parsed['digest'] if '@' in reference else parsed['version']
+    if '@' in reference:
+        release_oci._reference(parsed['registry'] + '/' + repository + '@' + identity)
+    else:
+        if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}', identity):
+            raise ValueError('Invalid retained image tag')
+        release_oci._reference(parsed['registry'] + '/' + repository + '@sha256:' + '0' * 64)
+    return parsed['registry'], repository, identity
+
+
+def _publish_image_archive(client, item, env, work, index):
+    """Reuse the existing Skopeo Docker-archive delivery format, then verify the OCI graph."""
+    path = _checked_file(item)
+    skopeo = shutil.which('skopeo')
+    if not skopeo:
+        raise ValueError('Skopeo is required to publish a retained remediation image archive')
+    digestfile = work / f'image-{index}.digest'
+    certdir = work / 'image-certs'
+    certdir.mkdir(exist_ok=True)
+    if env.get('SSL_CERT_FILE'):
+        shutil.copyfile(env['SSL_CERT_FILE'], certdir / 'ca.crt')
+    # Credentials/trust come from the same scoped destination environment used by OCI signing.
+    destination = client.api.removeprefix('https://').replace('/v2/', '/', 1) + ':retained'
+    subprocess.run([skopeo, 'copy', '--authfile', str(Path(env['DOCKER_CONFIG']) / 'config.json'),
+        '--dest-cert-dir', str(certdir), '--digestfile', str(digestfile),
+        'docker-archive:' + str(path), 'docker://' + destination],
+        env=env, capture_output=True, check=True, timeout=600)
+    digest = digestfile.read_text().strip()
+    if not release_oci._DIGEST.fullmatch(digest):
+        raise ValueError('Image archive publication did not return an OCI digest')
+    return digest
+
+
 def _publish_chart(client, item):
     """Retain the approved chart bytes as the Helm OCI content layer."""
     path = _checked_file(item)
@@ -240,7 +281,8 @@ def publish(db, approval, destination, checkpoint):
     a safe identifier. Destination is an already-authorized saved destination.
     """
     receipt = {"status": "publishing", "artifacts": [], "destination_id": str(destination["id"]),
-               "approval_id": approval.id, "release_key": approval.release_key}
+               "approval_id": approval.id, "release_key": approval.release_key,
+               "resolved_images": dict((getattr(approval, "publication", None) or {}).get("resolved_images", {}))}
 
     def save():
         checkpoint(deepcopy(receipt))
@@ -260,11 +302,14 @@ def publish(db, approval, destination, checkpoint):
         if not artifacts or len(artifacts) > 512:
             raise ValueError("Frozen deployable inventory unavailable")
         for item in artifacts:
-            if item.get("kind") == "chart" and item.get("path"):
+            if item.get("path") and (item.get("kind") == "chart" or (item.get("kind") == "image" and item.get("format") == "docker-archive")):
                 _checked_file(item)
                 continue
-            _, _, digest = release_oci._reference(item["reference"])
-            if item.get("digest") != digest or item.get("kind") not in {"chart", "image"}:
+            if item.get('kind') == 'image' and item.get('resolve_at_publication') and item.get('digest') is None:
+                image_source(item['reference'])
+                continue
+            _, _, digest = image_source(item["reference"])
+            if not release_oci._DIGEST.fullmatch(digest) or item.get("digest") != digest or item.get("kind") not in {"chart", "image"}:
                 raise ValueError("Frozen deployable identity mismatch")
         settings = {row.key: row.value for row in db.scalars(select(PortalSetting))}
         config, credentials = signing.job_material(settings, "push")
@@ -306,12 +351,25 @@ def publish(db, approval, destination, checkpoint):
                     repository = f"{prefix}/{item['kind']}-{index}"
                     target = release_oci._Client(host, repository, env)
                     if item.get("path"):
-                        digest = _publish_chart(target, item)
+                        digest = (_publish_image_archive(target, item, env, root, index)
+                            if item.get('format') == 'docker-archive' else _publish_chart(target, item))
                         descriptor = transport.graph(target, digest)
                     else:
-                        source_host, source_repository, digest = release_oci._reference(item["reference"])
+                        source_host, source_repository, digest = image_source(item["reference"])
                         retrieval_env = env if source_host == host else source_envs.get(source_host, source_env)
                         source = release_oci._Client(source_host, source_repository, retrieval_env)
+                        if item.get('resolve_at_publication'):
+                            retained = receipt['resolved_images'].get(str(index))
+                            if retained:
+                                if not release_oci._DIGEST.fullmatch(retained):
+                                    raise ValueError('Invalid retained publication image identity')
+                                digest = retained
+                            else:
+                                _, _, content = source.request('GET', source.api + '/manifests/' + digest,
+                                    limit=release_oci.MAX_MANIFEST_BYTES)
+                                digest = release_oci._digest(content)
+                                receipt['resolved_images'][str(index)] = digest
+                                save()  # Retries must not resolve a moved tag again.
                         descriptor = transport.graph(source, digest, target)
                     name = f"artifact-{index}"
                     transport.entry(descriptor, name)
@@ -319,7 +377,9 @@ def publish(db, approval, destination, checkpoint):
                     artifact = {"kind": item["kind"], "source_reference": item.get("reference"),
                                 "source_references": item.get("source_references", [item["reference"]] if item.get("reference") else []),
                                 "name": item.get("name"), "version": item.get("version"),
-                                "source_digest": item["digest"],
+                                "source_digest": item["digest"] or digest,
+                                "scan_identity_retained": not bool(item.get('resolve_at_publication')),
+                                "identity_resolution": 'publication' if item.get('resolve_at_publication') else 'retained-evidence',
                                 "reference": reference, "digest": digest, "layout_name": name,
                                 "repository_suffix": f"{item['kind']}-{index}", "verification_status": "verified"}
                     receipt["artifacts"].append(artifact)

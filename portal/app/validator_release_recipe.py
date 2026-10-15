@@ -6,9 +6,9 @@ import re
 import subprocess
 import tempfile
 
-from .deployment_validation import ValidationConfig
 from .deployment_bundle import build_helm_archive, file_digest
-from .managed_validator_release import SCHEMA, load_release
+from .managed_validator_release import SCHEMA, load_release, configured_node_pin
+from .managed_validator_bootstrap import BootstrapError
 
 
 def run(command, **kwargs):
@@ -37,7 +37,10 @@ def isolated_node_image(reference):
     it creates neither a host gateway nor an external network connection.
     """
     base = inspect(reference)
-    source = run(["docker", "run", "--rm", "--cpus", "0.5", "--memory", "256m", "--pids-limit", "64", "--network", "none", "--entrypoint", "cat", base["Id"], "/usr/local/bin/entrypoint"], check=True, capture_output=True, text=True).stdout
+    try:
+        source = run(["docker", "run", "--rm", "--cpus", "0.5", "--memory", "256m", "--pids-limit", "64", "--network", "none", "--entrypoint", "cat", base["Id"], "/usr/local/bin/entrypoint"], check=True, capture_output=True, text=True).stdout
+    except (subprocess.SubprocessError, OSError):
+        raise BootstrapError("Cannot read the configured Kind node entrypoint. Select a linux/amd64 Kind node image with CATS_DEPLOYMENT_KIND_NODE_IMAGE and provision again.") from None
     patched = patch_isolated_entrypoint(source)
     base_tag = "cats-kind-base:" + base["Id"].split(":")[1]
     run(["docker", "tag", base["Id"], base_tag], check=True)
@@ -56,7 +59,7 @@ def isolated_node_image(reference):
 def patch_isolated_entrypoint(source):
     anchor = "    docker_host_ip=$(ip -4 route show default | cut -d' ' -f3)"
     if source.count(anchor) != 1:
-        raise ValueError("Pinned Kind entrypoint no longer matches the isolated-network compatibility patch")
+        raise BootstrapError("Configured Kind node entrypoint is incompatible with the isolated-network patch. Set CATS_DEPLOYMENT_KIND_NODE_IMAGE to a compatible Kind node image, or update the CATS runtime to support this node image before provisioning again.")
     fallback = """
     if [[ -z "${docker_host_ip}" ]]; then
       # Isolated bridges have no gateway; use this node for Docker DNS NAT.
@@ -68,12 +71,39 @@ def patch_isolated_entrypoint(source):
     return source.replace(anchor, anchor + fallback)
 
 
-def prepare(output, cats_image, node_image=None):
+def validate_node_tools(cats_image, node_image, node_pin):
+    """Check the exact binaries; the existing deployed self-test validates the pair."""
+    versions = []
+    for image, binary, args, pattern in (
+        (cats_image, "kind", ["version"], r"kind (v\d+\.\d+\.\d+)(?:[-+][^\s]+)?(?:\s|$)"),
+        (node_image, "kubeadm", ["version", "-o", "short"], r"(v\d+\.\d+\.\d+)(?:[-+][^\s]+)?(?:\s|$)"),
+    ):
+        try:
+            result = run(["docker", "run", "--rm", "--cpus", "0.5", "--memory", "256m",
+                          "--pids-limit", "64", "--network", "none", "--entrypoint", binary,
+                          image, *args], check=True, text=True)
+            match = re.match(pattern, result.stdout.strip())
+            if not match:
+                raise ValueError("Unrecognized tool version")
+            versions.append(match.group(1))
+        except (subprocess.SubprocessError, OSError, ValueError):
+            raise BootstrapError("Cannot verify the bundled Kind/node tools. Ensure the selected CATS image contains a working Kind binary and CATS_DEPLOYMENT_KIND_NODE_IMAGE is a linux/amd64 Kind node image with kubeadm; then provision again.") from None
+    tag = node_pin.split("@")[0].rsplit("/", 1)[-1].partition(":")[2]
+    if re.fullmatch(r"v\d+\.\d+\.\d+", tag) and tag != versions[1]:
+        raise BootstrapError("CATS_DEPLOYMENT_KIND_NODE_IMAGE version tag does not match the node's kubeadm version. Correct the image tag and digest before provisioning again.")
+    # Kind has no universal Kubernetes version range: runtime compatibility is
+    # established by creating a cluster, deploying the self-test and cleaning up.
+    return tuple(versions)
+
+
+def prepare(output, cats_image, node_image=None, *, node_pin=None):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     (output / "images").mkdir()
     cats = inspect(cats_image)
-    node_ref = node_image or ValidationConfig.kind_node_image
+    node_pin = node_pin or configured_node_pin()
+    node_ref = inspect(node_image or node_pin)["Id"]
+    validate_node_tools(cats["Id"], node_ref, node_pin)
     node_ref, node = isolated_node_image(node_ref)  # Local pinned base only; no registry fallback.
     if any(row.get("Architecture") != "amd64" or row.get("Os") != "linux" for row in (cats, node)):
         raise ValueError("V1 validator images must be linux/amd64")
@@ -91,7 +121,7 @@ def prepare(output, cats_image, node_image=None):
         run(["docker", "save", "--output", str(output / filename), save_ref], check=True)
         manifest[key] = {"reference": ref, "image_id": row["Id"], "file": filename, "sha256": file_digest(output / filename)}
         if key == "node_image":
-            manifest[key]["base_reference"] = ValidationConfig.kind_node_image
+            manifest[key]["base_reference"] = node_pin
     pod = """apiVersion: v1
 kind: Pod
 metadata:

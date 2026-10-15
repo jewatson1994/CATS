@@ -47,7 +47,7 @@ class CyberApproval(Base):
     remediation_id: Mapped[int | None] = mapped_column(ForeignKey('remediation_executions.id'))
     requested_by_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
     decided_by_id: Mapped[int | None] = mapped_column(ForeignKey('users.id'))
-    destination_id: Mapped[int] = mapped_column(ForeignKey('approved_release_destinations.id'))
+    destination_id: Mapped[int | None] = mapped_column(ForeignKey('approved_release_destinations.id'))
     variant: Mapped[str] = mapped_column(String(24))
     status: Mapped[str] = mapped_column(String(24), default='pending', index=True)
     publish_status: Mapped[str] = mapped_column(String(24), default='not_started', index=True)
@@ -117,12 +117,13 @@ def _readiness(db, service, variant, remediation_id):
     from .cyber_approval_evidence import readiness
     result = readiness(db, service, variant, remediation_id)
     destinations = [public_destination(row) for row in db.scalars(select(ApprovedReleaseDestination)) if _eligible(row, service)]
-    blockers = list(result['blockers'])
+    notes = list(result.get('review_notes', []))
     if not destinations:
-        blockers.append('An administrator must configure an approved-release OCI destination for this service.')
+        notes.append('An administrator must configure an approved-release OCI destination before Cyber approves publication.')
     if not _signing_ready(db):
-        blockers.append('An administrator must enable the CATS signing key before requesting approval.')
-    return {**result, 'ready': not blockers, 'blockers': blockers, 'destinations': destinations}
+        notes.append('An administrator must enable the CATS signing key before Cyber approves publication.')
+    return {**result, 'review_notes': notes, 'destinations': destinations}
+
 
 
 @router.get('/api/services/{key}/cyber-approval-readiness')
@@ -131,10 +132,12 @@ def readiness_api(key: str, variant: str = 'current_service', remediation_id: in
     service = _service(db, auth, key)
     result = _readiness(db, service, variant, remediation_id)
     execution = result.get('execution')
-    return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant')} | {
+    return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant', 'review_notes')} | {
         'executions': [{'id': execution.id, 'scanned_at': execution.scanned_at.isoformat()}] if execution else [],
         'remediations': [{'id': row.id, 'label': row.job_key} for row in db.scalars(select(RemediationExecution).where(
-            RemediationExecution.service_id == service.id).order_by(RemediationExecution.id.desc()))],
+            RemediationExecution.service_id == service.id,
+            RemediationExecution.source_execution_id == execution.id if execution else False,
+            RemediationExecution.source_version_id == service.current_version_id).order_by(RemediationExecution.id.desc()))],
         'can_request': auth.has('approval.request', service.id) and auth.has('service.export', service.id)}
 
 
@@ -160,6 +163,9 @@ def dto(db, row, auth, detail=False):
         revoked=bool(row.revoked_at), release_id=row.id)
     if detail:
         result['snapshot'] = _public(row.snapshot)
+        if row.status == 'pending' and not row.destination_id:
+            result['destinations'] = [public_destination(item) for item in db.scalars(select(ApprovedReleaseDestination).order_by(
+                ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id)) if _eligible(item, service)]
         if auth.has('service.export', row.service_id):
             result['evidence_url'] = f'/api/cyber-approvals/{row.id}/download/evidence'
             if row.publish_status == 'published':
@@ -182,12 +188,13 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     result = _readiness(db, service, variant, data.get('remediation_id'))
     if not result['ready']:
         raise HTTPException(409, {'message': 'Resolve all missing evidence before requesting approval', 'blockers': result['blockers']})
-    try:
-        destination = db.get(ApprovedReleaseDestination, int(data.get('destination_id')))
-    except (ValueError, TypeError):
-        destination = None
-    if not destination or not _eligible(destination, service):
-        raise HTTPException(422, 'Select an available approved-release destination')
+    eligible = [row for row in db.scalars(select(ApprovedReleaseDestination).order_by(
+        ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id)) if _eligible(row, service)]
+    destination = eligible[0] if eligible else None
+    if data.get('destination_id') is not None:
+        destination = next((row for row in eligible if str(row.id) == str(data['destination_id'])), None)
+        if destination is None:
+            raise HTTPException(422, 'Select an available approved-release destination')
     from .cyber_approval_evidence import freeze
     release_key = uuid.uuid4().hex
     folder = root() / release_key
@@ -196,14 +203,19 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         snapshot = freeze(db, service, auth, result, folder)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
-    frozen_destination = public_destination(destination)
+    frozen_destination = public_destination(destination) if destination else {}
     # Credentials may rotate, but endpoint, namespace, trust and signing identity are bound to review.
-    frozen_destination['ca_digest'] = hashlib.sha256(destination.ca_pem.encode()).hexdigest()
-    snapshot.update(variant=variant, destination=frozen_destination,
-                    signing_fingerprint=signing.configuration(_settings(db))['fingerprint'])
+    if destination:
+        frozen_destination['ca_digest'] = hashlib.sha256(destination.ca_pem.encode()).hexdigest()
+    try:
+        fingerprint = signing.configuration(_settings(db)).get('fingerprint')
+    except ValueError:
+        fingerprint = None
+    snapshot.update(variant=variant, destination=frozen_destination, signing_fingerprint=fingerprint)
+    snapshot['review_notes'] = list(dict.fromkeys(snapshot.get('review_notes', []) + result.get('review_notes', [])))
     row = CyberApproval(release_key=release_key, service_id=service.id, source_execution_id=result['execution'].id,
         remediation_id=result['remediation'].id if result.get('remediation') else None, requested_by_id=auth.user.id,
-        destination_id=destination.id, variant=variant, snapshot=snapshot, snapshot_digest=digest(snapshot),
+        destination_id=destination.id if destination else None, variant=variant, snapshot=snapshot, snapshot_digest=digest(snapshot),
         destination=frozen_destination, rationale=str(data.get('rationale') or '')[:10000])
     db.add(row)
     db.flush()
@@ -255,8 +267,24 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
         raise HTTPException(422, 'Choose approve or deny and provide a rationale (3–10000 characters)')
     if not hmac.compare_digest(row.snapshot_digest, digest(row.snapshot)):
         raise HTTPException(409, 'Snapshot integrity check failed')
+    bound = {}
+    if decision == 'approved' and row.status == 'pending':
+        snapshot = dict(row.snapshot)
+        if not row.destination_id:
+            destination = db.get(ApprovedReleaseDestination, data.get('destination_id')) if data.get('destination_id') else None
+            if not destination or not _eligible(destination, db.get(Service, row.service_id)):
+                raise HTTPException(409, 'Configure and select an approved-release OCI destination before approving publication')
+            frozen = public_destination(destination)
+            frozen['ca_digest'] = hashlib.sha256(destination.ca_pem.encode()).hexdigest()
+            snapshot['destination'] = frozen
+            bound.update(destination_id=destination.id, destination=frozen)
+        if not snapshot.get('signing_fingerprint'):
+            if not _signing_ready(db):
+                raise HTTPException(409, 'An administrator must enable signing before approving publication')
+            snapshot['signing_fingerprint'] = signing.configuration(_settings(db))['fingerprint']
+        bound.update(snapshot=snapshot, snapshot_digest=digest(snapshot))
     changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id, CyberApproval.status == 'pending').values(
-        status=decision, decision_rationale=rationale, decided_by_id=auth.user.id, decided_at=utcnow())).rowcount
+        status=decision, decision_rationale=rationale, decided_by_id=auth.user.id, decided_at=utcnow(), **bound)).rowcount
     if changed != 1:
         db.rollback()
         raise HTTPException(409, 'This request already has a decision')

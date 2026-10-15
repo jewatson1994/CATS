@@ -16,8 +16,7 @@ import time
 from contextlib import contextmanager
 
 from .managed_validator_bootstrap import BootstrapError
-from .managed_validator_release import load_release
-from .deployment_validation import ValidationConfig
+from .managed_validator_release import load_release, configured_node_pin
 from . import validator_release_recipe as recipe
 
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
@@ -95,14 +94,17 @@ def approved_reference(reference):
 
 
 def resolve_image(reference, source=None):
+    # Validate configured sources even on cache hits: a warm cache must not hide
+    # a bad mirror pin or bypass acquisition policy on the next cold start.
+    if source:
+        source = approved_reference(source)
+        if '@sha256:' in reference and reference.split('@')[1] != source.split('@')[1]:
+            raise BootstrapError('Internal mirror digest does not match the required dependency pin. For Kind, set CATS_DEPLOYMENT_KIND_NODE_IMAGE to the intended digest and CATS_PROVISIONING_NODE_SOURCE to an approved mirror with that same digest.')
     try:
         row = json.loads(docker('image', 'inspect', reference))[0]
     except BootstrapError:
         if not source:
             raise BootstrapError('Missing dependency: ' + reference + '. Import this exact image into the provisioning worker Docker cache or configure its digest-pinned source in approved internal Harbor.') from None
-        source = approved_reference(source)
-        if '@sha256:' in reference and reference.split('@')[1] != source.split('@')[1]:
-            raise BootstrapError('Internal mirror digest does not match the required dependency pin.')
         docker('pull', source)
         row = json.loads(docker('image', 'inspect', source))[0]
     if not DIGEST.fullmatch(row.get('Id', '')) or row.get('Architecture') != 'amd64' or row.get('Os') != 'linux':
@@ -121,6 +123,7 @@ def prepare_release(expected=None, progress=lambda stage: None, selected=lambda 
 
 
 def _prepare_release(expected, progress, selected):
+    node_pin = configured_node_pin()
     staged = os.getenv('CATS_MANAGED_VALIDATOR_RELEASE_DIR', '')
     if staged and (Path(staged) / 'manifest.json').is_file():
         release = load_release(staged)
@@ -137,11 +140,11 @@ def _prepare_release(expected, progress, selected):
         runtime = json.loads(docker('container', 'inspect', os.environ.get('HOSTNAME', '')))[0]['Image']
     cats = resolve_image(runtime, os.getenv('CATS_PROVISIONING_CATS_SOURCE'))
     selected(cats['Id'])  # Persist the exact runtime before lengthy preparation.
-    node = resolve_image(ValidationConfig.kind_node_image, os.getenv('CATS_PROVISIONING_NODE_SOURCE'))
+    node = resolve_image(node_pin, os.getenv('CATS_PROVISIONING_NODE_SOURCE'))
     # Feed the recipe the verified local base ID, including when a mirror filled it.
     recipe_identity = hashlib.sha256(Path(recipe.__file__).read_bytes()).hexdigest()
     inputs = {'cats_image_id': cats['Id'], 'node_image_id': node['Id'],
-              'node_pin': ValidationConfig.kind_node_image, 'architecture': 'amd64',
+              'node_pin': node_pin, 'architecture': 'amd64',
               'recipe_sha256': recipe_identity, 'schema': 1}
     key = hashlib.sha256(json.dumps(inputs, sort_keys=True).encode()).hexdigest()
     root = Path(os.getenv('CATS_PROVISIONING_CACHE', '/app/data/validator-releases'))
@@ -163,7 +166,7 @@ def _prepare_release(expected, progress, selected):
     progress('PREPARING_PAYLOAD')
     temporary = Path(tempfile.mkdtemp(prefix='.prepare-', dir=root))
     try:
-        recipe.prepare(temporary / 'release', cats['Id'], node_image=node['Id'])
+        recipe.prepare(temporary / 'release', cats['Id'], node_image=node['Id'], node_pin=node_pin)
         (temporary / 'release' / 'provenance.json').write_text(json.dumps(inputs, sort_keys=True))
         progress('VERIFYING_RELEASE')
         load_release(temporary / 'release')

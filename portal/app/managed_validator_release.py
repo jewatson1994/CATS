@@ -7,8 +7,17 @@ import uuid
 from .deployment_bundle import file_digest, image_archive_identity, validate_bundle
 from .validator_protocol import strict_json_loads, validate_request
 from .deployment_validation import ValidationConfig
+from .managed_validator_bootstrap import BootstrapError
 
 SCHEMA = "cats.managed-validator-release/v1"
+
+
+def configured_node_pin():
+    """Expected managed-node base, distinct from the derived runtime image tag."""
+    reference = os.getenv("CATS_DEPLOYMENT_KIND_NODE_IMAGE", "").strip() or ValidationConfig.kind_node_image
+    if not re.fullmatch(r"[^\s@]+@sha256:[0-9a-f]{64}", reference):
+        raise BootstrapError("CATS_DEPLOYMENT_KIND_NODE_IMAGE must specify an image (optionally with a version tag) and an immutable @sha256:<64 lowercase hex> digest.")
+    return reference
 
 
 def load_release(directory=None, *, verify_assets=True):
@@ -43,11 +52,12 @@ def load_release(directory=None, *, verify_assets=True):
                 raise ValueError("Release image identity mismatch")
     node = value["node_image"]
     derived_reference = "cats-kind-isolated:" + str(node["image_id"]).removeprefix("sha256:")
+    node_pin = configured_node_pin()
     if "base_reference" in node:
-        if node["base_reference"] != ValidationConfig.kind_node_image or node["reference"] != derived_reference:
-            raise ValueError("Isolated Kind image must declare the pinned base and its exact image identity")
-    elif node["reference"] != ValidationConfig.kind_node_image:
-        raise ValueError("Release must use the core's pinned Kind node image")
+        if node["base_reference"] != node_pin or node["reference"] != derived_reference:
+            raise BootstrapError("Isolated Kind release does not match CATS_DEPLOYMENT_KIND_NODE_IMAGE or its derived image identity. Regenerate the staged payload with the configured pin, or clear CATS_MANAGED_VALIDATOR_RELEASE_SOURCE to use on-demand preparation.")
+    elif node["reference"] != node_pin:
+        raise BootstrapError("Release does not match CATS_DEPLOYMENT_KIND_NODE_IMAGE. Regenerate the staged payload or clear CATS_MANAGED_VALIDATOR_RELEASE_SOURCE to use on-demand preparation.")
     if value["selftest"]["image_reference"] != value["cats_image"]["reference"]:
         raise ValueError("Self-test must use the exact CATS release image")
     if verify_assets:
@@ -72,7 +82,7 @@ def assert_selftest(result):
     pods = (result.get("resource_summary") or {}).get("pods") or {}
     failures = []
     categories = {
-        "KIND_CREATION_FAILURE": "Kind cluster creation failed",
+        "KIND_CREATION_FAILURE": "Kind cluster creation failed; check validator resources and ensure CATS_DEPLOYMENT_KIND_NODE_IMAGE is compatible with the Kind binary in the selected CATS runtime. Choose a node image published for that Kind release or rebuild CATS with a compatible Kind binary, then provision again",
         "IMAGE_PULL_FAILURE": "a required container image could not be pulled",
         "HELM_CHART_INVALID": "the self-test Helm chart is invalid",
         "HELM_LINT_FAILURE": "Helm chart lint failed",
