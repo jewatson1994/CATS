@@ -14,6 +14,8 @@ __pycache__/
 *.db
 
 # Local builds, image exports, and bundled scanner databases
+/build.bat
+/build.ps1
 .release-build/
 CATS Offline/
 CATS Builds/

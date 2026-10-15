@@ -157,7 +157,7 @@ fi
 
 render_chart() {
   local chart_path="$1" chart_name="$2" rendered="$3" entry_json="${4:-}"
-  local values_file set_value dependency_mode release namespace source_chart metadata_name
+  local values_file values_error set_value dependency_mode release namespace source_chart metadata_name
   local -a helm_command
   [ -n "$entry_json" ] || entry_json='{}'
   [ -f "${chart_path}/Chart.yaml" ] || {
@@ -175,6 +175,11 @@ render_chart() {
   declared_by="$(jq -r '.declared_by // empty' <<< "$entry_json" 2>/dev/null || true)"
   declared_enabled="$(jq -r '.declared_enabled // "unknown"' <<< "$entry_json" 2>/dev/null || printf unknown)"
   record_discovery "$chart_name" "$identity" "$declared_by" "$declared_enabled" "processing"
+  values_error="$(jq -r '(.values_errors // []) | join("; ")' <<< "$entry_json")"
+  if [ -n "$values_error" ]; then
+    record_skip "$chart_name" "$values_error"
+    return
+  fi
   if ! jq -e '.graph_discovery == true' <<< "$entry_json" >/dev/null 2>&1; then
     discover_components "$chart_path" "$(chart_identity "$chart_path")/values.yaml"
   fi
