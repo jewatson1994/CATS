@@ -15,6 +15,7 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from .secrets import decrypt_secret, encrypt_secret
+from . import release_validity
 
 SETTING = "image_signing"
 MAX_KEY_BYTES = 32 * 1024
@@ -33,10 +34,14 @@ def configuration(settings: dict) -> dict:
 
 def public_metadata(settings: dict) -> dict:
     try:
+        lifetime = {"approval_validity_days": release_validity.configured_days(settings)}
+    except ValueError as exc:
+        lifetime = {"approval_validity_days": "", "error": str(exc)}
+    try:
         value = configuration(settings)
     except ValueError:
-        return {"enabled": True, "configured": False, "error": "Signing configuration is invalid. Upload a key pair to repair it; publishing is blocked."}
-    return {"enabled": value.get("enabled") is True, "configured": bool(value.get("private_key")),
+        return {**lifetime, "enabled": True, "configured": False, "error": "Signing configuration is invalid. Upload a key pair to repair it; publishing is blocked."}
+    return {**lifetime, "enabled": value.get("enabled") is True, "configured": bool(value.get("private_key")),
             "fingerprint": value.get("fingerprint", ""), "updated_at": value.get("updated_at", "")}
 
 
@@ -129,10 +134,12 @@ def sign_and_verify(reference: str, config: dict, credentials: dict, env: dict) 
             pub.write_text(pem, encoding="utf-8")
             signing_env = clean_environment(env)
             signing_env["COSIGN_PASSWORD"] = credentials.get(SECRET_ENV[1], "")
-            _command([cosign, "sign", "--yes", "--key", str(key), "--tlog-upload=false", reference], signing_env)
+            annotations = config.get('approval_annotations', {})
+            annotation_args = [arg for name, value in sorted(annotations.items()) for arg in ('-a', f'{name}={value}')]
+            _command([cosign, "sign", "--yes", "--key", str(key), "--tlog-upload=false", *annotation_args, reference], signing_env)
             key.unlink()
             signing_env.pop("COSIGN_PASSWORD", None)
-            _command([cosign, "verify", "--key", str(pub), "--insecure-ignore-tlog=true", "--offline", reference], signing_env)
+            _command([cosign, "verify", "--key", str(pub), "--insecure-ignore-tlog=true", "--offline", *annotation_args, reference], signing_env)
             version = _command([cosign, "version", "--json"], signing_env)
             try:
                 generator_version = json.loads(version.stdout).get("gitVersion", "unknown")

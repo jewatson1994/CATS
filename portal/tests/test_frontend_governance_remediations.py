@@ -60,6 +60,23 @@ def test_report_keeps_patch_blockers_and_worker_identity():
     assert data['job']['patched_images'][0]['patch_job_id'] == 'patch-1'
 
 
+def test_report_preserves_full_comparison_counts_and_coverage_notes():
+    snapshot = {'vulnerabilities': {'Critical': 1, 'Negligible': 0, 'Unknown': 2},
+                'vulnerability_observations': 3, 'comparison_note': 'Same scan method.',
+                'patchable_comparison_note': 'Fixable only.', 'configuration_applicable': False}
+    job = N(job_key='job', before_snapshot=snapshot, after_snapshot=snapshot)
+    data = {'can': {}, 'next_path': '/remediations'}
+    project_remediations(data, 'remediation_report.html', {'service': service(), 'job': job}, lambda *args: False, {})
+    for side in ('before_snapshot', 'after_snapshot'):
+        actual = data['job'][side]
+        assert actual['vulnerability_observations'] == 3
+        assert actual['vulnerabilities']['Negligible'] == 0
+        assert actual['vulnerabilities']['Unknown'] == 2
+        assert actual['comparison_note'] == 'Same scan method.'
+        assert actual['patchable_comparison_note'] == 'Fixable only.'
+        assert actual['configuration_applicable'] is False
+
+
 def test_final_delivery_evidence_is_separate_and_missing_measurements_stay_unknown():
     evidence = {'status': 'VERIFIED', 'offlineVerified': True, 'network': {'isolated': True, 'external_chart_fetches': 0, 'external_image_pulls': 0, 'credentials': 'SECRET'}, 'raw_payload': 'SECRET'}
     job = N(job_key='job', delivery_attempts=[N(id=41, status='download_ready', result={'validation_type': 'offline-bundle', 'service': {'id': 7, 'version': 'v2', 'credentials': 'SECRET'}, 'materialized_digest': 'digest', 'verification': evidence})], validation_results={'deployment': {'status': 'FAILED'}})

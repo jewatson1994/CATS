@@ -7,7 +7,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 
-from .models import (Execution, FindingObservation, Group, InventoryRecord, PoamEntry,
+from .models import (FindingObservation, Group, InventoryRecord, PoamEntry,
                      PortalSetting, ServiceArtifact, ServiceImage)
 from .overview import normalize_overview
 
@@ -163,9 +163,8 @@ def import_heading_aliases(db, dataset, service):
 
 
 def _latest_execution(db, service):
-    executions = db.scalars(select(Execution).where(Execution.service_id == service.id)
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc())).all()
-    return next((e for e in executions if e.scan_scope == "service"), executions[0] if executions else None)
+    from .service_evidence import current_execution
+    return current_execution(db, service)
 
 
 def _version(service, execution):

@@ -230,6 +230,29 @@ def risk_metadata(cve: str) -> tuple[bool, float | None]:
     return key in kev_cves(), epss_scores().get(key)
 
 
+def review_intelligence_snapshot(identifiers, captured_at: str) -> dict:
+    """Freeze review-time lookups with the exact catalogs used, without host details."""
+    catalogs, feeds = {}, {}
+    for name, cache in (("kev", _kev), ("epss", _epss)):
+        cache.get()
+        # A refresh in another thread cannot separate the values from their metadata.
+        with cache.lock:
+            catalog, status = cache.value, cache.status
+            catalogs[name] = catalog
+            feeds[name] = {"state": status.get("state", "MISSING"),
+                           "records": catalog.records, "metadata": dict(catalog.metadata)}
+    lookups = {}
+    for identifier in identifiers:
+        key = str(identifier).upper()
+        if not key.startswith("CVE-"):
+            continue
+        lookups[key] = {
+            "kev": key in catalogs["kev"].cves if feeds["kev"]["state"] == "LOADED" else None,
+            "epss": catalogs["epss"].scores.get(key),
+        }
+    return {"basis": "approval-request", "captured_at": captured_at, **feeds, "findings": lookups}
+
+
 _catalog_snapshot = None
 _catalog_token = None
 

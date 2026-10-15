@@ -13,10 +13,10 @@ from weakref import WeakSet
 from sqlalchemy import event, inspect, select
 from .models import Execution, ExecutionSummary
 from .overview import normalize_overview
+from .compose_architecture import compose_services
 
-# v4 adds immutable architecture/Helm-source metadata used to select evidence
-# without reparsing every retained payload.
-SUMMARY_VERSION = 4
+# v5 includes retained Compose architecture, including pre-existing scans.
+SUMMARY_VERSION = 5
 PAYLOAD_BATCH_SIZE = 32
 _installed = WeakSet()
 _PENDING = "cats_execution_summaries"
@@ -76,7 +76,8 @@ def build_summary(payload, complete):
     helm_sources = payload.get("helm_source_files")
     architecture = {
         # Same truthiness as the legacy per-request payload scans.
-        "has_architecture": bool(overview.get("rendered_resources") or payload.get("rendered_resources") or helm_sources),
+        "has_architecture": bool(declared or helm_sources or compose_services(payload)),
+        "compose_services": len(compose_services(payload)),
         "declared_resources": len(declared) if isinstance(declared, (list, tuple, dict, str)) else 0,
         "applicable": bool(helm_sources or declared) and str(payload.get("artifact_type") or "helm").lower() == "helm",
         "helm_original": payload.get("artifact_type") == "helm" and bool(helm_sources),
@@ -179,7 +180,8 @@ def architecture_has_resources(payload) -> bool:
     overview = payload.get("service_overview") or {}
     overview = overview if isinstance(overview, dict) else {}
     return bool(payload.get("rendered_resources") or payload.get("kubernetes_resources") or payload.get("resources")
-                or overview.get("resources") or overview.get("rendered_resources") or overview.get("kubernetes_resources"))
+                or overview.get("resources") or overview.get("rendered_resources") or overview.get("kubernetes_resources")
+                or compose_services(payload))
 
 
 def load_execution_summaries(db, execution_ids, *, include_header=False):

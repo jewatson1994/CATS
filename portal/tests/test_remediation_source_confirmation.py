@@ -7,7 +7,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app import main
+from app import main, remediation_jobs
 from remediation_job_helpers import completed_plan
 from app.models import Execution, Finding, FindingObservation, RemediationExecution
 from app.remediation import plan_digest
@@ -86,7 +86,7 @@ def test_source_changes_after_review_are_rejected_by_worker_before_effects(workf
     db.expire_all()
     assert not patched
     assert record.status == 'failed'
-    assert record.failure_reason == 'Remediation failed during snapshot: ValueError'
+    assert record.failure_reason == f'Remediation failed during snapshot: {remediation_jobs.PLAN_CHANGED}'
 
 
 @pytest.mark.parametrize('change', ['source_file', 'unmapped_image', 'observed_digest'])
@@ -112,7 +112,7 @@ def test_source_changes_after_confirmation_stop_before_any_patch(workflow, monke
     db.expire_all()
     assert not patched
     assert job.status == 'failed'
-    assert job.failure_reason == 'Remediation failed during snapshot: ValueError'
+    assert job.failure_reason == f'Remediation failed during snapshot: {remediation_jobs.PLAN_CHANGED}'
 
 
 def test_vulnerability_scope_rejects_finding_absent_from_chosen_execution(workflow):

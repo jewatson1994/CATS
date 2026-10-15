@@ -291,11 +291,11 @@ def _expand(text: str, env: dict, issue, depth=0) -> str:
         elif operator and operator.endswith("?"):
             value = env[name] if present else UNKNOWN
             if not present:
-                issue("required_variable", "A required variable is missing; supply it in the bundle .env file.")
+                issue("required_variable", f"Deployment requires variable {name}, but it was not supplied. Runtime values may remain unresolved for image scanning.")
         else:
             value = env.get(name, UNKNOWN)
             if name not in env:
-                issue("unresolved_variable", "A variable is unresolved; supply it in the bundle .env file.")
+                issue("unresolved_variable", f"Variable {name} is unresolved in the uploaded inputs. Runtime values may remain unresolved for image scanning.")
         result.append(str(value))
     return "".join(result)
 
@@ -489,9 +489,9 @@ def _sanitize(value, key=""):
 def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = None) -> dict:
     """Normalize selected files in explicit order; [] discovers the default pair.
 
-    Issues never contain source values. ``complete`` means inputs were resolved,
-    not that Docker ran or a configuration was proven safe. Disabled profiles are
-    omitted. Image discovery continues when unrelated inputs remain unresolved.
+    Issues never contain source values. ``complete`` means image discovery has
+    no blockers, not that deployment inputs were resolved or proven safe.
+    Disabled profiles are omitted. Runtime gaps remain as review notes.
     """
     root = Path(bundle_root).resolve()
     issues, findings, services, images, sources = [], [], [], [], []
@@ -505,7 +505,20 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             raise ComposeInputError("Compose inputs exceed aggregate read limits.")
         return text
 
-    def issue(code, message, blocking=True):
+    def issue(code, message, blocking=None):
+        # Runtime configuration is review evidence, not a prerequisite for an
+        # image assessment. Unresolved image/platform/profile fields are checked
+        # separately after interpolation and merging.
+        if blocking is None:
+            blocking = code not in {
+                "required_variable", "unresolved_variable", "interpolation",
+                "sensitive_interpolation", "unsupported_dotenv",
+                "missing_env_file", "unsupported_env_file", "unresolved_environment",
+                "missing_configs", "missing_secrets", "external_configs", "external_secrets",
+                "external_bind_input", "unresolved_bind_input",
+                "missing_networks", "missing_volumes", "external_networks", "external_volumes",
+                "missing_build_input", "unsupported_build_context", "missing_dependency",
+            }
         record = {"code": code, "message": message, "service": current_service, "source": current_source, "blocking": blocking}
         if record not in issues:
             issues.append(record)
@@ -548,7 +561,15 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             for key in ("include",):
                 if key in document:
                     issue("unsupported_feature", "Compose include requires a supplied, explicitly flattened Compose file.")
-            document = _interpolate(document, env, issue)
+            # Attribute interpolation notes to the consuming service, including
+            # expanded YAML anchors, without retaining any source values.
+            service_documents = document.get("services", {})
+            document = _interpolate({key: value for key, value in document.items() if key != "services"}, env, issue)
+            document["services"] = {}
+            for service_name, service_document in service_documents.items():
+                current_service = service_name
+                document["services"][service_name] = _interpolate(service_document, env, issue)
+            current_service = None
             for service_config in document.get("services", {}).values():
                 if not isinstance(service_config, dict):
                     continue
@@ -569,27 +590,29 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             active_profiles = config.get("profiles", [])
             if not isinstance(active_profiles, list):
                 issue("compose_schema", "Service profiles must be a list."); continue
+            if UNKNOWN in str(active_profiles):
+                issue("unresolved_profiles", "Resolve service profiles before scanning so CATS can determine which images are included."); continue
             if active_profiles and "*" not in (profiles or []) and not set(active_profiles).intersection(profiles or []):
                 continue
             for key in ("extends", "provider", "develop", "label_file", "models", "post_start", "pre_stop"):
                 if key in config:
-                    issue("unsupported_feature", "Service uses a feature requiring a supplied, explicitly flattened Compose configuration.")
+                    issue("unsupported_feature", "Service uses a feature requiring a supplied, explicitly flattened Compose configuration.", blocking=key in {"extends", "provider", "models"})
             valid_shape = True
             for field in ("ports", "volumes", "configs", "secrets", "expose", "cap_add", "cap_drop", "security_opt"):
                 if field in config and config[field] is not None and not isinstance(config[field], list):
-                    issue("compose_schema", "Service sequence field has an invalid type; provide a Compose list.")
+                    issue("compose_schema", "Service sequence field has an invalid type; provide a Compose list.", blocking=False)
                     valid_shape = False
             for field in ("environment", "depends_on", "networks"):
                 if field in config and config[field] is not None and not isinstance(config[field], (list, dict)):
-                    issue("compose_schema", "Service mapping or sequence field has an invalid type.")
+                    issue("compose_schema", "Service mapping or sequence field has an invalid type.", blocking=False)
                     valid_shape = False
             for field in ("deploy", "healthcheck", "logging", "ulimits", "blkio_config"):
                 if field in config and config[field] is not None and not isinstance(config[field], dict):
-                    issue("compose_schema", "Service configuration field requires a mapping.")
+                    issue("compose_schema", "Service configuration field requires a mapping.", blocking=False)
                     config[field] = {"unresolved": UNKNOWN}
             for field in ("privileged", "read_only", "init", "tty", "stdin_open", "oom_kill_disable"):
                 if field in config and config[field] is not None and not isinstance(config[field], bool) and config[field] != UNKNOWN:
-                    issue("compose_schema", "Service boolean field must be an explicit true or false value.")
+                    issue("compose_schema", "Service boolean field must be an explicit true or false value.", blocking=False)
             if not valid_shape:
                 # Image discovery remains possible without interpreting malformed resources.
                 config = {key: value for key, value in config.items() if key not in {"ports", "volumes", "configs", "secrets", "expose", "cap_add", "cap_drop", "security_opt", "environment", "depends_on", "networks"}}
@@ -638,7 +661,7 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             image = config.get("image")
             if not isinstance(image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@+\-]{0,999}", image) or "://" in image or "@" in image and not re.search(r"@sha256:[a-fA-F0-9]{64}$", image):
                 image = None
-                issue("unresolved_image", "Service requires a valid, explicitly resolved image reference to scan.")
+                issue("unresolved_image", "Service requires a valid, explicitly resolved image reference to scan. Supply image variables in the bundle .env file or declare the image directly.")
             if "build" in config:
                 issue("image_and_build" if image else "build_only", "Only the explicit image is scanned; local build output is not assessed." if image else "Build-only service cannot be scanned; supply a prebuilt image reference.", blocking=not bool(image))
                 build = config["build"]
@@ -685,10 +708,17 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                             issue("external_bind_input", "Bind mount input is unavailable inside the bundle; supply local configuration files or verify the host prerequisite separately.")
             for kind in ("networks", "volumes"):
                 refs = config.get("networks", {}) or {} if kind == "networks" else [m.get("source") for m in mounts if m.get("type") == "volume" and m.get("source")]
+                definitions = model.get(kind, {}) or {}
+                if not isinstance(definitions, dict):
+                    issue("compose_schema", f"Top-level {kind} must be a mapping.", blocking=False)
+                    continue
                 for ref in refs:
-                    definition = (model.get(kind, {}) or {}).get(ref)
-                    if ref != "default" and definition is None:
+                    definition = definitions.get(ref)
+                    # A null definition declares a resource with Compose defaults.
+                    if ref not in definitions and not (kind == "networks" and ref == "default"):
                         issue("missing_" + kind, "Named network or volume requires a top-level definition.")
+                    elif definition is not None and not isinstance(definition, dict):
+                        issue("compose_schema", f"Named {kind} definition must be empty or a mapping.", blocking=False)
                     if isinstance(definition, dict) and definition.get("external"):
                         issue("external_" + kind, "External network or volume availability cannot be verified from the bundle.")
             user = config.get("user")
@@ -726,7 +756,6 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                 options = dependencies.get(dependency, {}) if isinstance(dependencies, dict) else {}
                 if dependency not in selected_names and (not isinstance(options, dict) or options.get("required", True)):
                     issue("missing_dependency", "Required dependency is missing or excluded by selected profiles.")
-                    service["status"] = "incomplete"
         if any(i["blocking"] and i["service"] is None for i in issues):
             for service in services:
                 service["status"] = "incomplete"

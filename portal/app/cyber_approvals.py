@@ -18,7 +18,7 @@ from .auth import AuthContext, require_user, record_audit
 from .durable_jobs import DurableJob, submit, JobError
 from .service_oci import validate_destination, _csrf
 from .secrets import encrypt_secret, decrypt_secret
-from . import signing
+from . import signing, release_validity
 
 router = APIRouter()
 
@@ -161,6 +161,8 @@ def dto(db, row, auth, detail=False):
         publication=_public(row.publication), can_decide=row.status == 'pending' and auth.has('approval.decide', row.service_id),
         can_retry=row.status == 'approved' and row.publish_status == 'failed' and not row.revoked_at and auth.has('approval.decide', row.service_id),
         revoked=bool(row.revoked_at), release_id=row.id)
+    result.update(release_validity.summary(row))
+    result['can_retry'] = result['can_retry'] and result['validity_status'] in ('valid', 'expiring_soon')
     if detail:
         result['snapshot'] = _public(row.snapshot)
         if row.status == 'pending' and not row.destination_id:
@@ -268,8 +270,13 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
     if not hmac.compare_digest(row.snapshot_digest, digest(row.snapshot)):
         raise HTTPException(409, 'Snapshot integrity check failed')
     bound = {}
+    decided_at = utcnow()
     if decision == 'approved' and row.status == 'pending':
         snapshot = dict(row.snapshot)
+        try:
+            snapshot['approval_validity'] = release_validity.new_validity(decided_at, _settings(db))
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
         if not row.destination_id:
             destination = db.get(ApprovedReleaseDestination, data.get('destination_id')) if data.get('destination_id') else None
             if not destination or not _eligible(destination, db.get(Service, row.service_id)):
@@ -284,7 +291,7 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
             snapshot['signing_fingerprint'] = signing.configuration(_settings(db))['fingerprint']
         bound.update(snapshot=snapshot, snapshot_digest=digest(snapshot))
     changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id, CyberApproval.status == 'pending').values(
-        status=decision, decision_rationale=rationale, decided_by_id=auth.user.id, decided_at=utcnow(), **bound)).rowcount
+        status=decision, decision_rationale=rationale, decided_by_id=auth.user.id, decided_at=decided_at, **bound)).rowcount
     if changed != 1:
         db.rollback()
         raise HTTPException(409, 'This request already has a decision')
@@ -314,6 +321,10 @@ def retry(identity: int, request: Request, db: Session = Depends(get_db), auth: 
     _csrf(request, auth)
     row = _record(db, auth, identity)
     _permission(auth, 'approval.decide', row.service_id)
+    try:
+        release_validity.require_current(row)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
     changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id, CyberApproval.status == 'approved',
         CyberApproval.publish_status == 'failed', CyberApproval.revoked_at.is_(None)).values(publish_status='queued')).rowcount
     if changed != 1:
@@ -417,6 +428,10 @@ def publish_job(ctx, payload):
                 ctx.check()
                 if row.snapshot_digest != digest(row.snapshot):
                     raise JobError('Approved snapshot integrity check failed')
+                try:
+                    release_validity.require_current(row)
+                except ValueError as exc:
+                    raise JobError(str(exc)) from None
                 destination = db.get(ApprovedReleaseDestination, row.destination_id)
                 service = db.get(Service, row.service_id)
                 if not destination or not _eligible(destination, service):
@@ -433,6 +448,10 @@ def publish_job(ctx, payload):
                     db.refresh(row)
                     if row.job_id != ctx.job.id or row.status != 'approved' or row.revoked_at:
                         raise JobError('Publication authorization changed')
+                    try:
+                        release_validity.require_current(row)
+                    except ValueError as exc:
+                        raise JobError(str(exc)) from None
                 def checkpoint(receipt):
                     check_owner()
                     row.publication = dict(receipt)
@@ -451,6 +470,7 @@ def publish_job(ctx, payload):
                     checksum = 'sha256:' + hashlib.file_digest(stream, 'sha256').hexdigest()
                 if not hmac.compare_digest(checksum, str(receipt.get('bundle_digest') or '')):
                     raise JobError('Offline bundle integrity check failed')
+                check_owner()
                 row.publication, row.publish_status = receipt, 'published'
                 record_audit(db, None, 'cyber_release.published', 'cyber_approval', row.id, snapshot_digest=row.snapshot_digest)
                 db.commit()

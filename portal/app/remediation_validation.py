@@ -14,7 +14,7 @@ def classify_static(validation):
     for name in validation.get('required_checks', checks):
         check = checks.get(name, {'status': 'NOT RUN', 'detail': 'Evidence unavailable.'})
         status = check.get('status')
-        if status == 'PASS':
+        if status in {'PASS', 'NOT_APPLICABLE'}:
             continue
         detail = str(check.get('detail') or '')
         uncertain = status in {'NOT RUN', 'WARNING_UNVERIFIED', 'UNAVAILABLE'}

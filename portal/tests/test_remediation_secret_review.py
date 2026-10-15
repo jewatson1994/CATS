@@ -164,6 +164,33 @@ def test_invalid_candidate_archive_returns_sanitized_safety_failure(tmp_path):
     assert error.value.diagnostics[0]["reason"] == "unsupported_source_archive"
 
 
+def test_large_scan_evidence_does_not_exhaust_source_inspection_budget(tmp_path, monkeypatch):
+    from app import remediation_safety as safety
+    monkeypatch.setattr(safety, "MAX_CANDIDATE_SOURCE_BYTES", 128)
+    path = tmp_path / "candidate.zip"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("documentation/scan/grype-full-before.json", "x" * 256)
+        archive.writestr("documentation/sbom.json", "x" * 256)
+        archive.writestr("candidate/values.yaml", "replicas: 1")
+    safety.assert_candidate_safe(path)
+    # Oversized evidence must never bypass the source secret check.
+    with ZipFile(path, "a") as archive:
+        archive.writestr("candidate/secrets.yaml", "password: sensitive-content")
+    with pytest.raises(SourceSafetyError):
+        safety.assert_candidate_safe(path)
+
+
+def test_candidate_source_still_has_a_bounded_inspection_budget(tmp_path, monkeypatch):
+    from app import remediation_safety as safety
+    monkeypatch.setattr(safety, "MAX_CANDIDATE_SOURCE_BYTES", 128)
+    path = tmp_path / "candidate.zip"
+    with ZipFile(path, "w") as archive:
+        archive.writestr("candidate/values.yaml", "#" * 129)
+    with pytest.raises(SourceSafetyError) as error:
+        safety.assert_candidate_safe(path)
+    assert error.value.diagnostics[0]["reason"] == "source_inspection_limit"
+
+
 @pytest.mark.parametrize("manifest,content", [([], b"safe"), ({"deployment": []}, b"safe"),
     ({"deployment": {"valuesFiles": 42}}, b"safe"), ({}, b"\xffsensitive-content")])
 def test_uninspectable_candidate_returns_sanitized_safety_failure(tmp_path, manifest, content):

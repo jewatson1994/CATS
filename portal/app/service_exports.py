@@ -9,7 +9,8 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import Service, Execution, PoamEntry, Finding, FindingObservation, PolicyFinding
+from .models import Service, PoamEntry, Finding, FindingObservation, PolicyFinding
+from .service_evidence import current_execution, current_execution_id
 from .architecture import build_architecture_graph
 from .architecture_export import build_architecture_svg
 from .helm_diagram import build_helm_diagram
@@ -64,9 +65,7 @@ def _service_findings_book(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest_id = db.scalar(select(Execution.id).where(Execution.service_id == service.id,
-        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    latest_id = current_execution_id(db, service)
     def export_rows():
         observations = db.execute(select(Finding.cve, Finding.severity, Finding.active,
             FindingObservation.image, FindingObservation.package, FindingObservation.installed_version,
@@ -93,9 +92,7 @@ def _service_diagrams_bytes(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest = db.scalar(select(Execution).where(Execution.service_id == service.id,
-        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    latest = current_execution(db, service)
     if latest is None or not latest.raw_payload:
         raise HTTPException(422, detail="No architecture evidence is available to diagram")
     graph = build_architecture_graph(latest.raw_payload or {})
@@ -111,9 +108,7 @@ def _service_sbom_components(service_key: str, db: Session):
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404)
-    latest = db.scalar(select(Execution).where(Execution.service_id == service.id,
-        Execution.service_version_id == service.current_version_id, Execution.scan_scope == "service")
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    latest = current_execution(db, service)
     if latest is None or not (latest.raw_payload or {}).get("sbom_components"):
         raise HTTPException(422, detail="No retained SBOM component evidence is available")
     return {"format": "cats-retained-sbom-components-v1", "service": service_key,

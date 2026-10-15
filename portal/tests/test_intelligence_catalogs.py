@@ -53,6 +53,34 @@ def test_bundled_catalog_is_not_empty():
     assert catalog.records > 0 and catalog.metadata.get("model_version")
 
 
+def test_review_snapshot_freezes_matching_values_and_catalog_versions(catalog_dir):
+    (catalog_dir / "epss.csv").write_text(FIRST_FEED)
+    (catalog_dir / "kev.json").write_text(json.dumps({"catalogVersion": "2026.06.29",
+        "dateReleased": "2026-06-29T10:00:00Z", "vulnerabilities": [{"cveID": "CVE-2026-0001"}]}))
+    frozen = policy_data.review_intelligence_snapshot(
+        ["cve-2026-0001", "CVE-2026-0002", "CVE-2026-0003", "GHSA-unknown"], "request-time")
+    assert frozen["findings"] == {"CVE-2026-0001": {"kev": True, "epss": .97},
+        "CVE-2026-0002": {"kev": False, "epss": .01}, "CVE-2026-0003": {"kev": False, "epss": None}}
+    assert frozen["kev"]["metadata"]["catalog_version"] == "2026.06.29"
+    assert frozen["kev"]["metadata"]["date_released"] == "2026-06-29T10:00:00Z"
+    assert frozen["epss"]["metadata"]["score_date"] == "2026-06-29T12:00:29Z"
+    assert frozen["epss"]["metadata"]["model_version"] == "v2026.06.15"
+    assert set(frozen["kev"]) == {"state", "records", "metadata"}
+    assert frozen["basis"] == "approval-request" and frozen["captured_at"] == "request-time"
+    (catalog_dir / "epss.csv").write_text(FIRST_FEED.replace("0.97", "0.50"))
+    policy_data.epss_scores.cache_clear()
+    assert policy_data.review_intelligence_snapshot(["CVE-2026-0001"], "later")["findings"]["CVE-2026-0001"]["epss"] == .5
+    assert frozen["findings"]["CVE-2026-0001"]["epss"] == .97
+
+
+def test_review_snapshot_missing_or_invalid_feeds_are_unknown(catalog_dir):
+    (catalog_dir / "kev.json").write_text("invalid json")
+    frozen = policy_data.review_intelligence_snapshot(["CVE-2026-0001"], "request-time")
+    assert frozen["findings"]["CVE-2026-0001"] == {"kev": None, "epss": None}
+    assert frozen["kev"]["state"] == "INVALID" and frozen["epss"]["state"] == "MISSING"
+    assert "path" not in frozen["kev"] and "error" not in frozen["kev"]
+
+
 @pytest.mark.parametrize("feed", [
     "cve,epss\nCVE-1,1.5\n", "cve,epss\nCVE-1,abc\n", "cve,epss\n,0.5\n",
     "cve,epss,percentile\nCVE-1,0.5,2\n", "cve,epss\nCVE-1,nan\n",

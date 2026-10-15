@@ -32,8 +32,10 @@ def compose_bundle():
     privileged: true
     environment:
       API_PASSWORD: compose-env-secret-value
+      RUNTIME_TOKEN: ${RUNTIME_TOKEN:?do-not-export-this-message}
     command: ["serve", "--password=compose-command-secret-value"]
-    env_file: [service.env]
+    env_file: [service.env, absent-runtime.env]
+    volumes: ["/host/runtime-config:/config:ro"]
   worker:
     image: harbor.example.test/team/app:1
   db:
@@ -136,11 +138,11 @@ def compose_http(database, monkeypatch, tmp_path):
         return ResponseAdapter(response)
     worker.request = request
 
-    def run(*, preview=False):
+    def run(*, preview=False, profiles=None):
         job_id = main._start_public_scan("", owner_user_id=17,
             ingest_service_id=None if preview else "service", ingest_service_version="v1",
             compose_uploads=[compose_bundle()], compose_files=["compose.yaml", "override.yaml"],
-            compose_profiles=["data", "local"], compose_preview=preview)
+            compose_profiles=["data", "local"] if profiles is None else profiles, compose_preview=preview)
         claim = worker.claim()
         assert claim["job_id"] == job_id
         worker._execute(claim, None)
@@ -212,6 +214,36 @@ def test_compose_http_worker_ingests_shared_image_and_missing_evidence(compose_h
     assert status.status_code == 200
     assert status.json()["status"] == "incomplete"
     assert all(secret not in status.text for secret in SECRETS)
+
+
+def test_compose_runtime_notes_allow_completed_worker_ingestion(compose_http):
+    job_id, output, result, summary = compose_http.run(profiles=['data'])
+    model = result['service_overview']['compose']
+    assert result['complete'] is True
+    assert summary['status'] == 'complete'
+    assert model['coverage']['scanned_images'] == 2
+    assert all(service['image_scan'] == 'complete' for service in model['services'])
+    assert {'required_variable', 'missing_env_file', 'external_bind_input'} <= {issue['code'] for issue in model['issues']}
+    assert all(not issue['blocking'] for issue in model['issues'])
+    assert not result['service_overview']['missing_evidence']
+    assert main.PUBLIC_JOBS[job_id]['ingested'] is True
+    assert_sanitized(output, result, summary)
+    assert 'do-not-export-this-message' not in json.dumps(result)
+    with compose_http.database() as db:
+        execution = db.scalar(select(Execution).where(Execution.execution_key == 'public:' + job_id))
+        assert execution is not None
+        from app.overview_queries import overview_architecture_execution
+        from app.architecture import build_architecture_graph
+        retained = overview_architecture_execution(db, execution.service_id)
+        assert retained.id == execution.id
+        graph = build_architecture_graph(execution.raw_payload)
+        assert {node['name'] for node in graph['nodes'] if node['kind'] == 'ComposeService'} == {'web', 'worker', 'db'}
+        assert graph['source'] == 'Declared Compose configuration'
+        assert sum(node['kind'] == 'ContainerImage' for node in graph['nodes']) == 2
+        assert all(secret not in json.dumps(graph) for secret in SECRETS)
+    with tarfile.open(output / 'results-export.tar.gz', 'r:gz') as archive:
+        manifest = json.load(archive.extractfile('results/manifest.json'))
+    assert manifest['metadata']['service-overview.json']['compose']['issues'] == model['issues']
 
 
 def test_compose_preview_returns_discovery_without_scanning_or_ingesting(compose_http):

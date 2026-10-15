@@ -18,6 +18,24 @@ const page = (job:Record<string,unknown> = {}, permissions = true):PageData => (
 } as unknown as PageData);
 const button = () => screen.queryByRole('button',{name:'Validate retained candidate'});
 
+it('shows inapplicable checks separately from missing evidence and runtime validation', () => {
+  render(<Report data={page({validation:[
+    {name:'helm_template',status:'NOT_APPLICABLE',detail:'Image-only candidate contains no Helm charts.'},
+    {name:'image_inspection',status:'PASS',detail:'Image metadata inspected.'},
+    {name:'candidate_scan',status:'UNAVAILABLE',detail:'No scan evidence retained.'},
+  ], stages:[{name:'rewrite_artifacts',status:'not_applicable'}], logs:['Preparation completed']})}/>);
+  const checks = within(screen.getByRole('region',{name:'Static validation checks'}));
+  const notApplicable = checks.getByText('Not Applicable');
+  expect(notApplicable.closest('.badge')).toHaveClass('badge-neutral');
+  expect(checks.getByRole('row',{name:/candidate scan Unavailable/})).toBeInTheDocument();
+  expect(screen.getByText('Execution stages (1)').closest('details')).not.toHaveAttribute('open');
+  expect(screen.getByText('rewrite artifacts').parentElement).toHaveTextContent('Not Applicable');
+  expect(screen.getByText('Validator details').closest('details')).not.toHaveAttribute('open');
+  expect(screen.getByText('Activity and rollback reference (1 entries)').closest('details')).not.toHaveAttribute('open');
+  expect(within(screen.getByRole('region',{name:'Candidate lifecycle'})).getByText(/Static: PASS · Runtime: Not run/)).toBeInTheDocument();
+  expect(button()).toBeInTheDocument();
+});
+
 it('keeps applied source edits in the summary and unresolved findings in their own list', () => {
   render(<Report data={page({summary_of_changes:{schema_version:1, final_configuration_scan_complete:true,
     configuration_changes:[{rule_id:'APPLIED-CPU', resource:'Deployment/api', status:'VERIFIED', accepted:true,

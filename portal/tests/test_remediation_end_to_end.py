@@ -153,7 +153,7 @@ def remediation_portal(monkeypatch, tmp_path):
         patched.append(config["source_image"])
         out = root / "output"; out.mkdir(parents=True, exist_ok=True)
         _docker_archive(out / "patched-image.tar", config["destination_image"])
-        for name in ("grype-before.json", "grype-after.json", "grype-full-after.json"):
+        for name in ("grype-before.json", "grype-after.json", "grype-full-before.json", "grype-full-after.json"):
             (out / name).write_text(json.dumps({"matches": []}))
         result = {"patch_status": "PATCHED", "delivery_status": "download", "artifact_available": True,
                   "artifact_sha256": hashlib.sha256((out / "patched-image.tar").read_bytes()).hexdigest(),
@@ -322,6 +322,45 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
     assert len(patched) == 2
     assert client.get(f"/services/catalog/remediations/{job_key}/candidate.zip").content == candidate.content
     assert client.get(f"/services/catalog/remediations/{job_key}", headers=page).status_code == 200
+
+
+@pytest.mark.parametrize("kind", ["image", "compose"])
+def test_non_helm_remediation_retains_images_without_false_render_failures(remediation_portal, kind):
+    client, csrf, patched, validated = remediation_portal
+    payload = {
+        "schema_version": "1.0", "execution_id": "non-helm-1", "scanned_at": main.utcnow().isoformat(),
+        "complete": True, "fixable_only": True, "artifact_type": "image",
+        "service": {"id": "images", "name": "Images", "version": "1.0"},
+        "findings": [{"cve": "CVE-2026-0001", "severity": "High", "image": "registry.example/api:1",
+                      "package": "openssl", "fixed_version": "3.0.9"}], "policy_findings": [],
+    }
+    if kind == "compose":
+        payload["service_overview"] = {"compose": {"services": [
+            {"name": "api", "image": "registry.example/api:1", "configuration": {}}]}}
+    assert client.post("/api/v1/pipeline-results", json=payload,
+                       headers={"Authorization": "Bearer test-token"}).status_code == 201
+    preview = client.get("/api/v1/services/images/remediation-preview").json()
+    from remediation_job_helpers import drain_plan
+    with SessionLocal() as db:
+        plan = drain_plan(db, preview)
+    response = client.post("/services/images/remediations/start", follow_redirects=False, data={
+        "csrf_token": csrf, "remediation_mode": "automated", "decisions": "{}", "plan_digest": plan["plan_digest"],
+        "source_execution_id": plan["source_execution_id"], "confirmed": "yes", "submission_key": str(uuid.uuid4())})
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        record = db.scalar(select(RemediationExecution))
+        assert record.failure_reason is None, record.failure_reason
+        assert Path(record.artifact_path).is_file()
+        checks = record.validation_results["checks"]
+        for name in ("helm_lint", "helm_template", "yaml_parsing", "expected_resources", "kubernetes_schema", "baseline_render", "change_scope"):
+            assert checks[name]["status"] == "NOT_APPLICABLE"
+        assert record.validation_results["status"] == ("PASS" if kind == "image" else "WARNING_UNVERIFIED")
+        assert record.verification_status == "not_verified"
+        assert record.stages["rewrite_artifacts"]["status"] == "not_applicable"
+        assert record.after_snapshot["vulnerability_observations"] == 0
+        assert record.before_snapshot["vulnerability_observations"] == 0
+    assert patched == ["registry.example/api:1"]
+    assert validated == []
 
 
 def test_remediation_tab_survives_a_failing_plan_preview(remediation_portal, monkeypatch):

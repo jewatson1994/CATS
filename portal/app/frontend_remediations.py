@@ -61,8 +61,8 @@ def project_remediations(data, name, context, can, formatters):
                 "verification": validation_evidence(_field(delivery_result, "verification", {}) or {})})
         for key in ("before_snapshot", "after_snapshot"):
             snapshot = _field(item, key, {}) or {}
-            result[key] = _fields(snapshot, ("kev", "configuration_findings", "images", "helm_render", "policy_validation", "patchable_vulnerabilities", "epss_max"))
-            result[key]["vulnerabilities"] = _fields(_field(snapshot, "vulnerabilities", {}), ("Critical", "High", "Medium", "Low"))
+            result[key] = _fields(snapshot, ("kev", "configuration_findings", "images", "helm_render", "policy_validation", "patchable_vulnerabilities", "epss_max", "vulnerability_observations", "comparison_note", "patchable_comparison_note", "configuration_applicable"))
+            result[key]["vulnerabilities"] = _fields(_field(snapshot, "vulnerabilities", {}), ("Critical", "High", "Medium", "Low", "Negligible", "Unknown"))
         result["changed_artifacts"] = [{"path": _scalar(_field(row, "path")), "changes": [_scalar(change) for change in _field(row, "changes", [])]} for row in _field(item, "changed_artifacts", []) or []]
         result["patched_images"] = [_fields(row, ("original", "candidate", "classification", "reason", "patch_status", "patch_job_id")) for row in _field(item, "patched_images", []) or []]
         result["configuration_changes"] = []

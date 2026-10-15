@@ -25,6 +25,64 @@ def codes(result):
     return {issue['code'] for issue in result['issues']}
 
 
+@pytest.mark.parametrize('definition', ['', '{}'])
+def test_empty_named_resources_are_valid_declarations(tmp_path, definition):
+    result = parse(tmp_path, f'''services:
+  web:
+    image: nginx:1
+    volumes: ["data:/data"]
+    networks: [egress, default]
+volumes:
+  data: {definition}
+networks:
+  egress: {definition}
+  default: {definition}
+''')
+    assert result['complete'], result['issues']
+    assert result['images'] == ['nginx:1']
+    config = result['services'][0]['configuration']
+    assert config['volumes_definitions']['data'] == {}
+    assert config['networks_definitions']['egress'] == {}
+
+
+def test_missing_named_resources_still_require_declarations(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    volumes: ["default:/data"]
+    networks: [default, missing]
+''')
+    assert result['complete']
+    assert all(not issue['blocking'] for issue in result['issues'])
+    assert codes(result) == {'missing_volumes', 'missing_networks'}
+    assert len(result['issues']) == 2
+    assert result['images'] == ['nginx:1']
+
+
+def test_implicit_default_network_is_valid(tmp_path):
+    result = parse(tmp_path, 'services:\n  web:\n    image: nginx:1\n    networks: [default]\n')
+    assert result['complete'], result['issues']
+
+
+def test_missing_variable_messages_identify_names_without_custom_text(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    environment:
+      PASSWORD: ${DB_PASSWORD:?private-sentinel}
+      TOKEN: ${API_TOKEN?other-sentinel}
+      OPTION: ${UNSET_OPTION}
+''')
+    messages = [issue['message'] for issue in result['issues']]
+    for name in ('DB_PASSWORD', 'API_TOKEN', 'UNSET_OPTION'):
+        assert any(name in message for message in messages)
+    assert len(messages) == 3
+    assert 'sentinel' not in json.dumps(result)
+    assert result['images'] == ['nginx:1']
+    assert result['complete']
+    assert all(not issue['blocking'] and issue['service'] == 'web' for issue in result['issues'])
+
+
 def test_ordered_merge_anchors_profiles_and_redaction(tmp_path):
     put(tmp_path, '.env', 'REGISTRY=example.org\nTAG=2\nPASSWORD=private-sentinel\n')
     put(tmp_path, 'runtime.env', 'TOKEN=another-sentinel\n')
@@ -104,8 +162,65 @@ def test_unresolved_non_image_does_not_block_image_discovery_or_trigger_finding(
     result = parse(tmp_path, 'services:\n  web:\n    image: nginx:1\n    privileged: ${PRIV}\n    environment:\n      SECRET: ${SECRET}\n')
     assert result['images'] == ['nginx:1']
     assert 'COMPOSE-PRIVILEGED' not in {item['finding'] for item in result['findings']}
-    assert not result['complete']
+    assert result['complete']
+    assert all(not issue['blocking'] for issue in result['issues'])
     assert result['services'][0]['configuration']['privileged'] == '[unresolved]'
+
+
+@pytest.mark.parametrize('image', ['${IMAGE:?required}', 'registry/app:${TAG}', '${IMAGE}'])
+def test_unresolved_image_still_blocks_with_runtime_notes(tmp_path, image):
+    result = parse(tmp_path, f'''services:
+  web:
+    image: {image}
+    environment:
+      PASSWORD: ${{PASSWORD:?private-sentinel}}
+    volumes: ["/host/config:/config"]
+''')
+    assert not result['complete']
+    assert not result['images']
+    assert any(issue['code'] == 'unresolved_image' and issue['blocking'] for issue in result['issues'])
+    assert all(not issue['blocking'] for issue in result['issues'] if issue['code'] != 'unresolved_image')
+    assert 'private-sentinel' not in json.dumps(result)
+
+
+def test_unresolved_profiles_cannot_silently_omit_images(tmp_path):
+    result = parse(tmp_path, '''services:
+  web: {image: 'nginx:1'}
+  worker:
+    image: redis:7
+    profiles: ["${PROFILE:?required}"]
+''')
+    assert not result['complete']
+    assert any(issue['code'] == 'unresolved_profiles' and issue['blocking'] for issue in result['issues'])
+
+
+def test_missing_runtime_and_build_inputs_are_review_notes(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    build: absent-context
+    env_file: absent.env
+    environment: [PASSWORD]
+    volumes: ["/host/config:/config", "data:/data"]
+    networks: [external]
+    secrets: [password]
+    configs: [settings]
+secrets:
+  password: {external: true}
+configs:
+  settings: {file: absent.conf}
+volumes:
+  data: {external: true}
+networks:
+  external: {external: true}
+''')
+    assert result['complete'], result['issues']
+    assert result['images'] == ['nginx:1']
+    assert {'missing_build_input', 'missing_env_file', 'unresolved_environment',
+            'external_bind_input', 'external_volumes', 'external_networks',
+            'external_secrets', 'missing_configs'} <= codes(result)
+    assert all(not issue['blocking'] for issue in result['issues'])
+    assert result['services'][0]['configuration']['environment'] == {'PASSWORD': '[redacted]'}
 
 
 def test_merge_reset_and_override(tmp_path):
@@ -182,7 +297,7 @@ def test_local_paths_relative_to_first_file(tmp_path):
     assert result['findings'][0]['finding'] == 'COMPOSE-PRIVILEGED'
 
 
-def test_disabled_profile_dependency_is_incomplete(tmp_path):
+def test_disabled_profile_dependency_is_a_review_note(tmp_path):
     result = parse(tmp_path, '''services:
   web:
     image: nginx:1
@@ -192,7 +307,8 @@ def test_disabled_profile_dependency_is_incomplete(tmp_path):
     profiles: [data]
 ''')
     assert 'missing_dependency' in codes(result)
-    assert not result['complete']
+    assert result['complete']
+    assert result['services'][0]['status'] == 'resolved'
 
 
 @pytest.mark.parametrize('text', [
@@ -279,7 +395,8 @@ def test_zip_symlink_rejected(tmp_path):
 def test_traversal_references_rejected(tmp_path):
     result = parse(tmp_path, 'services:\n  web:\n    image: nginx:1\n    env_file: ../outside.env\n')
     assert 'missing_env_file' in codes(result)
-    assert not result['complete']
+    assert result['complete']
+    assert result['services'][0]['configuration']['environment'] == {}
 
 
 def test_env_interpolation_is_per_file_before_merge(tmp_path):
@@ -318,7 +435,8 @@ def test_explicit_security_checks(tmp_path):
 
 def test_invalid_ports_shape_is_not_silently_interpretedted(tmp_path):
     result = parse(tmp_path, 'services:\n  web:\n    image: nginx:1\n    ports: "8080:80"\n')
-    assert not result['complete']
+    assert result['complete']
+    assert any(issue['code'] == 'compose_schema' and not issue['blocking'] for issue in result['issues'])
     assert result['images'] == ['nginx:1']
     assert not result['services'][0]['configuration']['ports']
 
@@ -358,7 +476,8 @@ def test_secret_in_top_level_network_configuration_is_redacted(tmp_path):
     put(tmp_path, '.env', 'TOKEN=network-sensitive-972\n')
     result = parse(tmp_path, 'services:\n  web:\n    image: nginx:1\n    networks: [private]\nnetworks:\n  private:\n    name: ${TOKEN}\n')
     assert 'network-sensitive-972' not in json.dumps(result)
-    assert not result['complete']
+    assert result['complete']
+    assert any(issue['code'] == 'sensitive_interpolation' and not issue['blocking'] for issue in result['issues'])
 
 
 @pytest.mark.parametrize(('source', 'expected'), [
@@ -397,10 +516,11 @@ def test_dotenv_comment_quotes_do_not_change_resolved_image(tmp_path):
     assert result['complete'], result['issues']
 
 
-def test_windows_drive_bind_is_explicitly_incomplete(tmp_path):
+def test_windows_drive_bind_is_an_explicit_review_note(tmp_path):
     result = parse(tmp_path, "services:\n  web:\n    image: nginx:1\n    volumes: ['C:\\config:/config:ro']\n")
     assert result['images'] == ['nginx:1']
     assert 'unresolved_bind_input' in codes(result)
-    assert not result['complete']
-    assert result['services'][0]['status'] == 'incomplete'
+    assert result['complete']
+    assert all(not issue['blocking'] for issue in result['issues'])
+    assert result['services'][0]['status'] == 'resolved'
     assert result['services'][0]['configuration']['volumes'][0]['source'] == '[unresolved]'

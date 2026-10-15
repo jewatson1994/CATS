@@ -35,7 +35,7 @@ def _fail_record(db, job, payload, detail):
 
 
 def _handle(ctx, payload):
-    from . import main
+    from . import main, remediation_jobs
     from .auth import AuthContext
     from .models import User, Service, Execution, RemediationExecution
     from .remediation_delivery import DeliveryAttempt
@@ -51,6 +51,8 @@ def _handle(ctx, payload):
             _fail_record(db, ctx.job, payload, detail)
             raise JobError(detail)
     if ctx.job.kind == "remediation_plan":
+        if payload.get("planner_revision") != remediation_jobs.PLAN_REVISION:
+            raise JobError(remediation_jobs.PLAN_REVIEW_REQUIRED)
         ctx.stage("Resolving retained evidence and chart mappings", 10)
         with main.SessionLocal() as db:
             service = db.get(Service, ctx.job.service_id)
@@ -59,7 +61,8 @@ def _handle(ctx, payload):
                 raise JobError("The selected assessment/version is no longer available. Select a retained assessment and rebuild the plan.")
             _, plan = main._retained_remediation_plan(db, service, execution,
                 payload.get("finding_type"), payload.get("finding_id"))
-            public = {**main._public_remediation_plan(db, execution, plan), "plan_digest": main.plan_digest(plan)}
+            public = {**main._public_remediation_plan(db, execution, plan), "plan_digest": main.plan_digest(plan),
+                      "planner_revision": remediation_jobs.PLAN_REVISION}
             preview = {"images": len({row.get("original") for row in plan.get("images", [])}),
                 "charts": len(public.get("charts", [])),
                 "configuration_changes": sum(row.get("classification") == "AUTO-REMEDIABLE" for row in plan.get("configuration_changes", [])),

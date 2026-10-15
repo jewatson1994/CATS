@@ -106,12 +106,13 @@ from .purpose_exports import CATALOG as PURPOSE_CATALOG, NAMES as PURPOSE_NAMES,
 from .helm_diagram import build_helm_diagram
 from .architecture import build_architecture_graph
 from .architecture_evidence import architecture_summary_json, architecture_verification
+from .compose_architecture import compose_services
 from .capability_evidence import WORKLOAD_KINDS, pod_spec
 from .architecture_export import build_architecture_svg
 from .report_html import build_public_scan_report
 from .patching import PATCH_PHASES, advance_patch_stages, initial_patch_stages, redact, registry_host, safe_job_config
 from .secrets import encrypt_secret, decrypt_secret, secret_configured
-from . import signing
+from . import signing, release_validity
 from .admin_config import OS_DEFINITIONS, PACKAGE_MANAGERS, certificate_bundle_metadata, merge_certificate_metadata, normalize_policy, parse_json, policy_bool, test_repository, validate_os_definition, validate_policy
 from .trusted_ca import ephemeral_trust, write_additive_bundle
 from .runtime_version import deployed_version
@@ -695,7 +696,7 @@ def latest_architecture_execution(executions: list[Execution]) -> Execution | No
     def has_architecture(execution: Execution) -> bool:
         payload = execution.raw_payload if isinstance(execution.raw_payload, dict) else {}
         overview = payload.get("service_overview") if isinstance(payload.get("service_overview"), dict) else {}
-        return bool(overview.get("rendered_resources") or payload.get("rendered_resources") or payload.get("helm_source_files"))
+        return bool(overview.get("rendered_resources") or payload.get("rendered_resources") or payload.get("helm_source_files") or compose_services(payload))
     return max((item for item in executions if has_architecture(item)), key=lambda item: aware(item.scanned_at), default=None)
 
 
@@ -5483,16 +5484,17 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
                          signature_status=result.get("signature_status", "not_configured"), patch_job_id=patch_key)
             mapping = image.get("source_mapping") or {}
             source_files = plan.get("_source_files") or {}
-            editable = not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in source_files
+            editable = plan.get("_image_only", False) or (not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in source_files)
             image["classification"] = "AUTO-REMEDIABLE" if editable else "REVIEW REQUIRED"
-            image["reason"] = "Published and digest-qualified; source mapping is exact." if editable else "Published and digest-qualified, but the Helm source mapping needs review."
+            image["reason"] = ("Image artifact published and digest-qualified; no deployment source requires rewriting." if plan.get("_image_only") else
+                               "Published and digest-qualified; source mapping is exact." if editable else "Published and digest-qualified, but deployment source mapping needs review.")
         elif patch_mode == "download" and result.get("delivery_status") == "download" and result.get("artifact_available"):
             image.update(candidate=destination, digest=result.get("artifact_sha256"), patch_status=result.get("patch_status"),
                          signature_status="not_applicable", patch_job_id=patch_key, delivery_status="bundled")
             mapping = image.get("source_mapping") or {}
-            editable = not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in (plan.get("_source_files") or {})
+            editable = plan.get("_image_only", False) or (not mapping.get("ambiguous", True) and (mapping.get("values_file") or "") in (plan.get("_source_files") or {}))
             image["classification"] = "AUTO-REMEDIABLE" if editable else "REVIEW REQUIRED"
-            image["reason"] = "Archive prepared for the configured target registry; import is required before deployment." if editable else "Archive prepared, but Helm source mapping needs review."
+            image["reason"] = "Archive prepared; import is required before deployment." if editable else "Archive prepared, but deployment source mapping needs review."
         else:
             terminal_status = result.get("patch_status") or ("FAILED" if patch_job.get("status") == "failed" else "BLOCKED")
             if str(terminal_status).upper() in {"PENDING", "QUEUED", "RUNNING"}:
@@ -5634,6 +5636,9 @@ def _run_remediation_job(record_id: int) -> None:
         record.logs = ["Captured immutable references to the original execution and service revision."]
         db.commit()
         try:
+            inputs = record.workflow_inputs or {}
+            if inputs.get("workflow_version") == 2 and inputs.get("planner_revision") != remediation_jobs.PLAN_REVISION:
+                raise remediation_jobs.PlanReviewRequired(revision=True)
             service = db.scalar(select(Service).where(Service.id == record.service_id).options(
                 selectinload(Service.executions), selectinload(Service.policy_findings), selectinload(Service.findings).selectinload(Finding.observations)
             ))
@@ -5649,7 +5654,7 @@ def _run_remediation_job(record_id: int) -> None:
                 record.finding_type, record.finding_id, record.job_key)
             inputs = record.workflow_inputs or {}
             if inputs.get("workflow_version") == 2 and inputs.get("plan_digest") != plan_digest(plan):
-                raise ValueError("The retained source no longer matches the confirmed plan")
+                raise remediation_jobs.PlanReviewRequired()
             if inputs:
                 plan = resolve_decisions(plan, inputs.get("remediation_mode", "automated"), inputs.get("decisions", {}), record.requested_by_id)
                 _remediation_audit(db, record, "remediation.decisions_applied", mode=inputs.get("remediation_mode"), decisions=inputs.get("decisions", {}))
@@ -5660,6 +5665,9 @@ def _run_remediation_job(record_id: int) -> None:
             from .remediation_safety import approved_payload
             payload = approved_payload(payload, plan.get("source_safety", {}), inputs.get("excluded_charts", []))
             plan["_source_files"] = payload.get("helm_source_files") or payload.get("source_files") or {}
+            from .remediation import validation_applicability
+            applicability = validation_applicability(payload)
+            plan["_image_only"] = not applicability["kubernetes"] and not applicability["compose"]
             _assert_bundle_sources_safe(plan["_source_files"])
             _remediation_stage(record, "patch_images", "running")
             db.commit()
@@ -5672,29 +5680,15 @@ def _run_remediation_job(record_id: int) -> None:
                 _remediation_audit(db, record, "remediation.image_result", original=image.get("original"),
                     remediated=image.get("candidate"), patch_status=image.get("patch_status"),
                     signature_status=image.get("signature_status"))
-            distinct_patches = {image.get("patch_job_id"): image for image in plan["images"] if image.get("patch_job_id")}
-            plan["before"]["patchable_vulnerabilities"] = sum(int(image.get("vulnerabilities_before") or 0) for image in distinct_patches.values())
-            plan["after"]["patchable_vulnerabilities"] = sum(int(image.get("vulnerabilities_after") or 0) for image in distinct_patches.values())
-            if distinct_patches:
-                full_reports = []
-                for patch_key in distinct_patches:
-                    if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key):
-                        continue
-                    path = PATCH_JOB_ROOT / patch_key / "output" / "grype-full-after.json"
-                    if path.is_file():
-                        try:
-                            full_reports.append(json.loads(path.read_text(encoding="utf-8")))
-                        except (OSError, ValueError):
-                            pass
-                if len(full_reports) == len(distinct_patches):
-                    plan["after"].update(summarize_grype_reports(full_reports, risk_metadata))
-                else:
-                    plan["after"]["vulnerabilities"] = None
-                    plan["after"]["kev"] = None
+            from .remediation_comparison import apply_vulnerability_comparison
+            apply_vulnerability_comparison(plan, PATCH_JOB_ROOT, risk_metadata)
             plan.pop("_source_files", None)
+            plan.pop("_image_only", None)
             for image in plan["images"]:
                 if image.get("classification") == "AUTO-REMEDIABLE":
                     source = (image.get("source_mapping") or {}).get("values_file") or (image.get("source_mapping") or {}).get("template")
+                    if not source:
+                        continue
                     artifact = next((item for item in plan["changed_artifacts"] if item["path"] == source), None)
                     if not artifact:
                         artifact = {"path": source, "changes": []}; plan["changed_artifacts"].append(artifact)
@@ -5712,7 +5706,8 @@ def _run_remediation_job(record_id: int) -> None:
             plan["charts"] = chart_mappings
             _assert_bundle_sources_safe(files)
             values_files = checked_values_files(payload.get("helm_values_files", []), files)
-            _remediation_stage(record, "rewrite_artifacts", "success" if files else "skipped")
+            _remediation_stage(record, "rewrite_artifacts", "success" if files else "not_applicable",
+                "" if files else "No editable deployment source is part of this candidate; image artifacts are retained separately.")
             job_root = REMEDIATION_JOB_ROOT / record.job_key
             job_root.mkdir(parents=True, exist_ok=True)
             artifact = job_root / "remediation-candidate.zip"
@@ -5757,8 +5752,11 @@ def _run_remediation_job(record_id: int) -> None:
                 "detail": "Original retained source lint/render completed." if baseline_ok and baseline_resources else "Original source render is unavailable or failed."}
             validation["checks"]["change_scope"] = (verify_rendered_scope(baseline_resources, rendered, plan["configuration_changes"], plan["images"])
                 if baseline_resources and rendered else {"status": "WARNING_UNVERIFIED", "detail": "Source change scope cannot be proved without both renders."})
+            if not validation.get("applicability", {}).get("kubernetes", True):
+                for name in ("baseline_render", "change_scope"):
+                    validation["checks"][name] = {"status": "NOT_APPLICABLE", "detail": "No Kubernetes source changes require a render comparison."}
             validation["required_checks"].extend(["baseline_render", "change_scope"])
-            if any(validation["checks"][key]["status"] != "PASS" for key in ("baseline_render", "change_scope")):
+            if any(validation["checks"][key]["status"] not in {"PASS", "NOT_APPLICABLE"} for key in ("baseline_render", "change_scope")):
                 validation["status"] = "FAIL"
             if rendered and plan["images"]:
                 actual_images = _candidate_workload_images(rendered)
@@ -5787,7 +5785,7 @@ def _run_remediation_job(record_id: int) -> None:
             _remediation_stage(record, "static_validation", "failed" if validation["status"] == "BLOCKING" else
                                "warning" if validation["status"] == "WARNING_UNVERIFIED" else "success")
             scan_statuses = [validation["checks"][name]["status"] for name in ("trivy_config_rescan", "vulnerability_rescan")]
-            _remediation_stage(record, "final_rescan", "success" if all(value == "PASS" for value in scan_statuses) else "warning",
+            _remediation_stage(record, "final_rescan", "success" if all(value in {"PASS", "NOT_APPLICABLE"} for value in scan_statuses) else "warning",
                                "Final scan results are independent of mutation and runtime validation.")
             _remediation_stage(record, "package", "running")
             packaged_charts: list[tuple[Path, dict]] = []
@@ -5908,15 +5906,18 @@ def _run_remediation_job(record_id: int) -> None:
                     bundle.writestr(f"candidate/{safe.as_posix()}", content)
                 for archive, chart in packaged_charts:
                     bundle.write(archive, f"helm/{archive.name}")
+                archived_patch_keys = set()
                 if plan["images"]:
                     for image in plan["images"]:
                         patch_key = image.get("patch_job_id")
-                        if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key):
+                        if not isinstance(patch_key, str) or not re.fullmatch(r"[0-9a-f]{32}", patch_key) or patch_key in archived_patch_keys:
                             continue
+                        archived_patch_keys.add(patch_key)
                         output = PATCH_JOB_ROOT / patch_key / "output"
                         for name, archive_name in (("patched-image.tar", f"images/{patch_key}.tar"),
                                                    ("grype-before.json", f"scans/{patch_key}-grype-before.json"),
                                                    ("grype-after.json", f"scans/{patch_key}-grype-after.json"),
+                                                   ("grype-full-before.json", f"scans/{patch_key}-grype-full-before.json"),
                                                    ("grype-full-after.json", f"scans/{patch_key}-grype-full-after.json"),
                                                    ("remediated-sbom.json", f"sbom/{patch_key}.json")):
                             if name == "patched-image.tar" and record.output_mode != "bundle":
@@ -5951,6 +5952,9 @@ def _run_remediation_job(record_id: int) -> None:
                 record.artifact_digest = "sha256:" + hashlib.file_digest(artifact_stream, "sha256").hexdigest()
             record.resulting_revision = f"R{record.revision_number}" if record.revision_number else record.job_key
             deployable = bool(candidate_manifest.get("deployment_manifest"))
+            validation["deployment"] = {"status": "NOT RUN", "detail": (
+                "Candidate is ready for a separate validator deployment attempt." if deployable else
+                "No supported Helm deployment bundle is present. Image inspection and scans do not verify application startup; runtime validation has not run.")}
             publishable = any(row.get("archive_path") or row.get("package_path") for row in candidate_manifest.get("charts", [])) or any(
                 row.get("archive_path") for row in candidate_manifest.get("images", []))
             record.workflow_inputs = {**(record.workflow_inputs or {}), "artifact_capabilities": {
@@ -5976,7 +5980,10 @@ def _run_remediation_job(record_id: int) -> None:
             evidence_complete = all(all(value == "complete" for value in (image.get("remediation_evidence") or {}).values())
                                     and bool(image.get("remediation_evidence"))
                                     for image in plan["images"] if image.get("candidate"))
-            if automatic and not files:
+            source_changes = [item for item in plan["configuration_changes"] if item["classification"] == "AUTO-REMEDIABLE"]
+            source_changes.extend(item for item in plan["images"] if item["classification"] == "AUTO-REMEDIABLE"
+                                  and ((item.get("source_mapping") or {}).get("values_file") or (item.get("source_mapping") or {}).get("template")))
+            if source_changes and not files:
                 raise ValueError("An automatic change had no editable source artifact")
             if review or unresolved_images:
                 record.status = "review_required"
@@ -5991,7 +5998,7 @@ def _run_remediation_job(record_id: int) -> None:
                     record.status = "publication_partial"
                 elif not evidence_complete:
                     record.status = "evidence_partial"
-                elif not all(value == "PASS" for value in scan_statuses):
+                elif not all(value in {"PASS", "NOT_APPLICABLE"} for value in scan_statuses):
                     record.status = "validation_failed"
                 elif deployment_status == "VERIFIED":
                     record.status = "validated"
@@ -6012,7 +6019,7 @@ def _run_remediation_job(record_id: int) -> None:
                 record.logs = [*record.logs, "Partial candidate: explicitly excluded charts are listed in source-safety.json; original assessment evidence is unchanged."]
             record.phase = "complete" if record.status != "failed" else "failed"
             record.remediation_status = ("failed" if record.status in {"failed", "not_remediable"} else
-                                         "partial" if plan.get("source_safety", {}).get("partial") or review or unresolved_images or not evidence_complete or validation["status"] == "BLOCKING" or any(value != "PASS" for value in scan_statuses) else "complete")
+                                         "partial" if plan.get("source_safety", {}).get("partial") or review or unresolved_images or not evidence_complete or validation["status"] == "BLOCKING" or any(value not in {"PASS", "NOT_APPLICABLE"} for value in scan_statuses) else "complete")
             publication_results = [chart.get("publish_status") == "PUBLISHED" for chart in chart_mappings]
             publication_results.extend(bool(image.get("candidate")) and bool(image.get("digest"))
                                        for image in plan["images"])
@@ -6049,11 +6056,21 @@ def _run_remediation_job(record_id: int) -> None:
             record = db.get(RemediationExecution, record_id)
             if record:
                 failed_phase = record.phase
+                detail = str(exc) if isinstance(exc, remediation_jobs.PlanReviewRequired) else type(exc).__name__
+                from .remediation_safety import SourceSafetyError
+                if isinstance(exc, SourceSafetyError):
+                    reasons = {row.get("reason") for row in exc.diagnostics}
+                    if "source_inspection_limit" in reasons:
+                        detail = "Deployment source exceeds the 64 MiB inspection limit; reduce the source bundle and retry."
+                    elif "unsupported_source_archive" in reasons:
+                        detail = "Candidate source archive is malformed or cannot be inspected safely; review the retained source files."
+                    else:
+                        detail = "Candidate source requires secret review; remove literal credentials or exclude the affected chart and retry."
                 if failed_phase in REMEDIATION_STAGES:
-                    _remediation_stage(record, failed_phase, "failed", type(exc).__name__)
+                    _remediation_stage(record, failed_phase, "failed", detail)
                 record.status, record.phase = "failed", "failed"
                 record.remediation_status = "failed"
-                record.failure_reason = f"Remediation failed during {failed_phase}: {type(exc).__name__}"
+                record.failure_reason = f"Remediation failed during {failed_phase}: {detail}"
                 record.logs = [*(record.logs or []), record.failure_reason]
                 record.completed_at = record.updated_at = utcnow()
                 _remediation_audit(db, record, "remediation.failed", reason=type(exc).__name__)
@@ -6491,6 +6508,7 @@ def start_remediation(service_key: str, csrf_token: str = Form(), remediation_mo
         raise HTTPException(422, "Invalid or incomplete remediation decisions") from None
     public_plan = approved
     inputs = {"remediation_mode": remediation_mode, "decisions": choices, "source_execution_id": source_execution_id,
+              "planner_revision": plan["planner_revision"],
               "plan_digest": plan_digest, "workflow_version": 2, "excluded_charts": exclusions, **replay_inputs,
               "confirmed_by": auth.user.id, "confirmed_at": utcnow().isoformat(), "approved_plan": public_plan,
               "service": {"id": service.service_key, "version": public_plan["source_version"]}}
@@ -6988,6 +7006,8 @@ def retry_remediation(service_key: str, job_key: str, csrf_token: str = Form(), 
     if inputs.get("workflow_version") != 2 or not all(inputs.get(key) for key in (
             "confirmed_by", "confirmed_at", "approved_plan", "plan_digest", "source_execution_id")):
         raise HTTPException(422, detail="Open Remediate to review and confirm a new plan before retrying this older job")
+    if inputs.get("planner_revision") != remediation_jobs.PLAN_REVISION:
+        raise HTTPException(409, detail=remediation_jobs.PLAN_REVIEW_REQUIRED)
     for key in ("submission_key", "submission_digest", "validation_skipped", "artifact_capabilities",
                 "requested_delivery", "destination_id", "verify_runtime"):
         inputs.pop(key, None)
@@ -7225,6 +7245,7 @@ def architecture_evidence_result(
     run = applicable_run(db, service.id, execution_ids=execution_ids, **subject)
     state = architecture_verification(
         applicable=bool(meta.get("applicable")), declared_count=int(meta.get("declared_resources") or 0),
+        compose_declared_count=int(meta.get("compose_services") or 0),
         runs=[run] if run else [], **subject)
     runtime = deployment_validation_view(state.get("run"))
     newest = deployment_validation_view(latest_run(db, service.id, execution_ids=execution_ids))
@@ -7879,6 +7900,7 @@ def service_detail(
         architecture_verification_state = architecture_verification(
             applicable=bool(architecture_meta.get("applicable")),
             declared_count=int(architecture_meta.get("declared_resources") or 0),
+            compose_declared_count=int(architecture_meta.get("compose_services") or 0),
             runs=[architecture_run] if architecture_run else [], **architecture_subject)
         architecture_runtime = deployment_validation_view(architecture_verification_state.get("run"))
         if architecture_execution:
@@ -7987,7 +8009,7 @@ def service_detail(
         meta = architecture_metadata(db, latest_execution)
         architecture_state = (
             "NO_SOURCE" if not latest_execution else
-            "ANALYSIS_INCOMPLETE" if latest_execution.complete is False else
+            "ANALYSIS_INCOMPLETE" if latest_execution.complete is False and not meta.get("compose_services") else
             "NO_RELATIONSHIPS" if not meta.get("has_resources") else
             "READY"
         )
@@ -7997,6 +8019,7 @@ def service_detail(
         architecture_run = applicable_run(db, service.id, **subject)
         architecture_verification_state = architecture_verification(
             applicable=bool(meta.get("applicable")), declared_count=int(meta.get("declared_resources") or 0),
+            compose_declared_count=int(meta.get("compose_services") or 0),
             runs=[architecture_run] if architecture_run else [], **subject)
         runtime_view = deployment_validation_view(architecture_verification_state.get("run"))
         def architecture_payload():
@@ -8028,7 +8051,7 @@ def service_detail(
             payload["complete"] = latest_execution.complete
         architecture_state = (
             "NO_SOURCE" if not latest_execution else
-            "ANALYSIS_INCOMPLETE" if latest_execution.complete is False else
+            "ANALYSIS_INCOMPLETE" if latest_execution.complete is False and not compose_services(payload) else
             "NO_RELATIONSHIPS" if not _architecture_has_resources(payload) else
             "READY"
         )
@@ -8037,6 +8060,7 @@ def service_detail(
         working_revision = latest_architecture_working_revision(db, service.id)
         architecture_verification_state = architecture_verification(
             applicable=applicable, declared_count=len(declared_resources), runs=validation_records,
+            compose_declared_count=len(compose_services(payload)),
             execution_id=latest_execution.id if latest_execution and not working_revision else None,
             artifact_revision_id=working_revision.id if working_revision else None,
         )
@@ -8292,6 +8316,7 @@ def service_detail(
         architecture_verification_state = architecture_verification(
             applicable=bool(architecture_payload.get("helm_source_files") or declared_resources) and str(architecture_payload.get("artifact_type") or "helm").lower() == "helm",
             declared_count=len(declared_resources), runs=validation_records,
+            compose_declared_count=len(compose_services(architecture_payload)),
             execution_id=architecture_execution.id if architecture_execution and not architecture_revision else None,
             artifact_revision_id=architecture_revision.id if architecture_revision else None,
         )
@@ -11254,10 +11279,12 @@ def save_signing_configuration(
     csrf_token: str = Form(), private_key: UploadFile | None = File(None),
     public_key: UploadFile | None = File(None), key_password: str = Form(""),
     enabled: bool = Form(False), action: str = Form("save"),
+    approval_validity_days: str | None = Form(None),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
 ):
     check_csrf(auth, csrf_token)
     try:
+        lifetime = release_validity.validate_days(approval_validity_days) if action == "save" and approval_validity_days is not None else None
         current = {} if action == "remove" or (private_key and private_key.filename) else signing.configuration(get_global_configuration(db))
         if action == "remove":
             current = {}
@@ -11278,8 +11305,11 @@ def save_signing_configuration(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _set_config_value(db, auth, signing.SETTING, json.dumps(current), None)
+    if lifetime is not None:
+        _set_config_value(db, auth, release_validity.PORTAL_SETTING, str(lifetime), None)
     record_audit(db, auth, "configuration.signing_updated", "portal", "global",
-                 enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove")
+                 enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove",
+                 approval_validity_days=lifetime)
     db.commit()
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
 

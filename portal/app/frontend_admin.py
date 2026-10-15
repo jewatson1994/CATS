@@ -70,7 +70,7 @@ def project_admin(data, name, context, can=None, formatters=None):
             "oidc": ("provider_name", "issuer", "client_id", "client_secret_configured", "scopes", "username_claim", "email_claim",
                      "groups_claim", "roles_claim", "browser_issuer", "redirect_uri", "post_logout_redirect_uri"),
             "validator": ("endpoint", "client_certificate_configured", "client_key_configured", "ca_configured"),
-            "signing": ("enabled", "configured", "fingerprint", "updated_at", "error"),
+            "signing": ("enabled", "configured", "fingerprint", "updated_at", "error", "approval_validity_days"),
             "cyber_warning_policy": ("critical_high", "kev", "watchlist", "poam", "kind", "missing_evidence"),
         }.items():
             data[key] = _fields(context.get(key, {}), fields)

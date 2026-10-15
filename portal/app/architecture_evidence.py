@@ -43,11 +43,18 @@ def applicable_validation_run(
 
 
 def architecture_verification(
-    *, applicable: bool, declared_count: int, runs: Iterable[Any],
+    *, applicable: bool, declared_count: int, runs: Iterable[Any], compose_declared_count: int = 0,
     execution_id: int | None = None, artifact_revision_id: int | None = None,
 ) -> dict[str, Any]:
     """Return exactly one of the four Architecture evidence states."""
     if not applicable:
+        if compose_declared_count:
+            return {
+                "state": "DECLARED", "label": "Declared", "run": None, "run_key": None,
+                "expected": compose_declared_count, "observed": 0, "missing": 0, "failed": 0,
+                "runtime_supported": False,
+                "reason": "Architecture is declared by retained Compose configuration. Dependencies and network membership do not prove traffic. Kubernetes Deployment Validation does not verify Compose services.",
+            }
         return {
             "state": "N/A", "label": "N/A", "run": None, "run_key": None,
             "expected": 0, "observed": 0, "missing": 0, "failed": 0,
@@ -57,8 +64,8 @@ def architecture_verification(
     if run is None:
         return {
             "state": "DECLARED", "label": "Declared", "run": None, "run_key": None,
-            "expected": declared_count, "observed": 0, "missing": 0, "failed": 0,
-            "reason": "Architecture was derived from rendered Helm/Kubernetes evidence. Runtime verification has not been established for this artifact revision.",
+            "expected": declared_count + compose_declared_count, "observed": 0, "missing": 0, "failed": 0,
+            "reason": "Architecture was derived from retained deployment configuration. Runtime verification has not been established for this artifact revision.",
         }
     diagnostics = _value(run, "diagnostics", {}) or {}
     summary = diagnostics.get("classification_summary", {}) if isinstance(diagnostics, Mapping) else {}
@@ -68,11 +75,11 @@ def architecture_verification(
     missing = int(summary.get("expected_only", len(comparison.get("declared_only", []))) or 0)
     failed = int(summary.get("failed", 0) or 0)
     status = str(_value(run, "status", "")).upper()
-    state = "VERIFIED" if status == "VERIFIED" and not missing and not failed else "PARTIALLY_VERIFIED"
+    state = "VERIFIED" if status == "VERIFIED" and not missing and not failed and not compose_declared_count else "PARTIALLY_VERIFIED"
     return {
         "state": state, "label": "Verified" if state == "VERIFIED" else "Partially Verified",
         "run": run, "run_key": _value(run, "run_key"), "engine": _value(run, "engine", "kind"),
-        "completed_at": _value(run, "completed_at"), "expected": expected, "observed": observed,
+        "completed_at": _value(run, "completed_at"), "expected": expected + compose_declared_count, "observed": observed,
         "missing": missing, "failed": failed, "reason": _value(run, "reason", ""),
         "artifact_reference": _value(run, "artifact_reference"),
     }
@@ -81,5 +88,5 @@ def architecture_verification(
 def architecture_summary_json(value: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value.get(key) for key in (
         "state", "label", "run_key", "engine", "completed_at", "expected", "observed",
-        "missing", "failed", "reason", "artifact_reference",
+        "missing", "failed", "reason", "artifact_reference", "runtime_supported",
     )}

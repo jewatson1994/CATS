@@ -358,3 +358,61 @@ def test_no_destination_or_signing_does_not_block_denial(db, monkeypatch):
     monkeypatch.setattr(approvals.signing, 'configuration', lambda _: {})
     result = asyncio.run(approvals.request_approval(request({'service_key':'one'}), db, auth()))
     assert decide(db, result['id'], 'denied')['status'] == 'denied'
+
+
+def test_approval_freezes_configured_expiry_and_retry_never_renews(db, monkeypatch):
+    from datetime import timedelta
+    monkeypatch.setenv('CATS_CYBER_APPROVAL_VALIDITY_DAYS', '30')
+    identity = create(db)['id']
+    decided = decide(db, identity)
+    row = db.get(approvals.CyberApproval, identity)
+    window = copy.deepcopy(row.snapshot['approval_validity'])
+    assert window['validity_days'] == 30
+    assert decided['validity_status'] == 'valid'
+    assert decided['expires_at'] == window['expires_at']
+    monkeypatch.setenv('CATS_CYBER_APPROVAL_VALIDITY_DAYS', '180')
+    row.publish_status = 'failed'
+    db.commit()
+    approvals.retry(identity, request(), db, auth())
+    assert row.snapshot['approval_validity'] == window
+    assert row.snapshot_digest == approvals.digest(row.snapshot)
+    old = utcnow() - timedelta(days=31)
+    monkeypatch.setenv('CATS_CYBER_APPROVAL_VALIDITY_DAYS', '30')
+    row.decided_at = old
+    row.snapshot = {**row.snapshot, 'approval_validity': approvals.release_validity.new_validity(old)}
+    row.snapshot_digest = approvals.digest(row.snapshot)
+    row.publish_status = 'failed'
+    db.commit()
+    assert approvals.release(identity, db, auth())['validity_status'] == 'expired'
+    assert not approvals.release(identity, db, auth())['can_retry']
+    with pytest.raises(HTTPException) as error:
+        approvals.retry(identity, request(), db, auth())
+    assert error.value.status_code == 409
+    assert 'expired' in error.value.detail
+
+
+def test_invalid_expiry_setting_leaves_pending_decision_untouched(db, monkeypatch):
+    identity = create(db)['id']
+    monkeypatch.setenv('CATS_CYBER_APPROVAL_VALIDITY_DAYS', 'zero')
+    with pytest.raises(HTTPException) as error:
+        decide(db, identity)
+    assert error.value.status_code == 422
+    assert db.get(approvals.CyberApproval, identity).status == 'pending'
+    assert not list(db.scalars(select(DurableJob)))
+
+
+def test_approval_uses_saved_cosign_lifetime_and_freezes_it(db, monkeypatch):
+    monkeypatch.setenv('CATS_CYBER_APPROVAL_VALIDITY_DAYS', '90')
+    setting = approvals.PortalSetting(key=approvals.release_validity.PORTAL_SETTING, value='45')
+    db.add(setting)
+    db.commit()
+    identity = create(db)['id']
+    decide(db, identity)
+    row = db.get(approvals.CyberApproval, identity)
+    window = copy.deepcopy(row.snapshot['approval_validity'])
+    assert window['validity_days'] == 45
+    setting.value = '180'
+    row.publish_status = 'failed'
+    db.commit()
+    approvals.retry(identity, request(), db, auth())
+    assert row.snapshot['approval_validity'] == window

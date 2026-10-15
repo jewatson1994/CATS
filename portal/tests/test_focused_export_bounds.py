@@ -8,6 +8,7 @@ from sqlalchemy import create_engine, insert, select, event
 from sqlalchemy.orm import Session
 from app.database import Base
 from app.models import Service, Execution, Finding, FindingObservation, PolicyFinding, utcnow
+from app.service_evidence import current_execution_id
 
 
 def test_projected_export_database_residency():
@@ -42,7 +43,8 @@ def test_projected_export_database_residency():
             return count
         namespace=dict(Service=Service,Execution=Execution,Finding=Finding,FindingObservation=FindingObservation,
             PolicyFinding=PolicyFinding,select=select,Session=Session,AuthContext=object,
-            _focused_export_book=consume,workbook_response=lambda value,name:value)
+            _focused_export_book=consume,workbook_response=lambda value,name:value,
+            current_execution_id=current_execution_id)
         exec(compile(ast.fix_missing_locations(ast.Module(body=[function],type_ignores=[])),'export','exec'),namespace)
         statements=[]
         event.listen(engine,'before_cursor_execute',lambda c,r,s,p,x,m:statements.append(s))

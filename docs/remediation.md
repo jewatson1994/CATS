@@ -82,6 +82,26 @@ the chart can carry the intended target image references.
 
 ## Status and evidence
 
+The results page separates remediation, static checks, and runtime verification.
+Helm rendering and Kubernetes checks are **Not Applicable** when the retained
+candidate contains only images or Compose configuration. A chart that was
+supplied but failed to render still fails. Applicable checks with missing evidence
+remain **Unavailable**, including Compose configuration that was not rescanned.
+
+The severity chart and total vulnerability comparison use paired full Grype
+scans of the same images, counting package/image observations consistently.
+Shared images are counted once per patch job. **Known-fix vulnerabilities** are
+a separate comparison from the worker's fixable-only scans. Older jobs without
+paired full scans show an unavailable comparison; retry as a new job to collect
+that evidence. Historical results are not rewritten.
+
+Image inspection, archive checks, and vulnerability rescans do not establish that
+an application starts or works. CATS does not automatically run a patched image's
+entrypoint. Runtime verification remains a separate validator attempt; the
+current deployment validator requires a supported Helm deployment bundle.
+An image-only candidate can complete static checks without claiming runtime
+verification or bypassing the delivery validation policy.
+
 Service Remediations shows stage history, image mapping, configuration
 changes, chart version/package state, measured fixable Grype counts, full
 Grype severity/KEV totals and highest EPSS score where every patched image
@@ -106,6 +126,13 @@ and evidence. A service row lock and active-job check prevent concurrent
 requests for the same service.
 
 ## Deployment requirements and limits
+
+Deploy the portal and remediation worker from the same build. Planner revisions
+invalidate saved plan previews. After a planner update, open **Remediate** from
+the service and review and confirm a fresh plan; **Retry as new job** cannot reuse
+an older planner's confirmation. A plan/source mismatch stops before image
+patching and requires fresh review. Recreate `portal` and `remediation-worker`
+when deploying this change; no Compose or environment setting changes are needed.
 
 The patch worker still needs a container runtime and the existing Copa,
 Grype, Syft, Trivy, and Dockle tools. Configured per-OS mirrors and local

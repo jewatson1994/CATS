@@ -280,11 +280,14 @@ def publish(db, approval, destination, checkpoint):
     approval.snapshot_digest is SHA-256 of canonical(snapshot); release_key is
     a safe identifier. Destination is an already-authorized saved destination.
     """
+    from . import release_validity
     receipt = {"status": "publishing", "artifacts": [], "destination_id": str(destination["id"]),
                "approval_id": approval.id, "release_key": approval.release_key,
                "resolved_images": dict((getattr(approval, "publication", None) or {}).get("resolved_images", {}))}
 
     def save():
+        if receipt['status'] != 'failed':
+            release_validity.require_current(approval)
         checkpoint(deepcopy(receipt))
 
     try:
@@ -294,6 +297,7 @@ def publish(db, approval, destination, checkpoint):
         if (approval.status != "approved" or not approval.decided_by_id or not approval.decided_at
                 or not approval.decision_rationale or approval.revoked_at):
             raise ValueError("A current recorded Cyber approval decision is required")
+        release_validity.require_current(approval)
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", approval.release_key):
             raise ValueError("Invalid release identifier")
         evidence = _checked_file(snapshot["evidence"])
@@ -313,6 +317,7 @@ def publish(db, approval, destination, checkpoint):
                 raise ValueError("Frozen deployable identity mismatch")
         settings = {row.key: row.value for row in db.scalars(select(PortalSetting))}
         config, credentials = signing.job_material(settings, "push")
+        config = {**config, 'approval_annotations': release_validity.annotations(approval.release_key, snapshot['approval_validity'])}
         if config.get("signing_enabled") is not True or not shutil.which("cosign"):
             raise ValueError("Cyber-approved releases require configured Cosign signing")
         if config["signing_fingerprint"] != snapshot.get("signing_fingerprint"):
@@ -389,6 +394,7 @@ def publish(db, approval, destination, checkpoint):
                 manifest = {"format": "cats-cyber-approved-release-v1", "release_key": approval.release_key,
                             "approval_id": approval.id, "snapshot_digest": approval.snapshot_digest,
                             "approval": {"id": approval.id, "status": approval.status,
+                                         **snapshot['approval_validity'],
                                          "decided_by_id": approval.decided_by_id,
                                          "decided_at": approval.decided_at.isoformat(),
                                          "decision_rationale": approval.decision_rationale},
@@ -429,6 +435,8 @@ def publish(db, approval, destination, checkpoint):
                     "Import requires ORAS 1.2+ and prior oras/cosign registry login and trusted CA configuration:\n"
                     "  python verify-import.py --fingerprint sha256:<trusted-key-fingerprint> --destination registry.example/team/release\n"
                     "Every OCI manifest and layer, signature, signed evidence and release manifest is included.\n"
+                    "Verification/import rejects expired approvals; registry transfers never extend their validity.\n"
+                    "Use a trusted UTC clock. Generic cosign verify checks authenticity, not approval expiry.\n"
                     "release-manifest.json maps every source image/chart to its approved digest reference; imports print the new mapping.\n"
                     "Apply environment-specific chart/image overrides before deployment; retained charts are never rewritten after approval.\n"
                     "Operators must configure registry access controls, immutability and retention, and deployment signature/admission policies.\n"
@@ -468,6 +476,7 @@ OFFLINE_SCRIPT = r'''#!/usr/bin/env python3
 """Verify and optionally import a CATS Cyber-approved release. No portal needed."""
 import argparse
 import base64
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -521,6 +530,35 @@ def verify_remote(root, target, descriptor, depth=0):
             raise ValueError("Imported OCI layer digest changed")
 
 
+def approval_window(manifest, now=None):
+    try:
+        approval = manifest['approval']
+        start = datetime.fromisoformat(approval['approved_at'])
+        end = datetime.fromisoformat(approval['expires_at'])
+        days = approval['validity_days']
+        validity = {key: approval[key] for key in ('approved_at', 'expires_at', 'validity_days')}
+        decision = datetime.fromisoformat(approval['decided_at'])
+        # Retained database dates may be naive UTC; signed validity dates must carry a zone.
+        if decision.tzinfo is None:
+            decision = decision.replace(tzinfo=timezone.utc)
+        if (start.utcoffset() is None or end.utcoffset() is None or type(days) is not int
+                or not 1 <= days <= 3650 or end - start != timedelta(days=days)
+                or start != decision or approval['status'] != 'approved'
+                or manifest['snapshot']['approval_validity'] != validity):
+            raise ValueError()
+    except (KeyError, TypeError, ValueError, AttributeError):
+        raise ValueError('Missing or invalid signed approval expiry. Request Cyber approval again.') from None
+    now = now or datetime.now(timezone.utc)
+    if now < start:
+        raise ValueError('Cyber approval is not yet valid. Check the system clock.')
+    if now >= end:
+        raise ValueError('Cyber approval has expired. Request Cyber approval again.')
+    return {'io.cats.approval.type': 'cyber-approved-v1',
+            'io.cats.approval.release': manifest['release_key'],
+            'io.cats.approval.approved-at': approval['approved_at'],
+            'io.cats.approval.expires-at': approval['expires_at']}
+
+
 def verify(root, fingerprint):
     public = root / "release-public-key.pem"
     pem = public.read_text()
@@ -534,6 +572,7 @@ def verify(root, fingerprint):
     manifest = json.loads((root / "release-manifest.json").read_bytes())
     if manifest["signing_fingerprint"] != fingerprint:
         raise ValueError("Release signing identity mismatch")
+    expected_annotations = approval_window(manifest)
     for name in ("evidence", "candidate"):
         if name in manifest:
             file = "evidence.zip" if name == "evidence" else "candidate.zip"
@@ -565,6 +604,9 @@ def verify(root, fingerprint):
             payload = blob(root, layer)
             if json.loads(payload).get("critical", {}).get("image", {}).get("docker-manifest-digest") != artifact["digest"]:
                 raise ValueError("Cosign payload binds a different artifact")
+            annotations = json.loads(payload).get('optional') or {}
+            if any(annotations.get(key) != value for key, value in expected_annotations.items()):
+                continue
             with tempfile.TemporaryDirectory(prefix="cats-offline-verify-") as folder:
                 payload_path, signature_path = Path(folder) / "payload", Path(folder) / "signature"
                 payload_path.write_bytes(payload)
@@ -577,6 +619,7 @@ def verify(root, fingerprint):
                     continue
         if not verified:
             raise ValueError("No verified offline signature for artifact")
+    approval_window(manifest)
     return transport
 
 
@@ -595,6 +638,7 @@ def main():
         entries = json.loads((root / "oci" / "index.json").read_bytes())["manifests"]
         index = {item["annotations"]["org.opencontainers.image.ref.name"]: item for item in entries}
         for artifact in inventory["artifacts"]:
+            approval_window(json.loads((root / 'release-manifest.json').read_bytes()))
             suffix = artifact["repository_suffix"]
             if not re.fullmatch(r"(?:image-[0-9]+|chart-[0-9]+|release)", suffix):
                 raise ValueError("Invalid destination suffix")
@@ -611,10 +655,13 @@ def main():
                 raise ValueError("Imported signature digest changed")
             verify_remote(root, target, index[signature["layout_name"]])
             reference = target + "@" + artifact["digest"]
-            run(["cosign", "verify", "--key", str(root / "release-public-key.pem"), "--insecure-ignore-tlog=true", "--offline", reference])
+            expected = approval_window(json.loads((root / 'release-manifest.json').read_bytes()))
+            annotation_args = [arg for key, value in sorted(expected.items()) for arg in ('-a', key + '=' + value)]
+            run(["cosign", "verify", "--key", str(root / "release-public-key.pem"), "--insecure-ignore-tlog=true", "--offline", *annotation_args, reference])
             print(json.dumps({"sources": artifact.get("source_references", []), "name": artifact.get("name"),
                               "version": artifact.get("version"), "published_reference": artifact["reference"],
                               "imported_reference": reference}, sort_keys=True))
+        approval_window(json.loads((root / 'release-manifest.json').read_bytes()))
 
 
 if __name__ == "__main__":

@@ -246,6 +246,9 @@ def assert_candidate_safe(path):
                                   "reason": "unsupported_source_archive", "resolution": RESOLUTION}]) from None
 
 
+MAX_CANDIDATE_SOURCE_BYTES = 64 * 1024 * 1024
+
+
 def _inspect_candidate(path):
     with ZipFile(path) as archive:
         files = {}
@@ -265,13 +268,20 @@ def _inspect_candidate(path):
         for entry in archive.infolist():
             if entry.is_dir() or entry.filename.startswith("images/"):
                 continue
+            inspect_text = (entry.filename.startswith("candidate/") or entry.filename.endswith(("rendered.yaml", "rendered-before.yaml", "rendered-after.yaml"))
+                            or (chart and (chart == "." or entry.filename.startswith(chart + "/"))) or entry.filename in values)
+            if not inspect_text and not entry.filename.endswith(".tgz"):
+                # Reports and SBOMs are evidence, not deployment source. Their
+                # size must not exhaust the source inspection budget.
+                continue
             total += entry.file_size
-            if total > 64 * 1024 * 1024:
-                raise ValueError("Candidate source inspection exceeds size limit")
+            if total > MAX_CANDIDATE_SOURCE_BYTES:
+                raise SourceSafetyError([{"chart": ".", "file": "[candidate archive]", "path": "$",
+                    "reason": "source_inspection_limit",
+                    "resolution": "Deployment source exceeds the 64 MiB inspection limit; reduce the source bundle and retry."}])
             if entry.filename.endswith(".tgz"):
                 assert_chart_archive_safe(archive.read(entry))
-            elif (entry.filename.startswith("candidate/") or entry.filename.endswith(("rendered.yaml", "rendered-before.yaml", "rendered-after.yaml"))
-                  or (chart and (chart == "." or entry.filename.startswith(chart + "/"))) or entry.filename in values):
+            elif inspect_text:
                 try:
                     files[entry.filename] = archive.read(entry).decode("utf-8")
                 except UnicodeError:

@@ -35,11 +35,13 @@ def worker(tmp_path, monkeypatch):
         db.add(execution)
         db.flush()
         frozen = {**approvals.public_destination(destination), 'ca_digest': hashlib.sha256(b'').hexdigest()}
-        snapshot = {'destination': frozen, 'signing_fingerprint': 'trusted-key'}
+        decided_at = utcnow()
+        snapshot = {'destination': frozen, 'signing_fingerprint': 'trusted-key',
+                    'approval_validity': approvals.release_validity.new_validity(decided_at)}
         row = approvals.CyberApproval(release_key='worker-release', service_id=service.id,
             source_execution_id=execution.id, destination_id=destination.id, variant='current_service',
             status='approved', publish_status='queued', snapshot=snapshot, snapshot_digest=approvals.digest(snapshot),
-            destination=frozen, decision_rationale='Reviewed evidence', decided_by_id=1, decided_at=utcnow(), job_id='job-1')
+            destination=frozen, decision_rationale='Reviewed evidence', decided_by_id=1, decided_at=decided_at, job_id='job-1')
         db.add_all([row, DurableJob(id='job-1', kind='cyber_release_publish', status='running')])
         db.commit()
         identity, destination_id = row.id, destination.id
@@ -146,4 +148,22 @@ def test_reconcile_terminal_worker_without_completed_release(worker, job_status)
             job.status = job_status
         db.commit()
         approvals.reconcile_jobs(db)
+    assert state(worker)[0] == 'failed'
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_worker_refuses_expired_and_legacy_approvals_before_registry_work(worker, legacy):
+    from datetime import timedelta
+    with worker.factory() as db:
+        row = db.get(approvals.CyberApproval, worker.identity)
+        row.decided_at = utcnow() - timedelta(days=3660)
+        snapshot = dict(row.snapshot)
+        snapshot['approval_validity'] = approvals.release_validity.new_validity(row.decided_at)
+        if legacy:
+            snapshot.pop('approval_validity')
+        row.snapshot, row.snapshot_digest = snapshot, approvals.digest(snapshot)
+        db.commit()
+    with pytest.raises(JobError, match='Request Cyber approval again'):
+        approvals.publish_job(worker.ctx, {'approval_id': worker.identity})
+    assert not worker.calls
     assert state(worker)[0] == 'failed'

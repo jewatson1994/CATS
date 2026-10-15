@@ -7,6 +7,15 @@ const node={id:'pod',kind:'Pod',name:'Example',label:'Pod · Example',namespace:
 const layout={node_ids:['pod'],positions:{pod:{x:100,y:100}},edges:[],bounds:{x:0,y:0,width:200,height:200}};
 const data={view:{service:{service_key:'demo',name:'Demo'}},architecture_graph:{nodes:[node],relationships:[],layouts:{all:layout,declared:layout},summary:{nodes:1}},architecture_verification:{state:'DECLARED',label:'Declared'}};
 describe('native architecture',()=>{
+  it('shows Compose declarations and port details without offering Kubernetes validation',()=>{
+    const composeNode={...node,kind:'ComposeService',label:'Service · web',ports:[{name:'Internal only (expose)',port:'9000',protocol:'TCP'}]};
+    render(<Page data={{...data,architecture_graph:{...data.architecture_graph,source:'Declared Compose configuration',nodes:[composeNode]},architecture_verification:{state:'DECLARED',label:'Declared',runtime_supported:false}}}/>);
+    expect(screen.getByText('Declared Compose configuration')).toBeInTheDocument();
+    expect(screen.queryByRole('link',{name:'Run Deployment Validation'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Service · web'}));
+    expect(screen.getByRole('complementary',{name:'Selection details'})).toHaveTextContent('9000/TCP');
+    expect(screen.getByRole('complementary',{name:'Selection details'})).toHaveTextContent('Internal only (expose)');
+  });
   it('supports keyboard selection, layers and zoom/reset controls',()=>{
     render(<Page data={data}/>);
     fireEvent.keyDown(screen.getByRole('button',{name:'Pod · Example'}),{key:'Enter'});

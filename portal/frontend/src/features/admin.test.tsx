@@ -89,6 +89,12 @@ describe('native administration workflows', () => {
     expect(screen.getByText('No matching settings found.')).toBeInTheDocument();
     const signingForm = container.querySelector('form[action="/admin/configuration/signing"]');
     expect(signingForm).toHaveAttribute('enctype', 'multipart/form-data');
+    const lifetime = signingForm?.querySelector('input[name="approval_validity_days"]');
+    expect(lifetime).toHaveValue(90);
+    expect(lifetime).toHaveAttribute('min', '1');
+    expect(lifetime).toHaveAttribute('max', '3650');
+    fireEvent.change(lifetime!, {target: {value: '45'}});
+    expect(new FormData(signingForm as HTMLFormElement).get('approval_validity_days')).toBe('45');
     expect(signingForm?.querySelector('input[name="private_key"]')).toHaveAttribute('type', 'file');
     expect(container.querySelector('form[action="/admin/configuration/repositories"] input[name="verify_tls"][type="hidden"]')).toHaveValue('false');
   });

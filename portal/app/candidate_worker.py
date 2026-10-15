@@ -38,6 +38,32 @@ def validate_request(payload: dict) -> None:
 def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
     """Run available Level 1 tools and keep missing tools explicit."""
     checks = validation["checks"]
+    applicability = validation.get("applicability", {"kubernetes": True, "helm": True, "configuration": True})
+    has_chart = any(candidate_dir.rglob("Chart.yaml"))
+    if has_chart:
+        applicability.update(helm=True, kubernetes=True, configuration=True)
+        for name in ("helm_lint", "helm_template"):
+            if name not in validation["required_checks"]:
+                validation["required_checks"].append(name)
+    if not applicability["kubernetes"]:
+        # Compose and image candidates have no Kubernetes render to validate.
+        # Do not parse Compose YAML as Kubernetes or claim its configuration was rescanned.
+        for name in ("yaml_parsing", "expected_resources", "kubernetes_schema", "helm_lint", "helm_template", "intended_changes"):
+            checks[name] = {"status": "NOT_APPLICABLE", "detail": "No Helm or Kubernetes source is part of this candidate."}
+        if payload.get("render_only"):
+            return validation
+        config_status = "UNAVAILABLE" if applicability.get("configuration") else "NOT_APPLICABLE"
+        detail = ("Candidate configuration was not rescanned. Retained Compose/image configuration findings still require review."
+                  if applicability.get("configuration") else "No deployment configuration is part of this candidate.")
+        for name in ("candidate_security_evidence", "trivy_config_rescan", "cats_policy"):
+            checks[name] = {"status": config_status, "detail": detail}
+        plan.setdefault("after", {}).update(configuration_findings=None,
+            configuration_applicable=bool(applicability.get("configuration")), policy_validation=config_status,
+            helm_render="NOT_APPLICABLE")
+        _image_scan_check(plan, checks)
+        validation["status"] = "PASS" if all(checks[name]["status"] in {"PASS", "NOT_APPLICABLE"}
+                                            for name in validation["required_checks"]) else "FAIL"
+        return validation
     # Planning checks describe the original persisted render. Only this attempt's
     # output can establish these checks for the materialized candidate.
     for name in ("yaml_parsing", "expected_resources", "kubernetes_schema"):
@@ -127,13 +153,20 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
                 (candidate_dir / ".cats-config-scan.json").write_text(result.stdout, encoding="utf-8")
             except (ValueError, TypeError):
                 pass
+    _image_scan_check(plan, checks)
+    plan.setdefault("after", {})["helm_render"] = checks.get("helm_template", {}).get("status", "UNAVAILABLE")
+    validation["status"] = "PASS" if all(checks[name]["status"] in {"PASS", "NOT_APPLICABLE"} for name in validation["required_checks"]) else "FAIL"
+    return validation
+
+
+def _image_scan_check(plan: dict, checks: dict) -> None:
     if not plan.get("images"):
-        checks["vulnerability_rescan"] = {"status": "PASS", "detail": "No image references require vulnerability scanning."}
+        checks["vulnerability_rescan"] = {"status": "NOT_APPLICABLE", "detail": "No image references require vulnerability scanning."}
     elif all(item.get("candidate") and item.get("patch_status") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}
              for item in plan.get("images", [])):
         checks["vulnerability_rescan"] = {"status": "PASS", "detail": "Every staged image completed the existing patch worker's before/after vulnerability scan."}
-    validation["status"] = "PASS" if all(checks[name]["status"] == "PASS" for name in validation["required_checks"]) else "FAIL"
-    return validation
+    else:
+        checks["vulnerability_rescan"] = {"status": "UNAVAILABLE", "detail": "One or more images have no completed patch-worker scan evidence."}
 
 
 

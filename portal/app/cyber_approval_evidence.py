@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import re
 import shutil
@@ -13,11 +14,13 @@ from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
 import yaml
 from sqlalchemy import select
-from .models import (Execution, RemediationExecution, Finding, PolicyFinding,
+from .models import (RemediationExecution, Finding, PolicyFinding,
                      ExceptionRecord, PolicyExceptionRecord, PoamEntry)
 from .deployment_bundle import safe_path, file_digest, dependency_inventory, workload_images
 from .execution_summaries import payload_digest
 from .overview import normalize_overview, parse_image_reference
+from .service_evidence import current_execution
+from .policy_data import review_intelligence_snapshot
 
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 
@@ -99,9 +102,7 @@ def readiness(db, service, variant='current_service', remediation_id=None):
     db.refresh(service)
     blockers = []
     review_notes = []
-    execution = db.scalar(select(Execution).where(Execution.service_id == service.id,
-        Execution.service_version_id == service.current_version_id, Execution.scan_scope == 'service')
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1).execution_options(populate_existing=True)) if service.current_version_id else None
+    execution = current_execution(db, service) if service.current_version_id is not None else None
     result = {'ready': False, 'blockers': blockers, 'execution': execution, 'remediation': None,
               'artifacts': [], 'overview': {}, 'variant': variant, 'review_notes': review_notes,
               'version': service.current_version.version if service.current_version else None,
@@ -109,11 +110,13 @@ def readiness(db, service, variant='current_service', remediation_id=None):
     if variant not in {'current_service', 'cats_remediated'}:
         blockers.append('Unsupported release variant.')
     if execution is None:
-        blockers.append('A service scan for the exact current version is required.')
+        blockers.append('A retained scan for the exact current service version is required.')
         return result
+    if execution.scan_scope == 'image':
+        review_notes.append('Evidence covers the selected image scan only; whole-service configuration and deployment coverage have not been established.')
     payload = json.loads(json.dumps(execution.raw_payload or {}))
     if not execution.complete:
-        blockers.append('The latest service scan is incomplete.')
+        blockers.append('The selected current-version scan is incomplete.')
     if execution.payload_digest and execution.payload_digest != payload_digest(payload):
         blockers.append('Retained scan digest mismatch.')
     if not payload.get('sbom_components'):
@@ -303,6 +306,60 @@ def _package_chart(artifact, path):
             archive.addfile(info, io.BytesIO(content))
 
 
+def _finding_identifiers(findings):
+    """Identifiers from the retained pipeline, Grype and Trivy evidence formats."""
+    rows = list(findings.get('vulnerabilities') or [])
+    for scan in (findings.get('vulnerability_scans') or {}).values():
+        if not isinstance(scan, dict):
+            continue
+        rows.extend(scan.get('matches') or [])
+        for target in scan.get('Results') or []:
+            if isinstance(target, dict):
+                rows.extend(target.get('Vulnerabilities') or [])
+    for row in rows:
+        if isinstance(row, dict):
+            yield row.get('cve') or row.get('finding') or row.get('VulnerabilityID') or (row.get('vulnerability') or {}).get('id') or ''
+
+
+def _service_context(service, readiness):
+    """Small, frozen review context; never borrow baseline topology for a candidate."""
+    from collections import Counter
+    from .architecture import build_architecture_graph, _resource_list
+    from .compose_architecture import compose_services
+
+    if readiness['remediation']:
+        payload = {'service_overview': readiness['overview'],
+                   'rendered_resources': [row for row in yaml.safe_load_all(readiness['rendered'])
+                                          if isinstance(row, dict)]}
+    else:
+        payload = readiness['payload']
+    resources = _resource_list(payload)
+    compose = compose_services(payload)
+    kinds = {item['kind'] for item in readiness['artifacts']}
+    deployment_types = []
+    if compose:
+        deployment_types.append('Docker Compose')
+    if 'chart' in kinds:
+        deployment_types.append('Helm')
+    elif resources:
+        deployment_types.append('Kubernetes manifests')
+    if not deployment_types and 'image' in kinds:
+        deployment_types.append('Container images')
+    architecture = None
+    if resources or compose:
+        graph = build_architecture_graph(payload, layouts=False)
+        architecture = {
+            'components': dict(sorted(Counter(node['kind'] for node in graph['nodes']).items())),
+            'relationships': len(graph['relationships']),
+            'unresolved': len(graph['unresolved']),
+            'incomplete': graph['incomplete'],
+            'basis': 'Declared configuration; runtime reachability is not verified',
+        }
+    return {'description': str(service.description or '').strip()[:600],
+            'owner': str(service.owner or '').strip()[:240],
+            'deployment_types': deployment_types, 'architecture': architecture}
+
+
 def freeze(db, service, auth, readiness, folder: Path):
     if not readiness['ready'] or readiness['blockers']:
         raise ValueError('Approval evidence is not ready')
@@ -321,12 +378,15 @@ def freeze(db, service, auth, readiness, folder: Path):
         'service_id': service.id, 'service_key': service.service_key, 'version': service.current_version.version,
         'source_execution_id': execution.id, 'source_version_id': execution.service_version_id,
         'scan_date': execution.scanned_at.isoformat(), 'overview': readiness['overview'],
-        'evidence_scope': 'remediation-candidate' if record else 'current-service-scan',
+        'evidence_scope': 'remediation-candidate' if record else f'current-{execution.scan_scope}-scan',
         'review_notes': readiness['review_notes'],
+        'service_context': _service_context(service, readiness),
         'findings': {'summary': record.after_snapshot, 'configuration': readiness['candidate_config_scan'],
                      'vulnerability_scans': readiness['candidate_vulnerability_scans']} if record else {'vulnerabilities': readiness['payload'].get('findings', []), 'configuration': readiness['payload'].get('policy_findings', [])},
         'mitigations': [_row(row) for row in db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id))],
         'exceptions': exceptions, 'remediation': _row(record) if record else None, 'artifacts': []}
+    snapshot['risk_intelligence'] = review_intelligence_snapshot(
+        _finding_identifiers(snapshot['findings']), datetime.now(timezone.utc).isoformat())
     snapshot = json.loads(_json(snapshot))
     snapshot['source_payload_digest'] = payload_digest(readiness['payload'])
     for index, item in enumerate(readiness['artifacts']):

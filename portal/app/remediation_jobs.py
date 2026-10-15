@@ -13,6 +13,19 @@ from .durable_jobs import DurableJob, submit
 
 worker_context = ContextVar("remediation_worker_context", default=None)
 
+# Bump whenever planning semantics change; persisted previews must not survive
+# changes to the decisions or evidence that a user is asked to approve.
+PLAN_REVISION = 1
+PLAN_REVIEW_REQUIRED = "The remediation planner has changed. Open Remediate from the service to review and confirm a new plan."
+PLAN_CHANGED = "The retained source or remediation plan no longer matches your confirmation. Open Remediate from the service to review and confirm a new plan."
+
+
+class PlanReviewRequired(ValueError):
+    """Only fixed, safe review guidance may be exposed in job diagnostics."""
+
+    def __init__(self, *, revision=False):
+        super().__init__(PLAN_REVIEW_REQUIRED if revision else PLAN_CHANGED)
+
 
 def check_worker():
     context = worker_context.get()
@@ -38,9 +51,9 @@ def request_plan(db, service, actor_id, finding_type=None, finding_id=None, prev
     source = _source(db, service.id)
     # Exact execution and finding scope: previews share the service plan's worker
     # result, never a second synchronous planner or an unbound newer snapshot.
-    payload = {"source_execution_id": source.id, "source_version_id": source.service_version_id,
+    payload = {"planner_revision": PLAN_REVISION, "source_execution_id": source.id, "source_version_id": source.service_version_id,
                "finding_type": finding_type, "finding_id": finding_id}
-    key = f"plan:{service.id}:{actor_id}:{source.id}:{source.payload_digest}:{finding_type}:{finding_id}"
+    key = f"plan:v{PLAN_REVISION}:{service.id}:{actor_id}:{source.id}:{source.payload_digest}:{finding_type}:{finding_id}"
     job = submit(db, kind="remediation_plan", payload=payload, service_id=service.id,
         requested_by_id=actor_id, source_execution_id=source.id, dedupe_key=key)
     state = {"job_id": job.id, "status": job.status, "stage": job.stage,
@@ -65,9 +78,11 @@ def confirmed_plan(db, service, source_id, digest, finding_type, finding_id):
         if (payload.get("finding_type"), payload.get("finding_id"), payload.get("source_version_id")) != (finding_type, finding_id, source.service_version_id):
             continue
         plan = (job.result or {}).get("plan") or {}
+        if payload.get("planner_revision") != PLAN_REVISION or plan.get("planner_revision") != PLAN_REVISION:
+            continue
         if plan.get("source_execution_id") == source_id:
             return source, plan
-    raise HTTPException(409, "The completed source plan is unavailable or does not match this confirmation; rebuild it")
+    raise HTTPException(409, "The completed source plan is unavailable or has changed. Open Remediate from the service to review and confirm a new plan.")
 
 
 def enqueue_record(db, record, kind, attempt_id=None, requested_by_id=None):

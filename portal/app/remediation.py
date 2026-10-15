@@ -312,18 +312,38 @@ def _classify_resource_patch(resource: dict[str, Any], payload: dict[str, Any], 
             "source_mapping": mapping, **patch}
 
 
+def validation_applicability(payload: dict[str, Any]) -> dict[str, bool]:
+    """Determine source checks from retained evidence, never from render success."""
+    overview = payload.get("service_overview") or {}
+    files = payload.get("helm_source_files") or payload.get("source_files") or {}
+    kind = str(payload.get("artifact_type") or "helm").lower()
+    helm = (kind == "helm" or any(str(path).replace("\\", "/").endswith("Chart.yaml") for path in files)
+            or bool(payload.get("skipped_charts")))
+    compose = kind == "compose" or bool(overview.get("compose"))
+    kubernetes = helm or kind in {"kubernetes", "manifest", "raw"} or bool(rendered_resources(payload))
+    return {"helm": helm, "kubernetes": kubernetes, "compose": compose,
+            "configuration": kubernetes or compose}
+
+
 def snapshot(payload: dict[str, Any], findings: list[Any]) -> dict[str, Any]:
-    severities = {name: 0 for name in ("Critical", "High", "Medium", "Low", "Unknown")}
+    severities = {name: 0 for name in ("Critical", "High", "Medium", "Low", "Negligible", "Unknown")}
     vulnerability_rows = [item for item in _list(payload.get("findings")) if isinstance(item, dict)]
     for finding in vulnerability_rows:
         severity = str(finding.get("severity", "Unknown") or "Unknown").title()
         severities[severity if severity in severities else "Unknown"] += 1
     resources = rendered_resources(payload)
-    images = sorted({str(container.get("image")) for item in resources for container in _containers(item) if container.get("image")})
+    images = {str(container.get("image")) for item in resources for container in _containers(item) if container.get("image")}
+    images.update(str(item["image"]) for item in vulnerability_rows if item.get("image"))
+    from .compose_architecture import compose_services
+    images.update(str(item["image"]) for item in compose_services(payload) if item.get("image"))
+    applicability = validation_applicability(payload)
+    configuration_applicable = applicability["configuration"] or bool(findings)
     return {"vulnerabilities": severities, "kev": sum(bool(item.get("kev")) for item in vulnerability_rows),
-            "configuration_findings": len(findings), "images": len(images),
+            "configuration_findings": len(findings) if configuration_applicable else None, "images": len(images),
+            "configuration_applicable": configuration_applicable,
             "resources": len(resources), "resource_identities": sorted(resource_identity(item) for item in resources),
-            "helm_render": "PASS" if resources else "FAIL", "policy_validation": "FAIL" if findings else "PASS",
+            "helm_render": ("PASS" if resources else "FAIL") if applicability["helm"] else "NOT_APPLICABLE",
+            "policy_validation": ("FAIL" if findings else "PASS") if configuration_applicable else "NOT_APPLICABLE",
             "deployment_validation": "NOT RUN"}
 
 
@@ -444,9 +464,9 @@ def build_plan(payload: dict[str, Any], findings: list[Any], job_key: str) -> di
     after = deepcopy(before)
     applied = [item for item in changes if item["classification"] == AUTO]
     # Planning cannot prove resolution. Only the candidate's actual rescan can.
-    forecast = max(0, before["configuration_findings"] - len(applied))
+    forecast = max(0, before["configuration_findings"] - len(applied)) if before["configuration_findings"] is not None else None
     after["configuration_findings"] = None
-    after["policy_validation"] = "NOT RUN"
+    after["policy_validation"] = "NOT RUN" if before["configuration_applicable"] else "NOT_APPLICABLE"
     return {"schema_version": "1.0", "job_id": job_key, "before": before, "after": after,
             "forecast_configuration_findings": forecast,
             "configuration_changes": changes, "changed_artifacts": _changed_artifacts(changes),
@@ -638,11 +658,23 @@ def static_validation(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str
         "cats_policy": {"status": plan["after"]["policy_validation"]},
     }
     required = ["yaml_parsing", "expected_resources", "image_references", "source_mapping", "kubernetes_schema", "cats_policy", "trivy_config_rescan"]
-    if str(payload.get("artifact_type") or "helm").lower() == "helm":
+    applicability = validation_applicability(payload)
+    applicability["configuration"] |= bool(plan["before"].get("configuration_applicable"))
+    if applicability["helm"]:
         required.extend(("helm_lint", "helm_template"))
+    else:
+        for name in ("helm_lint", "helm_template"):
+            checks[name] = {"status": "NOT_APPLICABLE", "detail": "No Helm chart is part of this candidate."}
+    if not applicability["kubernetes"]:
+        for name in ("yaml_parsing", "expected_resources", "kubernetes_schema"):
+            checks[name] = {"status": "NOT_APPLICABLE", "detail": "No Kubernetes deployment source is part of this candidate."}
+    if not applicability["configuration"]:
+        for name in ("trivy_config_rescan", "cats_policy"):
+            checks[name] = {"status": "NOT_APPLICABLE", "detail": "No deployment configuration is part of this candidate."}
     if plan.get("images"):
         required.append("vulnerability_rescan")
-    return {"level": "STATIC", "status": "PASS" if all(checks[key]["status"] == "PASS" for key in required) else "FAIL",
+    return {"level": "STATIC", "applicability": applicability,
+            "status": "PASS" if all(checks[key]["status"] in {"PASS", "NOT_APPLICABLE"} for key in required) else "FAIL",
             "required_checks": required, "checks": checks, "deployment": {"status": "NOT RUN", "detail": "No validation cluster was configured."}}
 
 
@@ -754,6 +786,8 @@ def candidate_files(payload: dict[str, Any], plan: dict[str, Any]) -> dict[str, 
                                           change.get("new_value", MISSING))
     manifests = [{key: value for key, value in item.items() if not key.startswith("_cats_")}
                  for item in resources]
+    if not manifests:
+        return {}
     files = {"remediated-manifests.yaml": "---\n" + "\n---\n".join(yaml.safe_dump(item, sort_keys=False).strip() for item in manifests) + "\n"}
     assert_sources_safe(files)
     return files
@@ -791,10 +825,13 @@ def versioned_charts(files: dict[str, str], job_key: str) -> tuple[dict[str, str
     return updated, charts
 
 
-def summarize_grype_reports(reports: list[dict], risk_lookup) -> dict:
-    """Summarize fresh full Grype reports without mutating service findings."""
+def summarize_grype_reports(reports: list[dict], risk_lookup, *, observations: bool = False) -> dict:
+    """Count unique CVEs by default, or package/image match observations for comparisons."""
     severity_order = {"Unknown": 0, "Low": 1, "Medium": 2, "High": 3, "Critical": 4}
+    if observations:
+        severity_order = {"Unknown": 0, "Negligible": 1, "Low": 2, "Medium": 3, "High": 4, "Critical": 5}
     by_cve: dict[str, str] = {}
+    rows: list[tuple[str, str]] = []
     for report in reports:
         if not isinstance(report, dict) or not isinstance(report.get("matches"), list):
             raise ValueError("Vulnerability scan has no completed matches evidence")
@@ -808,15 +845,20 @@ def summarize_grype_reports(reports: list[dict], risk_lookup) -> dict:
             severity = str(vulnerability.get("severity") or "Unknown").title()
             if severity not in severity_order:
                 severity = "Unknown"
+            rows.append((cve, severity))
             if severity_order[severity] > severity_order.get(by_cve.get(cve, "Unknown"), 0):
                 by_cve[cve] = severity
             else:
                 by_cve.setdefault(cve, severity)
-    counts = {name: sum(value == name for value in by_cve.values()) for name in severity_order}
+    counted_rows = rows if observations else list(by_cve.items())
+    counts = {name: sum(value == name for _, value in counted_rows) for name in severity_order}
     risks = {cve: risk_lookup(cve) for cve in by_cve}
-    return {"vulnerabilities": counts, "kev": sum(bool(kev) for kev, _ in risks.values()),
+    summary = {"vulnerabilities": counts, "kev": sum(bool(risks[cve][0]) for cve, _ in counted_rows),
             "epss_max": max((score for _, score in risks.values() if score is not None), default=None),
             "cve_count": len(by_cve)}
+    if observations:
+        summary["vulnerability_observations"] = len(rows)
+    return summary
 
 
 def summarize_configuration_report(report: dict) -> dict:

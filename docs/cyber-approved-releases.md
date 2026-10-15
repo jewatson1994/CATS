@@ -14,6 +14,10 @@ Container tags are accepted without requiring a manually supplied digest. When t
 
 ## Review and decide
 
+Select a severity bar to see the top five container images ranked by finding observations for that severity and filter the findings table. Select a container in that ranking to filter the table to its exact image reference, together with the other active filters. Select it again or use **Clear container filter** to remove that filter. Repeated package or scanner observations count separately; this is not a count of unique CVEs or running containers. The ranking uses the complete retained snapshot, independent of the table's search and risk filters. Observations without an image are reported separately.
+
+New requests freeze KEV/EPSS lookups from the portal's installed intelligence catalogs together with the KEV catalog version/release date and EPSS model version/score date. The review shows when this intelligence was captured at request submission; these are review-time datasets, not a claim about the original scanner's feed versions. Later feed refreshes do not change a submitted review. Original scan results remain intact, and `frozen-snapshot.json` in the evidence ZIP includes the review intelligence. Missing or invalid catalogs produce unknown intelligence, not a negative result. Older requests retain their original values and show dataset provenance as not recorded; CATS does not backfill them from today's feeds. No new environment settings are required.
+
 The top-level **Approvals** queue lists pending, approved, and denied requests. Open a request to inspect its artifacts, findings, mitigations, exceptions, remediation provenance, coverage and verification notes, destination, and complete snapshot. Cyber can approve images with remaining vulnerabilities. Authorized reviewers must enter a rationale when approving or denying. Destination and signing identity are bound before approval; these publication settings must be available to approve. Denial does not require publication setup. Approval does not mean that registry publication has succeeded.
 
 ## Retrieve a release
@@ -43,7 +47,7 @@ Administrators with release destination permission use **Administration → Rele
 
 Configure a reachable OCI registry and credentials permitted to publish into the selected namespace. Keep source-registry credentials and CA trust configured so the worker can retrieve all approved artifacts. Configure the global Cosign signing key before Cyber approves publication, and distribute its trusted public-key fingerprint independently to consumers. Restrict destination groups to the intended services and assign `approval.request`, `approval.decide`, and `release.destination.manage` separately; requesting a snapshot also requires service export access. Catalog reading uses service viewing access, while retained downloads require service export access.
 
-Publication runs as a durable job on the existing **remediation-worker**. Rebuild and upgrade the portal and workers together so they use the same application version; this feature needs no additional Compose services or Compose changes. Keep the existing durable database and artifact storage volumes. Inspect the release publication error and retry the same snapshot after correcting registry, signing, or worker availability issues.
+Publication runs as a durable job on the existing **remediation-worker**. Rebuild and upgrade the portal and workers together so they use the same application version; this feature needs no additional Compose services. Keep the existing durable database and artifact storage volumes. Inspect the release publication error and retry the same snapshot after correcting registry, signing, or worker availability issues.
 
 Approval history preserves service and account provenance. Services and accounts referenced by approval records cannot be deleted; archive a service or disable an account instead.
 
@@ -52,3 +56,30 @@ Request and decision permissions are separate. The server checks service/group a
 ## Frontend integration
 
 Page envelopes use `cyber_approvals`, `approved_releases`, and `approved_release_destinations`. Their routes are `/cyber-approvals`, `/approved-releases`, and `/admin/approved-release-destinations`. Detail pages use `?id=`, and service links use `?service=`. JSON mutations use the existing same-origin request helper and `X-CSRF-Token` header. Service readiness and request creation are refreshed from the server before review.
+
+## Approval expiry
+
+New Cyber approvals expire **90 days after the approval decision** by default. Administrators can change **Settings → Image signing (Cosign) → Cyber approval lifetime (days)** to any whole number from 1 to 3650 and save the signing configuration. This setting can be saved before keys are uploaded, survives key rotation/removal, and takes effect without restarting services. Existing signing keys are preserved when only the lifetime changes.
+
+The saved setting takes precedence over `CATS_CYBER_APPROVAL_VALIDITY_DAYS`, which remains an optional deployment default until a lifetime is saved in Settings. If neither is configured, CATS uses 90 days. No Compose or `.env` edit, database migration, or additional service is required for the Settings control; deploy the updated portal image to expose it.
+
+Changes affect **future approvals only**. The duration is frozen when Cyber approves; retrying publication, re-signing during a retry, downloading, or copying to another OCI never renews it. Request and approve a new snapshot to renew authorization.
+
+Approved Releases displays the expiry and distinguishes valid, expiring soon (within seven days), expired, revoked, and reapproval-required releases. Expired releases cannot be published or retried. Their historical evidence and downloads remain available for audit. Previously signed releases without a signed expiry require new Cyber approval; CATS does not invent an expiry for an old signature. Previously downloaded verification scripts are not updated retroactively.
+
+The signed release manifest contains `approval.approved_at`, `approval.expires_at`, and `approval.validity_days`. Each published image, Helm chart, and release artifact also carries these signed Cosign annotations:
+
+- `io.cats.approval.type`: `cyber-approved-v1`
+- `io.cats.approval.release`: the release key
+- `io.cats.approval.approved-at`: the UTC approval timestamp
+- `io.cats.approval.expires-at`: the UTC expiry timestamp
+
+The offline verifier/importer validates the manifest signatures, requires matching signed dates on every artifact, and rejects a missing, malformed, future, or expired window using the importing system's UTC clock. It rechecks during import; if expiry occurs mid-import, already copied artifacts can remain but authorization is not extended. Exact-byte OCI transfers preserve the signatures and dates. The evidence ZIP's detached signature remains useful for historical integrity; deployment authorization comes from the signed release manifest and artifact annotations.
+
+### Enforce expiry in a consuming cluster
+
+Cryptographic signatures remain verifiable after authorization expires. A generic `cosign verify` or a cluster rule that only requires a trusted signature does **not** reject an expired approval. Consumers must enforce the signed window against a trustworthy local clock. Expiry does not delete registry content, evict running Pods, or propagate later revocations into disconnected systems.
+
+An optional [Kyverno policy example](../templates/kyverno-cyber-approval-expiry.yaml) verifies the signed annotations and checks the date at admission. It is not installed by CATS. Replace its public-key placeholder with your independently trusted CATS public key, configure registry authentication and CA trust, disable the Kyverno admission controller image-verification cache (`--imageVerifyCacheEnabled=false`), and test against your installed Kyverno version before rollout. Namespace labels selecting enforcement must be controlled by cluster administrators. Put the release key and exact signed timestamps on Pod metadata (for Deployments, `spec.template.metadata.annotations`). The example requires every image in a Pod, including sidecars, to have approval for the same release/window. It checks Pod creation and updates; already running workloads are not automatically stopped.
+
+The example follows Kyverno's [signed annotation verification](https://kyverno.io/docs/policy-types/cluster-policy/verify-images/sigstore/) and [time comparison functions](https://kyverno.io/docs/policy-types/cluster-policy/jmespath/). Both signature binding and time validation are required: trusting an unsigned Pod expiry annotation by itself would let a deployer extend the deadline.

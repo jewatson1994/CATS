@@ -10,7 +10,7 @@ class ArchitectureValueTruth(FunctionElement):
     inherit_cache = False
 
     def __init__(self, payload, path):
-        if path not in {"service_overview.rendered_resources", "rendered_resources", "helm_source_files", "policy_findings"}:
+        if path not in {"service_overview.rendered_resources", "rendered_resources", "helm_source_files", "service_overview.compose.services", "policy_findings"}:
             raise ValueError("Unsupported architecture path")
         self.path = path
         super().__init__(payload)
@@ -40,7 +40,7 @@ def _truth_postgres(element, compiler, **kw):
 
 def architecture_execution_query(service_id):
     eligible = or_(*(ArchitectureValueTruth(Execution.raw_payload, path) for path in
-        ("service_overview.rendered_resources", "rendered_resources", "helm_source_files")))
+        ("service_overview.rendered_resources", "rendered_resources", "helm_source_files", "service_overview.compose.services")))
     # Legacy max(timestamp) keeps the first relationship row for tied scans.
     return select(Execution).where(Execution.service_id == service_id, eligible).order_by(
         Execution.scanned_at.desc(), Execution.id.asc()).limit(1)

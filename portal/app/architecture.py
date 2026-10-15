@@ -536,6 +536,17 @@ def _build_architecture_graph(payload: dict[str, Any] | None, runtime_evidence: 
         for node in nodes:
             if node.get("kind") == kind and node.get("name") == name:
                 node.setdefault("capability_evidence", []).append({"capability": capability.get("capability"), "status": capability.get("status"), "explanation": capability.get("explanation")})
+    from .compose_architecture import compose_architecture, compose_services
+    compose = compose_architecture(payload)
+    has_compose = bool(compose_services(payload))
+    node_by_id = {node["id"]: node for node in nodes}
+    for node in compose["nodes"]:
+        if node["id"] in node_by_id:
+            node_by_id[node["id"]]["evidence"].extend(node["evidence"])
+        else:
+            nodes.append(node)
+            node_by_id[node["id"]] = node
+    relationships.extend(compose["relationships"])
     for relationship in relationships:
         relationship["provenance"] = "INFERRED" if relationship.get("classification") == "INFERRED" else "DECLARED"
         if relationship["provenance"] != "INFERRED" and relationship.get("source") in observed_node_ids and relationship.get("target") in observed_node_ids:
@@ -553,17 +564,25 @@ def _build_architecture_graph(payload: dict[str, Any] | None, runtime_evidence: 
     unresolved = [{"node_id": node["id"], "reason": "No relationship could be established from supplied evidence"}
                   for node in nodes if node["id"] in node_ids - connected]
     warnings = list(overview.get("missing_evidence", [])) + list(overview.get("warnings", []))
-    if not resources:
+    warnings.extend(compose["warnings"])
+    graph_ports = list(overview.get("ports", []))
+    for port in compose["ports"]:
+        if port not in graph_ports:
+            graph_ports.append(port)
+    if not resources and not has_compose:
         warnings.append({"type": "Rendered resources", "item": "Kubernetes resources", "reason": "No rendered Kubernetes resources were supplied", "source_file": "—"})
-    graph = {"schema_version": "1.1", "incomplete": bool(warnings or not resources), "source": overview.get("source", "Rendered Helm/Kubernetes evidence"),
+    source = "Declared Compose configuration" if has_compose else overview.get("source", "Rendered Helm/Kubernetes evidence")
+    if has_compose and resources:
+        source = "Rendered Helm/Kubernetes and declared Compose configuration"
+    graph = {"schema_version": "1.1", "incomplete": bool(warnings or not (resources or has_compose)), "source": source,
             "nodes": nodes, "relationships": relationships, "unresolved": unresolved, "warnings": warnings,
             "summary": {"nodes": len(nodes), "relationships": len(relationships), "unresolved": len(unresolved), "warnings": len(warnings),
-                        "ports": len(overview.get("ports", [])),
+                        "ports": len(graph_ports),
                         "declared": sum(node.get("provenance") in {"DECLARED", "DECLARED_AND_OBSERVED"} for node in nodes),
                         "runtime_verified": sum(node.get("provenance") == "DECLARED_AND_OBSERVED" for node in nodes),
                         "differences": sum(node.get("provenance") == "OBSERVED" or (
                             node.get("provenance") == "DECLARED" and node.get("kind") not in {"ContainerImage", "ExternalEndpoint"}
-                        ) for node in nodes)}, "ports": overview.get("ports", [])}
+                        ) for node in nodes)}, "ports": graph_ports}
     logger.info("Architecture normalization complete: resources=%d nodes=%d relationships=%d unresolved=%d warnings=%d ports=%d",
                 len(resources), len(nodes), len(relationships), len(unresolved), len(warnings), len(overview.get("ports", [])))
     return graph

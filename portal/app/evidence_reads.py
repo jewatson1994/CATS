@@ -60,7 +60,7 @@ def execution_metadata(db, service_id, *, execution_ids=None) -> list[SimpleName
     flags = {}
     if stale:
         has_architecture = or_(*(ArchitectureValueTruth(Execution.raw_payload, path) for path in
-                                 ("service_overview.rendered_resources", "rendered_resources", "helm_source_files")))
+                                 ("service_overview.rendered_resources", "rendered_resources", "helm_source_files", "service_overview.compose.services")))
         helm_original = helm_original_expression(db.get_bind().dialect.name)
         for row in db.execute(select(Execution.id, has_architecture, helm_original)
                               .where(member_of(Execution.id, stale, numeric=True))):

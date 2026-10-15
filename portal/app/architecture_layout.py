@@ -31,15 +31,15 @@ def _label_size(label: str) -> tuple[float, float]:
     lines = label_lines(label)
     return max(26.0, max(map(len, lines)) * 6.2 + 10), len(lines) * 16.0 + 4
 
-WORKLOADS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod", "ReplicaSet"}
+WORKLOADS = {"Deployment", "StatefulSet", "DaemonSet", "Job", "CronJob", "Pod", "ReplicaSet", "ComposeService"}
 FLOW_KINDS = WORKLOADS | {"ExternalEndpoint", "Ingress", "Gateway", "Service"}
-NETWORK_KINDS = FLOW_KINDS | {"NetworkPolicy"}
+NETWORK_KINDS = FLOW_KINDS | {"NetworkPolicy", "ComposeNetwork"}
 VIEW_KINDS = {
     "flow": FLOW_KINDS,
     "network": NETWORK_KINDS,
     "containers": WORKLOADS | {"ContainerImage"},
-    "configuration": WORKLOADS | {"ConfigMap", "Secret"},
-    "storage": WORKLOADS | {"PersistentVolumeClaim"},
+    "configuration": WORKLOADS | {"ConfigMap", "Secret", "ComposeConfig", "ComposeSecret"},
+    "storage": WORKLOADS | {"PersistentVolumeClaim", "ComposeVolume", "BindMount"},
 }
 VIEW_LABELS = {
     "containers": {"runs"},

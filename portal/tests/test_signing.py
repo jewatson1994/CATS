@@ -353,3 +353,55 @@ def test_saved_key_with_changed_encryption_key_explains_repair(keys, monkeypatch
     with pytest.raises(ValueError, match="CATS_CONFIG_ENCRYPTION_KEY") as error:
         signing.job_material({"image_signing": json.dumps(saved)}, "push")
     assert "TEST-PRIVATE" not in str(error.value) and "key-password" not in str(error.value)
+
+
+def test_signed_approval_annotations_are_verified_with_same_values(keys, monkeypatch):
+    config, credentials = material(keys)
+    config['approval_annotations'] = {'io.cats.approval.expires-at':'2026-12-01T00:00:00+00:00',
+                                      'io.cats.approval.type':'cyber-approved-v1'}
+    calls = []
+    def command(args, env):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, '{}', '')
+    monkeypatch.setattr(signing, '_command', command)
+    assert signing.sign_and_verify(REFERENCE, config, credentials, {})['signature_status'] == 'verified'
+    for operation in ['sign', 'verify']:
+        args = next(args for args in calls if args[1] == operation)
+        for key, value in config['approval_annotations'].items():
+            assert args[args.index(key + '=' + value) - 1] == '-a'
+
+
+def test_admin_saves_lifetime_without_keys_and_preserves_it_on_key_changes(keys, monkeypatch):
+    from app import release_validity
+    monkeypatch.setenv(release_validity.SETTING, '90')
+    client = new_client()
+    def save(**values):
+        return client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), **values}, follow_redirects=False)
+    assert save(approval_validity_days='45').status_code == 303
+    page = client.get('/admin/configuration', headers={'Accept': 'application/vnd.cats.page+json'})
+    assert page.json()['data']['signing']['approval_validity_days'] == 45
+    assert not page.json()['data']['signing']['configured']
+    response = client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), 'enabled': 'true'},
+                           files={'private_key': ('cosign.key', PRIVATE)}, follow_redirects=False)
+    assert response.status_code == 303
+    with SessionLocal() as db:
+        original = json.loads(db.scalar(select(PortalSetting.value).where(PortalSetting.key == signing.SETTING)))
+    assert save(approval_validity_days='60', enabled='true').status_code == 303
+    with SessionLocal() as db:
+        saved = json.loads(db.scalar(select(PortalSetting.value).where(PortalSetting.key == signing.SETTING)))
+        assert saved['private_key'] == original['private_key']
+        assert release_validity.configured_days(main.get_global_configuration(db)) == 60
+    assert save(action='remove').status_code == 303
+    with SessionLocal() as db:
+        assert release_validity.configured_days(main.get_global_configuration(db)) == 60
+
+
+@pytest.mark.parametrize('value', ['0', '3651', '-1', '1.5', 'ninety'])
+def test_admin_rejects_invalid_lifetime_without_mutating_settings(value):
+    from app import release_validity
+    client = new_client()
+    response = client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), 'approval_validity_days': value})
+    assert response.status_code == 400
+    with SessionLocal() as db:
+        assert db.scalar(select(PortalSetting).where(PortalSetting.key == release_validity.PORTAL_SETTING)) is None
+        assert db.scalar(select(PortalSetting).where(PortalSetting.key == signing.SETTING)) is None

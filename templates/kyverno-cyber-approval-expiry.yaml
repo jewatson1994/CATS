@@ -1,0 +1,60 @@
+# Example only: review against your installed Kyverno version before applying.
+# Configure Kyverno admission controller with --imageVerifyCacheEnabled=false.
+# Apply to namespaces labelled cats-approval-enforced=true by a cluster admin.
+# Add matching annotations to Pod metadata (workload spec.template.metadata).
+# All images in a Pod must have a signature for the same release and window.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: cats-current-cyber-approval
+  annotations:
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+    timeoutSeconds: 30
+  rules:
+    - name: verify-cats-approval-signature
+      match: &protectedPods
+        any:
+          - resources:
+              kinds: [Pod]
+              operations: [CREATE, UPDATE]
+              namespaceSelector:
+                matchLabels:
+                  cats-approval-enforced: 'true'
+      verifyImages:
+        - imageReferences: ['*']
+          failureAction: Enforce
+          required: true
+          mutateDigest: true
+          verifyDigest: true
+          attestors:
+            - count: 1
+              entries:
+                - keys:
+                    publicKeys: |-
+                      REPLACE_WITH_INDEPENDENTLY_TRUSTED_CATS_PUBLIC_KEY_PEM
+                  annotations:
+                    io.cats.approval.type: cyber-approved-v1
+                    io.cats.approval.release: '{{ request.object.metadata.annotations."io.cats.approval.release" || `""` }}'
+                    io.cats.approval.approved-at: '{{ request.object.metadata.annotations."io.cats.approval.approved-at" || `""` }}'
+                    io.cats.approval.expires-at: '{{ request.object.metadata.annotations."io.cats.approval.expires-at" || `""` }}'
+    - name: require-current-approval-window
+      match: *protectedPods
+      validate:
+        failureAction: Enforce
+        message: A current signed CATS Cyber approval is required. Request Cyber approval again after expiry.
+        deny:
+          conditions:
+            any:
+              - key: '{{ request.object.metadata.annotations."io.cats.approval.release" || `""` }}'
+                operator: Equals
+                value: ''
+              - key: '{{ time_before(time_now_utc(), request.object.metadata.annotations."io.cats.approval.expires-at" || `""`) }}'
+                operator: NotEquals
+                value: true
+              - key: '{{ time_before(time_now_utc(), request.object.metadata.annotations."io.cats.approval.approved-at" || `""`) }}'
+                operator: Equals
+                value: true

@@ -13,7 +13,7 @@ from test_portal import setup_function, new_client, payload, pipeline_headers, S
 D = 'sha256:' + 'a' * 64
 
 
-def seeded():
+def seeded(scan_scope='service'):
     client = new_client()
     body = payload('approval-source', datetime.now(timezone.utc), ['CVE-1'])
     body['helm_source_files'] = {'app/Chart.yaml': 'apiVersion: v2\nname: app\nversion: 1.0.0\n',
@@ -26,6 +26,9 @@ def seeded():
         'charts': [{'name': 'app', 'version': '1.0.0'}],
         'rendered_resources': [{'apiVersion': 'v1', 'kind': 'Pod', 'metadata': {'name': 'app'},
             'spec': {'containers': [{'name': 'app', 'image': 'registry.example/app:1'}]}}]}
+    body['scan_scope'] = scan_scope
+    if scan_scope == 'image':
+        body['scope_image'] = 'registry.example/app:1'
     assert client.post('/api/v1/pipeline-results', json=body, headers=pipeline_headers).status_code == 201
 
 
@@ -39,22 +42,68 @@ def fake_export(output, service, db, auth):
 def test_ready_uses_exact_scan_and_preserves_chart_values_and_inventory(tmp_path, monkeypatch):
     seeded()
     monkeypatch.setattr('app.service_exports.write_all', fake_export)
+    intelligence = {'basis': 'approval-request', 'captured_at': 'request-time',
+        'kev': {'state': 'LOADED', 'metadata': {'catalog_version': 'test-version'}},
+        'findings': {'CVE-1': {'kev': True, 'epss': .5}}}
+    def capture(identifiers, captured_at):
+        assert set(identifiers) == {'CVE-1'}
+        assert datetime.fromisoformat(captured_at).tzinfo is not None
+        return intelligence
+    monkeypatch.setattr(evidence, 'review_intelligence_snapshot', capture)
     with SessionLocal() as db:
         service = db.scalar(select(Service))
+        service.description = 'Internal reporting service'
+        service.owner = 'Platform team'
+        db.flush()
         ready = evidence.readiness(db, service)
         assert ready['ready'], ready['blockers']
         assert not any('Image identity was not retained' in note for note in ready['review_notes'])
         snapshot = evidence.freeze(db, service, SimpleNamespace(), ready, tmp_path)
+        assert snapshot['service_context']['description'] == 'Internal reporting service'
+        assert snapshot['service_context']['owner'] == 'Platform team'
+        assert snapshot['service_context']['deployment_types'] == ['Helm']
+        assert snapshot['service_context']['architecture']['components']['Pod'] == 1
+        service.description = 'Changed after submission'
+        assert snapshot['service_context']['description'] == 'Internal reporting service'
         assert snapshot['artifacts'][0]['reference'] == 'registry.example/app@' + D
         assert snapshot['evidence']['digest'] == evidence.file_digest(snapshot['evidence']['path'])
         with ZipFile(snapshot['evidence']['path']) as archive:
             assert archive.read('findings.xlsx') == b'workbook fixture'
             assert archive.read('chart-sources/app/values.yaml') == b'replicaCount: 2\n'
             assert json.loads(archive.read('scan-values-files.json')) == ['app/values.yaml']
+            assert json.loads(archive.read('frozen-snapshot.json'))['risk_intelligence'] == intelligence
+            assert json.loads(archive.read('frozen-snapshot.json'))['service_context'] == snapshot['service_context']
         import tarfile
         with tarfile.open(snapshot['artifacts'][1]['path']) as archive:
             assert archive.extractfile('app/values.yaml').read() == b'replicaCount: 2\n'
         assert snapshot['findings']['vulnerabilities'][0]['cve'] == 'CVE-1'
+        assert snapshot['risk_intelligence'] == intelligence
+
+
+@pytest.mark.parametrize('candidate', [False, True])
+def test_service_context_uses_only_selected_variant_architecture(candidate):
+    retained = {'service_overview': {'compose': {'services': [
+        {'name': 'api', 'image': 'harbor.test/api:1', 'configuration': {
+            'depends_on': ['db'], 'environment': {'PASSWORD': 'never-retain-this'}}},
+        {'name': 'db', 'image': 'postgres:16', 'configuration': {}},
+    ]}}}
+    ready = {'remediation': object() if candidate else None, 'payload': retained,
+             'overview': {}, 'rendered': '', 'artifacts': [{'kind': 'image'}]}
+    context = evidence._service_context(SimpleNamespace(description=None, owner=None), ready)
+    assert 'never-retain-this' not in json.dumps(context)
+    if candidate:
+        assert context['deployment_types'] == ['Container images']
+        assert context['architecture'] is None
+    else:
+        assert context['deployment_types'] == ['Docker Compose']
+        assert context['architecture']['components']['ComposeService'] == 2
+        assert context['architecture']['relationships'] > 0
+
+
+def test_review_identifiers_include_candidate_grype_and_trivy_findings():
+    findings = {'vulnerability_scans': {'app': {'matches': [{'vulnerability': {'id': 'CVE-G'}}]},
+        'db': {'Results': [{'Vulnerabilities': [{'VulnerabilityID': 'CVE-T'}]}]}}}
+    assert set(evidence._finding_identifiers(findings)) == {'CVE-G', 'CVE-T'}
 
 
 @pytest.mark.parametrize('mutation,expected', [
@@ -81,13 +130,14 @@ def test_missing_or_mismatched_evidence_blocks(mutation, expected):
         assert expected.lower() in ' '.join(result['blockers']).lower(), result['blockers']
 
 
-def test_newer_incomplete_scan_does_not_fall_back_to_older_complete():
-    seeded()
+@pytest.mark.parametrize('scan_scope', ['service', 'image'])
+def test_newer_incomplete_scan_does_not_fall_back_to_older_complete(scan_scope):
+    seeded(scan_scope)
     with SessionLocal() as db:
         service = db.scalar(select(Service))
         first = db.scalar(select(Execution))
         db.add(Execution(execution_key='incomplete', service_id=service.id, service_version_id=service.current_version_id,
-            scanned_at=datetime(2099, 1, 1, tzinfo=timezone.utc), complete=False, scan_scope='service', raw_payload=dict(first.raw_payload)))
+            scanned_at=datetime(2099, 1, 1, tzinfo=timezone.utc), complete=False, scan_scope=scan_scope, raw_payload=dict(first.raw_payload)))
         db.commit()
         result = evidence.readiness(db, service)
         assert not result['ready'] and result['execution'].execution_key == 'incomplete'
@@ -181,8 +231,9 @@ def test_freeze_detects_new_scan_arriving_during_export(tmp_path, monkeypatch):
             evidence.freeze(db, service, SimpleNamespace(), evidence.readiness(db, service), tmp_path)
 
 
-def test_full_service_image_only_freezes_actual_export_all(tmp_path):
-    seeded()
+@pytest.mark.parametrize('scan_scope', ['service', 'image'])
+def test_image_only_freezes_actual_export_all(tmp_path, scan_scope):
+    seeded(scan_scope)
     with SessionLocal() as db:
         service = db.scalar(select(Service))
         execution = db.scalar(select(Execution))
@@ -195,10 +246,15 @@ def test_full_service_image_only_freezes_actual_export_all(tmp_path):
         db.flush()
         ready = evidence.readiness(db, service)
         assert ready['ready'], ready['blockers']
+        assert ready['scan_date'] == execution.scanned_at.isoformat()
+        if scan_scope == 'image':
+            assert any('selected image scan only' in note for note in ready['review_notes'])
         assert [item['kind'] for item in ready['artifacts']] == ['image']
         auth = SimpleNamespace(has=lambda permission, service_id: permission == 'service.export')
         snapshot = evidence.freeze(db, service, auth, ready, tmp_path)
+        assert snapshot['evidence_scope'] == f'current-{scan_scope}-scan'
         with ZipFile(snapshot['evidence']['path']) as archive:
+            assert json.loads(archive.read('sbom-components.json'))['execution_id'] == execution.execution_key
             assert {'ppsm.xlsx', 'poam.xlsx', 'asset_list.xlsx', 'mitigations.xlsx', 'findings.xlsx',
                     'diagrams.zip', 'sbom-components.json', 'frozen-snapshot.json'}.issubset(archive.namelist())
             from openpyxl import load_workbook
@@ -206,6 +262,72 @@ def test_full_service_image_only_freezes_actual_export_all(tmp_path):
                 book = load_workbook(stream)
                 assert book.active.max_row >= 2
                 book.close()
+
+
+def test_image_rescan_does_not_replace_whole_service_evidence():
+    seeded()
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        first = db.scalar(select(Execution))
+        db.add(Execution(execution_key='image-rescan', service_id=service.id,
+            service_version_id=service.current_version_id, scan_scope='image', complete=True,
+            scanned_at=datetime(2099, 1, 1, tzinfo=timezone.utc), raw_payload=dict(first.raw_payload)))
+        db.commit()
+        assert evidence.readiness(db, service)['execution'].id == first.id
+
+
+def test_image_scan_can_be_submitted_through_approval_api(tmp_path, monkeypatch):
+    from app import cyber_approvals
+    from test_portal import csrf
+    seeded('image')
+    monkeypatch.setattr(cyber_approvals, 'root', lambda: tmp_path)
+    with SessionLocal() as db:
+        execution = db.scalar(select(Execution))
+        body = json.loads(json.dumps(execution.raw_payload))
+        for key in ('helm_source_files', 'helm_values_files'):
+            body.pop(key)
+        for key in ('charts', 'rendered_resources'):
+            body['service_overview'].pop(key)
+        execution.raw_payload = body
+        db.commit()
+        execution_id = execution.id
+    client = new_client()
+    ready = client.get('/api/services/payments-service/cyber-approval-readiness')
+    assert ready.status_code == 200, ready.text
+    assert ready.json()['ready'] and ready.json()['scan_date']
+    submitted = client.post('/api/cyber-approvals', json={
+        'service_key': 'payments-service', 'variant': 'current_service'},
+        headers={'x-csrf-token': csrf(client)})
+    assert submitted.status_code == 200, submitted.text
+    with SessionLocal() as db:
+        approval = db.get(cyber_approvals.CyberApproval, submitted.json()['id'])
+        assert approval.status == 'pending'
+        assert approval.source_execution_id == execution_id
+        assert approval.snapshot['evidence_scope'] == 'current-image-scan'
+        assert any('selected image scan only' in note for note in approval.snapshot['review_notes'])
+        assert Path(approval.snapshot['evidence']['path']).is_file()
+
+
+def test_image_evidence_never_falls_back_to_another_version():
+    from app.models import ServiceVersion
+    seeded('image')
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        version = ServiceVersion(service_id=service.id, version='unscanned')
+        db.add(version)
+        db.flush()
+        service.current_version_id = version.id
+        db.commit()
+        ready = evidence.readiness(db, service)
+        assert not ready['ready']
+        assert ready['execution'] is None
+        assert ready['scan_date'] is None
+        assert 'exact current service version' in ready['blockers'][0]
+        from app.service_exports import _service_sbom_components
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as exc:
+            _service_sbom_components(service.service_key, db)
+        assert exc.value.status_code == 422
 
 
 def test_chart_root_under_charts_directory_is_retained():

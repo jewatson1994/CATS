@@ -12,6 +12,7 @@ from pathlib import Path
 
 from .admin_config import OS_DEFINITIONS, resolve_policy, write_repository_config
 from .signing import SECRET_ENV, clean_environment, sign_and_verify
+from .remediation import summarize_grype_reports
 from .patching import (
     PATCH_PHASES,
     archive_sha256, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
@@ -137,6 +138,18 @@ def main() -> int:
 
     def run(command, **kwargs):
         return run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), **kwargs)
+
+    def extract_scan_root(reference: str, label: str) -> Path:
+        """Use identical filesystem coverage on both sides without starting the image."""
+        container = f"cats-{label}-{config['job_id']}"
+        root = workspace / f"{label}-rootfs"
+        root.mkdir()
+        created_containers.append(container)
+        run(["docker", "create", "--name", container, reference])
+        run(["docker", "cp", f"{container}:/.", str(root)])
+        run(["docker", "rm", "--force", container])
+        created_containers.remove(container)
+        return root
 
     def login_for(reference: str, username: str, password: str) -> None:
         if not username and not password:
@@ -284,9 +297,22 @@ def main() -> int:
 
         patched_ref, patched_tag = patched_reference(source_ref)
         state("running", "scanning_source", source_image=source_ref)
+        source_root = extract_scan_root(source_ref, "source")
         before_path = output / "grype-before.json"
-        run(["grype", f"docker:{source_ref}", "--only-fixed", "--output", "json"], stdout_path=before_path)
+        run(["grype", f"dir:{source_root}", "--only-fixed", "--output", "json"], stdout_path=before_path)
         before = json.loads(before_path.read_text(encoding="utf-8"))
+        remediation_full_before = "not_requested"
+        if config.get("remediation_evidence") is True:
+            full_before_path = output / "grype-full-before.json"
+            try:
+                run(["grype", f"dir:{source_root}", "--output", "json"], stdout_path=full_before_path)
+                summarize_grype_reports([json.loads(full_before_path.read_text(encoding="utf-8"))], lambda _: (False, None))
+                remediation_full_before = "complete"
+            except PatchCancelled:
+                raise
+            except Exception:
+                remediation_full_before = "failed"
+                full_before_path.unlink(missing_ok=True)
         inspect = run(["docker", "image", "inspect", source_ref, "--format", "{{.Architecture}}"])
         native_path = workspace / "copa-report.json"
         native = copa_native_report(before, (inspect.stdout or "amd64").strip(), package_ecosystem_name)
@@ -357,14 +383,7 @@ def main() -> int:
             run(["docker", "load", "--input", str(patched_archive)])
         except ValueError as exc:
             raise RuntimeError(f"Patched artifact materialization failure: {exc}") from exc
-        verification_container = f"cats-verify-{config['job_id']}"
-        verification_root = workspace / "patched-rootfs"
-        verification_root.mkdir()
-        created_containers.append(verification_container)
-        run(["docker", "create", "--name", verification_container, canonical_ref])
-        run(["docker", "cp", f"{verification_container}:/.", str(verification_root)])
-        run(["docker", "rm", "--force", verification_container])
-        created_containers.remove(verification_container)
+        verification_root = extract_scan_root(canonical_ref, "patched")
         after_path = output / "grype-after.json"
         run(["grype", f"dir:{verification_root}", "--only-fixed", "--output", "json"], stdout_path=after_path)
         after = json.loads(after_path.read_text(encoding="utf-8"))
@@ -373,8 +392,10 @@ def main() -> int:
         if config.get("remediation_evidence") is True:
             try:
                 run(["grype", f"dir:{verification_root}", "--output", "json"], stdout_path=full_after_path)
-                json.loads(full_after_path.read_text(encoding="utf-8"))
+                summarize_grype_reports([json.loads(full_after_path.read_text(encoding="utf-8"))], lambda _: (False, None))
                 remediation_full_scan = "complete"
+            except PatchCancelled:
+                raise
             except Exception:
                 remediation_full_scan = "failed"
                 full_after_path.unlink(missing_ok=True)
@@ -382,6 +403,7 @@ def main() -> int:
         remediation_evidence = {}
         if config.get("remediation_evidence") is True:
             remediation_evidence["grype_full"] = remediation_full_scan
+            remediation_evidence["grype_full_before"] = remediation_full_before
             checks = (
                 ("sbom", "syft", ["syft", f"dir:{verification_root}", "-o", "syft-json"], output / "remediated-sbom.json"),
                 ("trivy", "trivy", ["trivy", "image", "--skip-db-update", "--skip-check-update", "--format", "json",

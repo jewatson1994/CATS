@@ -105,6 +105,54 @@
 .comparison-delta.worse { color: var(--danger) !important; }
 .comparison-metric > div > span { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-sm); }
 
+/* Results prioritize outcomes and actions; diagnostic detail stays available on demand. */
+.remediation-report { max-width: 1480px; margin-inline: auto; }
+.remediation-report > .heading { margin-bottom: var(--space-2); }
+.remediation-report .panel.padded > h2 { margin: 0 0 var(--space-3); font-size: var(--text-lg); }
+.remediation-report .panel p { font-size: var(--text-sm); line-height: 1.6; color: var(--text-muted); }
+.remediation-report .panel .error { color: var(--danger); }
+.remediation-report code { overflow-wrap: anywhere; }
+.remediation-report summary { cursor: pointer; font-size: var(--text-sm); font-weight: 600; }
+.remediation-report summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; border-radius: var(--radius-sm); }
+.remediation-report details[open] > summary { margin-bottom: var(--space-3); }
+.execution-stages { border-top: 1px solid var(--border); padding-top: var(--space-3); margin-top: var(--space-3); }
+.candidate-lifecycle > dl { grid-template-columns: repeat(4,minmax(0,1fr)); margin-bottom: var(--space-5); }
+.candidate-lifecycle > dl > div { padding: var(--space-4); border: 1px solid var(--border); background: var(--surface-raised); border-radius: var(--radius-lg); }
+.candidate-lifecycle > dl dd { margin-top: var(--space-3); }
+.validation-outcome { border-left: 3px solid var(--accent); padding-left: var(--space-4); }
+.validation-outcome h3 { margin: 0 0 var(--space-2); }
+.validation-outcome p { margin: var(--space-2) 0; }
+.validator-metadata { margin: var(--space-4) 0; padding: var(--space-3) var(--space-4); background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.candidate-lifecycle > form { display: inline-flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-block: var(--space-2); }
+.candidate-lifecycle > form p { margin: 0; }
+.delivery-history { border-top: 1px solid var(--border); margin-top: var(--space-4); padding-top: var(--space-3); }
+.comparison-context { padding-inline: var(--space-5); margin-bottom: 0; }
+.comparison-card { padding: var(--space-4); }
+.comparison-card h3 { margin-bottom: var(--space-2); }
+.comparison-checks { grid-column: 1 / -1; }
+.remediation-report .comparison-card table, .validation-checks table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+.remediation-report .comparison-card th, .remediation-report .comparison-card td, .validation-checks th, .validation-checks td { padding: var(--space-3); vertical-align: middle; }
+.remediation-report .comparison-card th[scope=row], .validation-checks th[scope=row] { text-align: left; font-weight: 500; text-transform: none; letter-spacing: normal; color: var(--text); }
+.severity-comparison th[scope=row] { width: 30%; }
+.severity-comparison td { width: 35%; }
+.severity-value { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-xs); }
+.severity-value b { min-width: 30px; font-variant-numeric: tabular-nums; }
+.severity-value .comparison-track { flex: 1; min-width: 25px; height: 7px; }
+.severity-value.before .comparison-track > div { opacity: .55; background-image: repeating-linear-gradient(135deg, transparent 0 3px, rgb(0 0 0 / 35%) 3px 5px); }
+.comparison-severity:is([data-severity=Negligible],[data-severity=Unknown],[data-severity=Informational]) { --severity-color: var(--neutral); }
+.metric-comparison td { font-variant-numeric: tabular-nums; }
+.metric-comparison .comparison-delta { font-size: var(--text-xs); color: var(--text-muted); }
+.comparison-epss { margin-top: var(--space-4); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.comparison-epss > div { display: flex; flex-wrap: wrap; gap: var(--space-5); margin-top: var(--space-3); font-size: var(--text-sm); }
+.comparison-epss b { margin-left: var(--space-2); font-variant-numeric: tabular-nums; }
+.comparison-epss p { margin-bottom: 0; }
+.validation-checks .panel-head { padding: 0; border: 0; }
+.validation-checks .panel-head h2 { margin-top: var(--space-2); }
+.validation-checks td:last-child, .comparison-checks td:last-child { color: var(--text-muted); line-height: 1.5; }
+.report-disclosure { background: var(--surface-raised); }
+@media (max-width: 1000px) { .remediation-comparison { grid-template-columns: 1fr; } }
+@media (max-width: 650px) { .candidate-lifecycle > dl { grid-template-columns: repeat(2,minmax(0,1fr)); } .comparison-context { padding-inline: var(--space-3); } }
+
 /* Durable six-stage workflow and accessible native-radio delivery cards. */
 .workflow-steps { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: var(--space-2); list-style: none; padding: 0 !important; margin: var(--space-4) 0; }
 .workflow-steps > li { padding: var(--space-2) !important; margin: 0 !important; border-top: 0 !important; border-bottom: 3px solid var(--border); color: var(--text-muted); }

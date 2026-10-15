@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 import pytest
 
 from app import cyber_release_publication as publication
-from app import release_oci, signing
+from app import release_oci, signing, release_validity
 
 
 def descriptor(content, media_type="application/octet-stream"):
@@ -86,7 +86,7 @@ def environment(tmp_path, monkeypatch):
     def sign_and_verify(reference, config, credentials, env):
         host, repository, digest = release_oci._reference(reference)
         client = Registry(host, repository)
-        payload = publication.canonical({"critical": {"image": {"docker-manifest-digest": digest}}})
+        payload = publication.canonical({"critical": {"image": {"docker-manifest-digest": digest}}, "optional": config.get("approval_annotations", {})})
         layer = client.upload(payload, "application/vnd.dev.cosign.simplesigning.v1+json")
         layer["annotations"] = {"dev.cosignproject.cosign/signature": sign(payload)}
         content = publication.canonical({"schemaVersion": 2, "mediaType": release_oci.MANIFEST_TYPE,
@@ -115,10 +115,11 @@ def environment(tmp_path, monkeypatch):
                 "artifacts": [{"kind": "image", "reference": "source.example/app@" + digest, "digest": digest},
                               {"kind": "chart", "path": str(chart), "digest": publication.file_digest(chart)}]}
     destination = {"id": "saved:3", "endpoint": "https://approved.example", "namespace": "team"}
-    snapshot.update(destination=destination, signing_fingerprint=fingerprint)
+    decided_at = datetime.now(timezone.utc)
+    snapshot.update(destination=destination, signing_fingerprint=fingerprint, approval_validity=release_validity.new_validity(decided_at))
     approval = SimpleNamespace(id=7, release_key="approval-123", snapshot=snapshot,
                                snapshot_digest=release_oci._digest(publication.canonical(snapshot)),
-                               status="approved", decided_by_id=2, decided_at=datetime.now(timezone.utc),
+                               status="approved", decided_by_id=2, decided_at=decided_at,
                                decision_rationale="Reviewed retained findings and accepted release", revoked_at=None)
     db = SimpleNamespace(scalars=lambda query: [])
     return SimpleNamespace(approval=approval, destination=destination, db=db, stores=stores,
@@ -358,3 +359,60 @@ def test_tag_reference_rejects_malformed_values(reference):
     ('team/app:1', ('docker.io','team/app','1')), ('localhost:5000/team/app:2', ('localhost:5000','team/app','2'))])
 def test_tag_reference_normalizes_registry_repository_and_tag(reference, expected):
     assert publication.image_source(reference) == expected
+
+
+def test_offline_expiry_rejects_import_before_copy_and_tampering_fails_signature(environment, tmp_path, monkeypatch):
+    from datetime import timedelta
+    receipt = publish(environment, [])
+    output = tmp_path / 'expiry-import'
+    with ZipFile(receipt['bundle_path']) as archive:
+        archive.extractall(output)
+    namespace = {'__name__':'test_expiry', '__file__':str(output / 'verify-import.py')}
+    exec(compile(publication.OFFLINE_SCRIPT, namespace['__file__'], 'exec'), namespace)
+    manifest = json.loads((output / 'release-manifest.json').read_bytes())
+    end = datetime.fromisoformat(manifest['approval']['expires_at'])
+    start = datetime.fromisoformat(manifest['approval']['approved_at'])
+    assert end - start == timedelta(days=manifest['approval']['validity_days'])
+    assert namespace['approval_window'](manifest, start)['io.cats.approval.expires-at'] == end.isoformat()
+    with pytest.raises(ValueError, match='expired'):
+        namespace['approval_window'](manifest, end)
+    with pytest.raises(ValueError, match='not yet valid'):
+        namespace['approval_window'](manifest, start - timedelta(seconds=1))
+    class ExpiredClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return end
+    namespace['datetime'] = ExpiredClock
+    original = namespace['run']
+    calls = []
+    def run(args):
+        calls.append(args)
+        return original(args)
+    namespace['run'] = run
+    monkeypatch.setattr(sys, 'argv', ['verify-import.py', '--fingerprint', environment.fingerprint,
+                                     '--destination', 'offline.example/approved'])
+    with pytest.raises(ValueError, match='expired'):
+        namespace['main']()
+    assert not any(args[0] == 'oras' for args in calls)
+    # Expiry is covered by the real signed manifest, not editable import metadata.
+    manifest['approval']['expires_at'] = (end + timedelta(days=90)).isoformat()
+    (output / 'release-manifest.json').write_bytes(publication.canonical(manifest))
+    with pytest.raises(subprocess.CalledProcessError):
+        publication.verify_local(output, environment.fingerprint)
+
+
+def test_offline_requires_same_signed_expiry_on_every_artifact(environment, tmp_path, monkeypatch):
+    original = signing.sign_and_verify
+    def sign_without_window(reference, config, credentials, env):
+        return original(reference, {**config, 'approval_annotations':{}}, credentials, env)
+    monkeypatch.setattr(signing, 'sign_and_verify', sign_without_window)
+    with pytest.raises(publication.PublicationError):
+        publish(environment, [])
+
+
+def test_publication_rejects_legacy_approval_without_registry_writes(environment):
+    environment.approval.snapshot.pop('approval_validity')
+    environment.approval.snapshot_digest = release_oci._digest(publication.canonical(environment.approval.snapshot))
+    with pytest.raises(publication.PublicationError):
+        publish(environment, [])
+    assert not any(host == 'approved.example' for host, _ in environment.stores)

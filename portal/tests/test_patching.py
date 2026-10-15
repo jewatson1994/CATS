@@ -345,7 +345,7 @@ def test_public_oci_to_download_worker_flow(monkeypatch, tmp_path: Path):
     assert not any(command[:2] == ["docker", "login"] for command, _ in calls)
     grype_calls = [command for command, _ in calls if command and command[0] == "grype"]
     assert len(grype_calls) == 2 and all("--only-fixed" in command for command in grype_calls)
-    assert grype_calls[0][1] == "docker:docker.io/library/alpine:3.20"
+    assert grype_calls[0][1].startswith("dir:") and grype_calls[0][1].endswith("source-rootfs")
     assert grype_calls[1][1].startswith("dir:")
     assert not any(runtime in grype_calls[1][1] for runtime in ("docker-archive:", "docker:", "podman:", "containerd:", "registry:"))
     assert any(command[:2] == ["docker", "load"] and "patched-image.tar" in " ".join(command) for command, _ in calls)
@@ -442,7 +442,7 @@ def test_uploaded_tar_to_independent_oci_destination(monkeypatch, tmp_path: Path
     assert "destination-secret" not in logins[-1][0]
     assert logins[-1][1] == "destination-secret\n"
     assert any(command[:2] == ["docker", "push"] for command, _ in calls)
-    post_scan = next(index for index, (command, _) in enumerate(calls) if command and command[0] == "grype" and command[1].startswith("dir:"))
+    post_scan = next(index for index, (command, _) in enumerate(calls) if command and command[0] == "grype" and command[1].endswith("patched-rootfs"))
     destination_tag = next(index for index, (command, _) in enumerate(calls) if command[:2] == ["docker", "tag"] and command[-1] == config["destination_image"])
     assert post_scan < destination_tag
     assert calls[destination_tag][0][2].startswith("cats-canonical-")
@@ -477,11 +477,11 @@ def test_post_patch_rootfs_scan_failure_never_falls_back_to_image_sources(monkey
     config = {"job_id": "job-postscan", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
     code, _, state, calls = run_worker(
         monkeypatch, tmp_path, config, grype_report([("CVE-1", "openssl", ["2"])]) , grype_report([]),
-        fail_on="dir:", source_credentials=("", ""),
+        fail_on="patched-rootfs --only-fixed", source_credentials=("", ""),
     )
     assert code == 1 and state["failed_stage"] == "scanning_patched"
     assert state["stages"]["patching_image"]["status"] == "success"
-    target = next(command[1] for command, _ in calls if command and command[0] == "grype" and command[1].startswith("dir:"))
+    target = next(command[1] for command, _ in calls if command and command[0] == "grype" and command[1].endswith("patched-rootfs"))
     assert all(scheme not in target for scheme in ("docker-archive:", "docker:", "podman:", "containerd:", "registry:"))
 
 
@@ -493,7 +493,7 @@ def test_output_archive_must_complete_docker_load_round_trip(monkeypatch, tmp_pa
     )
     assert code == 1 and state["failed_stage"] == "scanning_patched"
     assert any(command[:2] == ["docker", "load"] and "patched-image.tar" in " ".join(command) for command, _ in calls)
-    assert not any(command[0] == "grype" and command[1].startswith("dir:") for command, _ in calls)
+    assert not any(command[0] == "grype" and command[1].endswith("patched-rootfs") for command, _ in calls)
 
 
 def test_push_failure_keeps_validated_download_and_fails_push_stage(monkeypatch, tmp_path: Path):
