@@ -1,7 +1,7 @@
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
 import {requestJson} from '../api';
-import {ApprovalDetail, Destinations, ReleaseDetail, RequestApproval} from './cyber_approvals';
+import {ApprovalDetail, Destinations, ReleaseDetail, RequestApproval, Reassessment} from './cyber_approvals';
 
 vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.resetAllMocks();});
@@ -167,4 +167,26 @@ it.each(['expired', 'reapproval_required', 'invalid'])('shows %s releases as aud
   expect(await screen.findByText(/needs a new Cyber approval before deployment/)).toBeInTheDocument();
   expect(screen.getByText(/Expires:/)).toBeInTheDocument();
   expect(screen.queryByRole('button', {name:'Retry publication'})).not.toBeInTheDocument();
+});
+
+
+it('updates a scoped reassessment schedule with CSRF and links renewal review', async () => {
+  const permissions = Object.fromEntries(['service.view','service.edit','service.export','approval.request','scan.ingest'].map(key => [key, {'7':true}]));
+  vi.mocked(requestJson).mockResolvedValue({schedule:{enabled:true,interval_days:14,next_run:'2026-10-20T00:00:00Z'},events:[{id:'event',state:'pending_review',renewal_id:42}]});
+  render(<Reassessment data={{csrf_token:'csrf',can:permissions}} row={{id:12,service_id:7,snapshot:{artifacts:[{kind:'image',reference:'registry/image@sha256:'+'a'.repeat(64)}]}}}/>);
+  expect(await screen.findByRole('link',{name:'Review renewal #42'})).toHaveAttribute('href','/cyber-approvals?id=42');
+  expect(screen.getByLabelText('Reassessment interval (days)')).toHaveValue(14);
+  fireEvent.change(screen.getByLabelText('Reassessment interval (days)'),{target:{value:'21'}});
+  fireEvent.click(screen.getByLabelText('Enable scheduled reassessment'));
+  fireEvent.click(screen.getByRole('button',{name:'Save reassessment schedule'}));
+  await screen.findByText('Reassessment schedule saved.');
+  expect(requestJson).toHaveBeenCalledWith('/api/cyber-approvals/12/reassessment',expect.objectContaining({method:'PUT',headers:expect.objectContaining({'X-CSRF-Token':'csrf'}),body:JSON.stringify({interval_days:21,enabled:false})}));
+});
+
+it('requires scoped scan ingestion permission for schedule controls', async () => {
+  vi.mocked(requestJson).mockResolvedValue({schedule:null,events:[]});
+  render(<Reassessment data={data} row={{id:12,service_id:7,snapshot:{artifacts:[{kind:'image',reference:'registry/image@sha256:'+'a'.repeat(64)}]}}}/>);
+  await screen.findByText('No reassessment events recorded.');
+  expect(screen.queryByRole('button',{name:'Save reassessment schedule'})).not.toBeInTheDocument();
+  expect(screen.getByText(/A scoped Service Manager/)).toBeInTheDocument();
 });

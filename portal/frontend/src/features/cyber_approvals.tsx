@@ -1,4 +1,5 @@
 import {VexEvidence} from './native_vex';
+import {OCIDistribution} from './oci_distribution';
 import {useEffect, useState, type FormEvent} from 'react';
 import {can, requestJson, type PageData} from '../api';
 import {StatusBadge} from '../components/ui';
@@ -122,6 +123,36 @@ function Decision({data, row, refresh}: {data: PageData; row: Row; refresh: () =
   return <section className="panel padded"><h2>Cyber decision</h2><p>Review the retained snapshot above. An approval authorizes signed publication to the recorded destination. Review any tag-only image identity limitations before approving.</p><form className="approval-form" onSubmit={submit}><label>Decision<select value={decision} onChange={event => setDecision(event.target.value)}><option value="approved">Approve</option><option value="denied">Deny</option></select></label>{!row.destination?.id && !!row.destinations && <label>Approved release destination<select value={selectedDestination} onChange={event => setDestination(event.target.value)}><option value="">Configure a destination before approving</option>{list(row.destinations).map(item => <option key={item.id} value={item.id}>{item.name} · {item.endpoint}/{item.namespace}</option>)}</select></label>}<label>Decision rationale<textarea required minLength={3} maxLength={10000} value={rationale} onChange={event => setRationale(event.target.value)}/></label><ResourceState error={error} pending={false}/><button disabled={busy || rationale.trim().length < 3}>{busy ? 'Saving decision…' : decision === 'approved' ? 'Approve snapshot' : 'Deny snapshot'}</button></form></section>;
 }
 
+export function Reassessment({data, row}: {data: PageData; row: Row}) {
+  const url = `/api/cyber-approvals/${row.id}/reassessment`, resource = useResource(url);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const schedule = resource.value?.schedule, artifacts = row.snapshot?.artifacts || [];
+  const eligible = !row.revoked && artifacts.length > 0 && artifacts.every((item: Row) => item.kind === 'image' && !item.archive_path && item.format !== 'docker-archive' && /@sha256:[0-9a-f]{64}$/.test(item.reference || ''));
+  const permitted = ['service.view', 'service.edit', 'service.export', 'approval.request', 'scan.ingest'].every(permission => can(data, permission, row.service_id));
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = new FormData(event.currentTarget);
+    setBusy(true); setError(''); setNotice('');
+    try {
+      await requestJson(url, {method:'PUT', headers:{'Content-Type':'application/json','X-CSRF-Token':data.csrf_token || ''}, body:JSON.stringify({interval_days:Number(form.get('interval_days')),enabled:form.get('enabled') === 'on'})});
+      setNotice('Reassessment schedule saved.'); resource.refresh();
+    } catch (error) {setError(message(error));} finally {setBusy(false);}
+  }
+  return <section className="panel padded" aria-label="Scheduled reassessment"><h2>Scheduled reassessment</h2>
+    <p>Rescan the approved image digests. Successful assessments create a new request for Cyber review; they do not extend this approval.</p>
+    <ResourceState error={resource.error || error} pending={!resource.value && !resource.error}/>
+    {notice && <p role="status">{notice}</p>}
+    {schedule && <p>{schedule.enabled ? 'Enabled' : 'Disabled'} · Every {schedule.interval_days} days · Next scheduled: {dateLabel(schedule.next_run)}</p>}
+    {!eligible ? <p>Automatic reassessment requires a non-revoked approval containing only registry images pinned to digests. Charts and archives need a full assessment.</p> : !permitted ? <p>A scoped Service Manager with scan ingestion and approval request access can manage this schedule.</p> : resource.value && <form key={JSON.stringify(schedule)} className="approval-form" onSubmit={save}>
+      <label>Reassessment interval (days)<input name="interval_days" type="number" min="1" max="365" required defaultValue={schedule?.interval_days || 7}/></label>
+      <label className="approval-checkbox"><input type="checkbox" name="enabled" defaultChecked={schedule?.enabled ?? true}/>Enable scheduled reassessment</label>
+      <button disabled={busy}>{busy ? 'Saving schedule...' : 'Save reassessment schedule'}</button>
+    </form>}
+    <button type="button" className="secondary-button" disabled={busy} onClick={resource.refresh}>Refresh reassessment status</button>
+    {resource.value && !(resource.value.events || []).length && <p>No reassessment events recorded.</p>}
+    {(resource.value?.events || []).map((event: Row) => <article key={event.id} className="approval-evidence"><StatusBadge value={event.state}/>{event.detail && <p>{event.detail}</p>}{event.scan_id && <p>Scan: <code>{event.scan_id}</code></p>}{event.renewal_id && <a href={`/cyber-approvals?id=${event.renewal_id}`}>Review renewal #{event.renewal_id}</a>}</article>)}
+  </section>;
+}
+
 export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
   const resource = useResource(`/api/cyber-approvals/${encodeURIComponent(id)}`), row = resource.value;
   const snapshot = row?.snapshot || {};
@@ -148,6 +179,7 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <SnapshotDetails snapshot={snapshot}/>
       </section>
       <Decision data={data} row={row} refresh={resource.refresh}/>
+      {row.status === 'approved' && <Reassessment data={data} row={row}/>}
       {row.status === 'approved' && <section className="panel padded"><h2>Approved release publication</h2><p>The Cyber decision is approved. Publication status: <StatusBadge value={row.publish_status || 'pending'}/></p><a href={`/approved-releases?id=${encodeURIComponent(row.release_id || row.publication?.release_id || row.id)}`}>Open approved release</a></section>}
     </>}
   </div>;
@@ -189,7 +221,7 @@ export function ReleaseDetail({data, id}: {data: PageData; id: string}) {
 
 export function Destinations({data}: {data: PageData}) {
   const resource = useResource('/api/approved-release-destinations'), [editing, setEditing] = useState<Row | null>(null), [notice, setNotice] = useState('');
-  return <><Heading title="Approved Release Destinations" description="Configure the OCI registries used to publish Cyber-approved service snapshots."/><AdminTabs data={data} selected="release-destinations"/><section className="panel padded"><h2>Registry destinations</h2><ResourceState error={resource.error} pending={!resource.value && !resource.error}/>{notice && <p role="status">{notice}</p>}<div className="table-wrap"><table><thead><tr>{['Name', 'Endpoint / namespace', 'Group IDs', 'Credentials', 'Default', 'Actions'].map(name => <th key={name}>{name}</th>)}</tr></thead><tbody>{list(resource.value).map(row => <tr key={row.id}><td>{row.name}</td><td>{row.endpoint}/{row.namespace}</td><td>{(row.group_ids || []).join(', ') || 'All permitted groups'}</td><td>{(row.credentials_configured || row.has_credentials) ? 'Configured' : 'Not configured'}</td><td>{row.is_default ? 'Yes' : 'No'}</td><td><button className="secondary-button" type="button" onClick={() => {setEditing(row); setNotice('');}}>Edit {row.name}</button></td></tr>)}</tbody></table></div><button type="button" className="secondary-button" onClick={() => {setEditing({}); setNotice('');}}>Add destination</button></section>{editing && <DestinationForm key={editing.id || 'new'} data={data} row={editing} cancel={() => setEditing(null)} saved={() => {setEditing(null); setNotice('Destination saved.'); resource.refresh();}}/>}<section className="panel padded"><h2>Signing configuration</h2><p>Approved releases use the global signing configuration. Destination credentials are retained on the server and are never returned to this page.</p><a href="/admin/configuration">Manage global signing settings</a></section></>;
+  return <><Heading title="Approved Release Destinations" description="Configure the OCI registries used to publish Cyber-approved service snapshots."/><AdminTabs data={data} selected="release-destinations"/><section className="panel padded"><h2>Registry destinations</h2><ResourceState error={resource.error} pending={!resource.value && !resource.error}/>{notice && <p role="status">{notice}</p>}<div className="table-wrap"><table><thead><tr>{['Name', 'Endpoint / namespace', 'Group IDs', 'Credentials', 'Default', 'Actions'].map(name => <th key={name}>{name}</th>)}</tr></thead><tbody>{list(resource.value).map(row => <tr key={row.id}><td>{row.name}</td><td>{row.endpoint}/{row.namespace}</td><td>{(row.group_ids || []).join(', ') || 'All permitted groups'}</td><td>{(row.credentials_configured || row.has_credentials) ? 'Configured' : 'Not configured'}</td><td>{row.is_default ? 'Yes' : 'No'}</td><td><button className="secondary-button" type="button" onClick={() => {setEditing(row); setNotice('');}}>Edit {row.name}</button></td></tr>)}</tbody></table></div><button type="button" className="secondary-button" onClick={() => {setEditing({}); setNotice('');}}>Add destination</button></section>{editing && <DestinationForm key={editing.id || 'new'} data={data} row={editing} cancel={() => setEditing(null)} saved={() => {setEditing(null); setNotice('Destination saved.'); resource.refresh();}}/>}<section className="panel padded"><h2>Signing configuration</h2><p>Approved releases use the global signing configuration. Destination credentials are retained on the server and are never returned to this page.</p><a href="/admin/configuration">Manage global signing settings</a></section><OCIDistribution data={data}/></>;
 }
 function DestinationForm({data, row, cancel, saved}: {data: PageData; row: Row; cancel: () => void; saved: () => void}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
