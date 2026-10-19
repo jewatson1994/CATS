@@ -33,3 +33,6 @@
 .cyber-bars button.cyber-bar-row{width:100%;display:grid}
 .cyber-detail-dialog{width:min(760px,calc(100vw - 40px));max-height:85vh;overflow:auto}
 .cyber-detail-dialog ol{padding-left:24px}.cyber-detail-dialog li{padding:10px 4px;border-bottom:1px solid var(--border);overflow-wrap:anywhere}.cyber-detail-dialog li strong{float:right;margin-left:16px}
+
+.service-warning-indicator { display: inline-flex; vertical-align: middle; margin-left: 6px; color: var(--warning); }
+.service-warning-indicator:hover, .service-warning-indicator:focus-visible { color: var(--warning); outline: 2px solid var(--warning); outline-offset: 3px; border-radius: 3px; }

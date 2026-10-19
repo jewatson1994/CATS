@@ -1,10 +1,10 @@
-import {StatusBadge} from './ui';
+import {Icon, StatusBadge} from './ui';
 import '../features/cybersecurity.css';
 interface SecurityRow {
   service: { service_key: string; name: string }; status: string;
   critical: number; high: number; medium: number; low: number; kev: number; watchlist: number; patchable: number;
   poam: number; poam_overdue: number; missing: boolean; sbom: boolean; kind: string;
-  last_scan_display: string;
+  last_scan_display: string; warning_reasons?: string[];
 }
 const title = (value: string) => value[0].toUpperCase() + value.slice(1).toLowerCase();
 export function ServiceSecurityMatrix({data}: {data: any}) {
@@ -19,7 +19,8 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
       <div className="table-wrap"><table><thead><tr>{['Service', 'Status', 'Critical', 'High', 'Medium / Low', 'KEV', 'Watchlist', 'Patchable', 'POA&M', 'Overdue', 'Missing Evidence', 'SBOM', 'Kind', 'Last scan'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead>
         <tbody>{data.rows?.length ? data.rows.map((row: SecurityRow) => {
           const servicePath = `/services/${encodeURIComponent(row.service.service_key)}`;
-          return <tr key={row.service.service_key}><td><a href={`${servicePath}?overview=true`}>{row.service.name}</a></td><td><StatusBadge value={row.status} label={row.status === 'GREEN' || row.status === 'YELLOW' ? 'Compliant' : 'Non-compliant'} tone={row.status === 'GREEN' || row.status === 'YELLOW' ? 'success' : 'danger'} icon={row.status === 'YELLOW' ? 'alert' : true}/></td><td className={row.critical ? 'num text-danger' : 'num'}>{row.critical}</td><td className="num">{row.high}</td><td>{row.medium || 0} / {row.low || 0}</td><td>{row.kev}</td><td><a href={`${servicePath}?finding_state=warnings`}>{row.watchlist}</a></td><td>{row.patchable}</td><td><a href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>{row.poam}</a></td><td>{row.poam_overdue}</td><td>{row.missing ? 'Yes' : 'No'}</td><td>{row.sbom ? 'Yes' : 'No'}</td><td><a href={`${servicePath}?validation=true`}>{row.kind}</a></td><td>{row.last_scan_display || 'â€”'}</td></tr>;
+          return <tr key={row.service.service_key}><td><a href={`${servicePath}?overview=true`}>{row.service.name}</a></td><td><StatusBadge value={row.status} label={row.status === 'GREEN' || row.status === 'YELLOW' ? 'Compliant' : 'Non-compliant'} tone={row.status === 'GREEN' || row.status === 'YELLOW' ? 'success' : 'danger'}/>
+            {row.status === 'YELLOW' && <a className="service-warning-indicator" href={`${servicePath}?finding_state=warnings`} aria-label={`Warnings for ${row.service.name}: ${(row.warning_reasons?.length ? row.warning_reasons : ['Review this service’s warning findings']).join('; ')}`} title={(row.warning_reasons?.length ? row.warning_reasons : ['Review this service’s warning findings']).join('\n')}><Icon name="alert" label="Warnings present"/></a>}</td><td className={row.critical ? 'num text-danger' : 'num'}>{row.critical}</td><td className="num">{row.high}</td><td>{row.medium || 0} / {row.low || 0}</td><td>{row.kev}</td><td><a href={`${servicePath}?finding_state=warnings`}>{row.watchlist}</a></td><td>{row.patchable}</td><td><a href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>{row.poam}</a></td><td>{row.poam_overdue}</td><td>{row.missing ? 'Yes' : 'No'}</td><td>{row.sbom ? 'Yes' : 'No'}</td><td><a href={`${servicePath}?validation=true`}>{row.kind}</a></td><td>{row.last_scan_display || 'â€”'}</td></tr>;
         }) : <tr><td colSpan={14}>No services match these filters.</td></tr>}</tbody>
       </table></div>
   </>;

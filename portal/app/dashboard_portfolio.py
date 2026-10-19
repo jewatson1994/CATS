@@ -179,6 +179,22 @@ def compute_rows(db, services, configs, configuration, now):
         row.update(service_id=service.id, watchlist=int(watches.get(service.id, 0)), poam=int(poam.count if poam else 0), poam_overdue=int(poam.overdue or 0) if poam else 0, missing=missing, sbom=bool(scan and sbom.get(service.id)), kind=validations.get(service.id, "NOT_ATTEMPTED"), last_scan=scan.scanned_at if scan else None)
         kind_failed = row["kind"] in failed_statuses
         warning = row["warning"] or missing or any(warning_policy.get(key, True) and value for key, value in (("critical_high", row["critical"] + row["high"]), ("kev", row["kev"]), ("watchlist", row["watchlist"]), ("poam", row["poam"]), ("kind", kind_failed), ("missing_evidence", missing)))
+        reasons = []
+        if row["warning"]:
+            reasons.append(f"{row['warning']} findings classified as warnings")
+        if missing:
+            reasons.append("Required scan evidence is missing or incomplete")
+        for key, count, label in (
+            ("critical_high", row["critical"] + row["high"], "critical/high findings"),
+            ("kev", row["kev"], "known exploited vulnerability findings"),
+            ("watchlist", row["watchlist"], "dependency watchlist matches"),
+            ("poam", row["poam"], "open POA&M entries"),
+        ):
+            if count and warning_policy.get(key, True):
+                reasons.append(f"{count} {label}")
+        if kind_failed and warning_policy.get("kind", True):
+            reasons.append("Deployment validation failed or could not complete")
+        row["warning_reasons"] = reasons
         compliant = not row["noncompliant"] and not policy_fails.get(service.id) and not (missing and configs[service.id].get("incomplete_noncompliant") == "true")
         row["status"] = "RED" if not compliant else "YELLOW" if warning else "GREEN"
         row["attention"] = row["critical"] + row["high"] + row["kev"] + row["watchlist"] + row["poam"] + int(missing) + int(kind_failed)

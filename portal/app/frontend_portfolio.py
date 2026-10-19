@@ -38,6 +38,7 @@ def cybersecurity_data(context, format_date=None):
         row = {key: _scalar(_value(source, key)) for key in
             ("status", "critical", "high", "medium", "low", "kev", "watchlist", "patchable", "poam",
              "poam_overdue", "missing", "sbom", "kind")}
+        row["warning_reasons"] = [reason for reason in (_value(source, "warning_reasons", []) or []) if isinstance(reason, str)]
         row["service"] = {key: _scalar(_value(service, key)) for key in ("service_key", "name")}
         scanned = _value(source, "last_scan")
         if scanned is None:
