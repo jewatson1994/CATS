@@ -18,8 +18,10 @@ describe('Services security matrix', () => {
   it('retains governance links, posture colors and backend-formatted scan dates', () => {
     render(<Page data={{ metrics: {}, rows: [{ service: { service_key: 'api', name: 'Payments' }, status: 'YELLOW', critical: 1, high: 2, kev: 3, watchlist: 4, patchable: 5, poam: 6, poam_overdue: 7, missing: true, sbom: false, kind: 'FAILED', last_scan_display: '28 Sep 2026' }] }} />);
     const row = screen.getByRole('link', { name: 'Payments' }).closest('tr')!;
-    expect(within(row).getByText('Warnings').closest('.badge')).toHaveClass('badge-warning');
-    expect(within(row).getByText('Warnings').closest('.badge')).toHaveAttribute('data-value', 'YELLOW');
+    expect(within(row).getByText('Compliant').closest('.badge')).toHaveClass('badge-success');
+    expect(within(row).getByText('Compliant').closest('.badge')).toHaveAttribute('data-value', 'YELLOW');
+    expect(within(row).getByRole('img', { name: 'Warnings present' })).toBeInTheDocument();
+    expect(within(row).queryByText('Warnings')).not.toBeInTheDocument();
     expect(within(row).getByRole('link', { name: '4' })).toHaveAttribute('href', '/services/api?finding_state=warnings');
     expect(within(row).getByRole('link', { name: '6' })).toHaveAttribute('href', '/poam/services/api');
     expect(within(row).getByRole('link', { name: 'FAILED' })).toHaveAttribute('href', '/services/api?validation=true');

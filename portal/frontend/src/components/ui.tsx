@@ -76,11 +76,11 @@ export function toneFor(value: unknown): Tone {
  * Status badge. Always carries a text label and a shape icon, so meaning never relies on colour alone.
  * The raw backend value is kept in `data-value` and `title`.
  */
-export function StatusBadge({value, label, tone, size = 'md', icon = true, className = ''}: {value: unknown; label?: ReactNode; tone?: Tone; size?: 'sm' | 'md' | 'lg'; icon?: boolean; className?: string}) {
+export function StatusBadge({value, label, tone, size = 'md', icon = true, className = ''}: {value: unknown; label?: ReactNode; tone?: Tone; size?: 'sm' | 'md' | 'lg'; icon?: boolean | IconName; className?: string}) {
   const resolved = tone || toneFor(value);
   const text = label ?? (humanize(value) || 'Unknown');
   return <span className={`badge badge-${resolved} badge-${size} ${className}`.trim()} data-value={value == null ? undefined : String(value)} title={value == null ? undefined : String(value)}>
-    {icon && <Icon name={toneIcon[resolved]}/>}<span>{text}</span></span>;
+    {icon && <Icon name={typeof icon === 'string' ? icon : toneIcon[resolved]} label={icon === 'alert' ? 'Warnings present' : undefined}/>}<span>{text}</span></span>;
 }
 
 const severityRank: Record<string, number> = {critical: 5, high: 4, medium: 3, moderate: 3, low: 2, negligible: 1, informational: 1, unknown: 0};
