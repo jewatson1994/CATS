@@ -51,7 +51,7 @@ def environment(tmp_path, monkeypatch):
     monkeypatch.setattr(publication.shutil, "which", lambda name: name)
 
     @contextmanager
-    def registry_environment(destination):
+    def registry_environment(destination, certificates=()):
         yield {}
     monkeypatch.setattr(publication, "registry_environment", registry_environment)
     private = ec.generate_private_key(ec.SECP256R1())
@@ -340,7 +340,7 @@ def test_retained_image_archive_is_published_and_signed_by_destination_digest(en
         return SimpleNamespace(stdout=b'')
     monkeypatch.setattr(subprocess, 'run', command)
     @contextmanager
-    def destination_env(destination):
+    def destination_env(destination, certificates=()):
         yield {'DOCKER_CONFIG':str(tmp_path)}
     monkeypatch.setattr(publication, 'registry_environment', destination_env)
     receipt = publish(environment, [])
@@ -447,3 +447,21 @@ def test_missing_evidence_has_specific_safe_cause(environment):
         publish(environment, [])
     assert caught.value.receipt['diagnostic'] == {
         'stage': 'Checking retained evidence', 'cause': 'Frozen release evidence is missing or changed'}
+
+
+def test_worker_publication_passes_current_admin_trust_to_destination(environment, monkeypatch):
+    certificates = [{'pem': 'portal-root'}, {'pem': 'portal-intermediate'}]
+    environment.db.scalars = lambda query: [SimpleNamespace(
+        key='trusted_ca_certificates', value=json.dumps(certificates))]
+    seen = []
+
+    @contextmanager
+    def destination_env(destination, supplied):
+        seen.append(deepcopy(supplied))
+        yield {}
+
+    monkeypatch.setattr(publication, 'registry_environment', destination_env)
+    assert publish(environment, [])['status'] == 'published'
+    certificates[1]['pem'] = 'rotated-intermediate'
+    assert publish(environment, [])['status'] == 'published'
+    assert seen == [[{'pem': 'portal-root'}, {'pem': 'portal-intermediate'}], certificates]

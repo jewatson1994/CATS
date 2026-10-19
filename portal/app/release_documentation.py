@@ -208,7 +208,7 @@ def retained_files(record, root, receipt):
 
 
 @contextmanager
-def registry_environment(destination):
+def registry_environment(destination, certificates=()):
     validate_destination(destination)
     with tempfile.TemporaryDirectory(prefix="cats-release-registry-") as temporary:
         root = Path(temporary)
@@ -220,7 +220,7 @@ def registry_environment(destination):
         auth = base64.b64encode(f"{username}:{password}".encode()).decode()
         with os.fdopen(os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as stream:
             json.dump({"auths": {host: {"auth": auth}}} if username and password else {"auths": {}}, stream)
-        with destination_trust(destination) as (_, trust):
+        with destination_trust(destination, certificates) as (_, trust):
             yield {**os.environ, **trust, "DOCKER_CONFIG": str(root)}
 
 

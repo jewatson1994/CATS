@@ -277,7 +277,7 @@ def _publish_image_archive(client, item, env, work, index):
     # Credentials/trust come from the same scoped destination environment used by OCI signing.
     destination = client.api.removeprefix('https://').replace('/v2/', '/', 1) + ':retained'
     subprocess.run([skopeo, 'copy', '--authfile', str(Path(env['DOCKER_CONFIG']) / 'config.json'),
-        '--dest-cert-dir', str(certdir), '--digestfile', str(digestfile),
+        '--dest-tls-verify=true', '--dest-cert-dir', str(certdir), '--digestfile', str(digestfile),
         'docker-archive:' + str(path), 'docker://' + destination],
         env=env, capture_output=True, check=True, timeout=600)
     digest = digestfile.read_text().strip()
@@ -391,7 +391,12 @@ def publish(db, approval, destination, checkpoint):
             documents["evidence.zip.sig"] = root / "evidence.zip.sig"
             documents["release-public-key.pem"] = root / "release-public-key.pem"
             stage = "Preparing registry authentication"
-            with registry_environment(destination) as environment, _source_environments(settings) as (source_env, source_envs):
+            # Resolve current portal-managed trust in the executing worker, not
+            # from its startup environment or the frozen approval snapshot.
+            certificates = settings.get("trusted_ca_certificates", "[]")
+            if isinstance(certificates, str):
+                certificates = json.loads(certificates)
+            with registry_environment(destination, certificates or []) as environment, _source_environments(settings) as (source_env, source_envs):
                 env = signing.clean_environment(environment)
                 transport = _Transport(root / "oci", env)
                 host = destination["endpoint"].removeprefix("https://").rstrip("/")

@@ -91,10 +91,10 @@ def resolve_destination(db, service_id, destination_id, global_registries=()):
 
 
 @contextmanager
-def destination_trust(destination):
+def destination_trust(destination, certificates=()):
     """Private CA scope ends when this destination operation ends."""
     ca = destination.get("ca_pem")
-    with ephemeral_trust([{"pem": ca}] if ca else []) as trust:
+    with ephemeral_trust([*certificates, *([{"pem": ca}] if ca else [])]) as trust:
         yield trust
 
 
