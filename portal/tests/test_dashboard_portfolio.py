@@ -114,3 +114,27 @@ def test_matrix_lifecycle_filters_and_bounded_total(portfolio_db):
     assert [row["service"]["service_key"] for row in archived_data["rows"]] == ["archived"]
     scoped = portfolio(db, auth({active.id}), lifecycle="archived")
     assert scoped["pagination"]["total"] == 0
+
+
+def test_cve_filter_is_exact_active_scoped_and_applied_before_paging(portfolio_db):
+    db = portfolio_db
+    services = [add_service(db, key, 1) for key in ("first", "second", "resolved", "similar")]
+    now = utcnow()
+    for service, cve, active in zip(services,
+            ("CVE-2026-12345", "cve-2026-12345", "CVE-2026-12345", "CVE-2026-123456"),
+            (True, True, False, True)):
+        db.add(Finding(service_id=service.id, cve=cve, severity="High", active=active,
+                       first_seen=now, last_seen=now, episode_started=now))
+    db.commit()
+    data = portfolio(db, auth(), cve="  cve-2026-12345  ", page_size=1, page=2)
+    assert data["cve"] == "CVE-2026-12345"
+    assert data["pagination"]["total"] == 2
+    assert data["pagination"]["pages"] == 2
+    assert len(data["rows"]) == 1
+    assert data["metrics"]["services"] == 4
+    scoped = portfolio(db, auth({services[0].id}), cve="CVE-2026-12345")
+    assert [row["service"]["service_key"] for row in scoped["rows"]] == ["first"]
+    assert portfolio(db, auth(), cve="CVE-2026-12345", q="second")["pagination"]["total"] == 1
+    assert portfolio(db, auth(), cve="CVE-2026-12345", severity="Low")["pagination"]["total"] == 0
+    assert portfolio(db, auth(), cve="CVE-2026-99999")["pagination"]["total"] == 0
+    assert portfolio(db, auth(), cve="   ")["pagination"]["total"] == 4

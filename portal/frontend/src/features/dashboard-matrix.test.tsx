@@ -4,7 +4,9 @@ import {Page} from './dashboard';
 afterEach(cleanup);
 describe('Services security matrix', () => {
   it('preserves submitted filters and server portfolio totals independent of filtered rows', () => {
-    render(<Page data={{ q: 'payments', component: 'openssl', since: '2026-09-01', status: 'RED', severity: 'High', attention: 'kev', rows: [], total_count: 20 }} />);
+    render(<Page data={{ q: 'payments', cve: 'CVE-2026-12345', component: 'openssl', since: '2026-09-01', status: 'RED', severity: 'High', attention: 'kev', rows: [], total_count: 20 }} />);
+    expect(screen.getByLabelText('CVE')).toHaveValue('CVE-2026-12345');
+    expect(screen.getByLabelText('CVE')).toHaveAttribute('name', 'cve');
     expect(screen.getByLabelText('Search')).toHaveValue('payments');
     expect(screen.getByLabelText('Component / image')).toHaveValue('openssl');
     expect(screen.getByLabelText('Scanned since')).toHaveValue('2026-09-01');

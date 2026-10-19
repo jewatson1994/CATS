@@ -14,7 +14,7 @@ def _scalar(value):
 def cybersecurity_data(context, format_date=None):
     """Return only fields rendered by cybersecurity.html, with configured dates."""
     data = {key: _scalar(context.get(key, "")) for key in
-            ("q", "status", "attention", "severity", "component", "since")}
+            ("q", "status", "attention", "severity", "component", "cve", "since")}
     metrics = context.get("metrics", {})
     data["metrics"] = {key: _scalar(_value(metrics, key, 0)) for key in
         ("attention", "services", "scanned", "vulnerabilities", "critical_high", "kev",

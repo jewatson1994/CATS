@@ -202,7 +202,7 @@ def compute_rows(db, services, configs, configuration, now):
     return rows
 
 
-def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50, *, lifecycle="active", source=None):
+def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50, *, cve="", lifecycle="active", source=None):
     from . import main as m
     try:
         since_date = datetime.fromisoformat(since).date() if since else None
@@ -237,15 +237,22 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         component_ids = set(db.scalars(select(Finding.service_id).join(FindingObservation).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True), func.lower(FindingObservation.package).contains(needle, autoescape=True)).distinct()))
         component_ids.update(db.scalars(select(ServiceImage.service_id).where(member_of(ServiceImage.service_id, ids, numeric=True), func.lower(ServiceImage.image_reference).contains(needle, autoescape=True)).distinct()))
         component_ids.update(db.scalars(select(DependencyWatchlistMatch.service_id).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).where(or_(func.lower(DependencyWatchlistMatch.component_name).contains(needle, autoescape=True), func.lower(DependencyWatchlistMatch.image).contains(needle, autoescape=True))).distinct()))
+    cve = cve.strip().upper()
+    cve_ids = None
+    if cve:
+        cve_ids = set(db.scalars(select(Finding.service_id).where(
+            member_of(Finding.service_id, ids, numeric=True),
+            Finding.active.is_(True), func.upper(Finding.cve) == cve,
+        ).distinct())) if ids else set()
     severity_ids = set(db.scalars(select(Finding.service_id).where(member_of(Finding.service_id, ids, numeric=True), Finding.active.is_(True), severity_lower == severity.casefold()).distinct())) if severity != "all" and ids else None
     metrics = {key: sum(row[key] for row in rows) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "watchlist", "poam", "poam_overdue", "missing", "attention")}
     metrics.update(services=len(rows), scanned=sum(row["last_scan"] is not None for row in rows), critical_high=metrics["critical"] + metrics["high"], sbom_coverage=sum(row["sbom"] for row in rows), kind_failed=sum(row["kind"] in failed_statuses for row in rows))
     metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
-    filtered = [row for row in rows if (not q or q.casefold() in row["service"].name.casefold() or q.casefold() in row["service"].service_key.casefold()) and (status == "all" or row["status"] == status) and (severity_ids is None or row["service"].id in severity_ids) and (component_ids is None or row["service"].id in component_ids) and (not since_date or row["last_scan"] and m.aware(row["last_scan"]).date() >= since_date) and (attention == "all" or (attention in {"kev", "watchlist", "poam", "missing"} and row[attention]) or (attention == "kind" and row["kind"] in failed_statuses))]
+    filtered = [row for row in rows if (not q or q.casefold() in row["service"].name.casefold() or q.casefold() in row["service"].service_key.casefold()) and (status == "all" or row["status"] == status) and (cve_ids is None or row["service"].id in cve_ids) and (severity_ids is None or row["service"].id in severity_ids) and (component_ids is None or row["service"].id in component_ids) and (not since_date or row["last_scan"] and m.aware(row["last_scan"]).date() >= since_date) and (attention == "all" or (attention in {"kev", "watchlist", "poam", "missing"} and row[attention]) or (attention == "kind" and row["kind"] in failed_statuses))]
     total = len(filtered)
     pages = max(1, ceil(total / page_size))
     page = min(page, pages)
-    data = cybersecurity_data(dict(rows=filtered[(page-1)*page_size:page*page_size], metrics=metrics, q=q, status=status, attention=attention, severity=severity, component=component, since=since), format_date=lambda value: m.configured_time(value, configuration=configuration))
+    data = cybersecurity_data(dict(rows=filtered[(page-1)*page_size:page*page_size], metrics=metrics, q=q, status=status, attention=attention, severity=severity, component=component, cve=cve, since=since), format_date=lambda value: m.configured_time(value, configuration=configuration))
     data.pop("history", None)
     data["services"] = [{"service_key": service.service_key, "name": service.name} for service in services]
     data["pagination"] = {"page": page, "page_size": page_size, "total": total, "pages": pages, "has_previous": page > 1, "has_next": page < pages}

@@ -7268,7 +7268,7 @@ def architecture_evidence_result(
 
 @app.get("/cybersecurity", response_class=HTMLResponse)
 def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", attention: str = "all",
-    severity: str = "all", component: str = "", since: str = "", page: int = 1, page_size: int = 50,
+    severity: str = "all", component: str = "", cve: str = "", since: str = "", page: int = 1, page_size: int = 50,
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     if auth.accessible_service_ids("service.view") == set():
         raise HTTPException(403, detail="Permission denied")
@@ -7276,18 +7276,18 @@ def cybersecurity_dashboard(request: Request, q: str = "", status: str = "all", 
     # Posture rows come from the Service Posture read model, so the page
     # carries the portfolio directly instead of a data-URL waterfall.
     data = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
-                     component=component, since=since, page=page, page_size=page_size)
+                     component=component, cve=cve, since=since, page=page, page_size=page_size)
     return templates.TemplateResponse(request, "cybersecurity.html", page_context(auth, cyber_portfolio=data))
 
 
 @app.get("/api/dashboard/cybersecurity")
 def cybersecurity_portfolio_data(request: Request, q: str = "", status: str = "all", attention: str = "all",
-    severity: str = "all", component: str = "", since: str = "", page: int = 1,
+    severity: str = "all", component: str = "", cve: str = "", since: str = "", page: int = 1,
     page_size: int = 50, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     from .dashboard_portfolio import portfolio
     started = time.perf_counter()
     data = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
-                     component=component, since=since, page=page, page_size=page_size)
+                     component=component, cve=cve, since=since, page=page, page_size=page_size)
     data["timings"] = {"portfolio_ms": round((time.perf_counter() - started) * 1000, 2)}
     request.state.snapshot_timings = data["timings"]
     return JSONResponse(data, headers={"Cache-Control": "no-store"})
@@ -7296,7 +7296,7 @@ def cybersecurity_portfolio_data(request: Request, q: str = "", status: str = "a
 @app.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
               page: int = 1, page_size: int = 50, status: str = "all", attention: str = "all",
-              severity: str = "all", component: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
+              severity: str = "all", component: str = "", cve: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
     if not auth:
         return templates.TemplateResponse(request, "home.html", {
             "current_user": None, "csrf_token": "", "can": lambda _permission: False,
@@ -7306,12 +7306,12 @@ def dashboard(request: Request, archived: bool = False, lifecycle: str = "active
     # them directly: one request, no envelope -> data-URL waterfall.
     return templates.TemplateResponse(request, "dashboard.html", _services_dashboard_context(
         request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort, page=page, page_size=page_size,
-        status=status, attention=attention, severity=severity, component=component, since=since))
+        status=status, attention=attention, severity=severity, component=component, cve=cve, since=since))
 
 
 def _services_dashboard_context(request: Request, db: Session, auth: AuthContext, *, archived: bool, lifecycle: str,
                                 q: str, sort: str, page: int, page_size: int, status: str = "all", attention: str = "all",
-                                severity: str = "all", component: str = "", since: str = "") -> dict:
+                                severity: str = "all", component: str = "", cve: str = "", since: str = "") -> dict:
     """Services page context from the Service Posture read model."""
     request_started = time.perf_counter()
     stage_timings = {}
@@ -7338,14 +7338,14 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
     selected_services = [view["service"] for view in visible_all]
     # Lifecycle selection has already used the archive projection, including legacy records.
     matrix = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
-                       component=component, since=since, page=page, page_size=page_size,
+                       component=component, cve=cve, since=since, page=page, page_size=page_size,
                        lifecycle=None, source=(selected_services, configurations, configuration, now))
     pagination = matrix["pagination"]
     page, page_size, total_count, total_pages = (pagination[key] for key in ("page", "page_size", "total", "pages"))
     views_by_key = {view["service"].service_key: view for view in visible_all}
     views = [views_by_key[row["service"]["service_key"]] for row in matrix["rows"]]
     dashboard_params = [("lifecycle", lifecycle), ("q", q), ("status", status), ("attention", attention),
-                        ("severity", severity), ("component", component), ("since", since), ("page_size", page_size)]
+                        ("severity", severity), ("component", component), ("cve", cve), ("since", since), ("page_size", page_size)]
     pagination_base = "/?" + urllib.parse.urlencode([(key, value) for key, value in dashboard_params if value not in (None, "")])
     visible_ids = [view["service"].id for view in visible_all]
     visible_poam = [poam_counts.get(service_id, {"active": 0, "pending": 0, "overdue": 0}) for service_id in visible_ids]
@@ -7356,7 +7356,7 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
     stage_started = time.perf_counter()
     context = page_context(auth,
         views=views, rows=matrix["rows"], q=q, status=status, attention=attention, severity=severity,
-        component=component, since=since, now=now, now_display=now_display,
+        component=component, cve=cve, since=since, now=now, now_display=now_display,
         compliant_count=sum(v["compliant"] for v in visible_all),
         noncompliant_count=sum(not v["compliant"] for v in visible_all),
         showing_archived=lifecycle == "archived", lifecycle=lifecycle, lifecycle_counts=lifecycle_counts,
@@ -7380,10 +7380,10 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
 @app.get("/api/dashboard/services")
 def dashboard_services_data(request: Request, archived: bool = False, lifecycle: str = "active", q: str = "", sort: str = "name",
                             page: int = 1, page_size: int = 50, status: str = "all", attention: str = "all",
-                            severity: str = "all", component: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+                            severity: str = "all", component: str = "", cve: str = "", since: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     context = _services_dashboard_context(request, db, auth, archived=archived, lifecycle=lifecycle, q=q, sort=sort,
                                           page=page, page_size=page_size, status=status, attention=attention,
-                                          severity=severity, component=component, since=since)
+                                          severity=severity, component=component, cve=cve, since=since)
     from .frontend import page_data
     return JSONResponse(page_data(request, "dashboard.html", context)["data"], headers={"Cache-Control": "no-store"})
 

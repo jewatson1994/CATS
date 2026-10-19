@@ -10,8 +10,9 @@ const title = (value: string) => value[0].toUpperCase() + value.slice(1).toLower
 export function ServiceSecurityMatrix({data}: {data: any}) {
   const select = (name: string, label: string, options: string[]) => <label>{label}<select name={name} defaultValue={data[name] || 'all'}><option value="all">All</option>{options.map(value => <option key={value} value={value}>{title(value)}</option>)}</select></label>;
   return <>
-      <form method="get" action="/" className="cyber-filters" key={JSON.stringify([data.q, data.component, data.since, data.status, data.severity, data.attention])}>
+      <form method="get" action="/" className="cyber-filters" key={JSON.stringify([data.q, data.cve, data.component, data.since, data.status, data.severity, data.attention])}>
         <input type="hidden" name="lifecycle" value={data.lifecycle || "active"} /><label>Search<input name="q" defaultValue={data.q || ''} placeholder="Service name or key" /></label>
+        <label>CVE<input name="cve" defaultValue={data.cve || ''} placeholder="CVE-2026-12345" title="Find services with an active finding for this exact CVE" /></label>
         <label>Component / image<input name="component" defaultValue={data.component || ''} /></label>
         <label>Scanned since<input name="since" type="date" defaultValue={data.since || ''} /></label>
         {select('status', 'Status', ['GREEN', 'YELLOW', 'RED'])}{select('severity', 'Severity', ['Critical', 'High', 'Medium', 'Low'])}{select('attention', 'Attention', ['kev', 'watchlist', 'poam', 'missing', 'kind'])}<label>Per page<select name="page_size" defaultValue={data.page_size || 50}>{[10, 25, 50, 100].map(value => <option value={value} key={value}>{value}</option>)}</select></label><button className="secondary-button">Filter</button>
