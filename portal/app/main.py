@@ -121,6 +121,7 @@ from .remediation_summary import build_summary as build_remediation_summary, art
 from . import cyber_approvals
 from . import risk_routes, discovery_routes
 from . import vex_models, risk_models, intelligence_models, native_vex_models, discovery_models
+from . import oci_models, oci_lifecycle, oci_admin
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -457,6 +458,8 @@ app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
+app.include_router(oci_admin.router)
+app.include_router(oci_lifecycle.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -11411,6 +11414,13 @@ def save_signing_configuration(
 ):
     check_csrf(auth, csrf_token)
     try:
+        from .oci_lifecycle import retain_public_key
+        # Keep public verification material available after rotation/removal.
+        try:
+            previous = signing.configuration(get_global_configuration(db))
+            retain_public_key(db, previous)
+        except ValueError:
+            pass  # A malformed old key must not prevent administrators repairing it.
         current = {} if action == "remove" or (private_key and private_key.filename) else signing.configuration(get_global_configuration(db))
         if action == "remove":
             current = {}
@@ -11430,6 +11440,7 @@ def save_signing_configuration(
             raise ValueError("Unknown signing configuration action.")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    retain_public_key(db, current)
     _set_config_value(db, auth, signing.SETTING, json.dumps(current), None)
     record_audit(db, auth, "configuration.signing_updated", "portal", "global",
                  enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove")

@@ -151,6 +151,9 @@ def handle(ctx, payload):
     from .delivery_execution import delivery_lock
     token = worker_context.set(ctx)
     try:
+        if ctx.job.kind == "oci_reassessment":
+            from .oci_lifecycle import handle as reassess
+            return reassess(ctx, payload)
         if ctx.job.kind == "cyber_release_publish":
             from .cyber_approvals import publish_job
             return publish_job(ctx, payload)
@@ -177,6 +180,8 @@ def maintenance():
     with main.SessionLocal() as db:
         from .cyber_approvals import reconcile_jobs
         reconcile_jobs(db)
+        from .oci_lifecycle import maintenance as lifecycle_maintenance
+        lifecycle_maintenance(db)
         records = db.scalars(select(RemediationExecution).where(
             (RemediationExecution.status.in_(["queued", "running"])) |
             (RemediationExecution.verification_status.in_(["queued", "running"])) |
@@ -209,4 +214,4 @@ def maintenance():
 
 
 if __name__ == "__main__":
-    run_worker(KINDS, handle, maintenance=maintenance)
+    run_worker((*KINDS, "oci_reassessment"), handle, maintenance=maintenance)

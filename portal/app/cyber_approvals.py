@@ -197,6 +197,30 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         destination = next((row for row in eligible if str(row.id) == str(data['destination_id'])), None)
         if destination is None:
             raise HTTPException(422, 'Select an available approved-release destination')
+    renewal = None
+    event = None
+    if data.get('renews_approval_id') is not None:
+        renewal = db.scalar(select(CyberApproval).where(CyberApproval.id == data['renews_approval_id']).with_for_update())
+        if not renewal or renewal.service_id != service.id or renewal.status != 'approved' or renewal.revoked_at:
+            raise HTTPException(409, 'Renewal requires a non-revoked approval for this service')
+        if data.get('reassessment_event_id'):
+            from .oci_lifecycle import OCIReassessmentEvent
+            event = db.get(OCIReassessmentEvent, str(data['reassessment_event_id']))
+            if not event or event.approval_id != renewal.id:
+                raise HTTPException(409, 'Reassessment event does not match renewal')
+            existing = db.scalar(select(CyberApproval).where(CyberApproval.service_id == service.id,
+                CyberApproval.snapshot['reassessment_event_id'].as_string() == event.id))
+            if existing:
+                return dto(db, existing, auth, True)
+        if data.get('expected_source_execution_id') is not None and result['execution'].id != data['expected_source_execution_id']:
+            raise HTTPException(409, 'Reassessment source changed; review the current assessment')
+        if (not result['execution'].complete or result['execution'].id == renewal.source_execution_id
+                or release_validity.utc(result['execution'].scanned_at) <= release_validity.utc(renewal.requested_at)):
+            raise HTTPException(409, 'Renewal requires a fresh complete assessment')
+        def identities(items):
+            return sorted((item.get('kind', ''), item.get('reference', ''), item.get('digest', '')) for item in items)
+        if identities(result['artifacts']) != identities(renewal.snapshot.get('artifacts', [])):
+            raise HTTPException(409, 'Renewal artifact identities changed; request a separate approval')
     from .cyber_approval_evidence import freeze
     release_key = uuid.uuid4().hex
     folder = root() / release_key
@@ -214,6 +238,11 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     except ValueError:
         fingerprint = None
     snapshot.update(variant=variant, destination=frozen_destination, signing_fingerprint=fingerprint)
+    if renewal:
+        snapshot['renews_approval_id'] = renewal.id
+        snapshot['reassessment_event_id'] = event.id if event else None
+    from .oci_lifecycle import retain_public_key
+    retain_public_key(db, signing.configuration(_settings(db)))
     snapshot['review_notes'] = list(dict.fromkeys(snapshot.get('review_notes', []) + result.get('review_notes', [])))
     row = CyberApproval(release_key=release_key, service_id=service.id, source_execution_id=result['execution'].id,
         remediation_id=result['remediation'].id if result.get('remediation') else None, requested_by_id=auth.user.id,
