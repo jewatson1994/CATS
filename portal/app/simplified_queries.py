@@ -6,7 +6,7 @@ truth/string and Unicode casefold semantics without reading evidence on GET.
 import hashlib
 import json
 from datetime import timedelta
-from sqlalchemy import case, event, func, literal, select, true, update, inspect
+from sqlalchemy import case, event, func, literal, select, true, update, inspect, and_
 from sqlalchemy.orm import aliased, Session
 from .models import Finding, FindingObservation, ExceptionRecord, PolicyFinding
 
@@ -148,11 +148,17 @@ def classified_candidates(service, now, configuration, *, state='active', findin
         FC.fixed_sort.label('fixed_sort')).where(*clauses).cte('members')
 
 
+def _native_grouping(db, state):
+    from .native_vex_models import VexDispositionPolicy
+    return state not in {'resolved', 'exceptions'} and bool(db.scalar(
+        select(VexDispositionPolicy.enabled).where(VexDispositionPolicy.id == 1)))
+
+
 def candidates(db, service, latest, now, configuration, *, state='active', finding_type='all',
                severities=(), query='', resource=''):
     from .finding_classification import ensure_current
     _validate_filters(state, finding_type)
-    if ensure_current(db, service.id, configuration, now, latest.id if latest else None):
+    if not _native_grouping(db, state) and ensure_current(db, service.id, configuration, now, latest.id if latest else None):
         return classified_candidates(service, now, configuration, state=state, finding_type=finding_type,
                                      severities=severities, query=query, resource=resource)
     return live_candidates(db, service, latest, now, configuration, state=state, finding_type=finding_type,
@@ -206,7 +212,15 @@ def live_candidates(db, service, latest, now, configuration, *, state='active', 
         func.coalesce(chosen.simplified_fixed, 'Latest fixed version').label('fixed'),
         func.coalesce(chosen.simplified_package_sort, 'package update').label('package_sort'),
         func.coalesce(chosen.simplified_fixed_sort, 'latest fixed version').label('fixed_sort'))
-    if LATERAL_CURRENT_OBSERVATION and db.get_bind().dialect.name == 'postgresql':
+    if _native_grouping(db, state):
+        # Group every current actionable component, not an arbitrary latest
+        # observation which may be excluded or belong to a different image.
+        from .native_vex import observation_excluded
+        statement = statement.select_from(Finding).outerjoin(chosen, and_(
+            chosen.finding_id == Finding.id,
+            chosen.execution_id == (latest.id if latest else -1),
+            ~observation_excluded(chosen.id, now))).distinct()
+    elif LATERAL_CURRENT_OBSERVATION and db.get_bind().dialect.name == 'postgresql':
         # The same observation as coalesce(current, ever): the newest one from
         # the latest execution, else the newest overall. Joined LATERAL so each
         # finding reads its own observations through the index; joining on the
@@ -395,7 +409,7 @@ def group_page(db, service, latest, now, configuration, *, page=1, page_size=50,
     from sqlalchemy import String, cast, text
     from .finding_classification import ensure_current
     _validate_filters(filters.get('state', 'active'), filters.get('finding_type', 'all'))
-    if ensure_current(db, service.id, configuration, now, latest.id if latest else None):
+    if not _native_grouping(db, filters.get("state", "active")) and ensure_current(db, service.id, configuration, now, latest.id if latest else None):
         return _classified_group_page(db, service, latest, now, configuration, page=page, page_size=page_size, **filters)
     members = live_candidates(db, service, latest, now, configuration, **filters)
     # Explicit reuse prevents candidate/risk evaluation for every aggregate.
@@ -452,6 +466,10 @@ def group_page(db, service, latest, now, configuration, *, page=1, page_size=50,
             FindingObservation.finding_id == members.c.id).where(
                 FindingObservation.execution_id == (latest.id if latest else -1),
                 FindingObservation.image.is_not(None), FindingObservation.image != '')
+        if _native_grouping(db, filters.get('state', 'active')):
+            from .native_vex import observation_excluded
+            images = images.where(~observation_excluded(FindingObservation.id, now),
+                FindingObservation.simplified_key == members.c.group_id)
         images = images.group_by(members.c.group_id).cte('group_images')
         return select(selected.c.group_id, func.substr(selected.c.package, 1, 500).label('package'),
             func.substr(selected.c.remediation, 1, 1200).label('remediation'), selected.c.fixed_version,
@@ -496,6 +514,27 @@ def member_page(db, service, latest, now, configuration, group_id, *, page=1, pa
         selected, selected.c.id == FindingObservation.finding_id).where(
             FindingObservation.execution_id == (latest.id if latest else -1),
             FindingObservation.image.is_not(None), FindingObservation.image != '').group_by(FindingObservation.finding_id).subquery()
+    if _native_grouping(db, filters.get('state', 'active')):
+        from .native_vex import observation_excluded
+        images = select(FindingObservation.finding_id,
+            func.count(func.distinct(FindingObservation.image)).label('image_count')).join(
+                selected, selected.c.id == FindingObservation.finding_id).where(
+                FindingObservation.execution_id == (latest.id if latest else -1),
+                FindingObservation.simplified_key == group_id,
+                ~observation_excluded(FindingObservation.id, now),
+                FindingObservation.image.is_not(None), FindingObservation.image != '').group_by(
+                    FindingObservation.finding_id).subquery()
+    # Multiple retained versions of a CVE remain one paginated member.
+    if _native_grouping(db, filters.get('state', 'active')):
+        versions = select(members.c.id, members.c.fixed).distinct().order_by(members.c.fixed).subquery()
+        if db.get_bind().dialect.name == 'postgresql':
+            from sqlalchemy.dialects.postgresql import aggregate_order_by
+            fixed = func.string_agg(versions.c.fixed, aggregate_order_by(literal(', '), versions.c.fixed))
+        else:
+            fixed = func.group_concat(versions.c.fixed, ', ')
+        fixes = select(versions.c.id, fixed.label('fixed')).group_by(versions.c.id).subquery()
+        members = select(members.c.id, members.c.severity, members.c.active,
+            members.c.package, fixes.c.fixed).join(fixes, fixes.c.id == members.c.id).distinct().cte('unique_members')
     rows = db.execute(select(members.c.id, selected.c.cve, members.c.severity, members.c.active,
         func.substr(members.c.package, 1, 500).label('package'), func.substr(members.c.fixed, 1, 1200).label('fixed'),
         func.coalesce(images.c.image_count, 0).label('image_count')).join(selected, selected.c.id == members.c.id).outerjoin(

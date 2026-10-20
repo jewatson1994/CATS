@@ -1,0 +1,23 @@
+{
+  "verified_at_utc": "2026-10-20T05:41:16.910316+00:00",
+  "suite": [
+    "test_container_intelligence"
+  ],
+  "selection": "assessment_expires",
+  "database": "cats_embedded_audit",
+  "database_container": "cats-embedded-audit-db",
+  "database_mode": "PostgreSQL isolated schema; global app SQLite",
+  "application_global_database": "sqlite://",
+  "counts": {
+    "tests": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "exit_code": 0,
+  "duration_seconds": 3.719,
+  "junit_xml": "postgres-advisory-expiry-final.xml",
+  "output": ".                                                                        [100%]\n- generated xml file: C:\\Users\\lil-j\\.codex\\worktrees\\risk-profiles-vex\\Cyber Hygiene\\docs\\evidence\\container-vex-scans\\postgres-advisory-expiry-final.xml -\n1 passed, 40 deselected in 3.64s\n",
+  "reason": "Targeted refresh after disabling unrelated background classification rebuild in the expiry fixture.",
+  "included_in_aggregate_totals": false
+}

@@ -61,10 +61,74 @@ for RESULT in results/*-results.json; do
   FIXABLE_COUNT=$(jq '[((.matches // [])[] | select((.vulnerability.fix.versions // []) | length > 0))] | length' "$RESULT")
   echo "${SAFE_NAME}: ${RAW_COUNT} raw finding(s), ${FIXABLE_COUNT} fixable finding(s)"
 
-  jq --arg image "$IMAGE" --arg digest "$DIGEST" --arg raw "$REPORT_RAW_FINDINGS" '
-    [
+  PROVENANCE_FILE="sboms/${SAFE_NAME}.provenance"
+  if [ ! -f "$PROVENANCE_FILE" ]; then
+    PROVENANCE_FILE="current-image-provenance.json"
+    printf '%s\n' 'null' > "$PROVENANCE_FILE"
+  fi
+  SBOM_FILE="sboms/${SAFE_NAME}.json"
+  if [ ! -f "$SBOM_FILE" ]; then
+    SBOM_FILE="current-sbom-identity.json"
+    printf '%s\n' 'null' > "$SBOM_FILE"
+  fi
+  jq --slurpfile image_provenance "$PROVENANCE_FILE" --slurpfile sbom_input "$SBOM_FILE" --arg image "$IMAGE" --arg digest "$DIGEST" --arg raw "$REPORT_RAW_FINDINGS" '
+    # Keep source evidence separate from authoritative applicability context.
+    def bounded($kind; $limit):
+      if type == $kind and ((tojson | utf8bytelength) <= $limit) then . else null end;
+    def image_source:
+      if type == "object" then
+        {type, name, target: (if (.target | type) == "object" then
+          (.target | {userInput, imageID, manifestDigest, repoDigests, architecture, os, labels, annotations})
+          else .target end),
+         metadata: (if (.metadata | type) == "object" then
+          (.metadata | {userInput, imageID, manifestDigest, repoDigests, architecture, os, labels, annotations})
+          else null end)} | bounded("object"; 32768)
+      else null end;
+    def scanner_descriptor:
+      if type == "object" then
+        with_entries(select(.key == "name" or .key == "version" or .key == "timestamp"))
+        | bounded("object"; 1024)
+      else null end;
+    def package_identity:
+      {id, name, version, purl, type, language, metadataType, foundBy,
+       metadata: (if (.metadata | type) == "object" then
+         (.metadata | with_entries(select(.key == "package" or .key == "name" or .key == "version"
+           or .key == "architecture" or .key == "source" or .key == "sourceVersion" or .key == "sourceRpm"
+           or .key == "originPackage" or .key == "vendor" or .key == "modularityLabel"
+           or .key == "epoch" or .key == "release"))) | bounded("object"; 8192)
+         else null end),
+       locations: (if (.locations | type) == "array" then
+         [.locations[] | select(type == "object")
+          | with_entries(select(.key == "path" or .key == "accessPath" or .key == "layerID" or .key == "annotations"))]
+         | bounded("array"; 8192) else null end),
+       upstreams: (.upstreams | bounded("array"; 8192)),
+       cpes: (.cpes | bounded("array"; 8192))} | bounded("object"; 32768);
+    # Grype can omit package metadata that remains in its input Syft SBOM.
+    # Join only a unique exact artifact ID in this image, and reject conflicts.
+    ($sbom_input[0] // {}) as $sbom
+    | ([$sbom.artifacts[]? | select(type == "object")
+        | select((.id | type) == "string") | select((.id | length) > 0)]
+        | group_by(.id) | map(select(length == 1) | {key: .[0].id, value: .[0]})
+        | from_entries) as $sbom_by_id
+    | (.descriptor | scanner_descriptor) as $scanner_descriptor
+    | (.source | image_source) as $scanner_source
+    | # Preserve bounded scanner identities without translating distribution names.
+    (if (.distro | type) == "object" and ((.distro | tojson | utf8bytelength) <= 4096) then .distro else null end) as $scanner_distro
+    | [
       (.matches // [])[]
       | select($raw == "true" or ((.vulnerability.fix.versions // []) | length > 0))
+      | .artifact as $artifact
+      | (if ($artifact.id | type) == "string" then $sbom_by_id[$artifact.id] else null end) as $sbom_candidate
+      | (if $sbom_candidate != null and $sbom_candidate.name == $artifact.name
+          and $sbom_candidate.version == $artifact.version and $sbom_candidate.type == $artifact.type
+          and (($sbom_candidate.purl // "") == ($artifact.purl // "")
+            or $sbom_candidate.purl == null or $artifact.purl == null)
+          then ($sbom_candidate | package_identity) else null end) as $sbom_artifact
+      | (if (.relatedVulnerabilities | type) == "array" then
+          [.relatedVulnerabilities[] | select(type == "object") | .id
+            | select(type == "string") | select(length > 0)] | unique
+          else [] end) as $raw_aliases
+      | [$raw_aliases[] | select(length <= 160)] as $aliases
       | {
           cve: .vulnerability.id,
           severity: (.vulnerability.severity // "Unknown"),
@@ -80,6 +144,27 @@ for RESULT in results/*-results.json; do
             cvss: (.vulnerability.cvss // []),
             namespace: .vulnerability.namespace,
             package_type: .artifact.type,
+            purl: (if (.artifact.purl | type) == "string" then
+              (if (.artifact.purl | startswith("pkg:")) and ((.artifact.purl | utf8bytelength) <= 1500) then .artifact.purl else null end)
+              else null end),
+            scanner_distro: $scanner_distro,
+            scanner_source: $scanner_source,
+            scanner_descriptor: $scanner_descriptor,
+            image_provenance: (($image_provenance[0] // null) | bounded("object"; 32768)),
+            scanner_artifact: (.artifact | package_identity),
+            sbom_artifact: $sbom_artifact,
+            sbom_distro: ($sbom.distro | bounded("object"; 4096)),
+            sbom_source: ($sbom.source | image_source),
+            sbom_descriptor: ($sbom.descriptor | scanner_descriptor),
+            sbom_schema: (if ($sbom.schema | type) == "object" then
+              ($sbom.schema | with_entries(select(.key == "version" or .key == "url")))
+              | bounded("object"; 2048) else null end),
+            aliases: ($aliases | bounded("array"; 8192)),
+            alias_count: ($raw_aliases | length),
+            aliases_truncated: (($aliases | length) != ($raw_aliases | length)
+              or ($aliases | tojson | utf8bytelength) > 8192),
+            related_vulnerabilities: (.relatedVulnerabilities | bounded("array"; 32768)),
+            match_details: (.matchDetails | bounded("array"; 32768)),
             locations: (.artifact.locations // [])
           }
         }

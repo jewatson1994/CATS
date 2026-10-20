@@ -7,6 +7,7 @@ export function AdminTabs({data, selected}: {data: PageData; selected: string}) 
   const items = [['accounts', '/admin', 'Accounts & roles', can(data, 'user.manage')], ['configuration', '/admin/configuration', 'Settings', can(data, 'config.manage')],
     ['general', `/admin/general-policy${group}`, 'General Policy', can(data, 'audit.view') || can(data, 'config.manage')],
     ['compliance', '/admin/compliance-frameworks', 'Hardening Policy', can(data, 'config.manage')], ['vulnerability', `/admin/compliance${group}`, 'Vulnerability Policy', can(data, 'config.manage')],
+    ['risk', `/admin/risk-policy${group}`, 'Risk Policy', Boolean(data.may_manage_risk_policy) || can(data, 'config.manage')],
     ['watchlist', '/admin/dependency-watchlist', 'Dependency Watchlist', can(data, 'config.manage')],
     ['release-destinations', '/admin/approved-release-destinations', 'Release Destinations', can(data, 'release.destination.manage')]];
   return <nav className="admin-tabs" aria-label="Administration sections">{items.filter(item => item[3]).map(([key, href, label]) => <a key={String(key)} href={String(href)} className={selected === key ? 'selected' : ''} aria-current={selected === key ? 'page' : undefined}>{label}</a>)}</nav>;

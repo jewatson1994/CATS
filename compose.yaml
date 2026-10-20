@@ -552,7 +552,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-      start_period: 20s
+      # Initial embedded intelligence import precedes readiness. Successful checks
+      # still mark the portal healthy immediately on ordinary restarts.
+      # Expanded embedded intelligence took 43 minutes on the measured cold import.
+      start_period: ${CATS_INTELLIGENCE_START_PERIOD:-60m}
 
 
     restart: unless-stopped
@@ -599,6 +602,13 @@ services:
       portal:
         condition: service_healthy
     restart: unless-stopped
+
+  risk-worker:
+    <<: *background_worker
+    command: ["python", "-m", "app.risk_worker"]
+    cpus: ${CATS_RISK_CPUS:-1.0}
+    mem_limit: ${CATS_RISK_MEMORY:-1g}
+    pids_limit: 128
 
   export-worker:
     <<: *background_worker

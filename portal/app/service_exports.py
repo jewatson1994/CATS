@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from .models import Service, PoamEntry, Finding, FindingObservation, PolicyFinding
 from .service_evidence import current_execution, current_execution_id
+from .native_vex import observation_excluded
+from .risk_profiles import utcnow
 from .architecture import build_architecture_graph
 from .architecture_export import build_architecture_svg
 from .helm_diagram import build_helm_diagram
@@ -66,26 +68,30 @@ def _service_findings_book(service_key: str, db: Session):
     if service is None:
         raise HTTPException(404)
     latest_id = current_execution_id(db, service)
+    now = utcnow()
     def export_rows():
         observations = db.execute(select(Finding.cve, Finding.severity, Finding.active,
             FindingObservation.image, FindingObservation.package, FindingObservation.installed_version,
-            FindingObservation.fixed_version, Finding.first_seen, Finding.last_seen)
+            FindingObservation.fixed_version, Finding.first_seen, Finding.last_seen,
+            observation_excluded(FindingObservation.id, now).label("vex_excluded"))
             .join(FindingObservation, FindingObservation.finding_id == Finding.id)
             .where(Finding.service_id == service.id, FindingObservation.execution_id == latest_id)
             .order_by(Finding.id, FindingObservation.id).execution_options(yield_per=500))
         for item in observations:
-            yield ["Vulnerability", *item[:7], item.first_seen.isoformat(), item.last_seen.isoformat()]
+            yield ["Vulnerability", *item[:7], item.first_seen.isoformat(), item.last_seen.isoformat(),
+                   "Resolved" if not item.active else "VEX Excluded" if item.vex_excluded else "Existing Policy"]
         policies = db.execute(select(PolicyFinding.finding, PolicyFinding.severity, PolicyFinding.active,
             PolicyFinding.target, PolicyFinding.first_seen, PolicyFinding.last_seen)
             .where(PolicyFinding.service_id == service.id).order_by(PolicyFinding.id)
             .execution_options(yield_per=500))
         for item in policies:
             yield ["Configuration", item.finding, item.severity, item.active, item.target or "",
-                   "", "", "", item.first_seen.isoformat(), item.last_seen.isoformat()]
+                   "", "", "", item.first_seen.isoformat(), item.last_seen.isoformat(),
+                   "Existing Policy" if item.active else "Resolved"]
     rows = export_rows()
     return _focused_export_book(
         ["Type", "Finding", "Severity", "Active", "Image or Target", "Package", "Installed Version",
-         "Fixed Version", "First Seen", "Last Seen"], rows)
+         "Fixed Version", "First Seen", "Last Seen", "Effective Disposition"], rows)
 
 
 def _service_diagrams_bytes(service_key: str, db: Session):

@@ -2,3 +2,6 @@
 *.sh text eol=lf
 scanning-main/scripts/cats text eol=lf
 cats-scanner/catscan-* text eol=lf
+
+# Preserve exact reproducible intelligence package bytes on every platform.
+portal/app/embedded_intelligence_data/* -text whitespace=-blank-at-eof,cr-at-eol

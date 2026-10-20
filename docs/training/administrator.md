@@ -30,7 +30,7 @@ Repair TLS trust at the component connecting to the endpoint instead of hiding t
 
 ## Image signing and remediation
 
-Open **Settings → Security → Image signing**:
+Open **Administration → Settings → Signing**:
 
 1. Obtain a Cosign PEM key pair through your key-handling process.
 2. Upload the private key (maximum 32 KiB) and its password when needed. Public key upload is optional because it can be derived; an uploaded public key must match.
@@ -75,3 +75,7 @@ See [deployment templates](../../templates/README.md), [runtime validation](../.
 ## Exercise
 
 Explain a scoped role assignment, locate registry/CA/signing controls, identify encryption-key recovery requirements, and describe validator readiness. Explain deletion safeguards without deleting a real service.
+
+## Group policy and risk administration
+
+CATS uses shared signing keys. Set approval validity under General Policy for the service's single owning group; key storage and approval lifetime are separate controls. Manage scoring profiles under **Administration → Risk Policy**. See the [Risk Policy and VEX walkthrough](risk-policy-and-vex.md) for group permissions, versioning, assessment previews, and safe upgrade checks.

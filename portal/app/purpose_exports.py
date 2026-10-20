@@ -5,9 +5,9 @@ import json
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 
-from .models import (FindingObservation, Group, InventoryRecord, PoamEntry,
+from .models import (Finding, FindingObservation, Group, InventoryRecord, PoamEntry,
                      PortalSetting, ServiceArtifact, ServiceImage)
 from .overview import normalize_overview
 
@@ -24,6 +24,7 @@ CATALOG = {
         ("created_at", "POA&M Created"), ("due_date", "POA&M Due Date"),
         ("mitigation", "Mitigation"), ("exception_status", "Exception Status"),
         ("scanner", "Scanner / Source"), ("assessment_status", "Assessment Status"),
+        ("effective_disposition", "Effective Disposition"), ("vex_review", "VEX Review"),
     ],
     "ppsm": [
         ("service", "Service"), ("service_id", "Service ID"), ("port", "Port"),
@@ -39,15 +40,17 @@ CATALOG = {
         ("chart", "Chart"), ("chart_version", "Chart Version"),
         ("lifecycle_status", "Lifecycle Status"),
         ("assessment_status", "Assessment Status"), ("service_version", "Service Version"),
+        ("actionable_observations", "Observations Retained by VEX Policy"),
+        ("vex_excluded_observations", "VEX Excluded Observations"),
     ],
 }
 NAMES = {"poam": "POA&M", "ppsm": "PPSM", "asset_list": "Asset List"}
 DEFAULT_ENABLED = {
     "poam": {"service", "service_id", "finding_id", "finding_type", "finding_title", "severity",
-             "poam_title", "poam_status", "due_date", "mitigation", "exception_status"},
+             "poam_title", "poam_status", "due_date", "mitigation", "exception_status", "effective_disposition", "vex_review"},
     "ppsm": {"service", "service_id", "port", "protocol", "application", "declared_by", "source_file", "provenance", "boundary", "fqdn"},
     "asset_list": {"service", "service_id", "asset_type", "asset_name", "image", "digest",
-                   "chart", "chart_version", "lifecycle_status", "assessment_status"},
+                   "chart", "chart_version", "lifecycle_status", "assessment_status", "actionable_observations", "vex_excluded_observations"},
 }
 
 
@@ -172,6 +175,9 @@ def _version(service, execution):
 
 
 def _poam_rows(db, service):
+    from .native_vex import excluded_finding_ids
+    from .risk_profiles import utcnow
+    excluded = excluded_finding_ids(db, service.id, utcnow())
     rows = []
     entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).order_by(PoamEntry.id)).all()
     for entry in entries:
@@ -182,6 +188,8 @@ def _poam_rows(db, service):
                      max(policy.exceptions, key=lambda e: e.id, default=None) if policy else None)
         rows.append({
             "service": service.name, "service_id": service.service_key,
+            "effective_disposition": "Resolved" if finding and not finding.active else "VEX Excluded" if finding and finding.id in excluded else "Existing Policy",
+            "vex_review": "Review existing POA&M; current evidence is VEX excluded" if finding and finding.id in excluded else "",
             "finding_id": finding.cve if finding else policy.finding if policy else "",
             "finding_type": "Vulnerability" if finding else "Configuration" if policy else entry.item_type,
             "finding_title": policy.title if policy else entry.title,
@@ -283,6 +291,20 @@ def _asset_rows(db, service, execution):
         values = record.values or {}
         rows.append({"service": service.name, "service_id": service.service_key, "asset_type": values.get("asset.type"),
                      "asset_name": values.get("asset.name"), "service_version": version})
+    from .native_vex import observation_excluded
+    from .risk_profiles import utcnow
+    excluded = observation_excluded(FindingObservation.id, utcnow())
+    counts = {row.image: (row.retained, row.excluded) for row in db.execute(
+        select(FindingObservation.image, func.sum(case((excluded, 0), else_=1)).label('retained'),
+               func.sum(case((excluded, 1), else_=0)).label('excluded'))
+        .join(Finding, Finding.id == FindingObservation.finding_id)
+        .where(Finding.service_id == service.id, Finding.active.is_(True),
+               FindingObservation.execution_id == (execution.id if execution else None))
+        .group_by(FindingObservation.image))}
+    for row in rows:
+        if row.get('image'):
+            retained, excluded_count = counts.get(row['image'], (0, 0))
+            row.update(actionable_observations=int(retained), vex_excluded_observations=int(excluded_count))
     return rows
 
 

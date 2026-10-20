@@ -121,6 +121,8 @@ def prepare_summary_header(db, proxy, current, latest, now, configuration, servi
         for column in Execution.__table__.columns if column.key != "raw_payload"},
         raw_payload={"service": {"version": summaries[scan.id].get("raw_version")}})
         for scan in executions]
+    from .native_vex import excluded_finding_ids
+    proxy._native_vex_excluded_ids = excluded_finding_ids(db, proxy.id, now)
     view = service_view_callback(proxy, now, configuration)
     proxy.executions = executions
     if current is not None:

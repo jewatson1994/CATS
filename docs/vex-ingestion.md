@@ -1,0 +1,25 @@
+# VEX ingestion and offline operations
+
+VEX is additive evidence for prioritization. It does not close findings, change compliance counts, or prove a scan is clean. No network feeds run at startup. The operator CLI is `python scripts/vex-intelligence.py --help` with the portal environment activated and `DATABASE_URL` set.
+
+## Authority and evidence
+
+Configure a source with its exact HTTPS DNS hosts, independently reviewed package URL authority prefixes, explicit trust rationale, maximum statement age, and optionally an Ed25519 PEM public key. A prefix must begin `pkg:` and end `/` (namespace) or `@` (one package); choose the narrowest publisher scope. A publisher name, HTTPS alone, a checksum, or a public key included in an import is never sufficient trust. `trusted=true` requires both rationale and authority scope. Manual document ingestion always remains unverified. Network retrieval validates TLS hostname/certificate, pins a checked public DNS address, refuses redirects/proxies/compression, and caps bytes and read duration. Conditional ETag/Last-Modified requests are persisted per exact URL. There is no automatic discovery or scheduling.
+
+Example: `python scripts/vex-intelligence.py source my-publisher --host security.example.org --authority-prefix pkg:apk/example/ --trusted --trust-reason "Security team reviewed publisher namespace ownership" --public-key publisher.pem`.
+
+Then explicitly `sync SOURCE_ID https://security.example.org/advisory.json`, `ingest SOURCE_ID document.json`, or `list`. Ingestion saves original JSON, SHA-256, document identity/version/timestamps, retrieval origin, verification and normalized statements. Repeated identical bytes from the same source are idempotent. Revisions are append-only through the service API. Duplicates never silently promote an earlier unverified revision; use a separately configured authenticated source when migrating an unverified archive. Failed transactions must be rolled back; API callers must preserve failure audit separately if their transaction is aborted.
+
+## Applicability and limits
+
+Supported adapters are OpenVEX context v0.2.0 and CSAF 2.0 `csaf_vex`. Parsing rejects duplicate JSON keys, nonfinite numbers, malformed status/CVE fields and oversized documents. CSAF executable identities currently require direct `product_identification_helper.purl`; display names, CPEs, relationship IDs, and unversioned products do not establish applicability. OpenVEX nonaffected claims require justification or an impact statement. Unknown CSAF status categories are not interpreted.
+
+Matching requires the exact versioned product URL, preserving architecture and other qualifiers. Explicit version, distro and digest constraints must agree. No CVE-only matching, loose package-name guessing, version-range comparison, vendor backport inference, or tag-to-image-digest inference is performed. A scanner record without a trustworthy exact product identity gets `no_vex`. Newest issued revision per source/document supersedes older revisions; equal-timestamp conflicting evidence remains visible. Withdrawn, stale, unverified, conflicting, under-investigation and no-evidence results are distinct; all evidence retains provenance. Staleness uses issue time, not the most recent download. Key rotation and removal of allowed retrieval hosts invalidate their previously authenticated claims. Source authority/config changes invalidate assessment tokens.
+
+The checked-in official fixtures include a real Red Hat advisory and illustrative OpenVEX/CSAF examples, with URL/hash/license provenance. Successful parsing of a vendor advisory does not imply its CPE/relationship identities can match scanner output. Vendor catalog crawling, CSAF provider discovery, OSV/VEX registries, OCI attestation retrieval, Sigstore/Rekor verification and registry credential handling are not integrated. Register explicit documents or import signed offline snapshots instead.
+
+## Air-gapped snapshots
+
+`export SOURCE_ID snapshot.json --private-key signer.pem` signs a canonical manifest using an Ed25519 private key supplied by the operator; keep that key outside the repository. Export does not claim the originating vendor signed the content: the snapshot signer is taking responsibility for the enclosed evidence. The manifest binds source name, allowed hosts, package authority scopes, and every document hash/raw content. Maximum total envelope size is 4 MiB.
+
+On the disconnected installation, independently provision the signer public key and identical reviewed source scope. Run `import SOURCE_ID snapshot.json`. Import verifies the pinned key before any write, validates all documents/hashes, then performs one atomic nested transaction. Self-asserted trust flags and keys in a file are never consumed. Signatures establish authenticity, not freshness; expired signed evidence remains stale. Cross-source substitution and modified manifests fail verification. Import is idempotent by source/content hash. Private keys are never stored in the application database.

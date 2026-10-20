@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-20T05:38:17.1594645Z",
+  "branch": "feature/risk-profiles-vex",
+  "working_directory": "C:\\Users\\lil-j\\.codex\\worktrees\\risk-profiles-vex\\Cyber Hygiene\\portal\\frontend",
+  "started_at": "2026-10-20T05:38:06.2975209Z",
+  "finished_at": "2026-10-20T05:38:17.1594645Z",
+  "runtime_seconds": 10.862,
+  "node_version": "v24.19.0",
+  "outcome": "passed",
+  "checks": [
+    {
+      "name": "focused_vitest",
+      "command": "node node_modules/vitest/vitest.mjs run src/features/risk_intelligence.test.tsx src/features/risk_coverage.test.tsx --reporter=json",
+      "exit_code": 0,
+      "outcome": "passed",
+      "runtime_seconds": 3.267,
+      "files": [
+        "src/features/risk_intelligence.test.tsx",
+        "src/features/risk_coverage.test.tsx"
+      ],
+      "test_files": 2,
+      "tests": 22,
+      "passed": 22,
+      "failed": 0,
+      "skipped": 0,
+      "failures": []
+    },
+    {
+      "name": "typecheck",
+      "command": "node node_modules/typescript/bin/tsc --noEmit",
+      "exit_code": 0,
+      "outcome": "passed",
+      "runtime_seconds": 4.185,
+      "diagnostics": ""
+    },
+    {
+      "name": "focused_eslint",
+      "command": "node node_modules/eslint/bin/eslint.js src/features/risk_intelligence.tsx src/features/risk_intelligence.test.tsx src/features/risk_coverage.tsx src/features/risk_coverage.test.tsx --format json",
+      "exit_code": 0,
+      "outcome": "passed",
+      "runtime_seconds": 3.363,
+      "files": [
+        "src/features/risk_intelligence.tsx",
+        "src/features/risk_intelligence.test.tsx",
+        "src/features/risk_coverage.tsx",
+        "src/features/risk_coverage.test.tsx"
+      ],
+      "errors": 0.0,
+      "warnings": 0.0,
+      "diagnostics": []
+    }
+  ]
+}

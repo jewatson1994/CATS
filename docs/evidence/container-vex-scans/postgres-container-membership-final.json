@@ -1,0 +1,14 @@
+{
+  "suite": [
+    "test_container_intelligence",
+    "test_intelligence_membership"
+  ],
+  "database": "cats_embedded_audit",
+  "database_container": "cats-embedded-audit-db",
+  "database_mode": "PostgreSQL isolated schemas; API fixture remains SQLite",
+  "exit_code": 0,
+  "duration_seconds": 77.282,
+  "junit_xml": "postgres-container-membership-final.xml",
+  "output": "..................................................                       [100%]\n- generated xml file: C:\\Users\\lil-j\\.codex\\worktrees\\risk-profiles-vex\\Cyber Hygiene\\docs\\evidence\\container-vex-scans\\postgres-container-membership-final.xml -\n50 passed in 77.18s (0:01:17)\n",
+  "application_global_database": "sqlite://"
+}

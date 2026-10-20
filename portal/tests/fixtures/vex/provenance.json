@@ -1,0 +1,32 @@
+[
+  {
+    "bytes": 27408,
+    "license": "CC-BY-4.0",
+    "license_url": "https://access.redhat.com/security/data",
+    "retrieved_at": "2026-10-20T01:08:04.4650500Z",
+    "url": "https://security.access.redhat.com/data/csaf/v2/vex/2024/cve-2024-3094.json",
+    "kind": "published vendor VEX",
+    "name": "redhat-cve-2024-3094.json",
+    "sha256": "8353cdd96dda13bdfdb7f81279fa73f3d198d2ae3013af37d3b250936edc0e72"
+  },
+  {
+    "bytes": 571,
+    "license": "Apache-2.0",
+    "license_url": "https://github.com/openvex/vexctl/blob/aa6ffc8d8d6bb8a1656493b92c61e955c3a2ce2d/LICENSE",
+    "retrieved_at": "2026-10-20T01:08:04.5724225Z",
+    "url": "https://raw.githubusercontent.com/openvex/vexctl/aa6ffc8d8d6bb8a1656493b92c61e955c3a2ce2d/examples/csaf/openvex.json",
+    "kind": "official upstream example; fictional CVE, not vendor evidence",
+    "name": "openvex-official-fixed.json",
+    "sha256": "64d77218ddc4c8d911ba09a85b36ff7f1c2127de04d72c3ba92494d42259c22a"
+  },
+  {
+    "bytes": 2276,
+    "license": "Apache-2.0",
+    "license_url": "https://github.com/openvex/vexctl/blob/aa6ffc8d8d6bb8a1656493b92c61e955c3a2ce2d/LICENSE",
+    "retrieved_at": "2026-10-20T01:08:04.6818821Z",
+    "url": "https://raw.githubusercontent.com/openvex/vexctl/aa6ffc8d8d6bb8a1656493b92c61e955c3a2ce2d/examples/csaf/csaf.json",
+    "kind": "official upstream example; fictional CVE, not vendor evidence",
+    "name": "csaf-official-example.json",
+    "sha256": "80616498e8c1d4f1fcbaa1223d1c2b4b0916b68062022c9ccb47f2a45fa199ee"
+  }
+]

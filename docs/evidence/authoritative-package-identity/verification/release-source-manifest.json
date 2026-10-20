@@ -1,0 +1,15 @@
+{
+  "portal/app/package_identity_resolution.py": "b03697e33a6b65a6d011c36978edfe59b4279184cd17ca70287e8196802caa05",
+  "portal/app/container_intelligence.py": "a5e2b771a19c5b6ef6be7f745ea3a9260fb6e5b4c5da8fce12f099059c413111",
+  "portal/app/risk_worker.py": "769960f507fa562181095996628e886b937c13e78e516a9abd0fd35131185ca0",
+  "portal/app/vex_intelligence.py": "915e54c257a8c1a26a5d379179ed413505386a15e77ee305bed3ff8e907929d0",
+  "portal/app/embedded_intelligence.py": "31df92d21e965d3f120c8a8c89b3d4ec079411059a56e32e84191071354aea4f",
+  "portal/app/risk_profiles.py": "57f28b871632a91eb6b4b10eb8b2001d5ac6d01b84375648620f4e880550ad4b",
+  "portal/app/schemas.py": "d7637c23e8195a84174171ec587fc67a105ea006ccc41c07d695d5f4394877de",
+  "scanning-main/scripts/sbom_identity.py": "6b935eff2374d47f4a16e3880f412ca2a0357712b42f5f9e4b94c0cc49c822cf",
+  "scanning-main/scripts/extract-sbom-components.py": "6dbbe911cdd48e5c5d27b5b50d1be0ddc89986aacdbd6395bccd56a376afd9d1",
+  "scanning-main/scripts/generate-sbom-formats.py": "6b0b768050a165da8322cac5a73d3bd0cd094e01c8e9b9125347607126452c0c",
+  "scanning-main/scripts/report-to-portal.sh": "75ddaa4102337ce82d7c28ecd53e6862ef5698343af501d946c994c8f9d94735",
+  "scanning-main/scripts/normalize-trivy-config.sh": "bd2ba58fd430ef1cb5d50ef500064fe35356618154c366723f3a48c25ce2117c",
+  "portal/frontend/src/features/risk_coverage.tsx": "d041d7205e7f71306a5040be7bc14e503458df5e7787a88d1a74bc4e07629088"
+}

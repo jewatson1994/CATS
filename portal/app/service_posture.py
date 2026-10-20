@@ -299,9 +299,13 @@ def config_digest(configuration: dict) -> str:
     return sha256(json.dumps(relevant, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _intelligence_token() -> str:
+def _intelligence_token(db=None) -> str:
     from .policy_data import risk_catalog_token
-    return risk_catalog_token()[:80]
+    if db is None:
+        return risk_catalog_token()[:80]
+    from .native_vex import cache_token
+    import hashlib
+    return hashlib.sha256((risk_catalog_token() + cache_token(db)).encode()).hexdigest()
 
 
 def _aware(value):
@@ -377,6 +381,9 @@ def valid_until(db, ids, configurations, now) -> dict[int, datetime | None]:
                     boundaries[row.service_id].append(value - timedelta(days=days))
 
     if ids:
+        from .native_vex_models import VexDispositionService as VS, VexDispositionEvaluation as VE
+        for sid, expiry in db.execute(select(VS.service_id, VE.valid_until).join(VE, VE.id == VS.evaluation_id).where(VS.service_id.in_(ids), VE.valid_until > now)):
+            boundaries[sid].append(_aware(expiry))
         gather(Finding, finding_offsets or {90})
         gather(PolicyFinding, policy_offsets or {90})
         exceptions(ExceptionRecord, Finding, ExceptionRecord.finding_id)
@@ -475,7 +482,10 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
             except IntegrityError:
                 pass
             built_from = generations()
-        epoch, token = current_epoch(db), _intelligence_token()
+        epoch, token = current_epoch(db), _intelligence_token(db)
+        from .native_vex_models import VexDispositionService
+        vex_generations = dict(db.execute(select(VexDispositionService.service_id,
+            VexDispositionService.generation).where(VexDispositionService.service_id.in_(ids))).all())
         now = _aware(now) if now is not None else _aware(m.utcnow())
         columns = (Service.id, Service.name, Service.service_key, Service.owner, Service.poc,
                    Service.manual_version, Service.lifecycle_status)
@@ -490,6 +500,8 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
             base = m.get_global_configuration(db)
             configurations = resolve_configurations(db, present, base)
             stored = {sid: _cyber_row(row) for sid, row in compute_rows(db, services, configurations, base, now).items()}
+        for sid, value in stored.items():
+            value['_native_vex_generation'] = vex_generations.get(sid)
         boundaries = valid_until(db, present, configurations.values(), now)
         fields = ("built_generation", "algorithm", "epoch", "token", "config_digest", "row", "valid_until", "calculated_at")
         statement = update(ServicePosture.__table__).where(ServicePosture.__table__.c.service_id == bindparam("target")).values(
@@ -553,7 +565,12 @@ def _read(db, kind, ids):
 
 def _classify(db, rows, service_ids, configurations, now):
     """(stale, missing) service ids against the current provenance."""
-    token, epoch = _intelligence_token(), current_epoch(db)
+    token, epoch = _intelligence_token(db), current_epoch(db)
+    from .native_vex_models import VexDispositionService
+    vex_generations = {}
+    for chunk in _chunks(service_ids):
+        vex_generations.update(dict(db.execute(select(VexDispositionService.service_id,
+            VexDispositionService.generation).where(VexDispositionService.service_id.in_(chunk))).all()))
     stale, missing = [], []
     for sid in service_ids:
         row = rows.get(sid)
@@ -561,6 +578,7 @@ def _classify(db, rows, service_ids, configurations, now):
             missing.append(sid)
         elif not (row.algorithm == ALGORITHM_VERSION and row.built == row.data_generation and row.epoch == epoch
                   and row.token == token and row.digest == config_digest(configurations[sid])
+                  and row.row.get("_native_vex_generation") == vex_generations.get(sid)
                   and (row.until is None or _aware(row.until) > now)):
             stale.append(sid)
     return stale, missing
@@ -597,6 +615,14 @@ def _load(db, kind, service_ids, configurations, now):
             if raced and background:
                 schedule(db.get_bind(), raced, kinds=(kind,))
         deferred = deferred + raced
+    from .native_vex_models import VexDispositionPolicy
+    native_enabled = bool(db.scalar(select(VexDispositionPolicy.enabled).where(VexDispositionPolicy.id == 1)))
+    current_token = _intelligence_token(db)
+    for sid in deferred:
+        # An enabled exclusion or changed policy/intelligence cannot be served
+        # from stale counts. Preserve the legacy stale-cache behavior otherwise.
+        if native_enabled or (sid in rows and rows[sid].token != current_token):
+            rows.pop(sid, None)
     preparing = [sid for sid in service_ids if sid not in rows or rows[sid].row is None]
     meta = {"services": len(service_ids), "stale": len(stale), "missing": len(missing),
             "recomputed": len(synchronous), "refreshing": bool(deferred) or bool(preparing),
@@ -656,12 +682,12 @@ def warm(bind, chunk_size=200, max_chunks=1000) -> int:
     intelligence token, epoch); configuration and time freshness are verified
     on read. Each chunk commits independently, so a restart resumes.
     """
-    token = _intelligence_token()
     total = 0
     for kind in KINDS:
         for _ in range(max_chunks):
             with Session(bind=bind) as db:
                 epoch = current_epoch(db)
+                token = _intelligence_token(db)
                 ids = list(db.scalars(select(ServicePosture.service_id).join(
                     Service, Service.id == ServicePosture.service_id).where(
                     (_column(kind, "built_generation") != ServicePosture.data_generation)

@@ -1,0 +1,69 @@
+{
+  "context": "Controlled test fixtures only; no real corpus accuracy or full-corpus evaluation claim. Existing signed corpus and cats-vex-expanded-db-20261020 preserved.",
+  "python": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\.venv\\Scripts\\python.exe",
+  "environment": {
+    "PYTHONPATH": "portal",
+    "CATS_TEST_POSTGRES_URL": "postgresql+psycopg://postgres:<disposable-test-password>@127.0.0.1:51055/native_test",
+    "postgres_container": "cats-native-vex-tests-20261020"
+  },
+  "checks": [
+    {
+      "name": "Broad backend, PostgreSQL, offline and signed-fixture verification",
+      "command": "python -m pytest <files in backend-suite-files.txt> -q --tb=short --basetemp=C:/Users/lil-j/.codex/native-vex-final-all-temp-20261020",
+      "passed": 870,
+      "failed": 0,
+      "seconds": 210.52
+    },
+    {
+      "name": "Latest native policy/evidence API and PostgreSQL boundary verification",
+      "command": "python -m pytest portal/tests/test_native_vex_boundaries.py -q --tb=short --basetemp=C:/Users/lil-j/.codex/native-vex-last-boundary-temp",
+      "passed": 23,
+      "failed": 0,
+      "seconds": 29.52,
+      "includes": "Actual PostgreSQL mixed group/member aggregation and unique member/fixed-version behavior"
+    },
+    {
+      "name": "Scanner and ingress/loadbalancer bundles",
+      "environment": {
+        "JQ_DOCKER_IMAGE": "cats:authoritative-identity-final"
+      },
+      "command": "python -m pytest scanning-main/tests cats-scanner/test_ingress_bundle.py cats-scanner/test_loadbalancer_bundle.py -q --tb=short --basetemp=artifacts/native-vex-scanner-temp-20261020 --junitxml=docs/evidence/native-vex/scanner-verification.xml",
+      "passed": 34,
+      "failed": 0,
+      "seconds": 13.11
+    },
+    {
+      "name": "Fresh affected signing/archive/subset-schema checks",
+      "command": "python -m pytest portal/tests/test_embedded_intelligence_build.py portal/tests/test_embedded_strict_json.py portal/tests/test_embedded_tar.py portal/tests/test_intelligence_projections.py portal/tests/test_risk_sources_api.py portal/tests/test_native_vex_boundaries.py -q --tb=short --basetemp=C:/Users/lil-j/.codex/native-vex-outside-temp-20261020",
+      "passed": 85,
+      "failed": 0,
+      "seconds": 23.72
+    },
+    {
+      "name": "Final frontend suite",
+      "command": "pnpm test",
+      "passed": 346,
+      "failed": 0
+    },
+    {
+      "name": "Final remediation workflows including emptied mixed-image proposal",
+      "command": "python -m pytest portal/tests/test_native_vex_workflows.py -q",
+      "passed": 8,
+      "failed": 0
+    }
+  ],
+  "initial_failures_resolved": [
+    "Default Windows pytest temporary directory permission denied; supplied unique accessible basetemp.",
+    "In-repository basetemp correctly rejected fixture private signing keys. Final backend basetemp is outside repository.",
+    "Subset metadata.create_all hook attempted INSERT into absent policy table; root fixed physical table inspection; final broad run covers SQLite and PostgreSQL.",
+    "Existing commit-triggered background classification race overwrote explicitly seeded PostgreSQL test classification state and could outlive disposable schema. Token changed from epoch=None/config_digest=test to epoch=initial/current digest. HEAD risk_worker restored in-memory passed13 cases without timing perturbation; adding0.5s scheduling delay after token capture reproduced1 fence failure/2 passes. Fixture now disables background scheduling only; production publication fence unchanged."
+  ],
+  "limits": "No external network acquisition performed by verification. This does not replace full signed-corpus correctness validation or deployment checks.",
+  "release": {
+    "image": "cats:native-vex-verification",
+    "digest": "sha256:26b9838c8b9e79cf67547fb1ab48b3f5abbbecdc897c41a82bbc61e346233435",
+    "build": "scripts/build-cats-release.py --tag cats:native-vex-verification --scanner-base catscan-base:local",
+    "offline_checks": "catscan-validate-offline-release and /opt/cats-venv/bin/python -m app.embedded_intelligence --verify both passed under docker --network none",
+    "payload_sha256": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e"
+  }
+}

@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-10-20T05:40:57.930104+00:00",
+  "baseline_sha256": "89fc430c721704846eda25ba66e8a95421deaa7b834c73b47c34e60ee8c4ae3a",
+  "after_evaluation_sha256": "e7470a09e5e793a9ec45c5a44b07f9ac80bd6c6c434c7e6edbf6cb855c807018",
+  "before": {
+    "vex_exact_pairs": {
+      "sql_sha256": "016ef670d4e781fa981b1250325ae08783d2a12a06fc16ddd049f6d878f7ae9d",
+      "planning_time_ms": 11.684,
+      "execution_time_ms": 3.764,
+      "root_shared_hit_blocks": 1000,
+      "root_shared_read_blocks": 0,
+      "node_types": {
+        "Limit": 1,
+        "Nested Loop": 2,
+        "Bitmap Heap Scan": 1,
+        "BitmapOr": 1,
+        "BitmapAnd": 250,
+        "Bitmap Index Scan": 500,
+        "Index Scan": 2
+      },
+      "relation_index_scans": [
+        {
+          "node_type": "Bitmap Heap Scan",
+          "relation": "vex_statements",
+          "index": null,
+          "nodes": 1,
+          "maximum_actual_rows": 0,
+          "maximum_actual_loops": 1
+        },
+        {
+          "node_type": "Bitmap Index Scan",
+          "relation": null,
+          "index": "ix_vex_statements_product_id",
+          "nodes": 250,
+          "maximum_actual_rows": 0,
+          "maximum_actual_loops": 1
+        },
+        {
+          "node_type": "Bitmap Index Scan",
+          "relation": null,
+          "index": "ix_vex_statements_cve",
+          "nodes": 250,
+          "maximum_actual_rows": 0,
+          "maximum_actual_loops": 0
+        },
+        {
+          "node_type": "Index Scan",
+          "relation": "vex_documents",
+          "index": "vex_documents_pkey",
+          "nodes": 1,
+          "maximum_actual_rows": 0,
+          "maximum_actual_loops": 0
+        },
+        {
+          "node_type": "Index Scan",
+          "relation": "vex_sources",
+          "index": "vex_sources_pkey",
+          "nodes": 1,
+          "maximum_actual_rows": 0,
+          "maximum_actual_loops": 0
+        }
+      ],
+      "full_plan_location": "intelligence-final.json#query_plans.vex_exact_pairs"
+    },
+    "vex_cve_presence": {
+      "sql_sha256": "0e3fb779d37350b24af45c8407878944c9f191e88f7e08f13437ea36a89d1374",
+      "planning_time_ms": 0.637,
+      "execution_time_ms": 1.084,
+      "root_shared_hit_blocks": 1152,
+      "root_shared_read_blocks": 0,
+      "node_types": {
+        "Nested Loop": 1,
+        "Append": 1,
+        "Result": 144,
+        "Index Scan": 2,
+        "Limit": 1
+      },
+      "relation_index_scans": [
+        {
+          "node_type": "Index Scan",
+          "relation": "vex_statements",
+          "index": "vex_statements_pkey",
+          "nodes": 1,
+          "maximum_actual_rows": 1,
+          "maximum_actual_loops": 144
+        },
+        {
+          "node_type": "Index Scan",
+          "relation": "vex_statements",
+          "index": "ix_vex_statements_cve",
+          "nodes": 1,
+          "maximum_actual_rows": 1,
+          "maximum_actual_loops": 144
+        }
+      ],
+      "full_plan_location": "intelligence-final.json#query_plans.vex_cve_presence"
+    }
+  },
+  "after": {
+    "vex_observed_and_resolved_pairs": {
+      "sql_sha256": "79307dbd2051d0538ba52497fe1e6ea3dfd3a02dd4bfc073c2ef186a85192735",
+      "planning_time_ms": 39.76,
+      "execution_time_ms": 7.803,
+      "output_rows": 0,
+      "root_shared_hit_blocks": 2023,
+      "root_shared_read_blocks": 0,
+      "nodes": 1469,
+      "indexes": [
+        "ix_vex_statements_cve",
+        "ix_vex_statements_product_id",
+        "vex_documents_pkey"
+      ],
+      "vex_sequential_scans": 0,
+      "limits": [
+        {
+          "actual_rows": 0,
+          "loops": 1,
+          "planned_rows": 11
+        }
+      ]
+    },
+    "vex_cve_presence": {
+      "sql_sha256": "fb8cbe9a21747b98f865526a653dfaba2ba9496620cc6754f6a36de8893b74c6",
+      "planning_time_ms": 0.62,
+      "execution_time_ms": 1.162,
+      "output_rows": 140,
+      "root_shared_hit_blocks": 1120,
+      "root_shared_read_blocks": 0,
+      "nodes": 145,
+      "indexes": [
+        "ix_vex_statements_cve",
+        "vex_statements_pkey"
+      ],
+      "vex_sequential_scans": 0,
+      "limits": [
+        {
+          "actual_rows": 1,
+          "loops": 140,
+          "planned_rows": 1
+        }
+      ]
+    }
+  },
+  "notes": [
+    "Before and after use the same immutable corpus and evaluation instant, with different evaluator code and bounded input projections.",
+    "Plans sample the first production batch; after has more exact identity pairs. These are representative plan samples, not every batch.",
+    "Presence LIMIT returns one index-backed witness per CVE, not a CVE-wide statement dump. Pair query is bounded by the global candidate cap plus one.",
+    "Both real-corpus samples use product/CVE indexes and no sequential scan of vex_statements. Full after plans and SQL remain in after-evaluation.json; baseline full plans remain in retained intelligence-final.json.",
+    "The controlled positive schema is separately documented; its small-table plan is not evidence about large-corpus positive latency."
+  ]
+}

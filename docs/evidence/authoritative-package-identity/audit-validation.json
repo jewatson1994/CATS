@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-10-20T06:55:33.0592286Z",
+  "checks": {
+    "observation_count": true,
+    "unique_finding_count": true,
+    "exclusive_observation_sum": true,
+    "exclusive_finding_sum": true,
+    "raw_exact_join_count": true,
+    "observation_hash": true,
+    "named_statement_hash": true,
+    "evaluation_details_hash": true,
+    "controlled_plans_hash": true,
+    "harness_hash": true,
+    "same_harness_all_after_reports": true,
+    "runtime_hashes": true,
+    "raw_file_hashes": true,
+    "code_unchanged_during_run": true,
+    "controlled_schema_removed": true,
+    "before_after_observation_content_identical": true,
+    "baseline_hash": true,
+    "scanner_projection_hash": true
+  },
+  "runtime_image": "cats:container-vex-audit-final",
+  "runtime_image_id": "sha256:f17f517ec2a16a535f1f39bdac62fea4eec886a8ae4a0ed89d11fc442a96688d",
+  "database_container": "cats-vex-expanded-db-20261020",
+  "database_network_mode": "none",
+  "code_sha256": {
+    "container_intelligence.py": "a5e2b771a19c5b6ef6be7f745ea3a9260fb6e5b4c5da8fce12f099059c413111",
+    "package_identity_resolution.py": "b03697e33a6b65a6d011c36978edfe59b4279184cd17ca70287e8196802caa05",
+    "vex_intelligence.py": "915e54c257a8c1a26a5d379179ed413505386a15e77ee305bed3ff8e907929d0",
+    "packaged_risk_intelligence.py": "cb92be0172b1d2265edf5a772e04833a44ebee639d94c5892a9e06945409f305"
+  },
+  "harness_sha256": "e03474579e4650a48dc3e6670fab389e6675b078cc80e9f900736d0cc5d589ec",
+  "checked_input_files": 35,
+  "input_hash_provenance": "after-root-cause.json#input_provenance",
+  "timing_environment": "Warm/unknown cache, shared host, no CPU reservation; concurrent release builds may affect latency."
+}

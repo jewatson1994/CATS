@@ -1,0 +1,11 @@
+{
+  "runtime_image_id": "sha256:9b001acbe697437fd6466e2ae568f2cb1633a08ca2ed8eaeb2d53760731525a8",
+  "database_image_id": "sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea",
+  "database_network": "none",
+  "verifier_network": "container:/cats-vex-expanded-db-20261020",
+  "workspace_mount": "read-only",
+  "database_transactions": "rollback-only; commits refused",
+  "runtime_entrypoint": "python",
+  "skip_normal_startup": true,
+  "fixture_vex_injected": false
+}

@@ -67,3 +67,49 @@ def test_retains_supplied_cyclonedx_dependency_links(tmp_path):
     app, library = json.loads(output.read_text(encoding="utf-8"))["components"]
     assert app["dependency_children"] == "pkg:library"
     assert library["dependency_parents"] == "pkg:app"
+
+
+def test_spdx_external_purl_and_ecosystem_architecture_are_preserved(tmp_path):
+    sboms = tmp_path / "sboms"
+    sboms.mkdir()
+    purl = "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1?arch=amd64&distro=ubuntu-22.04"
+    (sboms / "one.json").write_text(json.dumps({"packages": [{"name": "libssl3", "versionInfo": "3.0.2-0ubuntu1",
+        "SPDXID": "SPDXRef-1", "externalRefs": [{"referenceType": "purl", "referenceLocator": purl}]}]}), encoding="utf-8")
+    (sboms / "one.image").write_text("example:1", encoding="utf-8")
+    output = tmp_path / "components.json"
+    subprocess.run([sys.executable, str(SCRIPT), str(sboms), str(output)], check=True)
+    row = json.loads(output.read_text(encoding="utf-8"))["components"][0]
+    assert row["purl"] == purl
+    assert row["ecosystem"] == "deb"
+    assert row["architecture"] == "amd64"
+    assert row["component_id"] == "SPDXRef-1"
+    assert "source_package" not in row
+
+
+def test_ambiguous_and_oversized_purls_are_not_rewritten(tmp_path):
+    sboms = tmp_path / "sboms"
+    sboms.mkdir()
+    (sboms / "one.json").write_text(json.dumps({"packages": [
+        {"name": "ambiguous", "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:deb/ubuntu/x@1"},
+            {"referenceType": "purl", "referenceLocator": "pkg:deb/debian/x@1"}]},
+        {"name": "oversized", "purl": "pkg:npm/x@1?qualifier=" + "x" * 1500},
+        {"name": "missing", "versionInfo": "1"}]}), encoding="utf-8")
+    (sboms / "one.image").write_text("example:1", encoding="utf-8")
+    output = tmp_path / "components.json"
+    subprocess.run([sys.executable, str(SCRIPT), str(sboms), str(output)], check=True)
+    rows = json.loads(output.read_text(encoding="utf-8"))["components"]
+    assert len(rows) == 3 and all("purl" not in row for row in rows)
+
+
+def test_extractor_retains_malformed_purl_for_downstream_rejection(tmp_path):
+    root = tmp_path / "sboms"
+    root.mkdir()
+    malformed = " pkg:deb/ubuntu/libexample@1.0?arch=amd64 "
+    (root / "one.image").write_text("example:1", encoding="utf-8")
+    (root / "one.digest").write_text("sha256:" + "a" * 181, encoding="utf-8")
+    (root / "one.json").write_text(json.dumps({"artifacts": [{"name": "libexample", "purl": malformed}]}), encoding="utf-8")
+    output = tmp_path / "components.json"
+    subprocess.run([sys.executable, str(SCRIPT), str(root), str(output)], check=True)
+    row = json.loads(output.read_text(encoding="utf-8"))["components"][0]
+    assert row["purl"] == malformed
+    assert "image_digest" not in row

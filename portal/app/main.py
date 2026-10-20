@@ -119,6 +119,8 @@ from .runtime_version import deployed_version
 from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
 from .remediation_summary import build_summary as build_remediation_summary, artifacts as remediation_summary_artifacts
 from . import cyber_approvals
+from . import risk_routes
+from . import vex_models, risk_models, intelligence_models, native_vex_models
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -415,6 +417,8 @@ def _start_read_model_maintenance():
 
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
+    from .embedded_intelligence import install_package
+    await asyncio.to_thread(install_package, SessionLocal)
     # Recovery is a safety obligation even when administrators disable new runs.
     validator_management.recover_operations()
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
@@ -451,6 +455,7 @@ from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
 app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
+app.include_router(risk_routes.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -1321,6 +1326,7 @@ def page_context(auth: AuthContext, **values):
         # An unknown revision must never share a partition with a known one.
         cache_scope_value = f"uncached-{uuid.uuid4().hex}"
     return {
+        "may_manage_risk_policy": any(a.service_id is None and "config.manage" in (a.role.permissions or []) for a in auth.effective_assignments),
         "current_user": auth.user,
         "cache_scope": cache_scope_value,
         "session_identity": session_identity(auth.session.id, auth.user.id) if getattr(auth, "session", None) else "",
@@ -1801,6 +1807,14 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
                 if severity in {"any", finding.severity.lower()} and epss >= threshold:
                     risk_eligible.add(finding.id)
                     break
+    from sqlalchemy.orm import object_session
+    from .native_vex import excluded_finding_ids
+    vex_excluded_ids = set(getattr(service, '_native_vex_excluded_ids', ()))
+    if hasattr(service, '_sa_instance_state'):
+        vex_excluded_ids = excluded_finding_ids(object_session(service), service.id, now)
+    vex_excluded_ids.difference_update(fid for fid, exception in vulnerability_exceptions.items() if exception)
+    risk_eligible.difference_update(vex_excluded_ids)
+    risk_findings.difference_update(vex_excluded_ids)
     excepted = [f for f in active_all if f.id in risk_eligible and vulnerability_exceptions[f.id]]
     active = [
         finding for finding in active_all
@@ -2093,6 +2107,10 @@ def service_overview_rows_detailed(
                     if severity in {"any", str(row.severity or "").lower()} and epss >= float(rule.get("threshold", 1)):
                         risk_eligible.add(row.id)
                         break
+        from .native_vex import excluded_finding_ids
+        vex_excluded_ids = excluded_finding_ids(db, service.id, now) - exception_ids
+        risk_eligible.difference_update(vex_excluded_ids)
+        risk_findings.difference_update(vex_excluded_ids)
         excepted_count = len(risk_eligible & exception_ids)
         active_count = len(risk_eligible - risk_findings - exception_ids)
         policy_active = policy_by_service.get(service.id, [])
@@ -2245,6 +2263,7 @@ def _risk_finding_expressions(
     finding_exception,
     *,
     overdue=None,
+    native_disposition=True,
 ):
     """Build database expressions for risk-based finding summaries.
 
@@ -2339,7 +2358,15 @@ def _risk_finding_expressions(
             eligible_parts.append(and_(service_scope, or_(*eligible)))
         if noncompliant:
             noncompliant_parts.append(and_(service_scope, or_(*noncompliant)))
-    return (or_(*eligible_parts) if eligible_parts else false(), or_(*noncompliant_parts) if noncompliant_parts else false(), needs_observations)
+    eligible_result = or_(*eligible_parts) if eligible_parts else false()
+    noncompliant_result = or_(*noncompliant_parts) if noncompliant_parts else false()
+    if native_disposition:
+        from .native_vex import finding_excluded
+        # Existing exceptions retain their explicit lifecycle status.
+        applicable = or_(finding_exception, ~finding_excluded(Finding.id, now))
+        eligible_result = and_(eligible_result, applicable)
+        noncompliant_result = and_(noncompliant_result, applicable)
+    return eligible_result, noncompliant_result, needs_observations
 
 
 def service_overview_rows_aggregated(
@@ -2485,6 +2512,7 @@ def service_overview_rows_aggregated(
         rows.append({
             "service": service,
             "compliant": not finding_noncompliant and not policy_noncompliant and not evidence_noncompliant,
+            "evidence_noncompliant": evidence_noncompliant,
             "version": service.manual_version or summary.get("raw_version"),
             "evidence_state": evidence_state,
             "active": CountOnly(finding_total - finding_excepted - finding_noncompliant + policy_total - policy_excepted - policy_noncompliant),
@@ -6407,6 +6435,7 @@ def _retained_remediation_plan(db, service, execution, finding_type=None, findin
         planned_references.add(image_reference)
     # Bind all source bytes, including files with no selected finding, and the
     # supplemental image evidence. Never persist source contents in the approval.
+    remediation_jobs.filter_native_vex_images(db, service.id, execution.id, plan)
     plan["source_digest"] = hashlib.sha256(json.dumps({
         "payload": execution.raw_payload, "source_execution_id": execution.id,
         "source_version_id": execution.service_version_id,
@@ -7745,7 +7774,7 @@ def service_detail(
             total_items=result["total_items"], total_pages=result["total_pages"], finding_type=finding_type,
             remediation_classes={}, query=q, resource=resource, severity=severity, severity_options=severity_options,
             pagination_base=pagination_base, clear_filters_url=clear_filters_url, selected_findings_view="raw"))
-    if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved", "exceptions"}:
+    if narrow_findings and findings_view == "raw" and finding_state in {"active", "resolved", "exceptions", "vex_excluded"}:
         if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
             raise HTTPException(422, detail="Unknown finding type")
         if page_size not in {50, 100, 250}:
@@ -7857,7 +7886,7 @@ def service_detail(
             "reason": failed_run.reason or failed_run.reason_category or "Deployment validation needs review",
             "due": None, "href": f"/services/{service.service_key}?validation=true&validation_run={failed_run.run_key}"})
     if overview_only:
-        if finding_state not in {"active", "noncompliant", "overdue", "exceptions", "resolved"}:
+        if finding_state not in {"active", "noncompliant", "overdue", "exceptions", "resolved", "vex_excluded"}:
             raise HTTPException(400, detail="Unknown finding state")
         if finding_type not in {"all", "vulnerability", "configuration", "evidence", "watchlist"}:
             raise HTTPException(422, detail="Unknown finding type")
@@ -8185,14 +8214,19 @@ def service_detail(
     }
     # Raw findings must not silently inherit the risk-policy visibility filter.
     # Lifecycle and exceptions are still explicit, independent service states.
+    from .native_vex import excluded_finding_ids
+    native_excluded = excluded_finding_ids(db, service.id, now)
+    finding_groups["vex_excluded"] = [f for f in service.findings
+        if f.active and f.id in native_excluded and not active_exception(f, now)]
     if findings_view == "raw":
-        finding_groups["active"] = [f for f in service.findings if f.active and not active_exception(f, now)]
+        finding_groups["active"] = [f for f in service.findings
+            if f.active and f.id not in native_excluded and not active_exception(f, now)]
     severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
     all_policy_items = [*view["policy_findings"], *view["policy_excepted"], *view["policy_resolved"]]
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
     severity_options = sorted({str(item.severity) for item in [*finding_groups["active"], *finding_groups["exceptions"], *finding_groups["resolved"], *all_policy_items] if getattr(item, "severity", None)}, key=lambda value: (severity_order.get(value.casefold(), 4), value.casefold()))
     requested_page = page
-    sql_page = narrow_findings and not simplified and finding_state in {"active", "exceptions", "resolved"}
+    sql_page = narrow_findings and not simplified and finding_state in {"active", "exceptions", "resolved", "vex_excluded"}
     if narrow_findings and simplified and (q.strip() or resource.strip()):
         from .findings_query import load_filter_support
         load_filter_support(db, service.id, finding_groups["active"])
@@ -8243,7 +8277,7 @@ def service_detail(
         ))
     all_findings = [] if sql_page else sorted(finding_groups[finding_state], key=lambda finding: (aware(finding.episode_started), finding.cve))
     policy_items = policy_groups.get(finding_state, [])
-    mixed_state = finding_state in {"active", "exceptions", "resolved"}
+    mixed_state = finding_state in {"active", "exceptions", "resolved", "vex_excluded"}
     if mixed_state:
         active_entries = [("vulnerability", finding) for finding in all_findings]
         active_entries.extend(("configuration", item) for item in sorted(
@@ -9148,6 +9182,9 @@ def request_poam(
     finding = db.scalar(select(Finding).where(Finding.id == finding_id).options(selectinload(Finding.service).selectinload(Service.groups)))
     if not finding:
         raise HTTPException(404)
+    from .native_vex import finding_excluded
+    if db.scalar(select(finding_excluded(finding.id, utcnow()))):
+        raise HTTPException(409, detail="Verified VEX Not Affected evidence excludes this finding from new actionable POA&M entries")
     due_date = optional_form_datetime(due_date, "POA&M due date")
     if due_date is not None:
         if due_date <= utcnow():
@@ -9533,6 +9570,10 @@ def create_poam(
         raise HTTPException(422, detail="Finding does not belong to the selected service")
     if item_type == "vulnerability" and not finding:
         raise HTTPException(422, detail="A vulnerability POA&M requires a finding ID")
+    if finding:
+        from .native_vex import finding_excluded
+        if db.scalar(select(finding_excluded(finding.id, utcnow()))):
+            raise HTTPException(409, detail="Verified VEX Not Affected evidence excludes this finding from new actionable POA&M entries")
     due_date = optional_form_datetime(due_date, "POA&M due date")
     if due_date is not None:
         if due_date <= utcnow():
@@ -11911,3 +11952,20 @@ def approved_releases_page(request: Request, auth: AuthContext = Depends(require
 def approved_release_destinations_page(request: Request, auth: AuthContext = Depends(require_user)):
     cyber_approvals._permission(auth, "release.destination.manage")
     return templates.TemplateResponse(request, "approved_release_destinations.html", page_context(auth))
+
+
+@app.get("/admin/risk-policy")
+def risk_policy_page(request: Request, group_id: int | None = None, auth: AuthContext = Depends(require_user), db: Session = Depends(get_db)):
+    if not any(a.service_id is None and "config.manage" in (a.role.permissions or []) for a in auth.effective_assignments):
+        raise HTTPException(403, "Group configuration permission required")
+    if group_id is not None:
+        if not auth.can_manage_group(group_id):
+            raise HTTPException(403, "Group configuration permission required")
+        if db.get(Group, group_id) is None:
+            raise HTTPException(404, "Group not found")
+    return templates.TemplateResponse(request, "risk_intelligence.html", page_context(auth, selected_group_id=group_id))
+
+
+@app.get("/risk-intelligence")
+def risk_intelligence_page(request: Request, auth: AuthContext = Depends(require_user)):
+    return RedirectResponse("/admin/risk-policy", status_code=307)

@@ -1,0 +1,77 @@
+{
+  "docker": {
+    "cpus": 28,
+    "memory_bytes": 16618557440,
+    "architecture": "x86_64",
+    "version": "29.6.2",
+    "os": "Docker Desktop"
+  },
+  "postgresql_settings": {
+    "checkpoint_timeout": {
+      "setting": "300",
+      "unit": "s"
+    },
+    "fsync": {
+      "setting": "on",
+      "unit": null
+    },
+    "full_page_writes": {
+      "setting": "on",
+      "unit": null
+    },
+    "maintenance_work_mem": {
+      "setting": "65536",
+      "unit": "kB"
+    },
+    "max_parallel_workers_per_gather": {
+      "setting": "2",
+      "unit": null
+    },
+    "max_wal_size": {
+      "setting": "4096",
+      "unit": "MB"
+    },
+    "server_version": {
+      "setting": "16.15",
+      "unit": null
+    },
+    "shared_buffers": {
+      "setting": "32768",
+      "unit": "8kB"
+    },
+    "synchronous_commit": {
+      "setting": "on",
+      "unit": null
+    },
+    "work_mem": {
+      "setting": "4096",
+      "unit": "kB"
+    }
+  },
+  "methodology": "Docker Desktop shared host; some smaller tests and shared containers overlapped the cold import. No claim of an isolated performance laboratory.",
+  "containers": {
+    "cats-vex-expanded-db-20261020": {
+      "network": "none",
+      "memory_limit_bytes": 3221225472,
+      "mounts": [
+        {
+          "Type": "volume",
+          "Name": "6b0eb6923995ca81039b48308dc9c8a999a94af5aa1c82c823586785f651aa4e",
+          "Source": "/var/lib/docker/volumes/6b0eb6923995ca81039b48308dc9c8a999a94af5aa1c82c823586785f651aa4e/_data",
+          "Destination": "/var/lib/postgresql/data",
+          "Driver": "local",
+          "Mode": "",
+          "RW": true,
+          "Propagation": ""
+        }
+      ],
+      "published_ports": {}
+    },
+    "cats-vex-expanded-portal-20261020": {
+      "network": "container:224c6bb01f394e46d9c63ae01c2f7ae5217973422b36b2992862d524a6309c6c",
+      "memory_limit_bytes": 4294967296,
+      "mounts": [],
+      "published_ports": {}
+    }
+  }
+}

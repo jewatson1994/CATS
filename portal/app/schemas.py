@@ -99,13 +99,25 @@ class ExecutionPayload(BaseModel):
     @field_validator("sbom_components")
     @classmethod
     def validate_sbom_components(cls, components: list[dict[str, str]]) -> list[dict[str, str]]:
-        allowed = {"name": 300, "version": 200, "ecosystem": 80, "purl": 700, "image": 1000,
+        allowed = {"name": 300, "version": 200, "ecosystem": 80, "purl": 1500, "image": 1000,
                    "image_digest": 180, "cpe": 700, "supplier": 300, "author": 300,
                    "architecture": 120, "hashes": 1000, "copyright": 500,
                    "license_declared": 500, "license_detected": 500,
                    "license_expression": 500, "license_source": 120,
                      "location": 1000, "sbom": 300, "dependency_parents": 1000,
-                     "dependency_children": 1000}
+                     "dependency_children": 1000,
+                   "component_id": 1500, "distro_id": 120, "distro_version": 200,
+                   "distro_codename": 120, "distro_cpe": 700, "distro_variant": 200,
+                   "package_origin": 300, "source_package": 300, "source_version": 200,
+                   "source_rpm": 700, "package_vendor": 300, "package_epoch": 80,
+                   "package_release": 200, "package_modularity": 300,
+                   "scanner_source_type": 80, "scanner_source_name": 1000,
+                   "image_id": 180, "image_manifest_digest": 180,
+                   "image_architecture": 120, "image_os": 120,
+                   "package_metadata_type": 120, "package_found_by": 200,
+                   "package_db_path": 1000, "package_db_name": 300, "package_db_version": 200,
+                   "package_nevra": 1000, "package_metadata": 8192,
+                   "scanner_name": 80, "scanner_version": 120, "scanner_timestamp": 120, "scanner_schema_version": 80}
         for component in components:
             if any(key not in allowed or len(value) > allowed[key] for key, value in component.items()):
                 raise ValueError("SBOM component field is invalid or too long")

@@ -1,0 +1,87 @@
+{
+  "run_at": "2026-10-20T07:27:32.092531+00:00",
+  "scope": "Controlled test fixtures only; not genuine vendor applicability or full 29.2-million-statement corpus performance. Asynchronous posture refresh disabled to isolate evaluator cost. Single run, no statistical confidence interval.",
+  "results": [
+    {
+      "dialect": "postgresql",
+      "findings": 1000,
+      "observations": 1000,
+      "images": 1,
+      "controlled_statements": 1000,
+      "seed_seconds": 0.35126950000267243,
+      "evaluation_seconds": 0.34841359999700217,
+      "evaluation_queries": 30,
+      "classification_read_seconds": 0.004524999996647239,
+      "excluded_findings": 1000,
+      "summary": {
+        "observations": 1000,
+        "findings": 1000,
+        "scan_current": true,
+        "excluded_observations": 1000,
+        "fully_excluded_findings": 1000,
+        "mixed_findings": 0
+      },
+      "scan_mutation_and_conservative_read_seconds": 0.00970940000115661,
+      "excluded_immediately_after_mutation": 0,
+      "policy_transition_seconds": {
+        "disable": 0.005466200003866106,
+        "enable": 0.005556899996008724
+      },
+      "reevaluation_after_policy_change_seconds": 0.34937150000041584
+    },
+    {
+      "dialect": "postgresql",
+      "findings": 10000,
+      "observations": 10000,
+      "images": 1,
+      "controlled_statements": 10000,
+      "seed_seconds": 3.8811506000056397,
+      "evaluation_seconds": 3.8124096000028658,
+      "evaluation_queries": 174,
+      "classification_read_seconds": 0.020077699999092147,
+      "excluded_findings": 10000,
+      "summary": {
+        "observations": 10000,
+        "findings": 10000,
+        "scan_current": true,
+        "excluded_observations": 10000,
+        "fully_excluded_findings": 10000,
+        "mixed_findings": 0
+      },
+      "scan_mutation_and_conservative_read_seconds": 0.008999199999379925,
+      "excluded_immediately_after_mutation": 0,
+      "policy_transition_seconds": {
+        "disable": 0.01658290000341367,
+        "enable": 0.016515400006028358
+      },
+      "reevaluation_after_policy_change_seconds": 3.8182393000024604
+    },
+    {
+      "dialect": "postgresql",
+      "findings": 1000,
+      "observations": 10000,
+      "images": 10,
+      "controlled_statements": 1000,
+      "seed_seconds": 1.7906554000001051,
+      "evaluation_seconds": 1.671718300000066,
+      "evaluation_queries": 214,
+      "classification_read_seconds": 0.0027093000026070513,
+      "excluded_findings": 0,
+      "summary": {
+        "observations": 10000,
+        "findings": 1000,
+        "scan_current": true,
+        "excluded_observations": 5000,
+        "fully_excluded_findings": 0,
+        "mixed_findings": 1000
+      },
+      "scan_mutation_and_conservative_read_seconds": 0.010852200000954326,
+      "excluded_immediately_after_mutation": 0,
+      "policy_transition_seconds": {
+        "disable": 0.004375199998321477,
+        "enable": 0.005174699996132404
+      },
+      "reevaluation_after_policy_change_seconds": 1.6407630999965477
+    }
+  ]
+}

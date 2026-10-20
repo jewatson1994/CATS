@@ -12,7 +12,7 @@ from zipfile import ZipFile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["DATABASE_URL"] = os.environ.get("CATS_TEST_DATABASE_URL", "sqlite://")
 os.environ["PIPELINE_API_TOKEN"] = "test-token"
 os.environ["CATS_BOOTSTRAP_USERNAME"] = "admin"
 os.environ["CATS_BOOTSTRAP_PASSWORD"] = "test-password-long"
@@ -21,7 +21,7 @@ os.environ["CATS_DEPLOYMENT_VALIDATION_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
-from sqlalchemy import delete, event, select
+from sqlalchemy import MetaData, delete, event, select
 
 from app.auth import AuthContext, hash_password, seed_auth, token_hash
 from app.database import Base, SessionLocal, engine
@@ -32,7 +32,14 @@ pipeline_headers = {"Authorization": "Bearer test-token"}
 
 
 def setup_function():
-    Base.metadata.drop_all(engine)
+    if engine.dialect.name == "postgresql":
+        # PostgreSQL assigned names to unnamed use_alter foreign keys. Reflect
+        # those names so teardown can drop cyclic constraints in the test DB.
+        existing = MetaData()
+        existing.reflect(bind=engine)
+        existing.drop_all(engine)
+    else:
+        Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     seed_auth()
 

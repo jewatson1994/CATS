@@ -1,0 +1,14 @@
+{
+  "suite": [
+    "test_risk_sources_api"
+  ],
+  "selection": "postgresql parametrizations only",
+  "database": "cats_embedded_audit",
+  "database_container": "cats-embedded-audit-db",
+  "database_mode": "PostgreSQL isolated schemas; global app SQLite",
+  "application_global_database": "sqlite://",
+  "exit_code": 0,
+  "duration_seconds": 1.203,
+  "junit_xml": "postgres-sources-api-final.xml",
+  "output": "...                                                                      [100%]\n- generated xml file: C:\\Users\\lil-j\\AppData\\Local\\Temp\\cats-pg-sources-final-3026623ad07b4c5e9d7034393efa0bc0.xml -\n3 passed, 3 deselected in 1.11s\n"
+}

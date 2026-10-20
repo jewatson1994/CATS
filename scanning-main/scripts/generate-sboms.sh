@@ -149,6 +149,14 @@ while read IMAGE; do
   docker image inspect "$IMAGE" | jq -r '.[0].RepoDigests[0] // .[0].Id // empty' \
     > "sboms/${SAFE_NAME}.digest"
 
+  # Directory scans lack OCI metadata. Keep the inspected image provenance
+  # separately; labels are evidence, never inferred vendor product identities.
+  docker image inspect "$IMAGE" | jq '.[0] | {
+    imageID: .Id, repoDigests: .RepoDigests, architecture: .Architecture,
+    os: .Os, labels: (.Config.Labels // {})}
+    | if (tojson | utf8bytelength) <= 32768 then . else null end' \
+    > "sboms/${SAFE_NAME}.provenance"
+
   # Docker's image store may preserve compressed OCI layers when a digest-pinned
   # patched image is pulled. `docker save` can then produce a nominal Docker
   # archive whose layer entries older Syft releases reject as invalid tar data.
@@ -191,7 +199,10 @@ while read IMAGE; do
   ACTIVE_CONTAINER=""
 
   echo "Scanning materialized image filesystem with Syft"
+  # This directory is an extracted image: retain installed language packages
+  # that Syft's directory defaults intentionally omit (for example npm).
   if ! syft "dir:${ROOTFS_DIR}" \
+      --override-default-catalogers image \
       -o syft-json \
       > "sboms/${SAFE_NAME}.json"; then
 

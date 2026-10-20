@@ -1,0 +1,11 @@
+{
+  "suite": "test_risk_vex_postgres",
+  "database": "cats_embedded_audit",
+  "database_container": "cats-embedded-audit-db",
+  "application_global_database": "sqlite://",
+  "per_test_database": "isolated PostgreSQL schema",
+  "exit_code": 0,
+  "duration_seconds": 56.804,
+  "junit_xml": "postgres-risk-final.xml",
+  "output": ".............                                                            [100%]\n- generated xml file: C:\\Users\\lil-j\\.codex\\worktrees\\risk-profiles-vex\\Cyber Hygiene\\docs\\evidence\\container-vex-scans\\postgres-risk-final.xml -\n13 passed in 56.32s\n"
+}

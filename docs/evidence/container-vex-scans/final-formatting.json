@@ -1,0 +1,27 @@
+{
+  "recorded_at": "2026-10-20T05:49:39.143901+00:00",
+  "scope": "Post-verification formatting only. Existing test, benchmark and build records retain the hashes of the exact files used during those runs. No tests or build were repeated for removal of trailing blank lines. File contents before the final newline are byte-identical; Python ASTs are identical.",
+  "changes": [
+    {
+      "path": "portal/frontend/src/features/risk_coverage.tsx",
+      "tested_sha256": "ca43d44c63630a26ed15493519f7cf6bb842ff825599727258e353e9c93989d7",
+      "final_sha256": "e84da9379c4331e4cfaf52889580aaac5e1ddefd7056ad19afff374e947473d9",
+      "removed_bytes": 2,
+      "only_trailing_blank_lines_removed": true
+    },
+    {
+      "path": "portal/tests/test_risk_worker_retained_scans.py",
+      "tested_sha256": "7ed8ee652a86038f3c47d0dce658a7dd9cab0ec0a4907dc272968c2f0d0a4ed9",
+      "final_sha256": "dcf55e0ea24f18642e5009a415afe3406028d93b3cceef9ee1722f21bbe114b2",
+      "removed_bytes": 4,
+      "only_trailing_blank_lines_removed": true
+    },
+    {
+      "path": "scripts/verify-container-risk-worker.py",
+      "tested_sha256": "6199e8719e424a52484419389929a68131025af71d63cf753fc6fea6529097fe",
+      "final_sha256": "7753850d82d9c15edf34efe7e3a9325c4c131888aeeea3c3250470c2f8aef693",
+      "removed_bytes": 2,
+      "only_trailing_blank_lines_removed": true
+    }
+  ]
+}

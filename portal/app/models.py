@@ -995,3 +995,5 @@ class FindingClassificationChange(Base):
 from . import authorization_revision as _authorization_revision  # noqa: E402,F401
 from . import service_posture as _service_posture  # noqa: E402,F401
 from . import finding_classification as _finding_classification  # noqa: E402,F401
+
+from . import native_vex_models as _native_vex_models  # noqa: E402,F401

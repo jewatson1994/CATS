@@ -28,7 +28,7 @@ def _ids(view, key):
     return [item.id for item in value]
 
 
-def _classified_rows(service_id, view, state, finding_type, severity_values, needle, resource_needle, raw_selector):
+def _classified_rows(service_id, view, state, finding_type, severity_values, needle, resource_needle, raw_selector, now):
     """Vulnerability candidates from current classification rows.
 
     Same rows and sort keys as the live query: the stored exception state is
@@ -36,9 +36,13 @@ def _classified_rows(service_id, view, state, finding_type, severity_values, nee
     and ``episode_started``/``cve`` copies of the finding's own columns.
     """
     from .finding_classification import FC
+    from .native_vex import finding_excluded
+    excluded = finding_excluded(FC.finding_id, now)
     clauses = [FC.service_id == service_id]
     if state == "active" and raw_selector:
-        clauses.extend((FC.active.is_(True), FC.excepted.is_(False)))
+        clauses.extend((FC.active.is_(True), FC.excepted.is_(False), ~excluded))
+    elif state == "vex_excluded":
+        clauses.extend((FC.active.is_(True), FC.excepted.is_(False), excluded))
     elif state == "resolved" and raw_selector:
         clauses.append(FC.active.is_(False))
     else:
@@ -63,7 +67,7 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
     active findings ignore risk visibility; resolved rows use their inactive
     lifecycle flag. Exception and legacy active groups retain evaluator semantics.
     """
-    if state not in {"active", "exceptions", "resolved"}:
+    if state not in {"active", "exceptions", "resolved", "vex_excluded"}:
         raise ValueError("SQL findings pagination requires a lifecycle state")
     if page_size not in {50, 100, 250}:
         raise ValueError("Page size must be 50, 100, or 250")
@@ -82,12 +86,16 @@ def get_raw_finding_page(db, service_id, view, now, state="active", finding_type
     ):
         if kind == 0 and classified and (raw_selector or state == "exceptions"):
             queries.append(_classified_rows(service_id, view, state, finding_type, severity_values,
-                                            needle, resource_needle, raw_selector))
+                                            needle, resource_needle, raw_selector, now))
             continue
         clauses = [model.service_id == service_id]
         current = exists(select(exception.id).where(*_current(exception, fk, model.id, now)))
-        if state == "active" and raw_selector:
-            clauses.extend((model.active.is_(True), ~current))
+        from .native_vex import finding_excluded
+        excluded = finding_excluded(model.id, now) if kind == 0 else literal(False)
+        if state == "vex_excluded":
+            clauses.extend((model.active.is_(True), ~current, excluded))
+        elif state == "active" and raw_selector:
+            clauses.extend((model.active.is_(True), ~current, ~excluded))
         elif state == "resolved" and raw_selector:
             clauses.append(model.active.is_(False))
         else:

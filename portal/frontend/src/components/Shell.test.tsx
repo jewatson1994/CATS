@@ -7,8 +7,8 @@ afterEach(cleanup);
 const current_user = {display_name: 'Jane', theme: 'cats'};
 describe('unified administration navigation', () => {
   it.each([
-    [['user.manage', 'config.manage', 'audit.view'], '/admin', ['Accounts & roles', 'Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Dependency Watchlist']],
-    [['config.manage'], '/admin/configuration', ['Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Dependency Watchlist']],
+    [['user.manage', 'config.manage', 'audit.view'], '/admin', ['Accounts & roles', 'Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Risk Policy', 'Dependency Watchlist']],
+    [['config.manage'], '/admin/configuration', ['Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Risk Policy', 'Dependency Watchlist']],
     [['audit.view'], '/admin/general-policy', ['General Policy']],
     [['user.manage'], '/admin', ['Accounts & roles']],
     [['release.destination.manage'], '/admin/approved-release-destinations', ['Release Destinations']],
@@ -29,4 +29,11 @@ describe('unified administration navigation', () => {
     render(<Shell data={{current_user, can: {'config.manage': {'7': true}, 'user.manage': {'7': true}}}}>Services</Shell>);
     expect(screen.queryByRole('link', {name: 'Administration'})).not.toBeInTheDocument();
   });
+});
+
+it('exposes Risk Policy for a group manager without global configuration authority', () => {
+  const data={current_user,may_manage_risk_policy:true,can:{'config.manage':{'7':true}}};
+  render(<Shell data={data}><AdminTabs data={data} selected="risk"/></Shell>);
+  expect(screen.getByRole('link',{name:'Administration'})).toHaveAttribute('href','/admin/risk-policy');
+  expect(within(screen.getByRole('navigation',{name:'Administration sections'})).getAllByRole('link').map(link=>link.textContent)).toEqual(['Risk Policy']);
 });

@@ -1,0 +1,102 @@
+{
+  "verified_at_utc": "2026-10-20T05:41:16.910316+00:00",
+  "branch": "feature/risk-profiles-vex",
+  "database_container": "cats-embedded-audit-db",
+  "database": "cats_embedded_audit",
+  "execution": "Separate pytest processes with unique external basetemp paths; credentials only held in process memory. Retained risk and projection results, refreshed container/membership after advisory expiry correction, and added the three opt-in source API PostgreSQL variants. Risk, projections, and source API set CATS_TEST_POSTGRES_URL only; container/membership set CATS_TEST_DATABASE_URL only with a guard retaining the global application on SQLite.",
+  "suites": [
+    {
+      "name": "test_risk_vex_postgres",
+      "backend_scope": "isolated PostgreSQL schema; global app sqlite://",
+      "counts": {
+        "tests": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "duration_seconds": 56.804,
+      "json": "postgres-risk-final.json",
+      "junit_xml": "postgres-risk-final.xml"
+    },
+    {
+      "name": [
+        "test_container_intelligence",
+        "test_intelligence_membership"
+      ],
+      "backend_scope": "PostgreSQL isolated schemas; API fixture and global app remain SQLite",
+      "counts": {
+        "tests": 50,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "duration_seconds": 77.282,
+      "json": "postgres-container-membership-final.json",
+      "junit_xml": "postgres-container-membership-final.xml"
+    },
+    {
+      "name": [
+        "test_intelligence_projections"
+      ],
+      "backend_scope": "SQLite and PostgreSQL parametrized projections; global app SQLite",
+      "counts": {
+        "tests": 14,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "duration_seconds": 1.702,
+      "json": "postgres-projections-final.json",
+      "junit_xml": "postgres-projections-final.xml",
+      "dialect_counts": {
+        "sqlite": 7,
+        "postgresql": 7
+      }
+    },
+    {
+      "name": [
+        "test_risk_sources_api"
+      ],
+      "selection": "postgresql parametrizations only",
+      "backend_scope": "PostgreSQL isolated schemas; global app SQLite",
+      "counts": {
+        "tests": 3,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "duration_seconds": 1.203,
+      "json": "postgres-sources-api-final.json",
+      "junit_xml": "postgres-sources-api-final.xml"
+    }
+  ],
+  "totals": {
+    "tests": 80,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "passed": true,
+  "targeted_rechecks": [
+    {
+      "name": "test_assessment_expires_when_current_advisory_expires",
+      "backend_scope": "PostgreSQL isolated schema; global app SQLite",
+      "counts": {
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "duration_seconds": 3.719,
+      "json": "postgres-advisory-expiry-final.json",
+      "junit_xml": "postgres-advisory-expiry-final.xml",
+      "reason": "Targeted refresh after disabling unrelated background classification rebuild in the expiry fixture.",
+      "included_in_aggregate_totals": false
+    }
+  ]
+}

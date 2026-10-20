@@ -7,6 +7,10 @@
 | Service Manager | [Maintain services and execute workflows](service-manager.md) |
 | Cybersecurity | [Investigate posture and review governance](cybersecurity.md) |
 
+## Additional workflow training
+
+[Risk Policy and native VEX](risk-policy-and-vex.md) covers group-owned profiles, assessment previews, exclusion evidence, and disconnected operation. The original role guides and screenshots are retained; screenshots show the capture revision below, not every current control.
+
 ## Getting started
 
 Sign in at your organization's CATS URL using its local or OIDC account. Change an initial password when prompted. Ask an administrator to confirm your role and scope if an expected action is absent. Use training services for exercises.

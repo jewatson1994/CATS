@@ -1,0 +1,10 @@
+2026-10-20T06:54:28Z	INFO	[misconfig] Misconfiguration scanning is enabled
+2026-10-20T06:54:28Z	INFO	[checks-client] No downloadable checks were loaded as --skip-check-update is enabled, loading from existing cache...
+2026-10-20T06:54:28Z	ERROR	[misconfig] Falling back to embedded checks	err="failed to check cache: cache does not exist at \"/opt/catscan/trivy-cache/policy/content\""
+2026-10-20T06:54:28Z	INFO	Detected config files	num=1
+{
+  "offline_helm_configuration_findings": 37,
+  "finding_types": [
+    "Configuration"
+  ]
+}

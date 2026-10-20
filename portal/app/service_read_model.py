@@ -93,10 +93,26 @@ def prepare_raw_page(db, service, now, configuration, service_view, summary_view
             latest_ids = select(FC.latest_observation_id).where(FC.finding_id.in_(ids), FC.latest_observation_id.is_not(None))
         observations = {o.finding_id: o for o in _rows(db, FindingObservation,
             FindingObservation.id.in_(latest_ids))}
+    from .native_vex import current_evaluation
+    from .native_vex_models import (VexFindingDisposition, VexDispositionEvaluation,
+        VexDispositionService, VexDispositionPolicy)
+    dispositions = {row.finding_id: row for row in db.execute(select(
+        VexFindingDisposition.finding_id, VexFindingDisposition.observations,
+        VexFindingDisposition.excluded_observations).join(VexDispositionEvaluation,
+        VexDispositionEvaluation.id == VexFindingDisposition.evaluation_id).join(
+        VexDispositionService, VexDispositionService.service_id == VexDispositionEvaluation.service_id).join(
+        VexDispositionPolicy, VexDispositionPolicy.id == 1).where(
+        VexFindingDisposition.finding_id.in_(ids), *current_evaluation(now)))} if ids else {}
     page_findings = []
     for finding in proxy.findings:
         row = SimpleNamespace(**{c.key: getattr(finding, c.key) for c in Finding.__table__.columns})
         row.exceptions = finding.exceptions
+        disposition = dispositions.get(row.id)
+        row.vex_excluded_observations = disposition.excluded_observations if disposition else 0
+        row.effective_disposition = ('resolved' if not row.active else 'exception' if row.exceptions else
+            'vex_not_affected' if disposition and disposition.observations > 0 and
+                disposition.observations == disposition.excluded_observations else
+            'mixed_vex' if disposition and disposition.excluded_observations else 'active')
         row.observations = [observations[row.id]] if row.id in observations else []
         page_findings.append(row)
     proxy.findings = page_findings

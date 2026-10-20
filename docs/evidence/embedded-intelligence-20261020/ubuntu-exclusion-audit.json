@@ -1,0 +1,3613 @@
+{
+  "input": "exact locked ubuntu-vex.tar.xz",
+  "note": "Review only. No selection or payload changes. Earlier naive cohort counted empty documents and legacy metadata without parser validation. Legacy timestamps cannot be assumed UTC without additional evidence.",
+  "groups": {
+    "no_explicit_cve_aliases": {
+      "count": 423,
+      "formerly_bounded": 423,
+      "rows_formerly_bounded": 0,
+      "rows_min": 0,
+      "rows_max": 0,
+      "documents": [
+        {
+          "file": "USN-2169-2.json",
+          "canonical_bytes": 2501,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.505339Z"
+        },
+        {
+          "file": "USN-2184-1.json",
+          "canonical_bytes": 8660,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.509856Z"
+        },
+        {
+          "file": "USN-2184-2.json",
+          "canonical_bytes": 8932,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.510385Z"
+        },
+        {
+          "file": "USN-2214-2.json",
+          "canonical_bytes": 5795,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.525617Z"
+        },
+        {
+          "file": "USN-2214-3.json",
+          "canonical_bytes": 5759,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.526041Z"
+        },
+        {
+          "file": "USN-2232-2.json",
+          "canonical_bytes": 5285,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.533931Z"
+        },
+        {
+          "file": "USN-2232-3.json",
+          "canonical_bytes": 5273,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.534332Z"
+        },
+        {
+          "file": "USN-2254-2.json",
+          "canonical_bytes": 16762,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.546374Z"
+        },
+        {
+          "file": "USN-2303-1.json",
+          "canonical_bytes": 8508,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.569932Z"
+        },
+        {
+          "file": "USN-2319-2.json",
+          "canonical_bytes": 6784,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.582630Z"
+        },
+        {
+          "file": "USN-2319-3.json",
+          "canonical_bytes": 6604,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.583070Z"
+        },
+        {
+          "file": "USN-2350-1.json",
+          "canonical_bytes": 3832,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.608464Z"
+        },
+        {
+          "file": "USN-2387-1.json",
+          "canonical_bytes": 1178,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.634774Z"
+        },
+        {
+          "file": "USN-2431-2.json",
+          "canonical_bytes": 7144,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.662470Z"
+        },
+        {
+          "file": "USN-2436-2.json",
+          "canonical_bytes": 6918,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.666031Z"
+        },
+        {
+          "file": "USN-2447-2.json",
+          "canonical_bytes": 41020,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.676424Z"
+        },
+        {
+          "file": "USN-2458-2.json",
+          "canonical_bytes": 4080,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.683397Z"
+        },
+        {
+          "file": "USN-2458-3.json",
+          "canonical_bytes": 47705,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.683894Z"
+        },
+        {
+          "file": "USN-2475-1.json",
+          "canonical_bytes": 7224,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.695856Z"
+        },
+        {
+          "file": "USN-2504-1.json",
+          "canonical_bytes": 3908,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.712354Z"
+        },
+        {
+          "file": "USN-2505-2.json",
+          "canonical_bytes": 50381,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.714930Z"
+        },
+        {
+          "file": "USN-2509-1.json",
+          "canonical_bytes": 1278,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.719055Z"
+        },
+        {
+          "file": "USN-2516-2.json",
+          "canonical_bytes": 43098,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.728997Z"
+        },
+        {
+          "file": "USN-2516-3.json",
+          "canonical_bytes": 43141,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.731119Z"
+        },
+        {
+          "file": "USN-2553-2.json",
+          "canonical_bytes": 5705,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.768042Z"
+        },
+        {
+          "file": "USN-2569-2.json",
+          "canonical_bytes": 6585,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.779574Z"
+        },
+        {
+          "file": "USN-2576-1.json",
+          "canonical_bytes": 1241,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.785184Z"
+        },
+        {
+          "file": "USN-2598-2.json",
+          "canonical_bytes": 42327,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.800297Z"
+        },
+        {
+          "file": "USN-2599-2.json",
+          "canonical_bytes": 40866,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.803738Z"
+        },
+        {
+          "file": "USN-2624-1.json",
+          "canonical_bytes": 6914,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.822550Z"
+        },
+        {
+          "file": "USN-2643-2.json",
+          "canonical_bytes": 42274,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.841208Z"
+        },
+        {
+          "file": "USN-2644-2.json",
+          "canonical_bytes": 39559,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.844627Z"
+        },
+        {
+          "file": "USN-2702-2.json",
+          "canonical_bytes": 5558,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.896585Z"
+        },
+        {
+          "file": "USN-2702-3.json",
+          "canonical_bytes": 40233,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.897112Z"
+        },
+        {
+          "file": "USN-2709-1.json",
+          "canonical_bytes": 1176,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.900791Z"
+        },
+        {
+          "file": "USN-2709-2.json",
+          "canonical_bytes": 1399,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.901093Z"
+        },
+        {
+          "file": "USN-2710-2.json",
+          "canonical_bytes": 9286,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.902021Z"
+        },
+        {
+          "file": "USN-2743-2.json",
+          "canonical_bytes": 5711,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.926260Z"
+        },
+        {
+          "file": "USN-2743-3.json",
+          "canonical_bytes": 8814,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.926723Z"
+        },
+        {
+          "file": "USN-2743-4.json",
+          "canonical_bytes": 41127,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.927304Z"
+        },
+        {
+          "file": "USN-2746-2.json",
+          "canonical_bytes": 3344,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.930295Z"
+        },
+        {
+          "file": "USN-2753-2.json",
+          "canonical_bytes": 7402,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.938760Z"
+        },
+        {
+          "file": "USN-2753-3.json",
+          "canonical_bytes": 7424,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.939253Z"
+        },
+        {
+          "file": "USN-2788-2.json",
+          "canonical_bytes": 1737,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:46.972152Z"
+        },
+        {
+          "file": "USN-2821-1.json",
+          "canonical_bytes": 7230,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.002007Z"
+        },
+        {
+          "file": "USN-2839-1.json",
+          "canonical_bytes": 18397,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.018319Z"
+        },
+        {
+          "file": "USN-2855-2.json",
+          "canonical_bytes": 29285,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.042292Z"
+        },
+        {
+          "file": "USN-2880-2.json",
+          "canonical_bytes": 39810,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.066675Z"
+        },
+        {
+          "file": "USN-2908-5.json",
+          "canonical_bytes": 40115,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.101741Z"
+        },
+        {
+          "file": "USN-2909-2.json",
+          "canonical_bytes": 40201,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.105131Z"
+        },
+        {
+          "file": "USN-2910-2.json",
+          "canonical_bytes": 41406,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.108657Z"
+        },
+        {
+          "file": "USN-2913-1.json",
+          "canonical_bytes": 1358,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.110306Z"
+        },
+        {
+          "file": "USN-2913-2.json",
+          "canonical_bytes": 5493,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.110631Z"
+        },
+        {
+          "file": "USN-2913-3.json",
+          "canonical_bytes": 7234,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.111071Z"
+        },
+        {
+          "file": "USN-2913-4.json",
+          "canonical_bytes": 7510,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.111540Z"
+        },
+        {
+          "file": "USN-2915-2.json",
+          "canonical_bytes": 2287,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.113108Z"
+        },
+        {
+          "file": "USN-2915-3.json",
+          "canonical_bytes": 2287,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.113466Z"
+        },
+        {
+          "file": "USN-2917-2.json",
+          "canonical_bytes": 62896,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.117636Z"
+        },
+        {
+          "file": "USN-2917-3.json",
+          "canonical_bytes": 62757,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.119359Z"
+        },
+        {
+          "file": "USN-2935-2.json",
+          "canonical_bytes": 7166,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.152661Z"
+        },
+        {
+          "file": "USN-2936-3.json",
+          "canonical_bytes": 122586,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.156290Z"
+        },
+        {
+          "file": "USN-2945-1.json",
+          "canonical_bytes": 3134,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.165189Z"
+        },
+        {
+          "file": "USN-2948-2.json",
+          "canonical_bytes": 41366,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.174467Z"
+        },
+        {
+          "file": "USN-2950-2.json",
+          "canonical_bytes": 16817,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.178983Z"
+        },
+        {
+          "file": "USN-2950-3.json",
+          "canonical_bytes": 52077,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.180044Z"
+        },
+        {
+          "file": "USN-2950-5.json",
+          "canonical_bytes": 56057,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.181913Z"
+        },
+        {
+          "file": "USN-2985-2.json",
+          "canonical_bytes": 15292,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.246477Z"
+        },
+        {
+          "file": "USN-3047-2.json",
+          "canonical_bytes": 36281,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.344280Z"
+        },
+        {
+          "file": "USN-3087-2.json",
+          "canonical_bytes": 16629,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.400853Z"
+        },
+        {
+          "file": "USN-3094-1.json",
+          "canonical_bytes": 19641,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.409463Z"
+        },
+        {
+          "file": "USN-3101-1.json",
+          "canonical_bytes": 17273,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.423265Z"
+        },
+        {
+          "file": "USN-3114-2.json",
+          "canonical_bytes": 19712,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.458050Z"
+        },
+        {
+          "file": "USN-3135-1.json",
+          "canonical_bytes": 19027,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.508818Z"
+        },
+        {
+          "file": "USN-3135-2.json",
+          "canonical_bytes": 19194,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.509750Z"
+        },
+        {
+          "file": "USN-3142-2.json",
+          "canonical_bytes": 34649,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.522400Z"
+        },
+        {
+          "file": "USN-3175-2.json",
+          "canonical_bytes": 62521,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.588978Z"
+        },
+        {
+          "file": "USN-3177-2.json",
+          "canonical_bytes": 7926,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.592382Z"
+        },
+        {
+          "file": "USN-3211-2.json",
+          "canonical_bytes": 50797,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.642898Z"
+        },
+        {
+          "file": "USN-3212-2.json",
+          "canonical_bytes": 12908,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.647176Z"
+        },
+        {
+          "file": "USN-3215-2.json",
+          "canonical_bytes": 4849,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.651096Z"
+        },
+        {
+          "file": "USN-3216-2.json",
+          "canonical_bytes": 76411,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.655886Z"
+        },
+        {
+          "file": "USN-3217-1.json",
+          "canonical_bytes": 12109,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.657975Z"
+        },
+        {
+          "file": "USN-3239-2.json",
+          "canonical_bytes": 26035,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.698741Z"
+        },
+        {
+          "file": "USN-3242-2.json",
+          "canonical_bytes": 54560,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.704672Z"
+        },
+        {
+          "file": "USN-3253-2.json",
+          "canonical_bytes": 11582,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.721707Z"
+        },
+        {
+          "file": "USN-3260-2.json",
+          "canonical_bytes": 58693,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.748964Z"
+        },
+        {
+          "file": "USN-3272-2.json",
+          "canonical_bytes": 14351,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.778435Z"
+        },
+        {
+          "file": "USN-3275-3.json",
+          "canonical_bytes": 8139,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.784341Z"
+        },
+        {
+          "file": "USN-3276-2.json",
+          "canonical_bytes": 7481,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.785552Z"
+        },
+        {
+          "file": "USN-3299-1.json",
+          "canonical_bytes": 57389,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.816833Z"
+        },
+        {
+          "file": "USN-3346-2.json",
+          "canonical_bytes": 40879,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.895630Z"
+        },
+        {
+          "file": "USN-3363-2.json",
+          "canonical_bytes": 34660,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.932597Z"
+        },
+        {
+          "file": "USN-3366-2.json",
+          "canonical_bytes": 12963,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.943287Z"
+        },
+        {
+          "file": "USN-3391-2.json",
+          "canonical_bytes": 3757,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.991047Z"
+        },
+        {
+          "file": "USN-3391-3.json",
+          "canonical_bytes": 68387,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.991967Z"
+        },
+        {
+          "file": "USN-3392-1.json",
+          "canonical_bytes": 46259,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.995350Z"
+        },
+        {
+          "file": "USN-3392-2.json",
+          "canonical_bytes": 39431,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:47.997550Z"
+        },
+        {
+          "file": "USN-3411-1.json",
+          "canonical_bytes": 6949,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.027116Z"
+        },
+        {
+          "file": "USN-3414-2.json",
+          "canonical_bytes": 37951,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.033116Z"
+        },
+        {
+          "file": "USN-3432-1.json",
+          "canonical_bytes": 1897,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.068438Z"
+        },
+        {
+          "file": "USN-3435-2.json",
+          "canonical_bytes": 76654,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.074937Z"
+        },
+        {
+          "file": "USN-3477-2.json",
+          "canonical_bytes": 86286,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.151089Z"
+        },
+        {
+          "file": "USN-3477-3.json",
+          "canonical_bytes": 87976,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.153638Z"
+        },
+        {
+          "file": "USN-3477-4.json",
+          "canonical_bytes": 88040,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.156239Z"
+        },
+        {
+          "file": "USN-3480-2.json",
+          "canonical_bytes": 7905,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.161868Z"
+        },
+        {
+          "file": "USN-3480-3.json",
+          "canonical_bytes": 7692,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.162384Z"
+        },
+        {
+          "file": "USN-3509-3.json",
+          "canonical_bytes": 46266,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.212130Z"
+        },
+        {
+          "file": "USN-3509-4.json",
+          "canonical_bytes": 41492,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.214129Z"
+        },
+        {
+          "file": "USN-3522-3.json",
+          "canonical_bytes": 41581,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.237742Z"
+        },
+        {
+          "file": "USN-3522-4.json",
+          "canonical_bytes": 39295,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.239568Z"
+        },
+        {
+          "file": "USN-3531-2.json",
+          "canonical_bytes": 1844,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.255504Z"
+        },
+        {
+          "file": "USN-3544-2.json",
+          "canonical_bytes": 80790,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.280943Z"
+        },
+        {
+          "file": "USN-3548-2.json",
+          "canonical_bytes": 37190,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.287936Z"
+        },
+        {
+          "file": "USN-3575-2.json",
+          "canonical_bytes": 37588,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.319702Z"
+        },
+        {
+          "file": "USN-3596-2.json",
+          "canonical_bytes": 90269,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.367678Z"
+        },
+        {
+          "file": "USN-3623-1.json",
+          "canonical_bytes": 5393,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.433527Z"
+        },
+        {
+          "file": "USN-3645-2.json",
+          "canonical_bytes": 158899,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.486075Z"
+        },
+        {
+          "file": "USN-3690-2.json",
+          "canonical_bytes": 1519,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.597899Z"
+        },
+        {
+          "file": "USN-3705-2.json",
+          "canonical_bytes": 127756,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.636716Z"
+        },
+        {
+          "file": "USN-3715-1.json",
+          "canonical_bytes": 1293,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.655898Z"
+        },
+        {
+          "file": "USN-3716-1.json",
+          "canonical_bytes": 2435,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.656230Z"
+        },
+        {
+          "file": "USN-3718-1.json",
+          "canonical_bytes": 44514,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.659478Z"
+        },
+        {
+          "file": "USN-3718-2.json",
+          "canonical_bytes": 34300,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.661655Z"
+        },
+        {
+          "file": "USN-3722-3.json",
+          "canonical_bytes": 31881,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.667976Z"
+        },
+        {
+          "file": "USN-3722-5.json",
+          "canonical_bytes": 31798,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.669297Z"
+        },
+        {
+          "file": "USN-3741-3.json",
+          "canonical_bytes": 44689,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.709124Z"
+        },
+        {
+          "file": "USN-3747-2.json",
+          "canonical_bytes": 6714,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.720167Z"
+        },
+        {
+          "file": "USN-3761-2.json",
+          "canonical_bytes": 115345,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.769371Z"
+        },
+        {
+          "file": "USN-3761-3.json",
+          "canonical_bytes": 124995,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.772976Z"
+        },
+        {
+          "file": "USN-3781-2.json",
+          "canonical_bytes": 10229,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.833574Z"
+        },
+        {
+          "file": "USN-3784-1.json",
+          "canonical_bytes": 38465,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.835858Z"
+        },
+        {
+          "file": "USN-3795-3.json",
+          "canonical_bytes": 14153,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.854268Z"
+        },
+        {
+          "file": "USN-3801-2.json",
+          "canonical_bytes": 166941,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.877239Z"
+        },
+        {
+          "file": "USN-3809-2.json",
+          "canonical_bytes": 7018,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.891681Z"
+        },
+        {
+          "file": "USN-3816-3.json",
+          "canonical_bytes": 21314,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.901808Z"
+        },
+        {
+          "file": "USN-3830-1.json",
+          "canonical_bytes": 12011,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.934439Z"
+        },
+        {
+          "file": "USN-3831-2.json",
+          "canonical_bytes": 18537,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:48.936467Z"
+        },
+        {
+          "file": "USN-3866-2.json",
+          "canonical_bytes": 18566,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.007739Z"
+        },
+        {
+          "file": "USN-3866-3.json",
+          "canonical_bytes": 18597,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.008754Z"
+        },
+        {
+          "file": "USN-3871-2.json",
+          "canonical_bytes": 36614,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.022515Z"
+        },
+        {
+          "file": "USN-3878-3.json",
+          "canonical_bytes": 33766,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.046219Z"
+        },
+        {
+          "file": "USN-3911-2.json",
+          "canonical_bytes": 9034,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.120772Z"
+        },
+        {
+          "file": "USN-3914-2.json",
+          "canonical_bytes": 8248,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.123002Z"
+        },
+        {
+          "file": "USN-3918-3.json",
+          "canonical_bytes": 167345,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.133843Z"
+        },
+        {
+          "file": "USN-3918-4.json",
+          "canonical_bytes": 167361,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.138674Z"
+        },
+        {
+          "file": "USN-3976-3.json",
+          "canonical_bytes": 48766,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.250988Z"
+        },
+        {
+          "file": "USN-3976-4.json",
+          "canonical_bytes": 30419,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.252583Z"
+        },
+        {
+          "file": "USN-3991-2.json",
+          "canonical_bytes": 118761,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.299584Z"
+        },
+        {
+          "file": "USN-3991-3.json",
+          "canonical_bytes": 118837,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.303670Z"
+        },
+        {
+          "file": "USN-4024-1.json",
+          "canonical_bytes": 13041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.379403Z"
+        },
+        {
+          "file": "USN-4037-1.json",
+          "canonical_bytes": 2147,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.397830Z"
+        },
+        {
+          "file": "USN-4038-3.json",
+          "canonical_bytes": 7189,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.399348Z"
+        },
+        {
+          "file": "USN-4038-4.json",
+          "canonical_bytes": 3612,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.399840Z"
+        },
+        {
+          "file": "USN-4049-3.json",
+          "canonical_bytes": 10119,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.428656Z"
+        },
+        {
+          "file": "USN-4049-4.json",
+          "canonical_bytes": 9612,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.429284Z"
+        },
+        {
+          "file": "USN-4054-2.json",
+          "canonical_bytes": 119135,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.440474Z"
+        },
+        {
+          "file": "USN-4113-2.json",
+          "canonical_bytes": 17201,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.544739Z"
+        },
+        {
+          "file": "USN-4115-2.json",
+          "canonical_bytes": 80951,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.555119Z"
+        },
+        {
+          "file": "USN-4120-2.json",
+          "canonical_bytes": 16669,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.563449Z"
+        },
+        {
+          "file": "USN-4122-2.json",
+          "canonical_bytes": 108478,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.569403Z"
+        },
+        {
+          "file": "USN-4134-2.json",
+          "canonical_bytes": 16783,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.588878Z"
+        },
+        {
+          "file": "USN-4165-2.json",
+          "canonical_bytes": 117071,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.671844Z"
+        },
+        {
+          "file": "USN-4170-2.json",
+          "canonical_bytes": 6406,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.684191Z"
+        },
+        {
+          "file": "USN-4170-3.json",
+          "canonical_bytes": 6528,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.684719Z"
+        },
+        {
+          "file": "USN-4171-3.json",
+          "canonical_bytes": 13848,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.687403Z"
+        },
+        {
+          "file": "USN-4171-4.json",
+          "canonical_bytes": 8073,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.688100Z"
+        },
+        {
+          "file": "USN-4171-5.json",
+          "canonical_bytes": 13926,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.688747Z"
+        },
+        {
+          "file": "USN-4171-6.json",
+          "canonical_bytes": 19290,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.689685Z"
+        },
+        {
+          "file": "USN-4182-3.json",
+          "canonical_bytes": 2117,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.696855Z"
+        },
+        {
+          "file": "USN-4182-4.json",
+          "canonical_bytes": 1846,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.697175Z"
+        },
+        {
+          "file": "USN-4189-2.json",
+          "canonical_bytes": 62429,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.729581Z"
+        },
+        {
+          "file": "USN-4202-2.json",
+          "canonical_bytes": 57289,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.755132Z"
+        },
+        {
+          "file": "USN-4233-1.json",
+          "canonical_bytes": 14634,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.828368Z"
+        },
+        {
+          "file": "USN-4233-2.json",
+          "canonical_bytes": 15045,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.829093Z"
+        },
+        {
+          "file": "USN-4234-2.json",
+          "canonical_bytes": 107333,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.834364Z"
+        },
+        {
+          "file": "USN-4247-2.json",
+          "canonical_bytes": 9141,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.855190Z"
+        },
+        {
+          "file": "USN-4278-3.json",
+          "canonical_bytes": 58338,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.904716Z"
+        },
+        {
+          "file": "USN-4279-2.json",
+          "canonical_bytes": 49619,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.911102Z"
+        },
+        {
+          "file": "USN-4307-1.json",
+          "canonical_bytes": 5908,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:49.975266Z"
+        },
+        {
+          "file": "USN-4341-3.json",
+          "canonical_bytes": 28041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.054195Z"
+        },
+        {
+          "file": "USN-4353-2.json",
+          "canonical_bytes": 145963,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.085763Z"
+        },
+        {
+          "file": "USN-4360-2.json",
+          "canonical_bytes": 10595,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.097065Z"
+        },
+        {
+          "file": "USN-4360-3.json",
+          "canonical_bytes": 4706,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.097615Z"
+        },
+        {
+          "file": "USN-4367-2.json",
+          "canonical_bytes": 25009,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.126794Z"
+        },
+        {
+          "file": "USN-4369-2.json",
+          "canonical_bytes": 4479,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.132203Z"
+        },
+        {
+          "file": "USN-4377-1.json",
+          "canonical_bytes": 4478,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.151740Z"
+        },
+        {
+          "file": "USN-4377-2.json",
+          "canonical_bytes": 2211,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.152160Z"
+        },
+        {
+          "file": "USN-4385-2.json",
+          "canonical_bytes": 3100,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:45.736972Z"
+        },
+        {
+          "file": "USN-4423-1.json",
+          "canonical_bytes": 144916,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.273382Z"
+        },
+        {
+          "file": "USN-4432-2.json",
+          "canonical_bytes": 40330,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:46.236196Z"
+        },
+        {
+          "file": "USN-4436-2.json",
+          "canonical_bytes": 11314,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.319507Z"
+        },
+        {
+          "file": "USN-4441-2.json",
+          "canonical_bytes": 12470,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.327188Z"
+        },
+        {
+          "file": "USN-4446-2.json",
+          "canonical_bytes": 11271,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.337850Z"
+        },
+        {
+          "file": "USN-4467-3.json",
+          "canonical_bytes": 53724,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.378018Z"
+        },
+        {
+          "file": "USN-4471-2.json",
+          "canonical_bytes": 27416,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.388513Z"
+        },
+        {
+          "file": "USN-4474-2.json",
+          "canonical_bytes": 155177,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.399085Z"
+        },
+        {
+          "file": "USN-4533-1.json",
+          "canonical_bytes": 2553,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.503363Z"
+        },
+        {
+          "file": "USN-4546-2.json",
+          "canonical_bytes": 154705,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.517658Z"
+        },
+        {
+          "file": "USN-4599-3.json",
+          "canonical_bytes": 154727,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.604484Z"
+        },
+        {
+          "file": "USN-4605-2.json",
+          "canonical_bytes": 1914,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.615370Z"
+        },
+        {
+          "file": "USN-4608-1.json",
+          "canonical_bytes": 4668,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.619452Z"
+        },
+        {
+          "file": "USN-4628-2.json",
+          "canonical_bytes": 2931,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:47.714023Z"
+        },
+        {
+          "file": "USN-4646-2.json",
+          "canonical_bytes": 27816,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.684923Z"
+        },
+        {
+          "file": "USN-4649-2.json",
+          "canonical_bytes": 2745,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.688048Z"
+        },
+        {
+          "file": "USN-4651-1.json",
+          "canonical_bytes": 12132,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.691208Z"
+        },
+        {
+          "file": "USN-4658-2.json",
+          "canonical_bytes": 74642,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.713460Z"
+        },
+        {
+          "file": "USN-4660-2.json",
+          "canonical_bytes": 80134,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.730256Z"
+        },
+        {
+          "file": "USN-4668-3.json",
+          "canonical_bytes": 13223,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.752013Z"
+        },
+        {
+          "file": "USN-4698-2.json",
+          "canonical_bytes": 8102,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.837439Z"
+        },
+        {
+          "file": "USN-4712-1.json",
+          "canonical_bytes": 82105,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.860497Z"
+        },
+        {
+          "file": "USN-4717-2.json",
+          "canonical_bytes": 154672,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.880671Z"
+        },
+        {
+          "file": "USN-4719-1.json",
+          "canonical_bytes": 4367,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.884867Z"
+        },
+        {
+          "file": "USN-4726-1.json",
+          "canonical_bytes": 29536,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.894271Z"
+        },
+        {
+          "file": "USN-4733-2.json",
+          "canonical_bytes": 11060,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:50.902231Z"
+        },
+        {
+          "file": "USN-4754-2.json",
+          "canonical_bytes": 30875,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:48.776548Z"
+        },
+        {
+          "file": "USN-4916-2.json",
+          "canonical_bytes": 107603,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.183456Z"
+        },
+        {
+          "file": "USN-4918-3.json",
+          "canonical_bytes": 44223,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:49.787415Z"
+        },
+        {
+          "file": "USN-4937-2.json",
+          "canonical_bytes": 11028,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.230011Z"
+        },
+        {
+          "file": "USN-4944-1.json",
+          "canonical_bytes": 46653,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.240660Z"
+        },
+        {
+          "file": "USN-4944-2.json",
+          "canonical_bytes": 25016,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.242304Z"
+        },
+        {
+          "file": "USN-4958-1.json",
+          "canonical_bytes": 7656,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.274642Z"
+        },
+        {
+          "file": "USN-4961-1.json",
+          "canonical_bytes": 1883,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.277348Z"
+        },
+        {
+          "file": "USN-4986-3.json",
+          "canonical_bytes": 2020,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.329356Z"
+        },
+        {
+          "file": "USN-4986-4.json",
+          "canonical_bytes": 3595,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:50.463495Z"
+        },
+        {
+          "file": "USN-5032-1.json",
+          "canonical_bytes": 6606,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.446058Z"
+        },
+        {
+          "file": "USN-5035-1.json",
+          "canonical_bytes": 6833,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.447568Z"
+        },
+        {
+          "file": "USN-5037-2.json",
+          "canonical_bytes": 106910,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.454718Z"
+        },
+        {
+          "file": "USN-5042-1.json",
+          "canonical_bytes": 2603,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.466266Z"
+        },
+        {
+          "file": "USN-5051-4.json",
+          "canonical_bytes": 7824,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:51.221379Z"
+        },
+        {
+          "file": "USN-5060-1.json",
+          "canonical_bytes": 7398,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.508116Z"
+        },
+        {
+          "file": "USN-5060-2.json",
+          "canonical_bytes": 10421,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:51.272406Z"
+        },
+        {
+          "file": "USN-5079-3.json",
+          "canonical_bytes": 7555,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.553003Z"
+        },
+        {
+          "file": "USN-5079-4.json",
+          "canonical_bytes": 24136,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:51.529168Z"
+        },
+        {
+          "file": "USN-5086-1.json",
+          "canonical_bytes": 143029,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:01.946750Z"
+        },
+        {
+          "file": "USN-5089-1.json",
+          "canonical_bytes": 3054,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.567665Z"
+        },
+        {
+          "file": "USN-5089-2.json",
+          "canonical_bytes": 3734,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:51.604944Z"
+        },
+        {
+          "file": "USN-5090-3.json",
+          "canonical_bytes": 16180,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.570943Z"
+        },
+        {
+          "file": "USN-5090-4.json",
+          "canonical_bytes": 12806,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:01.995834Z"
+        },
+        {
+          "file": "USN-5091-3.json",
+          "canonical_bytes": 5955,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.579653Z"
+        },
+        {
+          "file": "USN-5092-3.json",
+          "canonical_bytes": 5832,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.585087Z"
+        },
+        {
+          "file": "USN-5122-1.json",
+          "canonical_bytes": 11726,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.644374Z"
+        },
+        {
+          "file": "USN-5122-2.json",
+          "canonical_bytes": 14967,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:52.027953Z"
+        },
+        {
+          "file": "USN-5142-2.json",
+          "canonical_bytes": 25362,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.691386Z"
+        },
+        {
+          "file": "USN-5142-3.json",
+          "canonical_bytes": 25337,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.692266Z"
+        },
+        {
+          "file": "USN-5174-2.json",
+          "canonical_bytes": 22571,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.762763Z"
+        },
+        {
+          "file": "USN-5186-2.json",
+          "canonical_bytes": 107329,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.780461Z"
+        },
+        {
+          "file": "USN-5210-2.json",
+          "canonical_bytes": 57940,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.826025Z"
+        },
+        {
+          "file": "USN-5267-2.json",
+          "canonical_bytes": 81590,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:51.931672Z"
+        },
+        {
+          "file": "USN-5292-4.json",
+          "canonical_bytes": 24382,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:53.853412Z"
+        },
+        {
+          "file": "USN-5313-2.json",
+          "canonical_bytes": 14417,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.029956Z"
+        },
+        {
+          "file": "USN-5321-3.json",
+          "canonical_bytes": 107190,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.068185Z"
+        },
+        {
+          "file": "USN-5376-3.json",
+          "canonical_bytes": 24341,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.183733Z"
+        },
+        {
+          "file": "USN-5376-4.json",
+          "canonical_bytes": 18907,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.184822Z"
+        },
+        {
+          "file": "USN-5376-5.json",
+          "canonical_bytes": 18869,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.185736Z"
+        },
+        {
+          "file": "USN-5376-6.json",
+          "canonical_bytes": 9557,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.186513Z"
+        },
+        {
+          "file": "USN-5395-2.json",
+          "canonical_bytes": 3000,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.230691Z"
+        },
+        {
+          "file": "USN-5400-3.json",
+          "canonical_bytes": 23632,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.239017Z"
+        },
+        {
+          "file": "USN-5441-1.json",
+          "canonical_bytes": 25383,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.318215Z"
+        },
+        {
+          "file": "USN-5473-1.json",
+          "canonical_bytes": 3080,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.405140Z"
+        },
+        {
+          "file": "USN-5473-2.json",
+          "canonical_bytes": 2166,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:06.387936Z"
+        },
+        {
+          "file": "USN-5481-1.json",
+          "canonical_bytes": 10962,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.423486Z"
+        },
+        {
+          "file": "USN-5487-2.json",
+          "canonical_bytes": 12209,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:56.103104Z"
+        },
+        {
+          "file": "USN-5495-2.json",
+          "canonical_bytes": 8587,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.473969Z"
+        },
+        {
+          "file": "USN-5526-2.json",
+          "canonical_bytes": 1516,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.543256Z"
+        },
+        {
+          "file": "USN-5606-2.json",
+          "canonical_bytes": 27725,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:07.704761Z"
+        },
+        {
+          "file": "USN-5709-2.json",
+          "canonical_bytes": 108160,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.894144Z"
+        },
+        {
+          "file": "USN-5739-2.json",
+          "canonical_bytes": 49871,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:52.975560Z"
+        },
+        {
+          "file": "USN-5745-2.json",
+          "canonical_bytes": 13878,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:58.495142Z"
+        },
+        {
+          "file": "USN-5761-1.json",
+          "canonical_bytes": 4004,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.025243Z"
+        },
+        {
+          "file": "USN-5761-2.json",
+          "canonical_bytes": 3239,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:58.704943Z"
+        },
+        {
+          "file": "USN-5771-1.json",
+          "canonical_bytes": 8708,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:09.450985Z"
+        },
+        {
+          "file": "USN-5782-2.json",
+          "canonical_bytes": 89805,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.065806Z"
+        },
+        {
+          "file": "USN-5782-3.json",
+          "canonical_bytes": 109104,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.068962Z"
+        },
+        {
+          "file": "USN-5810-2.json",
+          "canonical_bytes": 16717,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.149862Z"
+        },
+        {
+          "file": "USN-5816-2.json",
+          "canonical_bytes": 109650,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.165452Z"
+        },
+        {
+          "file": "USN-5821-4.json",
+          "canonical_bytes": 5775,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:52:59.369657Z"
+        },
+        {
+          "file": "USN-5822-2.json",
+          "canonical_bytes": 25082,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.180015Z"
+        },
+        {
+          "file": "USN-5823-3.json",
+          "canonical_bytes": 23756,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.183579Z"
+        },
+        {
+          "file": "USN-5855-3.json",
+          "canonical_bytes": 67611,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.257263Z"
+        },
+        {
+          "file": "USN-5880-2.json",
+          "canonical_bytes": 109632,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.294830Z"
+        },
+        {
+          "file": "USN-5954-2.json",
+          "canonical_bytes": 108945,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.446987Z"
+        },
+        {
+          "file": "USN-5966-2.json",
+          "canonical_bytes": 15150,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:00.651026Z"
+        },
+        {
+          "file": "USN-6010-2.json",
+          "canonical_bytes": 109504,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.578368Z"
+        },
+        {
+          "file": "USN-6010-3.json",
+          "canonical_bytes": 109543,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.581368Z"
+        },
+        {
+          "file": "USN-6042-2.json",
+          "canonical_bytes": 1583,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.657137Z"
+        },
+        {
+          "file": "USN-6046-1.json",
+          "canonical_bytes": 1342,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:12.753086Z"
+        },
+        {
+          "file": "USN-6060-3.json",
+          "canonical_bytes": 23650,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.701064Z"
+        },
+        {
+          "file": "USN-6073-5.json",
+          "canonical_bytes": 14325,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.720832Z"
+        },
+        {
+          "file": "USN-6073-6.json",
+          "canonical_bytes": 8309,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.721550Z"
+        },
+        {
+          "file": "USN-6073-7.json",
+          "canonical_bytes": 3815,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.722082Z"
+        },
+        {
+          "file": "USN-6073-8.json",
+          "canonical_bytes": 28173,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.722690Z"
+        },
+        {
+          "file": "USN-6073-9.json",
+          "canonical_bytes": 4837,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.723734Z"
+        },
+        {
+          "file": "USN-6074-2.json",
+          "canonical_bytes": 109767,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.732635Z"
+        },
+        {
+          "file": "USN-6074-3.json",
+          "canonical_bytes": 109806,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.738177Z"
+        },
+        {
+          "file": "USN-6105-1.json",
+          "canonical_bytes": 3992,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.806791Z"
+        },
+        {
+          "file": "USN-6105-2.json",
+          "canonical_bytes": 3220,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:02.176272Z"
+        },
+        {
+          "file": "USN-6106-1.json",
+          "canonical_bytes": 2552,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.807609Z"
+        },
+        {
+          "file": "USN-6143-2.json",
+          "canonical_bytes": 40471,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.864586Z"
+        },
+        {
+          "file": "USN-6143-3.json",
+          "canonical_bytes": 40510,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.865900Z"
+        },
+        {
+          "file": "USN-6152-1.json",
+          "canonical_bytes": 4456,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.885741Z"
+        },
+        {
+          "file": "USN-6156-2.json",
+          "canonical_bytes": 27976,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.891980Z"
+        },
+        {
+          "file": "USN-6161-2.json",
+          "canonical_bytes": 8689,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.896651Z"
+        },
+        {
+          "file": "USN-6170-1.json",
+          "canonical_bytes": 2294,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:53.911327Z"
+        },
+        {
+          "file": "USN-6191-1.json",
+          "canonical_bytes": 65228,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:14.368986Z"
+        },
+        {
+          "file": "USN-6211-1.json",
+          "canonical_bytes": 2467,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:03.032480Z"
+        },
+        {
+          "file": "USN-6237-2.json",
+          "canonical_bytes": 8520,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.031010Z"
+        },
+        {
+          "file": "USN-6243-2.json",
+          "canonical_bytes": 2091,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.040481Z"
+        },
+        {
+          "file": "USN-6245-1.json",
+          "canonical_bytes": 4855,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.041494Z"
+        },
+        {
+          "file": "USN-6263-2.json",
+          "canonical_bytes": 37997,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.088311Z"
+        },
+        {
+          "file": "USN-6267-2.json",
+          "canonical_bytes": 50658,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.094560Z"
+        },
+        {
+          "file": "USN-6267-3.json",
+          "canonical_bytes": 50697,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.096080Z"
+        },
+        {
+          "file": "USN-6279-1.json",
+          "canonical_bytes": 32694,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:03.651441Z"
+        },
+        {
+          "file": "USN-6305-3.json",
+          "canonical_bytes": 96337,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:15.587036Z"
+        },
+        {
+          "file": "USN-6375-1.json",
+          "canonical_bytes": 2811,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.282273Z"
+        },
+        {
+          "file": "USN-6404-2.json",
+          "canonical_bytes": 50462,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.343994Z"
+        },
+        {
+          "file": "USN-6425-2.json",
+          "canonical_bytes": 24322,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.392389Z"
+        },
+        {
+          "file": "USN-6431-3.json",
+          "canonical_bytes": 4041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.403448Z"
+        },
+        {
+          "file": "USN-6449-2.json",
+          "canonical_bytes": 75400,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.455679Z"
+        },
+        {
+          "file": "USN-6455-2.json",
+          "canonical_bytes": 6842,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-10T15:46:07.218539Z"
+        },
+        {
+          "file": "USN-6456-2.json",
+          "canonical_bytes": 50573,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.471616Z"
+        },
+        {
+          "file": "USN-6493-1.json",
+          "canonical_bytes": 2047,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.536341Z"
+        },
+        {
+          "file": "USN-6493-2.json",
+          "canonical_bytes": 2301,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:17.507621Z"
+        },
+        {
+          "file": "USN-6508-2.json",
+          "canonical_bytes": 12043,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.575721Z"
+        },
+        {
+          "file": "USN-6509-2.json",
+          "canonical_bytes": 50923,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.578839Z"
+        },
+        {
+          "file": "USN-6519-1.json",
+          "canonical_bytes": 1387,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.595268Z"
+        },
+        {
+          "file": "USN-6519-2.json",
+          "canonical_bytes": 1535,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:17.782974Z"
+        },
+        {
+          "file": "USN-6541-2.json",
+          "canonical_bytes": 11130,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.626727Z"
+        },
+        {
+          "file": "USN-6562-2.json",
+          "canonical_bytes": 31300,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.681449Z"
+        },
+        {
+          "file": "USN-6567-2.json",
+          "canonical_bytes": 39874,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.691486Z"
+        },
+        {
+          "file": "USN-6568-1.json",
+          "canonical_bytes": 19759,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.693043Z"
+        },
+        {
+          "file": "USN-6587-3.json",
+          "canonical_bytes": 23348,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.715607Z"
+        },
+        {
+          "file": "USN-6587-4.json",
+          "canonical_bytes": 31003,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:18.375608Z"
+        },
+        {
+          "file": "USN-6610-2.json",
+          "canonical_bytes": 50202,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.772524Z"
+        },
+        {
+          "file": "USN-6649-2.json",
+          "canonical_bytes": 50832,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.856198Z"
+        },
+        {
+          "file": "USN-6663-1.json",
+          "canonical_bytes": 13827,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.884803Z"
+        },
+        {
+          "file": "USN-6663-2.json",
+          "canonical_bytes": 8269,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:19.182966Z"
+        },
+        {
+          "file": "USN-6663-3.json",
+          "canonical_bytes": 4271,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.885940Z"
+        },
+        {
+          "file": "USN-6710-2.json",
+          "canonical_bytes": 50043,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:54.988898Z"
+        },
+        {
+          "file": "USN-6721-2.json",
+          "canonical_bytes": 61117,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:08.113811Z"
+        },
+        {
+          "file": "USN-6727-2.json",
+          "canonical_bytes": 7822,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.041334Z"
+        },
+        {
+          "file": "USN-6728-2.json",
+          "canonical_bytes": 5710,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.042778Z"
+        },
+        {
+          "file": "USN-6747-2.json",
+          "canonical_bytes": 52189,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.097978Z"
+        },
+        {
+          "file": "USN-6770-1.json",
+          "canonical_bytes": 6157,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:21.346185Z"
+        },
+        {
+          "file": "USN-6779-2.json",
+          "canonical_bytes": 40950,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.192594Z"
+        },
+        {
+          "file": "USN-6844-2.json",
+          "canonical_bytes": 77816,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:24.144222Z"
+        },
+        {
+          "file": "USN-6846-2.json",
+          "canonical_bytes": 3872,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:24.171875Z"
+        },
+        {
+          "file": "USN-6846-3.json",
+          "canonical_bytes": 3868,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:24.176144Z"
+        },
+        {
+          "file": "USN-6851-2.json",
+          "canonical_bytes": 11168,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.487423Z"
+        },
+        {
+          "file": "USN-6885-2.json",
+          "canonical_bytes": 29864,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.569234Z"
+        },
+        {
+          "file": "USN-6885-4.json",
+          "canonical_bytes": 43925,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:24.697811Z"
+        },
+        {
+          "file": "USN-6885-6.json",
+          "canonical_bytes": 19368,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:55.573969Z"
+        },
+        {
+          "file": "USN-6966-2.json",
+          "canonical_bytes": 31283,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:56.002506Z"
+        },
+        {
+          "file": "USN-6992-2.json",
+          "canonical_bytes": 11623,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:56.070800Z"
+        },
+        {
+          "file": "USN-7015-6.json",
+          "canonical_bytes": 46689,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T10:53:17.937288Z"
+        },
+        {
+          "file": "USN-7034-1.json",
+          "canonical_bytes": 2628,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:56.350922Z"
+        },
+        {
+          "file": "USN-7034-2.json",
+          "canonical_bytes": 3611,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:31.161626Z"
+        },
+        {
+          "file": "USN-7096-2.json",
+          "canonical_bytes": 35814,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:33.604480Z"
+        },
+        {
+          "file": "USN-7117-2.json",
+          "canonical_bytes": 4993,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:34.342761Z"
+        },
+        {
+          "file": "USN-7117-3.json",
+          "canonical_bytes": 5012,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:34.353215Z"
+        },
+        {
+          "file": "USN-7206-2.json",
+          "canonical_bytes": 7054,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:38.147103Z"
+        },
+        {
+          "file": "USN-7256-2.json",
+          "canonical_bytes": 4347,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:57.197761Z"
+        },
+        {
+          "file": "USN-7299-3.json",
+          "canonical_bytes": 45730,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:41.155604Z"
+        },
+        {
+          "file": "USN-7330-2.json",
+          "canonical_bytes": 4796,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:41.992838Z"
+        },
+        {
+          "file": "USN-7343-2.json",
+          "canonical_bytes": 5356,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:57.708198Z"
+        },
+        {
+          "file": "USN-7346-2.json",
+          "canonical_bytes": 11370,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:42.241524Z"
+        },
+        {
+          "file": "USN-7364-1.json",
+          "canonical_bytes": 22728,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:42.366306Z"
+        },
+        {
+          "file": "USN-7412-2.json",
+          "canonical_bytes": 32486,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:58.048373Z"
+        },
+        {
+          "file": "USN-7536-2.json",
+          "canonical_bytes": 4360,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:58.726533Z"
+        },
+        {
+          "file": "USN-7537-2.json",
+          "canonical_bytes": 4943,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:58.727706Z"
+        },
+        {
+          "file": "USN-7545-2.json",
+          "canonical_bytes": 30517,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:50.605054Z"
+        },
+        {
+          "file": "USN-7545-3.json",
+          "canonical_bytes": 30535,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:50.614173Z"
+        },
+        {
+          "file": "USN-7545-4.json",
+          "canonical_bytes": 24772,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:50.621871Z"
+        },
+        {
+          "file": "USN-7555-2.json",
+          "canonical_bytes": 3412,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:58.801238Z"
+        },
+        {
+          "file": "USN-7555-3.json",
+          "canonical_bytes": 2354,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:58.801639Z"
+        },
+        {
+          "file": "USN-7582-2.json",
+          "canonical_bytes": 79980,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:51.015412Z"
+        },
+        {
+          "file": "USN-7626-2.json",
+          "canonical_bytes": 38196,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:53.575621Z"
+        },
+        {
+          "file": "USN-7626-3.json",
+          "canonical_bytes": 38340,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-25T10:46:53.589292Z"
+        },
+        {
+          "file": "USN-7758-1.json",
+          "canonical_bytes": 35032,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.404816Z"
+        },
+        {
+          "file": "USN-7758-2.json",
+          "canonical_bytes": 15458,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.406793Z"
+        },
+        {
+          "file": "USN-7758-3.json",
+          "canonical_bytes": 3726,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.407563Z"
+        },
+        {
+          "file": "USN-7758-4.json",
+          "canonical_bytes": 4136,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.408008Z"
+        },
+        {
+          "file": "USN-7851-2.json",
+          "canonical_bytes": 6068,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.706446Z"
+        },
+        {
+          "file": "USN-7857-1.json",
+          "canonical_bytes": 5954,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.722845Z"
+        },
+        {
+          "file": "USN-7867-1.json",
+          "canonical_bytes": 2316,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.760063Z"
+        },
+        {
+          "file": "USN-7894-2.json",
+          "canonical_bytes": 11650,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:06:59.829070Z"
+        },
+        {
+          "file": "USN-7968-2.json",
+          "canonical_bytes": 29525,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.032810Z"
+        },
+        {
+          "file": "USN-8087-2.json",
+          "canonical_bytes": 6974,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.442419Z"
+        },
+        {
+          "file": "USN-8091-1.json",
+          "canonical_bytes": 90790,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.448642Z"
+        },
+        {
+          "file": "USN-8092-1.json",
+          "canonical_bytes": 8073,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.451325Z"
+        },
+        {
+          "file": "USN-8097-2.json",
+          "canonical_bytes": 5386,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.524856Z"
+        },
+        {
+          "file": "USN-8105-2.json",
+          "canonical_bytes": 39452,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.556520Z"
+        },
+        {
+          "file": "USN-8111-1.json",
+          "canonical_bytes": 10225,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.562184Z"
+        },
+        {
+          "file": "USN-8121-1.json",
+          "canonical_bytes": 2879,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.589032Z"
+        },
+        {
+          "file": "USN-8195-1.json",
+          "canonical_bytes": 27395,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-24T08:07:00.785251Z"
+        },
+        {
+          "file": "USN-8195-2.json",
+          "canonical_bytes": 9429,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-04-28T15:37:50.033434Z"
+        },
+        {
+          "file": "USN-8270-1.json",
+          "canonical_bytes": 25661,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-05-14T11:07:58.738006Z"
+        },
+        {
+          "file": "USN-8287-2.json",
+          "canonical_bytes": 7805,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-24T04:31:56.166725Z"
+        },
+        {
+          "file": "USN-8338-2.json",
+          "canonical_bytes": 11035,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-05-29T13:04:02.315540Z"
+        },
+        {
+          "file": "USN-8344-2.json",
+          "canonical_bytes": 6504,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-05-29T23:03:39.754994Z"
+        },
+        {
+          "file": "USN-8349-2.json",
+          "canonical_bytes": 7411,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-08T20:44:16.869281Z"
+        },
+        {
+          "file": "USN-8349-3.json",
+          "canonical_bytes": 6015,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-16T11:03:36.893707Z"
+        },
+        {
+          "file": "USN-8398-2.json",
+          "canonical_bytes": 75053,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-09T19:00:59.947133Z"
+        },
+        {
+          "file": "USN-8405-2.json",
+          "canonical_bytes": 58324,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-15T17:48:24.603056Z"
+        },
+        {
+          "file": "USN-8412-3.json",
+          "canonical_bytes": 33766,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-29T20:54:05.779553Z"
+        },
+        {
+          "file": "USN-8424-1.json",
+          "canonical_bytes": 1571,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-11T17:55:21.380020Z"
+        },
+        {
+          "file": "USN-8436-1.json",
+          "canonical_bytes": 3558,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-06-16T19:29:00.713142Z"
+        },
+        {
+          "file": "USN-8487-2.json",
+          "canonical_bytes": 15005,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-29T01:11:55.382263Z"
+        },
+        {
+          "file": "USN-8496-2.json",
+          "canonical_bytes": 6437,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-07-03T23:38:05.808660Z"
+        },
+        {
+          "file": "USN-8543-2.json",
+          "canonical_bytes": 14185,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-08-21T01:06:29.359613Z"
+        },
+        {
+          "file": "USN-8555-2.json",
+          "canonical_bytes": 1868,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-01T17:59:47.047983Z"
+        },
+        {
+          "file": "USN-8561-2.json",
+          "canonical_bytes": 47287,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-07-28T23:04:32.271946Z"
+        },
+        {
+          "file": "USN-8563-2.json",
+          "canonical_bytes": 60324,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-07-21T10:02:21.990818Z"
+        },
+        {
+          "file": "USN-8563-4.json",
+          "canonical_bytes": 60462,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-08-20T02:21:37.398564Z"
+        },
+        {
+          "file": "USN-8571-2.json",
+          "canonical_bytes": 15161,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-11T04:43:53.014490Z"
+        },
+        {
+          "file": "USN-8590-1.json",
+          "canonical_bytes": 18915,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-07-22T22:52:15.075753Z"
+        },
+        {
+          "file": "USN-8625-1.json",
+          "canonical_bytes": 13250,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-07-30T17:58:42.364748Z"
+        },
+        {
+          "file": "USN-8688-1.json",
+          "canonical_bytes": 27446,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-08-31T13:52:14.017591Z"
+        },
+        {
+          "file": "USN-8688-2.json",
+          "canonical_bytes": 7204,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-01T23:18:48.310493Z"
+        },
+        {
+          "file": "USN-8698-1.json",
+          "canonical_bytes": 47041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-08-31T13:52:14.034411Z"
+        },
+        {
+          "file": "USN-8708-1.json",
+          "canonical_bytes": 2311,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-01T18:00:01.856876Z"
+        },
+        {
+          "file": "USN-8779-2.json",
+          "canonical_bytes": 5337,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-18T03:13:04.863541Z"
+        },
+        {
+          "file": "USN-8836-1.json",
+          "canonical_bytes": 47041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-09-28T20:02:00.249791Z"
+        },
+        {
+          "file": "USN-8880-1.json",
+          "canonical_bytes": 47041,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2026-10-06T20:24:20.714778Z"
+        }
+      ]
+    },
+    "legacy_metadata_without_timezone": {
+      "count": 67,
+      "formerly_bounded": 63,
+      "rows_formerly_bounded": 55138,
+      "rows_min": 0,
+      "rows_max": 106173,
+      "documents": [
+        {
+          "file": "USN-7042-3.json",
+          "canonical_bytes": 2559,
+          "rows": 20,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-13T12:20:16.680169"
+        },
+        {
+          "file": "USN-7059-2.json",
+          "canonical_bytes": 5785,
+          "rows": 73,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-13T12:20:16.707138"
+        },
+        {
+          "file": "USN-7062-2.json",
+          "canonical_bytes": 4076,
+          "rows": 88,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-13T12:20:16.710466"
+        },
+        {
+          "file": "USN-7105-1.json",
+          "canonical_bytes": 8481,
+          "rows": 170,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-13T12:20:16.843949"
+        },
+        {
+          "file": "USN-7124-1.json",
+          "canonical_bytes": 7071,
+          "rows": 280,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-13T12:20:16.876625"
+        },
+        {
+          "file": "USN-7169-1.json",
+          "canonical_bytes": 14573,
+          "rows": 342,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-28T18:12:09.112764"
+        },
+        {
+          "file": "USN-7169-2.json",
+          "canonical_bytes": 2417,
+          "rows": 38,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-28T18:12:09.115420"
+        },
+        {
+          "file": "USN-7169-3.json",
+          "canonical_bytes": 3724,
+          "rows": 70,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-28T18:12:09.116461"
+        },
+        {
+          "file": "USN-7169-4.json",
+          "canonical_bytes": 3302,
+          "rows": 58,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-28T18:12:09.117877"
+        },
+        {
+          "file": "USN-7169-5.json",
+          "canonical_bytes": 3211,
+          "rows": 54,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-28T18:12:09.119067"
+        },
+        {
+          "file": "USN-7206-3.json",
+          "canonical_bytes": 2820,
+          "rows": 78,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-29T05:26:46.113293"
+        },
+        {
+          "file": "USN-7206-4.json",
+          "canonical_bytes": 2753,
+          "rows": 0,
+          "formerly_bounded": true,
+          "timestamp": "2025-02-10T17:09:06.696690"
+        },
+        {
+          "file": "USN-7214-1.json",
+          "canonical_bytes": 8630,
+          "rows": 106,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-17T08:24:13.199636"
+        },
+        {
+          "file": "USN-7215-1.json",
+          "canonical_bytes": 4971,
+          "rows": 57,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-17T08:24:13.201349"
+        },
+        {
+          "file": "USN-7238-2.json",
+          "canonical_bytes": 3521,
+          "rows": 62,
+          "formerly_bounded": true,
+          "timestamp": "2025-01-31T04:34:08.080806"
+        },
+        {
+          "file": "USN-7238-3.json",
+          "canonical_bytes": 3707,
+          "rows": 64,
+          "formerly_bounded": true,
+          "timestamp": "2025-02-04T16:36:38.401969"
+        },
+        {
+          "file": "USN-7238-4.json",
+          "canonical_bytes": 2950,
+          "rows": 52,
+          "formerly_bounded": true,
+          "timestamp": "2025-02-13T04:31:08.147643"
+        },
+        {
+          "file": "USN-7255-1.json",
+          "canonical_bytes": 6325,
+          "rows": 70,
+          "formerly_bounded": true,
+          "timestamp": "2025-02-05T16:34:18.718023"
+        },
+        {
+          "file": "USN-7264-1.json",
+          "canonical_bytes": 4234,
+          "rows": 129,
+          "formerly_bounded": true,
+          "timestamp": "2025-02-12T04:38:47.822684"
+        },
+        {
+          "file": "USN-7276-1.json",
+          "canonical_bytes": 42000,
+          "rows": 105560,
+          "formerly_bounded": false,
+          "timestamp": "2025-05-28T18:12:09.509223"
+        },
+        {
+          "file": "USN-7277-1.json",
+          "canonical_bytes": 42589,
+          "rows": 106173,
+          "formerly_bounded": false,
+          "timestamp": "2025-05-28T18:12:09.542508"
+        },
+        {
+          "file": "USN-7323-2.json",
+          "canonical_bytes": 3607,
+          "rows": 87,
+          "formerly_bounded": true,
+          "timestamp": "2025-03-06T16:58:26.549265"
+        },
+        {
+          "file": "USN-7338-1.json",
+          "canonical_bytes": 3756,
+          "rows": 110,
+          "formerly_bounded": true,
+          "timestamp": "2025-03-11T04:39:23.727261"
+        },
+        {
+          "file": "USN-7339-1.json",
+          "canonical_bytes": 3822,
+          "rows": 115,
+          "formerly_bounded": true,
+          "timestamp": "2025-03-11T04:39:23.822656"
+        },
+        {
+          "file": "USN-7366-2.json",
+          "canonical_bytes": 1827,
+          "rows": 24,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-24T17:22:52.770232"
+        },
+        {
+          "file": "USN-7376-1.json",
+          "canonical_bytes": 30272,
+          "rows": 334,
+          "formerly_bounded": true,
+          "timestamp": "2025-03-27T16:50:04.180870"
+        },
+        {
+          "file": "USN-7379-2.json",
+          "canonical_bytes": 14087,
+          "rows": 2745,
+          "formerly_bounded": true,
+          "timestamp": "2025-06-24T17:37:05.892020"
+        },
+        {
+          "file": "USN-7380-1.json",
+          "canonical_bytes": 16358,
+          "rows": 9824,
+          "formerly_bounded": true,
+          "timestamp": "2025-06-24T17:37:05.898528"
+        },
+        {
+          "file": "USN-7431-2.json",
+          "canonical_bytes": 2790,
+          "rows": 27,
+          "formerly_bounded": true,
+          "timestamp": "2025-04-24T16:42:55.968585"
+        },
+        {
+          "file": "USN-7434-2.json",
+          "canonical_bytes": 4185,
+          "rows": 50,
+          "formerly_bounded": true,
+          "timestamp": "2025-04-24T16:42:55.969191"
+        },
+        {
+          "file": "USN-7443-2.json",
+          "canonical_bytes": 23617,
+          "rows": 303,
+          "formerly_bounded": true,
+          "timestamp": "2025-04-24T16:42:55.969990"
+        },
+        {
+          "file": "USN-7477-1.json",
+          "canonical_bytes": 2759,
+          "rows": 29,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:34.335872"
+        },
+        {
+          "file": "USN-7484-1.json",
+          "canonical_bytes": 7237,
+          "rows": 210,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:34.403952"
+        },
+        {
+          "file": "USN-7489-2.json",
+          "canonical_bytes": 3099,
+          "rows": 27,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-07T16:38:24.972795"
+        },
+        {
+          "file": "USN-7520-2.json",
+          "canonical_bytes": 14051,
+          "rows": 169,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-21T17:31:28.488487"
+        },
+        {
+          "file": "USN-7521-2.json",
+          "canonical_bytes": 12859,
+          "rows": 5928,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-22T16:36:38.533848"
+        },
+        {
+          "file": "USN-7526-1.json",
+          "canonical_bytes": 7643,
+          "rows": 99,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:35.039164"
+        },
+        {
+          "file": "USN-7530-1.json",
+          "canonical_bytes": 1258,
+          "rows": 8,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:35.055263"
+        },
+        {
+          "file": "USN-7531-1.json",
+          "canonical_bytes": 3384,
+          "rows": 69,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:35.057460"
+        },
+        {
+          "file": "USN-7533-1.json",
+          "canonical_bytes": 3277,
+          "rows": 66,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-16T05:54:35.067435"
+        },
+        {
+          "file": "USN-7534-1.json",
+          "canonical_bytes": 1701,
+          "rows": 15,
+          "formerly_bounded": true,
+          "timestamp": "2025-05-27T04:32:14.517988"
+        },
+        {
+          "file": "USN-7560-1.json",
+          "canonical_bytes": 1031,
+          "rows": 2,
+          "formerly_bounded": true,
+          "timestamp": "2025-06-10T09:27:13.337752"
+        },
+        {
+          "file": "USN-7564-1.json",
+          "canonical_bytes": 34941,
+          "rows": 419,
+          "formerly_bounded": true,
+          "timestamp": "2025-06-10T16:05:46.548842"
+        },
+        {
+          "file": "USN-7594-1.json",
+          "canonical_bytes": 28906,
+          "rows": 60092,
+          "formerly_bounded": false,
+          "timestamp": "2025-06-25T17:51:28.893905"
+        },
+        {
+          "file": "USN-7594-2.json",
+          "canonical_bytes": 17159,
+          "rows": 9296,
+          "formerly_bounded": true,
+          "timestamp": "2025-06-26T17:49:52.195256"
+        },
+        {
+          "file": "USN-7594-3.json",
+          "canonical_bytes": 20314,
+          "rows": 21580,
+          "formerly_bounded": false,
+          "timestamp": "2025-07-09T04:44:38.472972"
+        },
+        {
+          "file": "USN-7611-1.json",
+          "canonical_bytes": 15005,
+          "rows": 905,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-02T05:48:22.736535"
+        },
+        {
+          "file": "USN-7611-2.json",
+          "canonical_bytes": 3258,
+          "rows": 140,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-09T04:44:38.516975"
+        },
+        {
+          "file": "USN-7611-3.json",
+          "canonical_bytes": 3737,
+          "rows": 170,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-17T17:43:16.395857"
+        },
+        {
+          "file": "USN-7611-4.json",
+          "canonical_bytes": 3574,
+          "rows": 155,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-21T17:29:49.138835"
+        },
+        {
+          "file": "USN-7641-1.json",
+          "canonical_bytes": 7676,
+          "rows": 99,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-17T17:43:16.462347"
+        },
+        {
+          "file": "USN-7649-1.json",
+          "canonical_bytes": 17059,
+          "rows": 8326,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-17T17:43:16.468758"
+        },
+        {
+          "file": "USN-7649-2.json",
+          "canonical_bytes": 5765,
+          "rows": 1564,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-22T17:25:25.255528"
+        },
+        {
+          "file": "USN-7665-1.json",
+          "canonical_bytes": 5602,
+          "rows": 1426,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-22T17:25:25.354333"
+        },
+        {
+          "file": "USN-7669-1.json",
+          "canonical_bytes": 7351,
+          "rows": 280,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-28T05:29:52.458152"
+        },
+        {
+          "file": "USN-7672-1.json",
+          "canonical_bytes": 3409,
+          "rows": 88,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-30T05:47:53.146732"
+        },
+        {
+          "file": "USN-7673-1.json",
+          "canonical_bytes": 3475,
+          "rows": 92,
+          "formerly_bounded": true,
+          "timestamp": "2025-07-30T05:47:53.147657"
+        },
+        {
+          "file": "USN-7681-2.json",
+          "canonical_bytes": 3450,
+          "rows": 31,
+          "formerly_bounded": true,
+          "timestamp": "2025-08-01T05:34:46.840009"
+        },
+        {
+          "file": "USN-7721-1.json",
+          "canonical_bytes": 8096,
+          "rows": 2968,
+          "formerly_bounded": true,
+          "timestamp": "2025-08-29T17:40:27.003602"
+        },
+        {
+          "file": "USN-7763-1.json",
+          "canonical_bytes": 1278,
+          "rows": 8,
+          "formerly_bounded": true,
+          "timestamp": "2025-09-24T05:44:48.477580"
+        },
+        {
+          "file": "USN-7770-1.json",
+          "canonical_bytes": 11544,
+          "rows": 5152,
+          "formerly_bounded": true,
+          "timestamp": "2025-09-25T05:43:30.074460"
+        },
+        {
+          "file": "USN-7777-1.json",
+          "canonical_bytes": 6195,
+          "rows": 78,
+          "formerly_bounded": true,
+          "timestamp": "2025-09-26T05:41:00.103601"
+        },
+        {
+          "file": "USN-7789-2.json",
+          "canonical_bytes": 9899,
+          "rows": 1656,
+          "formerly_bounded": true,
+          "timestamp": "2025-10-09T05:34:33.348038"
+        },
+        {
+          "file": "USN-7798-1.json",
+          "canonical_bytes": 3422,
+          "rows": 168,
+          "formerly_bounded": true,
+          "timestamp": "2025-10-03T05:41:19.864558"
+        },
+        {
+          "file": "USN-7821-1.json",
+          "canonical_bytes": 1661,
+          "rows": 36,
+          "formerly_bounded": true,
+          "timestamp": "2025-10-14T17:52:21.559757"
+        },
+        {
+          "file": "USN-7848-1.json",
+          "canonical_bytes": 1089,
+          "rows": 4,
+          "formerly_bounded": true,
+          "timestamp": "2025-10-30T05:49:05.464199"
+        },
+        {
+          "file": "USN-7878-2.json",
+          "canonical_bytes": 3725,
+          "rows": 25,
+          "formerly_bounded": true,
+          "timestamp": "2025-11-25T05:43:25.668072"
+        }
+      ]
+    },
+    "alias_limit_also_over_normalized_row_limit": {
+      "count": 17,
+      "formerly_bounded": 0,
+      "rows_formerly_bounded": 0,
+      "rows_min": 24100,
+      "rows_max": 439531,
+      "documents": [
+        {
+          "file": "USN-8126-1.json",
+          "canonical_bytes": 50463,
+          "rows": 35370,
+          "formerly_bounded": false,
+          "timestamp": "2026-06-03T10:46:26.565283Z"
+        },
+        {
+          "file": "USN-8603-1.json",
+          "canonical_bytes": 47392,
+          "rows": 64827,
+          "formerly_bounded": false,
+          "timestamp": "2026-09-14T08:03:26.295410Z"
+        },
+        {
+          "file": "USN-8606-1.json",
+          "canonical_bytes": 53997,
+          "rows": 72600,
+          "formerly_bounded": false,
+          "timestamp": "2026-07-24T12:44:15.068727Z"
+        },
+        {
+          "file": "USN-8607-1.json",
+          "canonical_bytes": 49763,
+          "rows": 24100,
+          "formerly_bounded": false,
+          "timestamp": "2026-07-24T12:44:15.217117Z"
+        },
+        {
+          "file": "USN-8609-1.json",
+          "canonical_bytes": 49996,
+          "rows": 24120,
+          "formerly_bounded": false,
+          "timestamp": "2026-07-24T12:44:15.477009Z"
+        },
+        {
+          "file": "USN-8619-1.json",
+          "canonical_bytes": 54031,
+          "rows": 70122,
+          "formerly_bounded": false,
+          "timestamp": "2026-07-28T08:04:16.851140Z"
+        },
+        {
+          "file": "USN-8728-1.json",
+          "canonical_bytes": 57770,
+          "rows": 32568,
+          "formerly_bounded": false,
+          "timestamp": "2026-09-14T08:03:32.630421Z"
+        },
+        {
+          "file": "USN-8728-2.json",
+          "canonical_bytes": 58234,
+          "rows": 38232,
+          "formerly_bounded": false,
+          "timestamp": "2026-09-22T17:59:11.353934Z"
+        },
+        {
+          "file": "USN-8728-3.json",
+          "canonical_bytes": 58377,
+          "rows": 39648,
+          "formerly_bounded": false,
+          "timestamp": "2026-09-29T14:22:05.586931Z"
+        },
+        {
+          "file": "USN-8887-1.json",
+          "canonical_bytes": 72581,
+          "rows": 346500,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-06T20:24:23.472950Z"
+        },
+        {
+          "file": "USN-8887-2.json",
+          "canonical_bytes": 44591,
+          "rows": 32550,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-08T16:30:05.267263Z"
+        },
+        {
+          "file": "USN-8887-3.json",
+          "canonical_bytes": 52054,
+          "rows": 108150,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-09T10:31:41.433489Z"
+        },
+        {
+          "file": "USN-8888-1.json",
+          "canonical_bytes": 51246,
+          "rows": 72513,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-06T20:24:23.700603Z"
+        },
+        {
+          "file": "USN-8888-2.json",
+          "canonical_bytes": 49699,
+          "rows": 51795,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-08T16:30:05.830396Z"
+        },
+        {
+          "file": "USN-8889-1.json",
+          "canonical_bytes": 43598,
+          "rows": 24127,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-06T20:24:23.873657Z"
+        },
+        {
+          "file": "USN-8917-1.json",
+          "canonical_bytes": 84036,
+          "rows": 439531,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-13T17:48:56.015425Z"
+        },
+        {
+          "file": "USN-8918-1.json",
+          "canonical_bytes": 50403,
+          "rows": 82792,
+          "formerly_bounded": false,
+          "timestamp": "2026-10-13T17:48:56.355271Z"
+        }
+      ]
+    }
+  },
+  "official_schema_reference": "https://documentation.ubuntu.com/security/security-updates/vex/",
+  "final_counts": {
+    "usn_total": 8204,
+    "usn_retained": 7297,
+    "usn_retained_rows": 7996730,
+    "usn_invalid_alias": 507,
+    "usn_invalid_alias_previously_bounded": 486,
+    "usn_rows_excluded": 398,
+    "usn_size_excluded": 2,
+    "cve_total": 70589,
+    "cve_retained": 50747,
+    "cve_retained_rows": 15256260,
+    "cve_size_excluded": 19828,
+    "cve_unsupported": 14
+  },
+  "legacy_cve": {
+    "count": 14,
+    "bounded_rows": 468,
+    "all_nested_metadata_without_timezone": true
+  },
+  "total_bounded_legacy_rows": 55606,
+  "input_sha256": "fa6500c0c191b9b8a1d74acd87b3ed209f0dbca723b72c51f7dbbdedcf69b886",
+  "completed_at": "2026-10-20T03:47:22.019685+00:00",
+  "timestamp_research": {
+    "checked_sources": [
+      "https://documentation.ubuntu.com/security/security-updates/vex/",
+      "https://github.com/canonical/ubuntu-security-notices"
+    ],
+    "finding": "Canonical documents the nested metadata schema and timezone-less examples, but neither checked official page supplies a UTC/default-timezone convention. Do not assign UTC from those examples.",
+    "recommendation": "Retain strict timezone validation; a future vendor adapter would need an explicit time convention or separately designed conservative interval semantics."
+  }
+}

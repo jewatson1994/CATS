@@ -1,0 +1,182 @@
+[
+  {
+    "id": "redhat-vex",
+    "name": "Red Hat CSAF VEX",
+    "url": "https://security.access.redhat.com/data/csaf/v2/vex-feed/",
+    "format": "csaf",
+    "trust": "vendor",
+    "coverage": "Red Hat products and RPMs",
+    "authority": "Exact Red Hat product applicability; provider traversal required",
+    "enabled": false
+  },
+  {
+    "id": "redhat-advisories",
+    "name": "Red Hat CSAF Advisories",
+    "url": "https://security.access.redhat.com/data/csaf/v2/advisories/",
+    "format": "csaf",
+    "trust": "vendor",
+    "coverage": "Red Hat security updates",
+    "authority": "Fixed product assertions; provider traversal required",
+    "enabled": false
+  },
+  {
+    "id": "chainguard-osv",
+    "name": "Chainguard Images OSV",
+    "url": "https://advisories.cgr.dev/chainguard/v3/osv/all.json",
+    "format": "osv-index",
+    "trust": "vendor",
+    "coverage": "Chainguard image packages",
+    "authority": "Publisher package advisories; terms and index adapter required",
+    "enabled": false
+  },
+  {
+    "id": "chainguard-openvex",
+    "name": "Chainguard Libraries OpenVEX",
+    "url": "https://libraries.cgr.dev/openvex/v1/all.json",
+    "format": "openvex",
+    "trust": "vendor",
+    "coverage": "Chainguard Libraries",
+    "authority": "Exact library applicability; feed terms and collection shape require verification",
+    "enabled": false
+  },
+  {
+    "id": "wolfi-historical",
+    "name": "Wolfi Historical Advisories",
+    "url": "https://github.com/wolfi-dev/advisories",
+    "format": "yaml-repository",
+    "trust": "historical",
+    "coverage": "Historical Wolfi package advisories",
+    "authority": "Archived reference only; restrictive terms; not a current feed",
+    "enabled": false
+  },
+  {
+    "id": "ubuntu-oval",
+    "name": "Canonical Ubuntu OVAL",
+    "url": "https://ubuntu.com/security/oval",
+    "format": "oval-discovery",
+    "trust": "vendor",
+    "coverage": "Ubuntu releases and packages",
+    "authority": "Ubuntu applicability; OVAL evaluator and release selection required",
+    "enabled": false
+  },
+  {
+    "id": "ubuntu-osv",
+    "name": "Canonical Ubuntu OSV",
+    "url": "https://github.com/canonical/ubuntu-security-notices",
+    "format": "osv-repository",
+    "trust": "vendor",
+    "coverage": "Ubuntu package security notices",
+    "authority": "Ubuntu advisory intelligence; repository adapter required",
+    "enabled": false
+  },
+  {
+    "id": "debian-tracker",
+    "name": "Debian Security Tracker",
+    "url": "https://security-tracker.debian.org/tracker/data/json",
+    "format": "debian-json",
+    "trust": "vendor",
+    "coverage": "Debian source packages and suites",
+    "authority": "Debian applicability; suite-aware version adapter required",
+    "enabled": false
+  },
+  {
+    "id": "suse-vex",
+    "name": "SUSE CSAF VEX",
+    "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/",
+    "format": "csaf",
+    "trust": "vendor",
+    "coverage": "SUSE products and packages",
+    "authority": "Exact SUSE applicability; provider traversal required",
+    "enabled": false
+  },
+  {
+    "id": "alpine-secdb",
+    "name": "Alpine SecDB",
+    "url": "https://secdb.alpinelinux.org/",
+    "format": "secdb",
+    "trust": "vendor",
+    "coverage": "Alpine releases and repositories",
+    "authority": "Package fix intelligence; release/repository adapter required",
+    "enabled": false
+  },
+  {
+    "id": "microsoft-msrc",
+    "name": "Microsoft MSRC",
+    "url": "https://api.msrc.microsoft.com/cvrf/v3.0/swagger/index",
+    "format": "cvrf-discovery",
+    "trust": "vendor",
+    "coverage": "Microsoft products and updates",
+    "authority": "Microsoft applicability; CVRF adapter required",
+    "enabled": false
+  },
+  {
+    "id": "github-advisories",
+    "name": "GitHub Advisory Database",
+    "url": "https://github.com/github/advisory-database",
+    "format": "osv-repository",
+    "trust": "curated",
+    "coverage": "Open-source ecosystem packages",
+    "authority": "Package advisory intelligence; not independent vendor VEX authority",
+    "enabled": false
+  },
+  {
+    "id": "osv",
+    "name": "OSV",
+    "url": "https://api.osv.dev/v1/query",
+    "format": "osv-api",
+    "trust": "aggregate",
+    "coverage": "Open-source ecosystems",
+    "authority": "Aggregated package advisory intelligence; source authority varies",
+    "enabled": false
+  },
+  {
+    "id": "nvd",
+    "name": "NVD",
+    "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+    "format": "nvd-api",
+    "trust": "enrichment",
+    "coverage": "CVE CVSS CWE CPE",
+    "authority": "General vulnerability enrichment; no authoritative VEX suppression",
+    "enabled": false
+  },
+  {
+    "id": "cisa-kev",
+    "name": "CISA Known Exploited Vulnerabilities",
+    "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "format": "kev-json",
+    "trust": "enrichment",
+    "coverage": "Known exploited CVEs",
+    "authority": "Observed exploitation priority; not package applicability",
+    "enabled": false
+  },
+  {
+    "id": "cisa-vulnrichment",
+    "name": "CISA Vulnrichment",
+    "url": "https://github.com/cisagov/vulnrichment",
+    "format": "cve-json-repository",
+    "trust": "enrichment",
+    "coverage": "CVE ADP and SSVC enrichment",
+    "authority": "Priority enrichment; not product-specific VEX authority",
+    "enabled": false
+  },
+  {
+    "id": "first-epss",
+    "name": "FIRST EPSS",
+    "url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+    "format": "epss-csv-gzip",
+    "trust": "enrichment",
+    "coverage": "Scored CVEs",
+    "authority": "Predicted exploitation probability; not package applicability",
+    "enabled": false
+  },
+  {
+    "id": "cisco-psirt",
+    "name": "Cisco PSIRT openVuln",
+    "url": "https://developer.cisco.com/docs/psirt/authentication/",
+    "format": "cisco-api-discovery",
+    "trust": "vendor",
+    "coverage": "Cisco products",
+    "authority": "Cisco product advisories; OAuth and provider adapter required",
+    "enabled": false
+  }
+]

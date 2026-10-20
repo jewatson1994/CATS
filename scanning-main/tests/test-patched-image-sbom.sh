@@ -52,7 +52,7 @@ chmod +x "$TEMPORARY_DIRECTORY/fake-bin/"*
     bash "$REPOSITORY_ROOT/scripts/generate-sboms.sh"
 )
 
-grep -Eq '^dir:.+-rootfs -o syft-json$' "$TEMPORARY_DIRECTORY/syft.calls"
+grep -Eq '^dir:.+-rootfs --override-default-catalogers image -o syft-json$' "$TEMPORARY_DIRECTORY/syft.calls"
 ! grep -Eq 'docker-archive:|docker save' "$TEMPORARY_DIRECTORY/syft.calls" "$TEMPORARY_DIRECTORY/docker.calls"
 test -s "$TEMPORARY_DIRECTORY"/sboms/*.json
 test -s "$TEMPORARY_DIRECTORY"/sboms/*.digest

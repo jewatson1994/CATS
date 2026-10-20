@@ -1,0 +1,5592 @@
+{
+  "schema_version": 1,
+  "capture_kind": "live_scan",
+  "image_key": "node",
+  "image": "node:20-bookworm-slim",
+  "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+  "image_id": "sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+  "repo_digests": [
+    "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0"
+  ],
+  "platform": {
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "oci_labels": {},
+  "distro": {
+    "prettyName": "Debian GNU/Linux 12 (bookworm)",
+    "name": "Debian GNU/Linux",
+    "id": "debian",
+    "version": "12 (bookworm)",
+    "versionID": "12",
+    "versionCodename": "bookworm",
+    "homeURL": "https://www.debian.org/",
+    "supportURL": "https://www.debian.org/support",
+    "bugReportURL": "https://bugs.debian.org/"
+  },
+  "sbom_source": {
+    "id": "2afdf17470169d88e535d3038a23d7d28349ad73856250401d70b43130250fee",
+    "name": "/tmp/cats-rootfs",
+    "version": "",
+    "type": "directory",
+    "metadata": {
+      "path": "/tmp/cats-rootfs"
+    }
+  },
+  "scanner_descriptor": "1.31.0",
+  "capture": {
+    "started_at": "2026-10-20T05:01:30.282362+00:00",
+    "completed_at": "2026-10-20T05:01:39.992695+00:00",
+    "seconds": 9.711,
+    "scanner_exit_code": 0,
+    "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/node.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/node.syft.json; grype sbom:/evidence/node.syft.json --only-fixed -o json > /evidence/node.grype.json"
+  },
+  "counts": {
+    "sbom_components": 89,
+    "components_with_purls": 89,
+    "components_with_valid_purls": 89,
+    "components_by_ecosystem": {
+      "binary": 1,
+      "deb": 88
+    },
+    "vulnerability_findings": 58,
+    "unique_vulnerability_package_version_purl": 58,
+    "findings_by_ecosystem": {
+      "binary": 14,
+      "deb": 44
+    }
+  },
+  "components": [
+    {
+      "id": "c02171bf930643dd",
+      "name": "adduser",
+      "version": "3.134",
+      "type": "deb",
+      "purl": "pkg:deb/debian/adduser@3.134?arch=all&distro=debian-12",
+      "metadata": {
+        "version": "3.134",
+        "architecture": "all",
+        "source": "",
+        "package": "adduser",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "cd0a6d87e2b9c130",
+      "name": "apt",
+      "version": "2.6.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/apt@2.6.1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "2.6.1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "apt",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "e2ebec28be00b718",
+      "name": "base-files",
+      "version": "12.4+deb12u13",
+      "type": "deb",
+      "purl": "pkg:deb/debian/base-files@12.4%2Bdeb12u13?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "12.4+deb12u13",
+        "architecture": "amd64",
+        "source": "",
+        "package": "base-files",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "7cc4c7a70852c7fd",
+      "name": "base-passwd",
+      "version": "3.6.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/base-passwd@3.6.1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "3.6.1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "base-passwd",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f511ddd208e477c9",
+      "name": "bash",
+      "version": "5.2.15-2+b10",
+      "type": "deb",
+      "purl": "pkg:deb/debian/bash@5.2.15-2%2Bb10?arch=amd64&distro=debian-12&upstream=bash%405.2.15-2",
+      "metadata": {
+        "version": "5.2.15-2+b10",
+        "architecture": "amd64",
+        "source": "bash",
+        "package": "bash",
+        "sourceVersion": "5.2.15-2"
+      }
+    },
+    {
+      "id": "f131145b816a43ee",
+      "name": "bsdutils",
+      "version": "1:2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/bsdutils@1%3A2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux%402.38.1-5%2Bdeb12u3",
+      "metadata": {
+        "version": "1:2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "bsdutils",
+        "sourceVersion": "2.38.1-5+deb12u3"
+      }
+    },
+    {
+      "id": "eca37691b87c0860",
+      "name": "coreutils",
+      "version": "9.1-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/coreutils@9.1-1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "9.1-1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "coreutils",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "d99eda363265247f",
+      "name": "dash",
+      "version": "0.5.12-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/dash@0.5.12-2?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "0.5.12-2",
+        "architecture": "amd64",
+        "source": "",
+        "package": "dash",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "242708e27fd24140",
+      "name": "debconf",
+      "version": "1.5.82",
+      "type": "deb",
+      "purl": "pkg:deb/debian/debconf@1.5.82?arch=all&distro=debian-12",
+      "metadata": {
+        "version": "1.5.82",
+        "architecture": "all",
+        "source": "",
+        "package": "debconf",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "7fa8d8929a81f2c3",
+      "name": "debian-archive-keyring",
+      "version": "2023.3+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/debian-archive-keyring@2023.3%2Bdeb12u2?arch=all&distro=debian-12",
+      "metadata": {
+        "version": "2023.3+deb12u2",
+        "architecture": "all",
+        "source": "",
+        "package": "debian-archive-keyring",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "2587c3c4d8d21d21",
+      "name": "debianutils",
+      "version": "5.7-0.5~deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/debianutils@5.7-0.5~deb12u1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "5.7-0.5~deb12u1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "debianutils",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "eae3581d3fe173ec",
+      "name": "diffutils",
+      "version": "1:3.8-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/diffutils@1%3A3.8-4?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1:3.8-4",
+        "architecture": "amd64",
+        "source": "",
+        "package": "diffutils",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "2818345ae43ed06c",
+      "name": "dpkg",
+      "version": "1.21.22",
+      "type": "deb",
+      "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1.21.22",
+        "architecture": "amd64",
+        "source": "",
+        "package": "dpkg",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "4be417a9253d1325",
+      "name": "e2fsprogs",
+      "version": "1.47.0-2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/e2fsprogs@1.47.0-2%2Bb2?arch=amd64&distro=debian-12&upstream=e2fsprogs%401.47.0-2",
+      "metadata": {
+        "version": "1.47.0-2+b2",
+        "architecture": "amd64",
+        "source": "e2fsprogs",
+        "package": "e2fsprogs",
+        "sourceVersion": "1.47.0-2"
+      }
+    },
+    {
+      "id": "1b6d210249e3ac45",
+      "name": "findutils",
+      "version": "4.9.0-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/findutils@4.9.0-4?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "4.9.0-4",
+        "architecture": "amd64",
+        "source": "",
+        "package": "findutils",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "5dd3e15c0db94758",
+      "name": "gcc-12-base",
+      "version": "12.2.0-14+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/gcc-12-base@12.2.0-14%2Bdeb12u1?arch=amd64&distro=debian-12&upstream=gcc-12",
+      "metadata": {
+        "version": "12.2.0-14+deb12u1",
+        "architecture": "amd64",
+        "source": "gcc-12",
+        "package": "gcc-12-base",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "bab4532a87a829c8",
+      "name": "gpgv",
+      "version": "2.2.40-1.1+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/gpgv@2.2.40-1.1%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=gnupg2",
+      "metadata": {
+        "version": "2.2.40-1.1+deb12u2",
+        "architecture": "amd64",
+        "source": "gnupg2",
+        "package": "gpgv",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "22c460e1da8ba8cd",
+      "name": "grep",
+      "version": "3.8-5",
+      "type": "deb",
+      "purl": "pkg:deb/debian/grep@3.8-5?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "3.8-5",
+        "architecture": "amd64",
+        "source": "",
+        "package": "grep",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "aa527ab8cb576b14",
+      "name": "gzip",
+      "version": "1.12-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/gzip@1.12-1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1.12-1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "gzip",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "6953da8863232503",
+      "name": "hostname",
+      "version": "3.23+nmu1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/hostname@3.23%2Bnmu1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "3.23+nmu1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "hostname",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "bc67df4e4ad2e833",
+      "name": "init-system-helpers",
+      "version": "1.65.2+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/init-system-helpers@1.65.2%2Bdeb12u1?arch=all&distro=debian-12",
+      "metadata": {
+        "version": "1.65.2+deb12u1",
+        "architecture": "all",
+        "source": "",
+        "package": "init-system-helpers",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "d047530090108251",
+      "name": "libacl1",
+      "version": "2.3.1-3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libacl1@2.3.1-3?arch=amd64&distro=debian-12&upstream=acl",
+      "metadata": {
+        "version": "2.3.1-3",
+        "architecture": "amd64",
+        "source": "acl",
+        "package": "libacl1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "91b1396a4c2e715d",
+      "name": "libapt-pkg6.0",
+      "version": "2.6.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libapt-pkg6.0@2.6.1?arch=amd64&distro=debian-12&upstream=apt",
+      "metadata": {
+        "version": "2.6.1",
+        "architecture": "amd64",
+        "source": "apt",
+        "package": "libapt-pkg6.0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "722285f8005c2384",
+      "name": "libattr1",
+      "version": "1:2.5.1-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libattr1@1%3A2.5.1-4?arch=amd64&distro=debian-12&upstream=attr",
+      "metadata": {
+        "version": "1:2.5.1-4",
+        "architecture": "amd64",
+        "source": "attr",
+        "package": "libattr1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "e35c37c43c21e3d0",
+      "name": "libaudit-common",
+      "version": "1:3.0.9-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libaudit-common@1%3A3.0.9-1?arch=all&distro=debian-12&upstream=audit",
+      "metadata": {
+        "version": "1:3.0.9-1",
+        "architecture": "all",
+        "source": "audit",
+        "package": "libaudit-common",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "366c21d0062ecd94",
+      "name": "libaudit1",
+      "version": "1:3.0.9-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libaudit1@1%3A3.0.9-1?arch=amd64&distro=debian-12&upstream=audit",
+      "metadata": {
+        "version": "1:3.0.9-1",
+        "architecture": "amd64",
+        "source": "audit",
+        "package": "libaudit1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "af35543f081d70bf",
+      "name": "libblkid1",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libblkid1@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "libblkid1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "751ec9ae4280dd32",
+      "name": "libbz2-1.0",
+      "version": "1.0.8-5+b1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libbz2-1.0@1.0.8-5%2Bb1?arch=amd64&distro=debian-12&upstream=bzip2%401.0.8-5",
+      "metadata": {
+        "version": "1.0.8-5+b1",
+        "architecture": "amd64",
+        "source": "bzip2",
+        "package": "libbz2-1.0",
+        "sourceVersion": "1.0.8-5"
+      }
+    },
+    {
+      "id": "e90934cdc31ca290",
+      "name": "libc-bin",
+      "version": "2.36-9+deb12u13",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "metadata": {
+        "version": "2.36-9+deb12u13",
+        "architecture": "amd64",
+        "source": "glibc",
+        "package": "libc-bin",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "0ab22287b6343f5c",
+      "name": "libc6",
+      "version": "2.36-9+deb12u13",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "metadata": {
+        "version": "2.36-9+deb12u13",
+        "architecture": "amd64",
+        "source": "glibc",
+        "package": "libc6",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "9a34227939df7216",
+      "name": "libcap-ng0",
+      "version": "0.8.3-1+b3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libcap-ng0@0.8.3-1%2Bb3?arch=amd64&distro=debian-12&upstream=libcap-ng%400.8.3-1",
+      "metadata": {
+        "version": "0.8.3-1+b3",
+        "architecture": "amd64",
+        "source": "libcap-ng",
+        "package": "libcap-ng0",
+        "sourceVersion": "0.8.3-1"
+      }
+    },
+    {
+      "id": "603f50dd77898547",
+      "name": "libcap2",
+      "version": "1:2.66-4+deb12u2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libcap2@1%3A2.66-4%2Bdeb12u2%2Bb2?arch=amd64&distro=debian-12&upstream=libcap2%401%3A2.66-4%2Bdeb12u2",
+      "metadata": {
+        "version": "1:2.66-4+deb12u2+b2",
+        "architecture": "amd64",
+        "source": "libcap2",
+        "package": "libcap2",
+        "sourceVersion": "1:2.66-4+deb12u2"
+      }
+    },
+    {
+      "id": "d35ef33fd323c933",
+      "name": "libcom-err2",
+      "version": "1.47.0-2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libcom-err2@1.47.0-2%2Bb2?arch=amd64&distro=debian-12&upstream=e2fsprogs%401.47.0-2",
+      "metadata": {
+        "version": "1.47.0-2+b2",
+        "architecture": "amd64",
+        "source": "e2fsprogs",
+        "package": "libcom-err2",
+        "sourceVersion": "1.47.0-2"
+      }
+    },
+    {
+      "id": "66f0c5120721190f",
+      "name": "libcrypt1",
+      "version": "1:4.4.33-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libcrypt1@1%3A4.4.33-2?arch=amd64&distro=debian-12&upstream=libxcrypt",
+      "metadata": {
+        "version": "1:4.4.33-2",
+        "architecture": "amd64",
+        "source": "libxcrypt",
+        "package": "libcrypt1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "b0cb4641a25bfdd2",
+      "name": "libdb5.3",
+      "version": "5.3.28+dfsg2-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libdb5.3@5.3.28%2Bdfsg2-1?arch=amd64&distro=debian-12&upstream=db5.3",
+      "metadata": {
+        "version": "5.3.28+dfsg2-1",
+        "architecture": "amd64",
+        "source": "db5.3",
+        "package": "libdb5.3",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "2690aae2bbaa51bf",
+      "name": "libdebconfclient0",
+      "version": "0.270",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libdebconfclient0@0.270?arch=amd64&distro=debian-12&upstream=cdebconf",
+      "metadata": {
+        "version": "0.270",
+        "architecture": "amd64",
+        "source": "cdebconf",
+        "package": "libdebconfclient0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "e42f4960873727f9",
+      "name": "libext2fs2",
+      "version": "1.47.0-2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libext2fs2@1.47.0-2%2Bb2?arch=amd64&distro=debian-12&upstream=e2fsprogs%401.47.0-2",
+      "metadata": {
+        "version": "1.47.0-2+b2",
+        "architecture": "amd64",
+        "source": "e2fsprogs",
+        "package": "libext2fs2",
+        "sourceVersion": "1.47.0-2"
+      }
+    },
+    {
+      "id": "3d64cbaa76084dc4",
+      "name": "libffi8",
+      "version": "3.4.4-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libffi8@3.4.4-1?arch=amd64&distro=debian-12&upstream=libffi",
+      "metadata": {
+        "version": "3.4.4-1",
+        "architecture": "amd64",
+        "source": "libffi",
+        "package": "libffi8",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f34a6c9eeba92c05",
+      "name": "libgcc-s1",
+      "version": "12.2.0-14+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libgcc-s1@12.2.0-14%2Bdeb12u1?arch=amd64&distro=debian-12&upstream=gcc-12",
+      "metadata": {
+        "version": "12.2.0-14+deb12u1",
+        "architecture": "amd64",
+        "source": "gcc-12",
+        "package": "libgcc-s1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "d386f651d9220c9e",
+      "name": "libgcrypt20",
+      "version": "1.10.1-3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libgcrypt20@1.10.1-3?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1.10.1-3",
+        "architecture": "amd64",
+        "source": "",
+        "package": "libgcrypt20",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "4a42a38761bb84e0",
+      "name": "libgmp10",
+      "version": "2:6.2.1+dfsg1-1.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libgmp10@2%3A6.2.1%2Bdfsg1-1.1?arch=amd64&distro=debian-12&upstream=gmp",
+      "metadata": {
+        "version": "2:6.2.1+dfsg1-1.1",
+        "architecture": "amd64",
+        "source": "gmp",
+        "package": "libgmp10",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "d981b5d966d448b2",
+      "name": "libgnutls30",
+      "version": "3.7.9-2+deb12u6",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "metadata": {
+        "version": "3.7.9-2+deb12u6",
+        "architecture": "amd64",
+        "source": "gnutls28",
+        "package": "libgnutls30",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "bbf12da6801244e7",
+      "name": "libgpg-error0",
+      "version": "1.46-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libgpg-error0@1.46-1?arch=amd64&distro=debian-12&upstream=libgpg-error",
+      "metadata": {
+        "version": "1.46-1",
+        "architecture": "amd64",
+        "source": "libgpg-error",
+        "package": "libgpg-error0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "244c6a089f6b6308",
+      "name": "libhogweed6",
+      "version": "3.8.1-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libhogweed6@3.8.1-2?arch=amd64&distro=debian-12&upstream=nettle",
+      "metadata": {
+        "version": "3.8.1-2",
+        "architecture": "amd64",
+        "source": "nettle",
+        "package": "libhogweed6",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "000ea285a5c77eab",
+      "name": "libidn2-0",
+      "version": "2.3.3-1+b1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libidn2-0@2.3.3-1%2Bb1?arch=amd64&distro=debian-12&upstream=libidn2%402.3.3-1",
+      "metadata": {
+        "version": "2.3.3-1+b1",
+        "architecture": "amd64",
+        "source": "libidn2",
+        "package": "libidn2-0",
+        "sourceVersion": "2.3.3-1"
+      }
+    },
+    {
+      "id": "7b6901adcac17545",
+      "name": "liblz4-1",
+      "version": "1.9.4-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/liblz4-1@1.9.4-1?arch=amd64&distro=debian-12&upstream=lz4",
+      "metadata": {
+        "version": "1.9.4-1",
+        "architecture": "amd64",
+        "source": "lz4",
+        "package": "liblz4-1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ff68b512d2726a47",
+      "name": "liblzma5",
+      "version": "5.4.1-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/liblzma5@5.4.1-1?arch=amd64&distro=debian-12&upstream=xz-utils",
+      "metadata": {
+        "version": "5.4.1-1",
+        "architecture": "amd64",
+        "source": "xz-utils",
+        "package": "liblzma5",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f7a02d5b69549304",
+      "name": "libmd0",
+      "version": "1.0.4-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libmd0@1.0.4-2?arch=amd64&distro=debian-12&upstream=libmd",
+      "metadata": {
+        "version": "1.0.4-2",
+        "architecture": "amd64",
+        "source": "libmd",
+        "package": "libmd0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "3578a81ebb651f3d",
+      "name": "libmount1",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libmount1@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "libmount1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "1ac1c6a69a1bbe8a",
+      "name": "libnettle8",
+      "version": "3.8.1-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libnettle8@3.8.1-2?arch=amd64&distro=debian-12&upstream=nettle",
+      "metadata": {
+        "version": "3.8.1-2",
+        "architecture": "amd64",
+        "source": "nettle",
+        "package": "libnettle8",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "0027543880aaec84",
+      "name": "libp11-kit0",
+      "version": "0.24.1-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libp11-kit0@0.24.1-2?arch=amd64&distro=debian-12&upstream=p11-kit",
+      "metadata": {
+        "version": "0.24.1-2",
+        "architecture": "amd64",
+        "source": "p11-kit",
+        "package": "libp11-kit0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "4cab7ef7de016d31",
+      "name": "libpam-modules",
+      "version": "1.5.2-6+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libpam-modules@1.5.2-6%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=pam",
+      "metadata": {
+        "version": "1.5.2-6+deb12u2",
+        "architecture": "amd64",
+        "source": "pam",
+        "package": "libpam-modules",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "372dffabd059479c",
+      "name": "libpam-modules-bin",
+      "version": "1.5.2-6+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libpam-modules-bin@1.5.2-6%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=pam",
+      "metadata": {
+        "version": "1.5.2-6+deb12u2",
+        "architecture": "amd64",
+        "source": "pam",
+        "package": "libpam-modules-bin",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ca1034d5d24bcf54",
+      "name": "libpam-runtime",
+      "version": "1.5.2-6+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libpam-runtime@1.5.2-6%2Bdeb12u2?arch=all&distro=debian-12&upstream=pam",
+      "metadata": {
+        "version": "1.5.2-6+deb12u2",
+        "architecture": "all",
+        "source": "pam",
+        "package": "libpam-runtime",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "87d8465053cf56c8",
+      "name": "libpam0g",
+      "version": "1.5.2-6+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libpam0g@1.5.2-6%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=pam",
+      "metadata": {
+        "version": "1.5.2-6+deb12u2",
+        "architecture": "amd64",
+        "source": "pam",
+        "package": "libpam0g",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "fdd1d61b217ae9fe",
+      "name": "libpcre2-8-0",
+      "version": "10.42-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "metadata": {
+        "version": "10.42-1",
+        "architecture": "amd64",
+        "source": "pcre2",
+        "package": "libpcre2-8-0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "864deba87ee227ff",
+      "name": "libseccomp2",
+      "version": "2.5.4-1+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libseccomp2@2.5.4-1%2Bdeb12u1?arch=amd64&distro=debian-12&upstream=libseccomp",
+      "metadata": {
+        "version": "2.5.4-1+deb12u1",
+        "architecture": "amd64",
+        "source": "libseccomp",
+        "package": "libseccomp2",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "b07e9d426f477f60",
+      "name": "libselinux1",
+      "version": "3.4-1+b6",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libselinux1@3.4-1%2Bb6?arch=amd64&distro=debian-12&upstream=libselinux%403.4-1",
+      "metadata": {
+        "version": "3.4-1+b6",
+        "architecture": "amd64",
+        "source": "libselinux",
+        "package": "libselinux1",
+        "sourceVersion": "3.4-1"
+      }
+    },
+    {
+      "id": "8118fc40b739539a",
+      "name": "libsemanage-common",
+      "version": "3.4-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libsemanage-common@3.4-1?arch=all&distro=debian-12&upstream=libsemanage",
+      "metadata": {
+        "version": "3.4-1",
+        "architecture": "all",
+        "source": "libsemanage",
+        "package": "libsemanage-common",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "a960a8aaee1ee769",
+      "name": "libsemanage2",
+      "version": "3.4-1+b5",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libsemanage2@3.4-1%2Bb5?arch=amd64&distro=debian-12&upstream=libsemanage%403.4-1",
+      "metadata": {
+        "version": "3.4-1+b5",
+        "architecture": "amd64",
+        "source": "libsemanage",
+        "package": "libsemanage2",
+        "sourceVersion": "3.4-1"
+      }
+    },
+    {
+      "id": "ef742c3346e74452",
+      "name": "libsepol2",
+      "version": "3.4-2.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libsepol2@3.4-2.1?arch=amd64&distro=debian-12&upstream=libsepol",
+      "metadata": {
+        "version": "3.4-2.1",
+        "architecture": "amd64",
+        "source": "libsepol",
+        "package": "libsepol2",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ecee94562f1ce06f",
+      "name": "libsmartcols1",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libsmartcols1@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "libsmartcols1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "1604e864b4a343b7",
+      "name": "libss2",
+      "version": "1.47.0-2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libss2@1.47.0-2%2Bb2?arch=amd64&distro=debian-12&upstream=e2fsprogs%401.47.0-2",
+      "metadata": {
+        "version": "1.47.0-2+b2",
+        "architecture": "amd64",
+        "source": "e2fsprogs",
+        "package": "libss2",
+        "sourceVersion": "1.47.0-2"
+      }
+    },
+    {
+      "id": "6c755f621b3d6c49",
+      "name": "libstdc++6",
+      "version": "12.2.0-14+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libstdc%2B%2B6@12.2.0-14%2Bdeb12u1?arch=amd64&distro=debian-12&upstream=gcc-12",
+      "metadata": {
+        "version": "12.2.0-14+deb12u1",
+        "architecture": "amd64",
+        "source": "gcc-12",
+        "package": "libstdc++6",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ffff5892914d165f",
+      "name": "libsystemd0",
+      "version": "252.39-1~deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "metadata": {
+        "version": "252.39-1~deb12u1",
+        "architecture": "amd64",
+        "source": "systemd",
+        "package": "libsystemd0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "43e8c6e1dbd41a5d",
+      "name": "libtasn1-6",
+      "version": "4.19.0-2+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libtasn1-6@4.19.0-2%2Bdeb12u1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "4.19.0-2+deb12u1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "libtasn1-6",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "a6231fb14cfeaaac",
+      "name": "libtinfo6",
+      "version": "6.4-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libtinfo6@6.4-4?arch=amd64&distro=debian-12&upstream=ncurses",
+      "metadata": {
+        "version": "6.4-4",
+        "architecture": "amd64",
+        "source": "ncurses",
+        "package": "libtinfo6",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "884632838cded891",
+      "name": "libudev1",
+      "version": "252.39-1~deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "metadata": {
+        "version": "252.39-1~deb12u1",
+        "architecture": "amd64",
+        "source": "systemd",
+        "package": "libudev1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f167882223735de0",
+      "name": "libunistring2",
+      "version": "1.0-2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libunistring2@1.0-2?arch=amd64&distro=debian-12&upstream=libunistring",
+      "metadata": {
+        "version": "1.0-2",
+        "architecture": "amd64",
+        "source": "libunistring",
+        "package": "libunistring2",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "2049f4c13963925a",
+      "name": "libuuid1",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libuuid1@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "libuuid1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "662454f7c4742a97",
+      "name": "libxxhash0",
+      "version": "0.8.1-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libxxhash0@0.8.1-1?arch=amd64&distro=debian-12&upstream=xxhash",
+      "metadata": {
+        "version": "0.8.1-1",
+        "architecture": "amd64",
+        "source": "xxhash",
+        "package": "libxxhash0",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "7cc55da81007017d",
+      "name": "libzstd1",
+      "version": "1.5.4+dfsg2-5",
+      "type": "deb",
+      "purl": "pkg:deb/debian/libzstd1@1.5.4%2Bdfsg2-5?arch=amd64&distro=debian-12&upstream=libzstd",
+      "metadata": {
+        "version": "1.5.4+dfsg2-5",
+        "architecture": "amd64",
+        "source": "libzstd",
+        "package": "libzstd1",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "d5e0daed57b0ef5c",
+      "name": "login",
+      "version": "1:4.13+dfsg1-1+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/login@1%3A4.13%2Bdfsg1-1%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=shadow",
+      "metadata": {
+        "version": "1:4.13+dfsg1-1+deb12u2",
+        "architecture": "amd64",
+        "source": "shadow",
+        "package": "login",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "db69887a7e4088b2",
+      "name": "logsave",
+      "version": "1.47.0-2+b2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/logsave@1.47.0-2%2Bb2?arch=amd64&distro=debian-12&upstream=e2fsprogs%401.47.0-2",
+      "metadata": {
+        "version": "1.47.0-2+b2",
+        "architecture": "amd64",
+        "source": "e2fsprogs",
+        "package": "logsave",
+        "sourceVersion": "1.47.0-2"
+      }
+    },
+    {
+      "id": "81ae31ac445c7dbb",
+      "name": "mawk",
+      "version": "1.3.4.20200120-3.1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/mawk@1.3.4.20200120-3.1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1.3.4.20200120-3.1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "mawk",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "e75e0a2b6968d414",
+      "name": "mount",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/mount@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "mount",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ec73073218fd031a",
+      "name": "ncurses-base",
+      "version": "6.4-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/ncurses-base@6.4-4?arch=all&distro=debian-12&upstream=ncurses",
+      "metadata": {
+        "version": "6.4-4",
+        "architecture": "all",
+        "source": "ncurses",
+        "package": "ncurses-base",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "c5b18ac268f2ccdf",
+      "name": "ncurses-bin",
+      "version": "6.4-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/ncurses-bin@6.4-4?arch=amd64&distro=debian-12&upstream=ncurses",
+      "metadata": {
+        "version": "6.4-4",
+        "architecture": "amd64",
+        "source": "ncurses",
+        "package": "ncurses-bin",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "682e2af0ff4c2f53",
+      "name": "node",
+      "version": "20.20.2",
+      "type": "binary",
+      "purl": "pkg:generic/node@20.20.2",
+      "metadata": {}
+    },
+    {
+      "id": "1853000d374a22b0",
+      "name": "passwd",
+      "version": "1:4.13+dfsg1-1+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/passwd@1%3A4.13%2Bdfsg1-1%2Bdeb12u2?arch=amd64&distro=debian-12&upstream=shadow",
+      "metadata": {
+        "version": "1:4.13+dfsg1-1+deb12u2",
+        "architecture": "amd64",
+        "source": "shadow",
+        "package": "passwd",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f323d96ee2e604be",
+      "name": "perl-base",
+      "version": "5.36.0-7+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/perl-base@5.36.0-7%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=perl",
+      "metadata": {
+        "version": "5.36.0-7+deb12u3",
+        "architecture": "amd64",
+        "source": "perl",
+        "package": "perl-base",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "29a4796fb455ff5b",
+      "name": "sed",
+      "version": "4.9-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/sed@4.9-1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "4.9-1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "sed",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "ad6415822991d492",
+      "name": "sysvinit-utils",
+      "version": "3.06-4",
+      "type": "deb",
+      "purl": "pkg:deb/debian/sysvinit-utils@3.06-4?arch=amd64&distro=debian-12&upstream=sysvinit",
+      "metadata": {
+        "version": "3.06-4",
+        "architecture": "amd64",
+        "source": "sysvinit",
+        "package": "sysvinit-utils",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "f8ad3f5238dbcf6a",
+      "name": "tar",
+      "version": "1.34+dfsg-1.2+deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/tar@1.34%2Bdfsg-1.2%2Bdeb12u1?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "1.34+dfsg-1.2+deb12u1",
+        "architecture": "amd64",
+        "source": "",
+        "package": "tar",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "30a2ec79a0be6035",
+      "name": "tzdata",
+      "version": "2025b-0+deb12u2",
+      "type": "deb",
+      "purl": "pkg:deb/debian/tzdata@2025b-0%2Bdeb12u2?arch=all&distro=debian-12",
+      "metadata": {
+        "version": "2025b-0+deb12u2",
+        "architecture": "all",
+        "source": "",
+        "package": "tzdata",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "5d5368e5a339ea05",
+      "name": "usr-is-merged",
+      "version": "37~deb12u1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/usr-is-merged@37~deb12u1?arch=all&distro=debian-12&upstream=usrmerge",
+      "metadata": {
+        "version": "37~deb12u1",
+        "architecture": "all",
+        "source": "usrmerge",
+        "package": "usr-is-merged",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "b11f4a313957922c",
+      "name": "util-linux",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/util-linux@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "",
+        "package": "util-linux",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "fc9180bcad1f4d49",
+      "name": "util-linux-extra",
+      "version": "2.38.1-5+deb12u3",
+      "type": "deb",
+      "purl": "pkg:deb/debian/util-linux-extra@2.38.1-5%2Bdeb12u3?arch=amd64&distro=debian-12&upstream=util-linux",
+      "metadata": {
+        "version": "2.38.1-5+deb12u3",
+        "architecture": "amd64",
+        "source": "util-linux",
+        "package": "util-linux-extra",
+        "sourceVersion": ""
+      }
+    },
+    {
+      "id": "077923f667034501",
+      "name": "zlib1g",
+      "version": "1:1.2.13.dfsg-1",
+      "type": "deb",
+      "purl": "pkg:deb/debian/zlib1g@1%3A1.2.13.dfsg-1?arch=amd64&distro=debian-12&upstream=zlib",
+      "metadata": {
+        "version": "1:1.2.13.dfsg-1",
+        "architecture": "amd64",
+        "source": "zlib",
+        "package": "zlib1g",
+        "sourceVersion": ""
+      }
+    }
+  ],
+  "findings": [
+    {
+      "cve": "CVE-2026-42010",
+      "aliases": [
+        "CVE-2026-42010"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42010",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42010",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42010"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42010",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42009",
+      "aliases": [
+        "CVE-2026-42009"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42009",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42009",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42009"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42009",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-33846",
+      "aliases": [
+        "CVE-2026-33846"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-33846",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-33846",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-33846"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-33846",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-33845",
+      "aliases": [
+        "CVE-2026-33845"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-33845",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-33845",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-33845"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-33845",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-5260",
+      "aliases": [
+        "CVE-2026-5260"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-5260",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-5260",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-5260"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-5260",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-3833",
+      "aliases": [
+        "CVE-2026-3833"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-3833",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-3833",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-3833"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-3833",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4046",
+      "aliases": [
+        "CVE-2026-4046"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4046",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4046",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4046"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4046",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4046",
+      "aliases": [
+        "CVE-2026-4046"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4046",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4046",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4046"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4046",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42015",
+      "aliases": [
+        "CVE-2026-42015"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42015",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42015",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42015"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42015",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-0915",
+      "aliases": [
+        "CVE-2026-0915"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-0915",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-0915",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-0915"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-0915",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-0915",
+      "aliases": [
+        "CVE-2026-0915"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-0915",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-0915",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-0915"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-0915",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42013",
+      "aliases": [
+        "CVE-2026-42013"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42013",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42013",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42013"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42013",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42011",
+      "aliases": [
+        "CVE-2026-42011"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42011",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42011",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42011"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42011",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-48937",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-48937",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.0",
+            "24.17.0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-48937",
+              "versionConstraint": "< 22.23.0,>= 23.0.0, < 24.17.0 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-56846",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-56846",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-56846",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15281",
+      "aliases": [
+        "CVE-2025-15281"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2025-15281",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15281",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15281"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15281",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15281",
+      "aliases": [
+        "CVE-2025-15281"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2025-15281",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15281",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15281"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15281",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-56848",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-56848",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-56848",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1,>= 25, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42012",
+      "aliases": [
+        "CVE-2026-42012"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42012",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42012",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42012"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42012",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-6297",
+      "aliases": [
+        "CVE-2025-6297"
+      ],
+      "package": "dpkg",
+      "installed_version": "1.21.22",
+      "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+      "ecosystem": "deb",
+      "artifact_id": "2818345ae43ed06c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+        "artifact_metadata": {
+          "version": "1.21.22",
+          "architecture": "amd64",
+          "source": "",
+          "package": "dpkg",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "2818345ae43ed06c",
+        "sbom_artifact": {
+          "id": "2818345ae43ed06c",
+          "name": "dpkg",
+          "version": "1.21.22",
+          "type": "deb",
+          "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+          "metadata": {
+            "version": "1.21.22",
+            "architecture": "amd64",
+            "source": "",
+            "package": "dpkg",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2025-6297",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-6297",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-6297"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.21.23"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "dpkg",
+                "version": "1.21.22"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-6297",
+              "versionConstraint": "< 1.21.23 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "1.21.23"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-2219",
+      "aliases": [
+        "CVE-2026-2219"
+      ],
+      "package": "dpkg",
+      "installed_version": "1.21.22",
+      "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+      "ecosystem": "deb",
+      "artifact_id": "2818345ae43ed06c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+        "artifact_metadata": {
+          "version": "1.21.22",
+          "architecture": "amd64",
+          "source": "",
+          "package": "dpkg",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "2818345ae43ed06c",
+        "sbom_artifact": {
+          "id": "2818345ae43ed06c",
+          "name": "dpkg",
+          "version": "1.21.22",
+          "type": "deb",
+          "purl": "pkg:deb/debian/dpkg@1.21.22?arch=amd64&distro=debian-12",
+          "metadata": {
+            "version": "1.21.22",
+            "architecture": "amd64",
+            "source": "",
+            "package": "dpkg",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-2219",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-2219",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-2219"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.21.23"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "dpkg",
+                "version": "1.21.22"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-2219",
+              "versionConstraint": "< 1.21.23 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "1.21.23"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-0861",
+      "aliases": [
+        "CVE-2026-0861"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-0861",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-0861",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-0861"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-0861",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-0861",
+      "aliases": [
+        "CVE-2026-0861"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-0861",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-0861",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-0861"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-0861",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-86145",
+      "aliases": [
+        "CVE-2026-86145"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-86145",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-86145",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-86145"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-86145",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-34743",
+      "aliases": [
+        "CVE-2026-34743"
+      ],
+      "package": "liblzma5",
+      "installed_version": "5.4.1-1",
+      "purl": "pkg:deb/debian/liblzma5@5.4.1-1?arch=amd64&distro=debian-12&upstream=xz-utils",
+      "ecosystem": "deb",
+      "artifact_id": "ff68b512d2726a47",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/liblzma5@5.4.1-1?arch=amd64&distro=debian-12&upstream=xz-utils",
+        "artifact_metadata": {
+          "version": "5.4.1-1",
+          "architecture": "amd64",
+          "source": "xz-utils",
+          "package": "liblzma5",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ff68b512d2726a47",
+        "sbom_artifact": {
+          "id": "ff68b512d2726a47",
+          "name": "liblzma5",
+          "version": "5.4.1-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/liblzma5@5.4.1-1?arch=amd64&distro=debian-12&upstream=xz-utils",
+          "metadata": {
+            "version": "5.4.1-1",
+            "architecture": "amd64",
+            "source": "xz-utils",
+            "package": "liblzma5",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-34743",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-34743",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-34743"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "5.4.1-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "xz-utils",
+                "version": "5.4.1-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-34743",
+              "versionConstraint": "< 5.4.1-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "5.4.1-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4437",
+      "aliases": [
+        "CVE-2026-4437"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4437",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4437",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4437"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4437",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4437",
+      "aliases": [
+        "CVE-2026-4437"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4437",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4437",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4437"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4437",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-5419",
+      "aliases": [
+        "CVE-2026-5419"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-5419",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-5419",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-5419"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-5419",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-89157",
+      "aliases": [
+        "CVE-2026-89157"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-89157",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-89157",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-89157"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-89157",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58042",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58042",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58042",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1,>= 25, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-48617",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-48617",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.0",
+            "24.17.0",
+            "26.3.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-48617",
+              "versionConstraint": "< 22.23.0,>= 23.0.0, < 24.17.0,>= 25.0.0, < 26.3.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4438",
+      "aliases": [
+        "CVE-2026-4438"
+      ],
+      "package": "libc-bin",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "e90934cdc31ca290",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc-bin",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "e90934cdc31ca290",
+        "sbom_artifact": {
+          "id": "e90934cdc31ca290",
+          "name": "libc-bin",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc-bin@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc-bin",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4438",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4438",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4438"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4438",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4438",
+      "aliases": [
+        "CVE-2026-4438"
+      ],
+      "package": "libc6",
+      "installed_version": "2.36-9+deb12u13",
+      "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+      "ecosystem": "deb",
+      "artifact_id": "0ab22287b6343f5c",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+        "artifact_metadata": {
+          "version": "2.36-9+deb12u13",
+          "architecture": "amd64",
+          "source": "glibc",
+          "package": "libc6",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "0ab22287b6343f5c",
+        "sbom_artifact": {
+          "id": "0ab22287b6343f5c",
+          "name": "libc6",
+          "version": "2.36-9+deb12u13",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libc6@2.36-9%2Bdeb12u13?arch=amd64&distro=debian-12&upstream=glibc",
+          "metadata": {
+            "version": "2.36-9+deb12u13",
+            "architecture": "amd64",
+            "source": "glibc",
+            "package": "libc6",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4438",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4438",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4438"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "2.36-9+deb12u14"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "glibc",
+                "version": "2.36-9+deb12u13"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4438",
+              "versionConstraint": "< 2.36-9+deb12u14 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "2.36-9+deb12u14"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-89156",
+      "aliases": [
+        "CVE-2026-89156"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-89156",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-89156",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-89156"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-89156",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58040",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58040",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58040",
+              "versionConstraint": "< 22.23.2,>= 23.0.0, < 24.18.1,>= 25.0.0, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-89160",
+      "aliases": [
+        "CVE-2026-89160"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-89160",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-89160",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-89160"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-89160",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58041",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58041",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58041",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1,>= 25, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-89158",
+      "aliases": [
+        "CVE-2026-89158"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-89158",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-89158",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-89158"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-89158",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40225",
+      "aliases": [
+        "CVE-2026-40225"
+      ],
+      "package": "libsystemd0",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "ffff5892914d165f",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libsystemd0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ffff5892914d165f",
+        "sbom_artifact": {
+          "id": "ffff5892914d165f",
+          "name": "libsystemd0",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libsystemd0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-40225",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40225",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40225"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40225",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40225",
+      "aliases": [
+        "CVE-2026-40225"
+      ],
+      "package": "libudev1",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "884632838cded891",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libudev1",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "884632838cded891",
+        "sbom_artifact": {
+          "id": "884632838cded891",
+          "name": "libudev1",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libudev1",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-40225",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40225",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40225"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40225",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58043",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58043",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58043",
+              "versionConstraint": "< 22.23.2,>= 23.0.0, < 24.18.1,>= 25.0.0, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-42014",
+      "aliases": [
+        "CVE-2026-42014"
+      ],
+      "package": "libgnutls30",
+      "installed_version": "3.7.9-2+deb12u6",
+      "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+      "ecosystem": "deb",
+      "artifact_id": "d981b5d966d448b2",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+        "artifact_metadata": {
+          "version": "3.7.9-2+deb12u6",
+          "architecture": "amd64",
+          "source": "gnutls28",
+          "package": "libgnutls30",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d981b5d966d448b2",
+        "sbom_artifact": {
+          "id": "d981b5d966d448b2",
+          "name": "libgnutls30",
+          "version": "3.7.9-2+deb12u6",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgnutls30@3.7.9-2%2Bdeb12u6?arch=amd64&distro=debian-12&upstream=gnutls28",
+          "metadata": {
+            "version": "3.7.9-2+deb12u6",
+            "architecture": "amd64",
+            "source": "gnutls28",
+            "package": "libgnutls30",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-42014",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-42014",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-42014"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.7.9-2+deb12u7"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "gnutls28",
+                "version": "3.7.9-2+deb12u6"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-42014",
+              "versionConstraint": "< 3.7.9-2+deb12u7 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "3.7.9-2+deb12u7"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-48931",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-48931",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.0",
+            "24.17.0",
+            "26.3.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-48931",
+              "versionConstraint": "< 22.23.0,>= 23.0.0, < 24.17.0,>= 25.0.0, < 26.3.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-41989",
+      "aliases": [
+        "CVE-2026-41989"
+      ],
+      "package": "libgcrypt20",
+      "installed_version": "1.10.1-3",
+      "purl": "pkg:deb/debian/libgcrypt20@1.10.1-3?arch=amd64&distro=debian-12",
+      "ecosystem": "deb",
+      "artifact_id": "d386f651d9220c9e",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libgcrypt20@1.10.1-3?arch=amd64&distro=debian-12",
+        "artifact_metadata": {
+          "version": "1.10.1-3",
+          "architecture": "amd64",
+          "source": "",
+          "package": "libgcrypt20",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d386f651d9220c9e",
+        "sbom_artifact": {
+          "id": "d386f651d9220c9e",
+          "name": "libgcrypt20",
+          "version": "1.10.1-3",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libgcrypt20@1.10.1-3?arch=amd64&distro=debian-12",
+          "metadata": {
+            "version": "1.10.1-3",
+            "architecture": "amd64",
+            "source": "",
+            "package": "libgcrypt20",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-41989",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-41989",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-41989"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.10.1-3+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "libgcrypt20",
+                "version": "1.10.1-3"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-41989",
+              "versionConstraint": "< 1.10.1-3+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "1.10.1-3+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4878",
+      "aliases": [
+        "CVE-2026-4878"
+      ],
+      "package": "libcap2",
+      "installed_version": "1:2.66-4+deb12u2+b2",
+      "purl": "pkg:deb/debian/libcap2@1%3A2.66-4%2Bdeb12u2%2Bb2?arch=amd64&distro=debian-12&upstream=libcap2%401%3A2.66-4%2Bdeb12u2",
+      "ecosystem": "deb",
+      "artifact_id": "603f50dd77898547",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libcap2@1%3A2.66-4%2Bdeb12u2%2Bb2?arch=amd64&distro=debian-12&upstream=libcap2%401%3A2.66-4%2Bdeb12u2",
+        "artifact_metadata": {
+          "version": "1:2.66-4+deb12u2+b2",
+          "architecture": "amd64",
+          "source": "libcap2",
+          "package": "libcap2",
+          "sourceVersion": "1:2.66-4+deb12u2"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "603f50dd77898547",
+        "sbom_artifact": {
+          "id": "603f50dd77898547",
+          "name": "libcap2",
+          "version": "1:2.66-4+deb12u2+b2",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libcap2@1%3A2.66-4%2Bdeb12u2%2Bb2?arch=amd64&distro=debian-12&upstream=libcap2%401%3A2.66-4%2Bdeb12u2",
+          "metadata": {
+            "version": "1:2.66-4+deb12u2+b2",
+            "architecture": "amd64",
+            "source": "libcap2",
+            "package": "libcap2",
+            "sourceVersion": "1:2.66-4+deb12u2"
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4878",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4878",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4878"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1:2.66-4+deb12u3"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "libcap2",
+                "version": "1:2.66-4+deb12u2+b2"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4878",
+              "versionConstraint": "< 1:2.66-4+deb12u3 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "1:2.66-4+deb12u3"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "libcap2",
+                "version": "1:2.66-4+deb12u2"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4878",
+              "versionConstraint": "< 1:2.66-4+deb12u3 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "1:2.66-4+deb12u3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-89161",
+      "aliases": [
+        "CVE-2026-89161"
+      ],
+      "package": "libpcre2-8-0",
+      "installed_version": "10.42-1",
+      "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+      "ecosystem": "deb",
+      "artifact_id": "fdd1d61b217ae9fe",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+        "artifact_metadata": {
+          "version": "10.42-1",
+          "architecture": "amd64",
+          "source": "pcre2",
+          "package": "libpcre2-8-0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fdd1d61b217ae9fe",
+        "sbom_artifact": {
+          "id": "fdd1d61b217ae9fe",
+          "name": "libpcre2-8-0",
+          "version": "10.42-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libpcre2-8-0@10.42-1?arch=amd64&distro=debian-12&upstream=pcre2",
+          "metadata": {
+            "version": "10.42-1",
+            "architecture": "amd64",
+            "source": "pcre2",
+            "package": "libpcre2-8-0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-89161",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-89161",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-89161"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "10.42-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "pcre2",
+                "version": "10.42-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-89161",
+              "versionConstraint": "< 10.42-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "10.42-1+deb12u1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58045",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58045",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58045",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1,>= 25, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58044",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58044",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58044",
+              "versionConstraint": "< 22.23.2,>= 23, < 24.18.1,>= 25, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4105",
+      "aliases": [
+        "CVE-2026-4105"
+      ],
+      "package": "libsystemd0",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "ffff5892914d165f",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libsystemd0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ffff5892914d165f",
+        "sbom_artifact": {
+          "id": "ffff5892914d165f",
+          "name": "libsystemd0",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libsystemd0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4105",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4105",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4105"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4105",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-4105",
+      "aliases": [
+        "CVE-2026-4105"
+      ],
+      "package": "libudev1",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "884632838cded891",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libudev1",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "884632838cded891",
+        "sbom_artifact": {
+          "id": "884632838cded891",
+          "name": "libudev1",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libudev1",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-4105",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-4105",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-4105"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-4105",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-29111",
+      "aliases": [
+        "CVE-2026-29111"
+      ],
+      "package": "libsystemd0",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "ffff5892914d165f",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libsystemd0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ffff5892914d165f",
+        "sbom_artifact": {
+          "id": "ffff5892914d165f",
+          "name": "libsystemd0",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libsystemd0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-29111",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-29111",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-29111"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-29111",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-29111",
+      "aliases": [
+        "CVE-2026-29111"
+      ],
+      "package": "libudev1",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "884632838cded891",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libudev1",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "884632838cded891",
+        "sbom_artifact": {
+          "id": "884632838cded891",
+          "name": "libudev1",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libudev1",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-29111",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-29111",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-29111"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-29111",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-56847",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-56847",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-56847",
+              "versionConstraint": "< 22.23.2,>= 23.0.0, < 24.18.1,>= 25.0.0, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40226",
+      "aliases": [
+        "CVE-2026-40226"
+      ],
+      "package": "libsystemd0",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "ffff5892914d165f",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libsystemd0",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ffff5892914d165f",
+        "sbom_artifact": {
+          "id": "ffff5892914d165f",
+          "name": "libsystemd0",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libsystemd0@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libsystemd0",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-40226",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40226",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40226"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40226",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40226",
+      "aliases": [
+        "CVE-2026-40226"
+      ],
+      "package": "libudev1",
+      "installed_version": "252.39-1~deb12u1",
+      "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+      "ecosystem": "deb",
+      "artifact_id": "884632838cded891",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+        "artifact_metadata": {
+          "version": "252.39-1~deb12u1",
+          "architecture": "amd64",
+          "source": "systemd",
+          "package": "libudev1",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "884632838cded891",
+        "sbom_artifact": {
+          "id": "884632838cded891",
+          "name": "libudev1",
+          "version": "252.39-1~deb12u1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/libudev1@252.39-1~deb12u1?arch=amd64&distro=debian-12&upstream=systemd",
+          "metadata": {
+            "version": "252.39-1~deb12u1",
+            "architecture": "amd64",
+            "source": "systemd",
+            "package": "libudev1",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-40226",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40226",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40226"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "252.39-1~deb12u2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "systemd",
+                "version": "252.39-1~deb12u1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40226",
+              "versionConstraint": "< 252.39-1~deb12u2 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "252.39-1~deb12u2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-58039",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-58039",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-58039",
+              "versionConstraint": "< 22.23.2,>= 23.0.0, < 24.18.1,>= 25.0.0, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-56850",
+      "aliases": [],
+      "package": "node",
+      "installed_version": "20.20.2",
+      "purl": "pkg:generic/node@20.20.2",
+      "ecosystem": "binary",
+      "artifact_id": "682e2af0ff4c2f53",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:generic/node@20.20.2",
+        "artifact_metadata": {},
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "682e2af0ff4c2f53",
+        "sbom_artifact": {
+          "id": "682e2af0ff4c2f53",
+          "name": "node",
+          "version": "20.20.2",
+          "type": "binary",
+          "purl": "pkg:generic/node@20.20.2",
+          "metadata": {}
+        },
+        "namespace": "nvd:cpe",
+        "data_source": "https://nvd.nist.gov/vuln/detail/CVE-2026-56850",
+        "related_vulnerabilities": [],
+        "fix": {
+          "versions": [
+            "22.23.2",
+            "24.18.1",
+            "26.5.1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "cpe-match",
+            "matcher": "stock-matcher",
+            "searchedBy": {
+              "namespace": "nvd:cpe",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:20.20.2:*:*:*:*:*:*:*"
+              ],
+              "package": {
+                "name": "node",
+                "version": "20.20.2"
+              }
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-56850",
+              "versionConstraint": "< 22.23.2,>= 23.0.0, < 24.18.1,>= 25.0.0, < 26.5.1 (unknown)",
+              "cpes": [
+                "cpe:2.3:a:nodejs:node.js:*:*:*:*:*:*:*:*"
+              ]
+            },
+            "fix": {
+              "suggestedVersion": "22.23.2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-5958",
+      "aliases": [
+        "CVE-2026-5958"
+      ],
+      "package": "sed",
+      "installed_version": "4.9-1",
+      "purl": "pkg:deb/debian/sed@4.9-1?arch=amd64&distro=debian-12",
+      "ecosystem": "deb",
+      "artifact_id": "29a4796fb455ff5b",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:deb/debian/sed@4.9-1?arch=amd64&distro=debian-12",
+        "artifact_metadata": {
+          "version": "4.9-1",
+          "architecture": "amd64",
+          "source": "",
+          "package": "sed",
+          "sourceVersion": ""
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "29a4796fb455ff5b",
+        "sbom_artifact": {
+          "id": "29a4796fb455ff5b",
+          "name": "sed",
+          "version": "4.9-1",
+          "type": "deb",
+          "purl": "pkg:deb/debian/sed@4.9-1?arch=amd64&distro=debian-12",
+          "metadata": {
+            "version": "4.9-1",
+            "architecture": "amd64",
+            "source": "",
+            "package": "sed",
+            "sourceVersion": ""
+          }
+        },
+        "namespace": "debian:distro:debian:12",
+        "data_source": "https://security-tracker.debian.org/tracker/CVE-2026-5958",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-5958",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-5958"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "4.9-1+deb12u1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "dpkg-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "debian",
+                "version": "12"
+              },
+              "package": {
+                "name": "sed",
+                "version": "4.9-1"
+              },
+              "namespace": "debian:distro:debian:12"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-5958",
+              "versionConstraint": "< 4.9-1+deb12u1 (deb)"
+            },
+            "fix": {
+              "suggestedVersion": "4.9-1+deb12u1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "raw_evidence": [
+    {
+      "name": "node.syft.json",
+      "bytes": 2515928,
+      "sha256": "c6a01a203e6976a5802a0f7471722124cc07abfa590141c3bc43ac848ee93ce2"
+    },
+    {
+      "name": "node.grype.json",
+      "bytes": 1089578,
+      "sha256": "93f9f5bc4e8b07cc12924be8acba787cf27bdd97b1ae7180aa942336c760aa38"
+    },
+    {
+      "name": "node.image-inspect.json",
+      "bytes": 1538,
+      "sha256": "c5d768174771fd14371353aa0acd95334a7899011aa81bd4fb6fb8519f791ca8"
+    },
+    {
+      "name": "node.scanner.log",
+      "bytes": 136,
+      "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+    },
+    {
+      "name": "node.capture.json",
+      "bytes": 427,
+      "sha256": "1b4f671f10b4a171586c94b4c8a7c1ea29f0b9a0d7aa706b71f854da33153201"
+    }
+  ]
+}

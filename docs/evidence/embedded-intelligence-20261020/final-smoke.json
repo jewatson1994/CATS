@@ -1,0 +1,2687 @@
+{
+  "started_at": "2026-10-20T04:43:50.123268+00:00",
+  "passed": true,
+  "scope": "Read-only real corpus smoke plus authenticated unchanged install status update. No database_coverage, statement totals, schema creation, service fixture or assessment writes.",
+  "latency_scope": "Single-process handler/function latency, including SQL; excludes HTTP transport and authentication middleware. Existing database/cache state is preserved.",
+  "network_guard": {
+    "python_socket_connect": "Only configured loopback PostgreSQL port allowed",
+    "limitation": "Container network isolation is provided by the driver; native DB client calls are not intercepted by the Python socket guard."
+  },
+  "package": {
+    "version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+    "sequence": 2026102001,
+    "signed_manifest_sha256": "dcb38c60838d0ce5d07489f6b2cfa3630422cb1ef434922cf6a8eab9a25edf3c",
+    "payload_sha256": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+    "payload_bytes": 477230165
+  },
+  "repeat_install": {
+    "outcome": "unchanged",
+    "seconds": 0.5483660049976606,
+    "verification": "Actual loader re-verifies Ed25519 manifest and every ordered compressed payload byte before unchanged comparison."
+  },
+  "package_status": {
+    "seconds": 0.2902790109983471,
+    "result": {
+      "status": "installed",
+      "version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+      "sequence": 2026102001,
+      "built_at": "2026-10-20T03:23:01.645041+00:00",
+      "installed_at": "2026-10-20T04:23:44.467339+00:00",
+      "last_error": null,
+      "counts": {
+        "vex": 119387,
+        "exploitation": 1748,
+        "advisory": 56628,
+        "risk_enrichment": 592162,
+        "vulnerability": 22272,
+        "vex_documents": 119387,
+        "vex_statements": 29212947,
+        "vex_products": 2245117,
+        "sources": 13,
+        "records": 672810
+      },
+      "sources": [
+        {
+          "id": "ubuntu-vex",
+          "url": "https://security-metadata.canonical.com/vex/vex-all.tar.xz",
+          "name": "Canonical Ubuntu VEX",
+          "counts": {
+            "vex": 58044,
+            "vex_products": 2002561,
+            "vex_documents": 58044,
+            "vex_statements": 23252990
+          },
+          "license": "CC-BY-SA-4.0",
+          "trusted": true,
+          "category": "vex",
+          "coverage": "Bounded whole Ubuntu CVE and USN documents with explicit CVE aliases",
+          "selection": {
+            "policy": "Complete CVE and verified USN documents within canonical bytes and 10,000 expanded statements; no statements truncated",
+            "excluded": {
+              "ubuntu_canonical_size_above_limit": 19830,
+              "ubuntu_normalized_statement_limit": 398,
+              "ubuntu_invalid_alias_or_identifier": 507,
+              "ubuntu_invalid_ValueError:Unsupported VEX format/version": 14
+            },
+            "status_counts": {
+              "fixed": 11190657,
+              "affected": 3020357,
+              "not_affected": 7060458,
+              "under_investigation": 1981518
+            },
+            "document_kinds": {
+              "cve_documents": 50747,
+              "usn_documents": 7297,
+              "cve_statements": 15256260,
+              "usn_statements": 7996730
+            },
+            "archive_documents": 78793,
+            "measured_size_cohorts": {
+              "65536": {
+                "cve_documents": 44027,
+                "usn_documents": 7038,
+                "cve_canonical_bytes": 615415873,
+                "usn_canonical_bytes": 118802333,
+                "cve_bounded_documents": 44027,
+                "usn_bounded_documents": 6775,
+                "cve_bounded_statements": 5774215,
+                "cve_product_statements": 5774215,
+                "usn_bounded_statements": 6049522,
+                "usn_product_statements": 14133276
+              },
+              "131072": {
+                "cve_documents": 48465,
+                "usn_documents": 7566,
+                "cve_canonical_bytes": 1034215551,
+                "usn_canonical_bytes": 166195005,
+                "cve_bounded_documents": 48465,
+                "usn_bounded_documents": 7210,
+                "cve_bounded_statements": 9989246,
+                "cve_product_statements": 9989246,
+                "usn_bounded_statements": 7649089,
+                "usn_product_statements": 18842418
+              },
+              "262144": {
+                "cve_documents": 49607,
+                "usn_documents": 7677,
+                "cve_canonical_bytes": 1221997072,
+                "usn_canonical_bytes": 184766049,
+                "cve_bounded_documents": 49607,
+                "usn_bounded_documents": 7284,
+                "cve_bounded_statements": 11882487,
+                "cve_product_statements": 11882487,
+                "usn_bounded_statements": 7932818,
+                "usn_product_statements": 19753765
+              },
+              "524288": {
+                "cve_documents": 50761,
+                "usn_documents": 7695,
+                "cve_canonical_bytes": 1576603002,
+                "usn_canonical_bytes": 191101547,
+                "cve_bounded_documents": 50761,
+                "usn_bounded_documents": 7297,
+                "cve_bounded_statements": 15256728,
+                "cve_product_statements": 15256728,
+                "usn_bounded_statements": 7996730,
+                "usn_product_statements": 20000620
+              },
+              "1048576": {
+                "cve_documents": 56904,
+                "usn_documents": 7697,
+                "cve_canonical_bytes": 7056677704,
+                "usn_canonical_bytes": 192161694,
+                "cve_bounded_documents": 56903,
+                "usn_bounded_documents": 7297,
+                "cve_bounded_statements": 67242505,
+                "cve_product_statements": 67252582,
+                "usn_bounded_statements": 7996730,
+                "usn_product_statements": 20075016
+              },
+              "2097152": {
+                "cve_documents": 70577,
+                "usn_documents": 7697,
+                "cve_canonical_bytes": 21845483820,
+                "usn_canonical_bytes": 192161694,
+                "cve_bounded_documents": 60427,
+                "usn_bounded_documents": 7297,
+                "cve_bounded_statements": 102367896,
+                "cve_product_statements": 207546741,
+                "usn_bounded_statements": 7996730,
+                "usn_product_statements": 20075016
+              },
+              "4194304": {
+                "cve_documents": 70581,
+                "usn_documents": 7697,
+                "cve_canonical_bytes": 21858735405,
+                "usn_canonical_bytes": 192161694,
+                "cve_bounded_documents": 60427,
+                "usn_bounded_documents": 7297,
+                "cve_bounded_statements": 102367896,
+                "cve_product_statements": 207678760,
+                "usn_bounded_statements": 7996730,
+                "usn_product_statements": 20075016
+              }
+            },
+            "normalized_statements": 23252990,
+            "versioned_purl_statements": 23252990,
+            "archive_uncompressed_bytes": 28475331061,
+            "max_canonical_document_bytes": 524288,
+            "documents_with_versioned_purls": 57212
+          },
+          "provenance": {
+            "url": "https://security-metadata.canonical.com/vex/vex-all.tar.xz",
+            "bytes": 75142992,
+            "sha256": "fa6500c0c191b9b8a1d74acd87b3ed209f0dbca723b72c51f7dbbdedcf69b886",
+            "acquired_at": "2026-10-20T02:31:05.731234+00:00",
+            "tls_verified": true,
+            "last_modified": "Mon, 19 Oct 2026 06:23:55 GMT"
+          },
+          "acquired_at": "2026-10-20T02:31:05.731234+00:00",
+          "attribution": "Canonical Ubuntu VEX",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "security-metadata.canonical.com",
+            "github.com"
+          ],
+          "authoritative_prefixes": [
+            "pkg:deb/ubuntu/"
+          ],
+          "expires_at": "2026-11-19T02:31:05.731234+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "cisa-kev",
+          "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+          "name": "CISA Known Exploited Vulnerabilities",
+          "counts": {
+            "exploitation": 1748
+          },
+          "license": "CC0-1.0",
+          "trusted": true,
+          "category": "exploitation",
+          "coverage": "Entire current KEV catalog",
+          "provenance": {
+            "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+            "bytes": 1792713,
+            "sha256": "b6e27975f6635ecfc546fbd4fd6e444ba63a07ab2abc8876229d77fe083d357d",
+            "acquired_at": "2026-10-20T02:31:05.901008+00:00",
+            "tls_verified": true,
+            "last_modified": "Fri, 16 Oct 2026 17:15:48 GMT"
+          },
+          "acquired_at": "2026-10-20T02:31:05.901008+00:00",
+          "attribution": "CISA Known Exploited Vulnerabilities",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "www.cisa.gov"
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T02:31:05.901008+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "alpine-secdb",
+          "url": "https://secdb.alpinelinux.org/v3.24/main.json",
+          "name": "Alpine SecDB v3.24",
+          "counts": {
+            "advisory": 10094
+          },
+          "license": "CC-BY-SA-4.0",
+          "trusted": true,
+          "category": "advisory",
+          "coverage": "Latest stable main and community SecDB",
+          "provenance": {
+            "main": {
+              "url": "https://secdb.alpinelinux.org/v3.24/main.json",
+              "bytes": 91739,
+              "sha256": "cf5cd27300cac5ee2f7bfcedef429f531dd1b17dad9b5547a94fefb3582f8bbf",
+              "acquired_at": "2026-10-20T02:31:06.400397+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 22:45:16 GMT"
+            },
+            "community": {
+              "url": "https://secdb.alpinelinux.org/v3.24/community.json",
+              "bytes": 162016,
+              "sha256": "37ccc723f92585382a615066c7deafdb1bc36e277d6d6964e9c611bc79e0f3e9",
+              "acquired_at": "2026-10-20T02:31:06.985787+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 23:39:39 GMT"
+            },
+            "release_index": {
+              "url": "https://secdb.alpinelinux.org/",
+              "bytes": 2710,
+              "sha256": "a6bbac87d8b3bd4542143909f27a17ccad3701a051082daaee480e44a4104bd6",
+              "acquired_at": "2026-10-20T02:31:04.434479+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            }
+          },
+          "acquired_at": "2026-10-20T02:31:06.400397+00:00",
+          "attribution": "Alpine SecDB v3.24",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "secdb.alpinelinux.org"
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T02:31:06.400397+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "ghsa-reviewed",
+          "url": "https://codeload.github.com/github/advisory-database/tar.gz/refs/heads/main",
+          "name": "GitHub Reviewed Advisory Database",
+          "counts": {
+            "advisory": 32256
+          },
+          "license": "CC-BY-4.0",
+          "trusted": true,
+          "category": "advisory",
+          "coverage": "All GitHub-reviewed advisories having CVE aliases",
+          "provenance": {
+            "url": "https://codeload.github.com/github/advisory-database/tar.gz/refs/heads/main",
+            "bytes": 140917028,
+            "sha256": "3783260af281a0038dc48d30d8ba5ab6d2652fc4ca428d998b333f9734d51d83",
+            "acquired_at": "2026-10-20T02:31:30.464580+00:00",
+            "tls_verified": true,
+            "last_modified": null
+          },
+          "acquired_at": "2026-10-20T02:31:30.464580+00:00",
+          "attribution": "GitHub Reviewed Advisory Database",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "codeload.github.com",
+            "github.com"
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T02:31:30.464580+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "redhat-vex",
+          "url": "https://security.access.redhat.com/data/csaf/v2/vex/",
+          "name": "Red Hat CSAF VEX",
+          "counts": {
+            "vex": 59417,
+            "vex_products": 240630,
+            "vex_documents": 59417,
+            "vex_statements": 5589493
+          },
+          "license": "CC-BY-4.0",
+          "trusted": true,
+          "category": "vex",
+          "coverage": "Whole per-CVE documents from the original Red Hat VEX archive within the canonical size bound",
+          "selection": {
+            "policy": "Complete original per-CVE documents; no statement truncation; exact versioned PURL and CSAF product context required for applicability",
+            "excluded": {
+              "redhat_member_above_safety_bound": 18,
+              "redhat_canonical_size_above_limit": 12003,
+              "redhat_invalid_ValueError:Duplicate CSAF product ID": 411
+            },
+            "unique_cves": 43247,
+            "archive_members": 71849,
+            "canonical_bytes": 3936932742,
+            "archive_documents": 71849,
+            "retained_documents": 59417,
+            "contextual_statements": 5589493,
+            "measured_size_cohorts": {
+              "65536": {
+                "documents": 36789,
+                "canonical_bytes": 470378806
+              },
+              "262144": {
+                "documents": 59828,
+                "canonical_bytes": 3984161424
+              },
+              "1048576": {
+                "documents": 69148,
+                "canonical_bytes": 8562755015
+              },
+              "4194304": {
+                "documents": 71438,
+                "canonical_bytes": 13078756249
+              }
+            },
+            "normalized_statements": 5589493,
+            "unique_product_identities": 240630,
+            "versioned_purl_statements": 1481906,
+            "archive_uncompressed_bytes": 22159788284,
+            "max_canonical_document_bytes": 262144,
+            "documents_with_versioned_purls": 15912,
+            "documents_without_normalized_statements": 16170
+          },
+          "provenance": {
+            "archive": {
+              "url": "https://security.access.redhat.com/data/csaf/v2/vex/csaf_vex_2026-10-18.tar.zst",
+              "bytes": 373262380,
+              "sha256": "50e6aa3cd24430a5e60c9f9ff7ada312e85375a43a112e73a884a509b0aeb7de",
+              "acquired_at": "2026-10-20T03:11:17.242176+00:00",
+              "tls_verified": true
+            },
+            "locator": {
+              "url": "https://security.access.redhat.com/data/csaf/v2/vex/archive_latest.txt",
+              "bytes": 27,
+              "sha256": "9ac0da297c7f6f5401d5888c35ca90397cac8bf76a8e06218c46ebf7b8d05801",
+              "acquired_at": "2026-10-20T03:11:45.709175+00:00",
+              "tls_verified": true
+            },
+            "license_evidence": {
+              "LICENSE-redhat.html": {
+                "url": "https://access.redhat.com/security/data",
+                "bytes": 74986,
+                "sha256": "a1fd756f9ebd470a2e197bf43357f28c67a4970e6953791716bbd53558e8bda5",
+                "acquired_at": "2026-10-20T03:11:45.998115+00:00",
+                "tls_verified": true
+              },
+              "LICENSE-redhat-CC-BY-4.0.txt": {
+                "url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+                "bytes": 18657,
+                "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+                "acquired_at": "2026-10-20T03:14:02.718478+00:00",
+                "tls_verified": true
+              }
+            },
+            "publisher_checksum": {
+              "url": "https://security.access.redhat.com/data/csaf/v2/vex/csaf_vex_2026-10-18.tar.zst.sha256",
+              "bytes": 93,
+              "sha256": "0bc721e298476645c22ee42f75a76ef77ce718200cb0e6d9bf8e4be9620ab587",
+              "acquired_at": "2026-10-20T03:11:45.807217+00:00",
+              "tls_verified": true
+            }
+          },
+          "acquired_at": "2026-10-20T03:11:17.242176+00:00",
+          "attribution": "Red Hat, Inc.",
+          "max_age_days": 30,
+          "trust_reason": "Official Red Hat archive acquired over HTTPS with publisher checksum; Red Hat RPM namespace only and exact CSAF product context required",
+          "allowed_hosts": [
+            "security.access.redhat.com"
+          ],
+          "license_files": [
+            "LICENSE-redhat.html",
+            "LICENSE-redhat-CC-BY-4.0.txt"
+          ],
+          "license_evidence_url": "https://access.redhat.com/security/data",
+          "authoritative_prefixes": [
+            "pkg:rpm/redhat/"
+          ],
+          "expires_at": "2026-11-19T03:11:17.242176+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "suse-vex",
+          "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/",
+          "name": "SUSE CSAF VEX",
+          "counts": {
+            "vex": 1926,
+            "vex_products": 1926,
+            "vex_documents": 1926,
+            "vex_statements": 370464
+          },
+          "license": "CC-BY-4.0",
+          "trusted": true,
+          "category": "vex",
+          "coverage": "Bounded complete SUSE CVE CSAF VEX documents; exact product and relationship identities",
+          "selection": {
+            "policy": "Newest modified indexed documents present in the publisher directories; complete documents only, no statement truncation",
+            "excluded": {
+              "suse_canonical_size_above_limit": 122
+            },
+            "documents": 1926,
+            "max_documents": 2048,
+            "canonical_bytes": 756990969,
+            "index_documents": 71607,
+            "status_affected": 77757,
+            "advisory_records": 1576,
+            "eligible_documents": 71592,
+            "selected_documents": 2048,
+            "directory_documents": 71711,
+            "status_not_affected": 292707,
+            "change_index_entries": 71607,
+            "normalized_statements": 370464,
+            "acquired_document_bytes": 948130582,
+            "versioned_purl_statements": 6490,
+            "versioned_status_affected": 3199,
+            "product_context_statements": 370464,
+            "not_selected_document_limit": 69544,
+            "max_canonical_document_bytes": 1048576,
+            "versioned_status_not_affected": 3291,
+            "index_missing_from_directories": 15,
+            "recommended_product_identities": 541214,
+            "documents_with_supported_status": 1538
+          },
+          "provenance": {
+            "index": {
+              "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/index.txt",
+              "bytes": 1765169,
+              "sha256": "a99d7162baeeff4c176fa75688760ef16f3779114cdc14c2964788fb03b3862d",
+              "acquired_at": "2026-10-20T03:13:24.305823+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 08:32:19 GMT"
+            },
+            "changes": {
+              "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/changes.csv",
+              "bytes": 3555344,
+              "sha256": "2bb1d350d6a9f2a10802f42742c61f889252b3966fab66c331c5619a7b053c07",
+              "acquired_at": "2026-10-20T03:13:27.203743+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 08:32:19 GMT"
+            },
+            "license": {
+              "url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+              "bytes": 18657,
+              "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+              "acquired_at": "2026-10-20T03:13:27.258939+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 11 Sep 2023 21:49:41 GMT"
+            },
+            "directories": {
+              "2023": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2023/",
+                "bytes": 16670408,
+                "sha256": "42e6972856ba7d08d025ea9f6ce7ffb0b69abac87d4409091e46c20fd967f6d9",
+                "acquired_at": "2026-10-20T03:13:31.038208+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2024": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2024/",
+                "bytes": 3180552,
+                "sha256": "3a646436fb873124a83570d9fe0ff7269ee659330c79e4aa6a79e838d993f68b",
+                "acquired_at": "2026-10-20T03:13:33.012434+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2025": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2025/",
+                "bytes": 4119305,
+                "sha256": "935504d10a476ad95aecf821134b8bea1aa433d500d875ba1bcbeb822c98836d",
+                "acquired_at": "2026-10-20T03:13:34.617461+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2026": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2026/",
+                "bytes": 9347490,
+                "sha256": "3661ee583a5be94e694c2f98dfca111026b9242ebba9ca9edf73bc9ec4f89ceb",
+                "acquired_at": "2026-10-20T03:13:36.372118+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              }
+            }
+          },
+          "acquired_at": "2026-10-20T03:13:24.305823+00:00",
+          "attribution": "SUSE Product Security Team",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "ftp.suse.com"
+          ],
+          "authoritative_prefixes": [
+            "pkg:rpm/suse/"
+          ],
+          "expires_at": "2026-11-19T03:13:24.305823+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "suse-advisories",
+          "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/",
+          "name": "SUSE CSAF product recommendations",
+          "counts": {
+            "advisory": 1576
+          },
+          "license": "CC-BY-4.0",
+          "trusted": false,
+          "category": "advisory",
+          "coverage": "Explicit recommended product identities from the selected SUSE documents; not VEX fixed assertions",
+          "selection": {
+            "policy": "Newest modified indexed documents present in the publisher directories; complete documents only, no statement truncation",
+            "excluded": {
+              "suse_canonical_size_above_limit": 122
+            },
+            "documents": 1926,
+            "max_documents": 2048,
+            "canonical_bytes": 756990969,
+            "index_documents": 71607,
+            "status_affected": 77757,
+            "advisory_records": 1576,
+            "eligible_documents": 71592,
+            "selected_documents": 2048,
+            "directory_documents": 71711,
+            "status_not_affected": 292707,
+            "change_index_entries": 71607,
+            "normalized_statements": 370464,
+            "acquired_document_bytes": 948130582,
+            "versioned_purl_statements": 6490,
+            "versioned_status_affected": 3199,
+            "product_context_statements": 370464,
+            "not_selected_document_limit": 69544,
+            "max_canonical_document_bytes": 1048576,
+            "versioned_status_not_affected": 3291,
+            "index_missing_from_directories": 15,
+            "recommended_product_identities": 541214,
+            "documents_with_supported_status": 1538
+          },
+          "provenance": {
+            "index": {
+              "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/index.txt",
+              "bytes": 1765169,
+              "sha256": "a99d7162baeeff4c176fa75688760ef16f3779114cdc14c2964788fb03b3862d",
+              "acquired_at": "2026-10-20T03:13:24.305823+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 08:32:19 GMT"
+            },
+            "changes": {
+              "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/changes.csv",
+              "bytes": 3555344,
+              "sha256": "2bb1d350d6a9f2a10802f42742c61f889252b3966fab66c331c5619a7b053c07",
+              "acquired_at": "2026-10-20T03:13:27.203743+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 19 Oct 2026 08:32:19 GMT"
+            },
+            "license": {
+              "url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+              "bytes": 18657,
+              "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+              "acquired_at": "2026-10-20T03:13:27.258939+00:00",
+              "tls_verified": true,
+              "last_modified": "Mon, 11 Sep 2023 21:49:41 GMT"
+            },
+            "directories": {
+              "2023": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2023/",
+                "bytes": 16670408,
+                "sha256": "42e6972856ba7d08d025ea9f6ce7ffb0b69abac87d4409091e46c20fd967f6d9",
+                "acquired_at": "2026-10-20T03:13:31.038208+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2024": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2024/",
+                "bytes": 3180552,
+                "sha256": "3a646436fb873124a83570d9fe0ff7269ee659330c79e4aa6a79e838d993f68b",
+                "acquired_at": "2026-10-20T03:13:33.012434+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2025": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2025/",
+                "bytes": 4119305,
+                "sha256": "935504d10a476ad95aecf821134b8bea1aa433d500d875ba1bcbeb822c98836d",
+                "acquired_at": "2026-10-20T03:13:34.617461+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              },
+              "2026": {
+                "url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2026/",
+                "bytes": 9347490,
+                "sha256": "3661ee583a5be94e694c2f98dfca111026b9242ebba9ca9edf73bc9ec4f89ceb",
+                "acquired_at": "2026-10-20T03:13:36.372118+00:00",
+                "tls_verified": true,
+                "last_modified": null
+              }
+            }
+          },
+          "acquired_at": "2026-10-20T03:13:24.305823+00:00",
+          "attribution": "SUSE Product Security Team",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "ftp.suse.com"
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:24.305823+00:00",
+          "health": "untrusted",
+          "enabled": true
+        },
+        {
+          "id": "first-epss",
+          "url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+          "name": "FIRST Exploit Prediction Scoring System",
+          "counts": {
+            "risk_enrichment": 391411
+          },
+          "license": "LicenseRef-FIRST-EPSS",
+          "trusted": true,
+          "category": "risk_enrichment",
+          "coverage": "Entire daily EPSS CSV, all CVE scores",
+          "provenance": {
+            "url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+            "bytes": 2743807,
+            "sha256": "80819f94057089bcd2e3c4d0377de3b7948e41b07062c4237618973e828ef96f",
+            "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+            "tls_verified": true,
+            "last_modified": "Mon, 19 Oct 2026 13:30:37 GMT"
+          },
+          "score_date": "2026-10-19T12:00:27Z",
+          "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+          "attribution": "FIRST Exploit Prediction Scoring System",
+          "max_age_days": 7,
+          "allowed_hosts": [
+            "epss.empiricalsecurity.com",
+            "www.first.org"
+          ],
+          "model_version": "v2026.06.15",
+          "license_evidence": [
+            {
+              "url": "https://www.first.org/epss/faq",
+              "bytes": 48135,
+              "sha256": "ab8e4e7d7c2e4a94d72b78ee5081f636f7d195e2aa3daf0220acee6b39dc2474",
+              "filename": "TERMS-epss.html",
+              "acquired_at": "2026-10-20T03:13:05.103193+00:00",
+              "tls_verified": true,
+              "last_modified": "Wed, 29 Jul 2026 12:13:04 GMT"
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-10-27T03:13:04.363223+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "nvd-modified",
+          "url": "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-modified.json.gz",
+          "name": "NIST NVD modified CVE feed",
+          "counts": {
+            "vulnerability": 22272
+          },
+          "license": "LicenseRef-NIST-Public-Service",
+          "trusted": true,
+          "category": "vulnerability",
+          "coverage": "Current rolling modified feed only; not full NVD history",
+          "provenance": {
+            "url": "https://nvd.nist.gov/feeds/json/cve/2.0/nvdcve-2.0-modified.json.gz",
+            "bytes": 12475853,
+            "sha256": "5959ebd654156c5521b9eddecc1f7177378be92b4e47733cfbe1220684785c11",
+            "acquired_at": "2026-10-20T03:13:23.685605+00:00",
+            "tls_verified": true,
+            "last_modified": "Fri, 16 Oct 2026 22:15:10 GMT"
+          },
+          "acquired_at": "2026-10-20T03:13:23.685605+00:00",
+          "attribution": "NIST NVD modified CVE feed",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "nvd.nist.gov"
+          ],
+          "feed_timestamp": "2026-10-16T18:00:05.0136263",
+          "license_evidence": [
+            {
+              "url": "https://www.nist.gov/open/license",
+              "bytes": 93931,
+              "sha256": "6f000573e348a13030a39ee074a3b7eccd3a3a248a78d66791078c860e69dfa1",
+              "filename": "TERMS-nvd.html",
+              "acquired_at": "2026-10-20T03:13:05.222294+00:00",
+              "tls_verified": true,
+              "last_modified": "Tue, 20 Oct 2026 02:18:19 GMT"
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:23.685605+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "cisa-vulnrichment",
+          "url": "https://codeload.github.com/cisagov/vulnrichment/tar.gz/refs/heads/develop",
+          "name": "CISA ADP Vulnrichment",
+          "counts": {
+            "risk_enrichment": 200751
+          },
+          "license": "CC0-1.0",
+          "trusted": true,
+          "category": "risk_enrichment",
+          "coverage": "CISA-authored ADP containers across the current Vulnrichment repository",
+          "provenance": {
+            "url": "https://codeload.github.com/cisagov/vulnrichment/tar.gz/refs/heads/develop",
+            "bytes": 102205859,
+            "sha256": "7fa0f238d2a93b1822ea93d85baf19979f6c04fd1b316b3a7c53d26cd28c92a1",
+            "acquired_at": "2026-10-20T03:13:21.660178+00:00",
+            "tls_verified": true,
+            "last_modified": null
+          },
+          "acquired_at": "2026-10-20T03:13:21.660178+00:00",
+          "attribution": "CISA ADP Vulnrichment",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "codeload.github.com",
+            "github.com"
+          ],
+          "license_evidence": [
+            {
+              "url": "https://raw.githubusercontent.com/cisagov/vulnrichment/develop/LICENSE",
+              "bytes": 7048,
+              "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+              "filename": "LICENSE-vulnrichment.txt",
+              "acquired_at": "2026-10-20T03:13:04.652973+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:21.660178+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "osv-go",
+          "url": "https://storage.googleapis.com/osv-vulnerabilities/Go/all.zip",
+          "name": "Go vulnerability database via OSV",
+          "counts": {
+            "advisory": 4428
+          },
+          "license": "CC-BY-4.0",
+          "trusted": true,
+          "category": "advisory",
+          "coverage": "Publisher-owned records from selected ecosystem dump with every CVE alias; other publishers and records without CVE aliases excluded",
+          "provenance": {
+            "url": "https://storage.googleapis.com/osv-vulnerabilities/Go/all.zip",
+            "bytes": 12551293,
+            "sha256": "8723bac935e1adbe28fd2fcc38e48aa46d1b8e8a20c45ca86c449149c0c79b70",
+            "acquired_at": "2026-10-20T03:13:04.380730+00:00",
+            "tls_verified": true,
+            "last_modified": "Tue, 20 Oct 2026 01:02:56 GMT"
+          },
+          "acquired_at": "2026-10-20T03:13:04.380730+00:00",
+          "attribution": "Go vulnerability database via OSV",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "osv.dev",
+            "storage.googleapis.com"
+          ],
+          "license_evidence": [
+            {
+              "url": "https://raw.githubusercontent.com/golang/vulndb/master/data/LICENSE",
+              "bytes": 14527,
+              "sha256": "419896aea50c15d6e40c5b4baf4bd346f78223b9a354c7357ad00262afdc08ec",
+              "filename": "LICENSE-osv-go.txt",
+              "acquired_at": "2026-10-20T03:13:04.693520+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:04.380730+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "osv-pypi",
+          "url": "https://storage.googleapis.com/osv-vulnerabilities/PyPI/all.zip",
+          "name": "PyPA advisory database via OSV",
+          "counts": {
+            "advisory": 7667
+          },
+          "license": "CC-BY-4.0",
+          "trusted": true,
+          "category": "advisory",
+          "coverage": "Publisher-owned records from selected ecosystem dump with every CVE alias; other publishers and records without CVE aliases excluded",
+          "provenance": {
+            "url": "https://storage.googleapis.com/osv-vulnerabilities/PyPI/all.zip",
+            "bytes": 36469854,
+            "sha256": "9afc5a7619ca1328e12c27424011a867a8df76bfa37745799d2abac06ba181d9",
+            "acquired_at": "2026-10-20T03:13:05.011429+00:00",
+            "tls_verified": true,
+            "last_modified": "Mon, 19 Oct 2026 22:33:00 GMT"
+          },
+          "acquired_at": "2026-10-20T03:13:05.011429+00:00",
+          "attribution": "PyPA advisory database via OSV",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "osv.dev",
+            "storage.googleapis.com"
+          ],
+          "license_evidence": [
+            {
+              "url": "https://raw.githubusercontent.com/pypa/advisory-database/main/LICENSE",
+              "bytes": 18657,
+              "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411",
+              "filename": "LICENSE-osv-pypi.txt",
+              "acquired_at": "2026-10-20T03:13:04.797189+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:05.011429+00:00",
+          "health": "loaded",
+          "enabled": true
+        },
+        {
+          "id": "osv-rust",
+          "url": "https://storage.googleapis.com/osv-vulnerabilities/crates.io/all.zip",
+          "name": "RustSec advisory database via OSV",
+          "counts": {
+            "advisory": 607
+          },
+          "license": "CC0-1.0 AND CC-BY-4.0",
+          "trusted": true,
+          "category": "advisory",
+          "coverage": "Publisher-owned records from selected ecosystem dump with every CVE alias; other publishers and records without CVE aliases excluded",
+          "provenance": {
+            "url": "https://storage.googleapis.com/osv-vulnerabilities/crates.io/all.zip",
+            "bytes": 3620600,
+            "sha256": "2cb1d0399a3543e32165973413c14cc70ae96de4cbc4721cf45d168b56bf5c5c",
+            "acquired_at": "2026-10-20T03:13:04.554254+00:00",
+            "tls_verified": true,
+            "last_modified": "Mon, 19 Oct 2026 17:18:05 GMT"
+          },
+          "acquired_at": "2026-10-20T03:13:04.554254+00:00",
+          "attribution": "RustSec advisory database via OSV",
+          "max_age_days": 30,
+          "allowed_hosts": [
+            "osv.dev",
+            "storage.googleapis.com"
+          ],
+          "license_evidence": [
+            {
+              "url": "https://raw.githubusercontent.com/rustsec/advisory-db/main/LICENSE.txt",
+              "bytes": 1299,
+              "sha256": "b342fe896e158b8c5a83e707446113f3a149fa0104d834afa78cd2a48eaf1906",
+              "filename": "LICENSE-osv-rust.txt",
+              "acquired_at": "2026-10-20T03:13:04.856511+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            },
+            {
+              "url": "https://raw.githubusercontent.com/rustsec/advisory-db/main/LICENSES/CC0-1.0.txt",
+              "bytes": 7048,
+              "sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+              "filename": "LICENSE-osv-rust-cc0.txt",
+              "acquired_at": "2026-10-20T03:13:04.974259+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            },
+            {
+              "url": "https://raw.githubusercontent.com/rustsec/advisory-db/main/LICENSES/CC-BY-4.0.txt",
+              "bytes": 20138,
+              "sha256": "28a9529c7d0bb4dc51f4bf5c116a3d16ef247a052f7591466768ddf563fd1cf5",
+              "filename": "LICENSE-osv-rust-ccby.txt",
+              "acquired_at": "2026-10-20T03:13:05.086636+00:00",
+              "tls_verified": true,
+              "last_modified": null
+            }
+          ],
+          "authoritative_prefixes": [],
+          "expires_at": "2026-11-19T03:13:04.554254+00:00",
+          "health": "loaded",
+          "enabled": true
+        }
+      ],
+      "exclusions": [
+        {
+          "counts": {
+            "alpine-secdb_duplicate_records": 8,
+            "alpine_non_cve_identifiers": 95,
+            "cisa-vulnrichment_without_cisa_adp": 529,
+            "ghsa_reviewed_without_cve": 4654,
+            "osv-go_other_publisher": 5030,
+            "osv-go_without_cve_alias": 346,
+            "osv-pypi_other_publisher": 18451,
+            "osv-pypi_without_cve_alias": 342,
+            "osv-rust_other_publisher": 1627,
+            "osv-rust_without_cve_alias": 781,
+            "redhat_canonical_size_above_limit": 12003,
+            "redhat_invalid_ValueError:Duplicate CSAF product ID": 411,
+            "redhat_member_above_safety_bound": 18,
+            "suse_canonical_size_above_limit": 122,
+            "ubuntu_canonical_size_above_limit": 19830,
+            "ubuntu_invalid_ValueError:Unsupported VEX format/version": 14,
+            "ubuntu_invalid_alias_or_identifier": 507,
+            "ubuntu_normalized_statement_limit": 398
+          },
+          "reason": "Whole-document and scoped-feed bounds; individual reasons and counts are preserved.",
+          "source": "selection"
+        }
+      ],
+      "history": [
+        {
+          "version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+          "sequence": 2026102001,
+          "installed_at": "2026-10-20T04:23:44.467339+00:00",
+          "counts": {
+            "vex": 119387,
+            "exploitation": 1748,
+            "advisory": 56628,
+            "risk_enrichment": 592162,
+            "vulnerability": 22272,
+            "vex_documents": 119387,
+            "vex_statements": 29212947,
+            "vex_products": 2245117,
+            "sources": 13,
+            "records": 672810
+          }
+        }
+      ]
+    }
+  },
+  "runtime_sources_api": {
+    "path": "/api/risk/sources",
+    "invocation": "Actual route handler with in-memory authorized diagnostic AuthContext; no HTTP session created.",
+    "seconds": 0.2956072769993625,
+    "items": [
+      {
+        "id": 3,
+        "name": "Alpine SecDB v3.24",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "secdb.alpinelinux.org"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 10,
+        "name": "CISA ADP Vulnrichment",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "codeload.github.com",
+          "github.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 2,
+        "name": "CISA Known Exploited Vulnerabilities",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "www.cisa.gov"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 1,
+        "name": "Canonical Ubuntu VEX",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "github.com",
+          "security-metadata.canonical.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [
+          "pkg:deb/ubuntu/"
+        ],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": "2026-10-20T02:31:05.731234+00:00",
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "loaded",
+        "latest_issued_at": "2026-10-17T10:01:24.802997+00:00",
+        "documents": 58044,
+        "key_configured": false,
+        "statements": null,
+        "statement_count_state": "lower_bound",
+        "statement_count_lower_bound": 10001,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 8,
+        "name": "FIRST Exploit Prediction Scoring System",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "epss.empiricalsecurity.com",
+          "www.first.org"
+        ],
+        "max_age_days": 7,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 4,
+        "name": "GitHub Reviewed Advisory Database",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "codeload.github.com",
+          "github.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 11,
+        "name": "Go vulnerability database via OSV",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "osv.dev",
+          "storage.googleapis.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 9,
+        "name": "NIST NVD modified CVE feed",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "nvd.nist.gov"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 12,
+        "name": "PyPA advisory database via OSV",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "osv.dev",
+          "storage.googleapis.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 5,
+        "name": "Red Hat CSAF VEX",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "security.access.redhat.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [
+          "pkg:rpm/redhat/"
+        ],
+        "trust_reason": "Official Red Hat archive acquired over HTTPS with publisher checksum; Red Hat RPM namespace only and exact CSAF product context required",
+        "last_success": "2026-10-20T03:11:17.242176+00:00",
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "loaded",
+        "latest_issued_at": "2026-10-18T09:37:02+00:00",
+        "documents": 59417,
+        "key_configured": false,
+        "statements": null,
+        "statement_count_state": "lower_bound",
+        "statement_count_lower_bound": 10001,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 13,
+        "name": "RustSec advisory database via OSV",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "osv.dev",
+          "storage.googleapis.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "empty",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 6,
+        "name": "SUSE CSAF VEX",
+        "trusted": true,
+        "enabled": true,
+        "allowed_hosts": [
+          "ftp.suse.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [
+          "pkg:rpm/suse/"
+        ],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": "2026-10-20T03:21:51.572870+00:00",
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "loaded",
+        "latest_issued_at": "2026-10-19T00:24:03+00:00",
+        "documents": 1926,
+        "key_configured": false,
+        "statements": null,
+        "statement_count_state": "lower_bound",
+        "statement_count_lower_bound": 10001,
+        "statement_count_scope": "retained_history"
+      },
+      {
+        "id": 7,
+        "name": "SUSE CSAF product recommendations",
+        "trusted": false,
+        "enabled": true,
+        "allowed_hosts": [
+          "ftp.suse.com"
+        ],
+        "max_age_days": 30,
+        "authoritative_prefixes": [],
+        "trust_reason": "Authority and acquisition provenance in signed embedded distribution",
+        "last_success": null,
+        "last_error": null,
+        "has_pinned_key": false,
+        "health": "untrusted",
+        "latest_issued_at": null,
+        "documents": 0,
+        "key_configured": false,
+        "statements": 0,
+        "statement_count_state": "exact",
+        "statement_count_lower_bound": 0,
+        "statement_count_scope": "retained_history"
+      }
+    ],
+    "embedded_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+    "statement_probe_limit": 10001,
+    "count_scope": "Retained history; exact up to configured bound, lower-bound indication thereafter."
+  },
+  "catalog_token": {
+    "value": "02c107f2db4a94972bda0a7a9e8161d806a8f809f3d00d7596be676c367d531e",
+    "seconds": 0.040248889999929816
+  },
+  "scoped_lookup_examples": {
+    "ubuntu-vex": {
+      "cve": "CVE-2026-111458",
+      "identity": {
+        "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+        "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+        "version": "1.3-2build1",
+        "distro": "jammy"
+      },
+      "source": "Canonical Ubuntu VEX",
+      "source_url": "https://github.com/canonical/ubuntu-security-notices/blob/main/vex/cve/2026/CVE-2026-111458.json",
+      "document_id": 22356,
+      "document_key": "https://github.com/canonical/ubuntu-security-notices/blob/main/vex/cve/2026/CVE-2026-111458",
+      "document_sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+      "document_issued_at": "2026-10-17T10:01:24.802997+00:00",
+      "source_acquired_at": "2026-10-20T02:31:05.731234+00:00",
+      "max_age_days": 30,
+      "now": "2026-10-20T04:43:51.943297+00:00",
+      "current": {
+        "status": "under_investigation",
+        "statements": [
+          {
+            "id": 12516181,
+            "document_id": 22356,
+            "source_id": 1,
+            "source": "Canonical Ubuntu VEX",
+            "status": "under_investigation",
+            "identity": {
+              "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+              "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+              "version": "1.3-2build1",
+              "distro": "jammy"
+            },
+            "verification": "tls",
+            "sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+            "reason": null,
+            "justification": null,
+            "impact_statement": null,
+            "action_statement": null,
+            "valid_until": "2026-11-16T10:01:24.802997+00:00"
+          }
+        ],
+        "valid_until": "2026-11-16T10:01:24.802997+00:00",
+        "reasons": []
+      },
+      "current_fresh_match": true,
+      "selection": {
+        "mode": "current_fresh",
+        "fresh_document_limit": 128,
+        "fresh_statement_evaluation_limit": 32,
+        "fresh_documents_examined": 1,
+        "fresh_statements_evaluated": 1,
+        "fallback_statement_limit_per_pass": 32,
+        "scope": "Bounded example search, not an exhaustive claim that fresh matches are present or absent.",
+        "selected_statement_current_usable": true
+      },
+      "source_as_of": {
+        "as_of": "2026-10-17T10:01:24.802997+00:00",
+        "purpose": "Historical diagnostic at the actual statement publication time; no production freshness or trust configuration changed.",
+        "result": {
+          "status": "under_investigation",
+          "statements": [
+            {
+              "id": 12516181,
+              "document_id": 22356,
+              "source_id": 1,
+              "source": "Canonical Ubuntu VEX",
+              "status": "under_investigation",
+              "identity": {
+                "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                "version": "1.3-2build1",
+                "distro": "jammy"
+              },
+              "verification": "tls",
+              "sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+              "reason": null,
+              "justification": null,
+              "impact_statement": null,
+              "action_statement": null,
+              "valid_until": "2026-11-16T10:01:24.802997+00:00"
+            }
+          ],
+          "valid_until": "2026-11-16T10:01:24.802997+00:00",
+          "reasons": []
+        }
+      },
+      "wrong_context": {
+        "description": "same exact PURL and version, contradictory distribution context",
+        "identity": {
+          "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+          "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+          "version": "1.3-2build1",
+          "distro": "acceptance-wrong-distribution"
+        },
+        "current": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "source_as_of": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        }
+      },
+      "wrong_purl": {
+        "status": "no_vex",
+        "statements": [],
+        "valid_until": null,
+        "reasons": [
+          "no_vex"
+        ]
+      },
+      "seconds": {
+        "candidate_selection_and_source_as_of": 0.04609831999914604,
+        "current_exact": 0.011130465001770062,
+        "wrong_context_current_and_source_as_of": 0.0209269300030428
+      }
+    },
+    "redhat-vex": {
+      "cve": "CVE-2026-73619",
+      "identity": {
+        "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+        "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+        "version": "4.6.31-1.el9ap",
+        "csaf_product_context": {
+          "publisher": "https://www.redhat.com",
+          "products": [
+            {
+              "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+            }
+          ]
+        },
+        "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+        "csaf_relationship": "default_component_of"
+      },
+      "source": "Red Hat CSAF VEX",
+      "source_url": "https://security.access.redhat.com/data/csaf/v2/vex/2026/cve-2026-73619.json",
+      "document_id": 112453,
+      "document_key": "CVE-2026-73619",
+      "document_sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+      "document_issued_at": "2026-10-18T08:52:23+00:00",
+      "source_acquired_at": "2026-10-20T03:11:17.242176+00:00",
+      "max_age_days": 30,
+      "now": "2026-10-20T04:43:51.943297+00:00",
+      "current": {
+        "status": "affected",
+        "statements": [
+          {
+            "id": 28121946,
+            "document_id": 112453,
+            "source_id": 5,
+            "source": "Red Hat CSAF VEX",
+            "status": "affected",
+            "identity": {
+              "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+              "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+              "version": "4.6.31-1.el9ap",
+              "csaf_product_context": {
+                "publisher": "https://www.redhat.com",
+                "products": [
+                  {
+                    "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+                  }
+                ]
+              },
+              "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+              "csaf_relationship": "default_component_of"
+            },
+            "verification": "tls",
+            "sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+            "reason": null,
+            "justification": null,
+            "impact_statement": "A flaw was found in GitPython. This vulnerability allows an attacker to read arbitrary files from the filesystem. By exploiting an incomplete denylist in the `unsafe_git_archive_options` guard, an attacker can supply specific options, such as `--add-file` or `--add-virtual-file`, to the `Repo.archive()` function. This leads to unauthorized information disclosure at the privileges of the process running GitPython.\ngitpython: GitPython: Arbitrary file read vulnerability via `Repo.archive()`\nThis is a Moderate impact flaw in GitPython that allows an attacker to read arbitrary files from the filesystem. The vulnerability arises from an incomplete denylist in the `unsafe_git_archive_options` guard, which can be bypassed by supplying specific options to the `Repo.archive()` function. This could lead to unauthorized information disclosure in Red Hat products utilizing affected versions of GitPython, such as Red Hat OpenStack Platform and Red Hat Satellite.\nThe CVSS score(s) listed for this vulnerability do not reflect the associated product's status, and are included for informational purposes to better understand the severity of this vulnerability.",
+            "action_statement": null,
+            "valid_until": "2026-11-17T08:52:23+00:00"
+          }
+        ],
+        "valid_until": "2026-11-17T08:52:23+00:00",
+        "reasons": []
+      },
+      "current_fresh_match": true,
+      "selection": {
+        "mode": "current_fresh",
+        "fresh_document_limit": 128,
+        "fresh_statement_evaluation_limit": 32,
+        "fresh_documents_examined": 2,
+        "fresh_statements_evaluated": 1,
+        "fallback_statement_limit_per_pass": 32,
+        "scope": "Bounded example search, not an exhaustive claim that fresh matches are present or absent.",
+        "selected_statement_current_usable": true
+      },
+      "source_as_of": {
+        "as_of": "2026-10-18T08:52:23+00:00",
+        "purpose": "Historical diagnostic at the actual statement publication time; no production freshness or trust configuration changed.",
+        "result": {
+          "status": "affected",
+          "statements": [
+            {
+              "id": 28121946,
+              "document_id": 112453,
+              "source_id": 5,
+              "source": "Red Hat CSAF VEX",
+              "status": "affected",
+              "identity": {
+                "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                "version": "4.6.31-1.el9ap",
+                "csaf_product_context": {
+                  "publisher": "https://www.redhat.com",
+                  "products": [
+                    {
+                      "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+                    }
+                  ]
+                },
+                "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+                "csaf_relationship": "default_component_of"
+              },
+              "verification": "tls",
+              "sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+              "reason": null,
+              "justification": null,
+              "impact_statement": "A flaw was found in GitPython. This vulnerability allows an attacker to read arbitrary files from the filesystem. By exploiting an incomplete denylist in the `unsafe_git_archive_options` guard, an attacker can supply specific options, such as `--add-file` or `--add-virtual-file`, to the `Repo.archive()` function. This leads to unauthorized information disclosure at the privileges of the process running GitPython.\ngitpython: GitPython: Arbitrary file read vulnerability via `Repo.archive()`\nThis is a Moderate impact flaw in GitPython that allows an attacker to read arbitrary files from the filesystem. The vulnerability arises from an incomplete denylist in the `unsafe_git_archive_options` guard, which can be bypassed by supplying specific options to the `Repo.archive()` function. This could lead to unauthorized information disclosure in Red Hat products utilizing affected versions of GitPython, such as Red Hat OpenStack Platform and Red Hat Satellite.\nThe CVSS score(s) listed for this vulnerability do not reflect the associated product's status, and are included for informational purposes to better understand the severity of this vulnerability.",
+              "action_statement": null,
+              "valid_until": "2026-11-17T08:52:23+00:00"
+            }
+          ],
+          "valid_until": "2026-11-17T08:52:23+00:00",
+          "reasons": []
+        }
+      },
+      "wrong_context": {
+        "description": "same exact PURL and version, different containing product CPE",
+        "identity": {
+          "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+          "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+          "version": "4.6.31-1.el9ap",
+          "csaf_product_context": {
+            "publisher": "https://www.redhat.com",
+            "products": [
+              {
+                "cpe": "cpe:/o:acceptance:wrong_product:0"
+              }
+            ]
+          },
+          "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+          "csaf_relationship": "default_component_of"
+        },
+        "current": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "source_as_of": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        }
+      },
+      "wrong_purl": {
+        "status": "no_vex",
+        "statements": [],
+        "valid_until": null,
+        "reasons": [
+          "no_vex"
+        ]
+      },
+      "seconds": {
+        "candidate_selection_and_source_as_of": 0.026272139002685435,
+        "current_exact": 0.007035182999970857,
+        "wrong_context_current_and_source_as_of": 0.01449718500225572
+      }
+    },
+    "suse-vex": {
+      "cve": "CVE-2015-4588",
+      "identity": {
+        "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+        "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+        "version": "0_2-7",
+        "csaf_product_context": {
+          "publisher": "https://www.suse.com/",
+          "products": [
+            {
+              "cpe": "cpe:/o:suse:sled:15:sp5"
+            }
+          ]
+        },
+        "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+        "csaf_relationship": "default_component_of"
+      },
+      "source": "SUSE CSAF VEX",
+      "source_url": "https://ftp.suse.com/pub/projects/security/csaf-vex/2023/cve-2015-4588.json",
+      "document_id": 117698,
+      "document_key": "CVE-2015-4588",
+      "document_sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+      "document_issued_at": "2026-10-19T00:17:25+00:00",
+      "source_acquired_at": "2026-10-20T03:13:24.305823+00:00",
+      "max_age_days": 30,
+      "now": "2026-10-20T04:43:51.943297+00:00",
+      "current": {
+        "status": "not_affected",
+        "statements": [
+          {
+            "id": 28876828,
+            "document_id": 117698,
+            "source_id": 6,
+            "source": "SUSE CSAF VEX",
+            "status": "not_affected",
+            "identity": {
+              "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+              "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+              "version": "0_2-7",
+              "csaf_product_context": {
+                "publisher": "https://www.suse.com/",
+                "products": [
+                  {
+                    "cpe": "cpe:/o:suse:sled:15:sp5"
+                  }
+                ]
+              },
+              "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+              "csaf_relationship": "default_component_of"
+            },
+            "verification": "tls",
+            "sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+            "reason": null,
+            "justification": null,
+            "impact_statement": "Heap-based buffer overflow in the DecodeImage function in libwmf 0.2.8.4 allows remote attackers to cause a denial of service (crash) or possibly execute arbitrary code via a crafted \"run-length count\" in an image in a WMF file.",
+            "action_statement": null,
+            "valid_until": "2026-11-18T00:17:25+00:00"
+          }
+        ],
+        "valid_until": "2026-11-18T00:17:25+00:00",
+        "reasons": []
+      },
+      "current_fresh_match": true,
+      "selection": {
+        "mode": "historical_seed_fallback",
+        "fresh_document_limit": 128,
+        "fresh_statement_evaluation_limit": 32,
+        "fresh_documents_examined": 128,
+        "fresh_statements_evaluated": 0,
+        "fallback_statement_limit_per_pass": 32,
+        "scope": "Bounded example search, not an exhaustive claim that fresh matches are present or absent.",
+        "selected_statement_current_usable": true
+      },
+      "source_as_of": {
+        "as_of": "2026-10-19T00:17:25+00:00",
+        "purpose": "Historical diagnostic at the actual statement publication time; no production freshness or trust configuration changed.",
+        "result": {
+          "status": "not_affected",
+          "statements": [
+            {
+              "id": 28876828,
+              "document_id": 117698,
+              "source_id": 6,
+              "source": "SUSE CSAF VEX",
+              "status": "not_affected",
+              "identity": {
+                "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                "version": "0_2-7",
+                "csaf_product_context": {
+                  "publisher": "https://www.suse.com/",
+                  "products": [
+                    {
+                      "cpe": "cpe:/o:suse:sled:15:sp5"
+                    }
+                  ]
+                },
+                "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+                "csaf_relationship": "default_component_of"
+              },
+              "verification": "tls",
+              "sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+              "reason": null,
+              "justification": null,
+              "impact_statement": "Heap-based buffer overflow in the DecodeImage function in libwmf 0.2.8.4 allows remote attackers to cause a denial of service (crash) or possibly execute arbitrary code via a crafted \"run-length count\" in an image in a WMF file.",
+              "action_statement": null,
+              "valid_until": "2026-11-18T00:17:25+00:00"
+            }
+          ],
+          "valid_until": "2026-11-18T00:17:25+00:00",
+          "reasons": []
+        }
+      },
+      "wrong_context": {
+        "description": "same exact PURL and version, different containing product CPE",
+        "identity": {
+          "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+          "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+          "version": "0_2-7",
+          "csaf_product_context": {
+            "publisher": "https://www.suse.com/",
+            "products": [
+              {
+                "cpe": "cpe:/o:acceptance:wrong_product:0"
+              }
+            ]
+          },
+          "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+          "csaf_relationship": "default_component_of"
+        },
+        "current": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "source_as_of": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        }
+      },
+      "wrong_purl": {
+        "status": "no_vex",
+        "statements": [],
+        "valid_until": null,
+        "reasons": [
+          "no_vex"
+        ]
+      },
+      "seconds": {
+        "candidate_selection_and_source_as_of": 0.15399598799922387,
+        "current_exact": 0.0031715730001451448,
+        "wrong_context_current_and_source_as_of": 0.005749001997173764
+      }
+    }
+  },
+  "kev_overlay": {
+    "cve": "CVE-2026-102764",
+    "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "sha256": "2bc6e4be16ebfa73095a5b30674ef0d13adf3ac64c51eaf0ad7980d6ed739c9b",
+    "source_acquired_at": "2026-10-20T02:31:05.901008+00:00",
+    "publication_at": "2026-10-20T02:31:05.901008+00:00",
+    "max_age_days": 30,
+    "current_fresh": true,
+    "now": "2026-10-20T04:43:51.943297+00:00",
+    "expected_positive_value": true,
+    "positive": {
+      "kev": true,
+      "epss": null
+    },
+    "catalog": {
+      "state": "LOADED",
+      "records": 1748,
+      "metadata": {
+        "date_released": "2026-10-20T02:31:05.901008+00:00",
+        "expires_at": "2026-11-19T02:31:05.901008+00:00",
+        "basis": "embedded-signed-package",
+        "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+        "source": "cisa-kev",
+        "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        "prior_catalog": {
+          "state": "MISSING"
+        }
+      }
+    },
+    "unknown_control": "CVE-1900-0000",
+    "unknown_preserved": true,
+    "seconds": 0.007607784002175322,
+    "source_as_of": {
+      "as_of": "2026-10-20T02:31:05.901008+00:00",
+      "seconds": 0.0016033000028983224,
+      "positive": {
+        "kev": true,
+        "epss": null
+      },
+      "unknown": {
+        "kev": null,
+        "epss": null
+      },
+      "catalog": {
+        "state": "LOADED",
+        "records": 1748,
+        "metadata": {
+          "date_released": "2026-10-20T02:31:05.901008+00:00",
+          "expires_at": "2026-11-19T02:31:05.901008+00:00",
+          "basis": "embedded-signed-package",
+          "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+          "source": "cisa-kev",
+          "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+          "prior_catalog": {
+            "state": "MISSING"
+          }
+        }
+      },
+      "purpose": "Historical diagnostic at acquired publication; no production configuration changed."
+    }
+  },
+  "epss_overlay": {
+    "cve": "CVE-1999-0077",
+    "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+    "sha256": "0bf2dec85d5780f1c7c85ae1063d62dd1664980c8f5a5137f3bc83bc2c3d5bbc",
+    "source_acquired_at": "2026-10-20T03:13:04.363223+00:00",
+    "publication_at": "2026-10-19T12:00:27+00:00",
+    "max_age_days": 7,
+    "current_fresh": true,
+    "now": "2026-10-20T04:43:51.943297+00:00",
+    "expected_positive_value": 0.31392,
+    "positive": {
+      "kev": null,
+      "epss": 0.31392,
+      "epss_percentile": 0.9827
+    },
+    "catalog": {
+      "state": "LOADED",
+      "records": 391411,
+      "metadata": {
+        "score_date": "2026-10-19T12:00:27+00:00",
+        "model_version": "v2026.06.15",
+        "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+        "expires_at": "2026-10-26T12:00:27+00:00",
+        "basis": "embedded-signed-package",
+        "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+        "source": "first-epss",
+        "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+        "prior_catalog": {
+          "state": "MISSING"
+        }
+      }
+    },
+    "unknown_control": "CVE-1900-0000",
+    "unknown_preserved": true,
+    "seconds": 0.0020184950008115266,
+    "source_as_of": {
+      "as_of": "2026-10-20T03:13:04.363223+00:00",
+      "seconds": 0.0016978269995888695,
+      "positive": {
+        "kev": null,
+        "epss": 0.31392,
+        "epss_percentile": 0.9827
+      },
+      "unknown": {
+        "kev": null,
+        "epss": null,
+        "epss_percentile": null
+      },
+      "catalog": {
+        "state": "LOADED",
+        "records": 391411,
+        "metadata": {
+          "score_date": "2026-10-19T12:00:27+00:00",
+          "model_version": "v2026.06.15",
+          "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+          "expires_at": "2026-10-26T12:00:27+00:00",
+          "basis": "embedded-signed-package",
+          "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+          "source": "first-epss",
+          "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+          "prior_catalog": {
+            "state": "MISSING"
+          }
+        }
+      },
+      "purpose": "Historical diagnostic at acquired publication; no production configuration changed."
+    }
+  },
+  "enrichment_selection": "At most 128 hashes per catalog projected from current signed membership; full historical DB manifest is never loaded.",
+  "worker_package_digest_separation": {
+    "scope": "Actual worker context helper followed by actual database evaluator, using the selected real vendor identity; refresh_assessment is not invoked because it would persist an assessment.",
+    "containing_image_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "control_provenance": "Synthetic containing-image digest only; CVEs, package versions, PURLs, vendor context and VEX evidence come from the installed corpus.",
+    "examples": {
+      "ubuntu-vex": {
+        "cve": "CVE-2026-111458",
+        "context": {
+          "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+          "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+          "version": "1.3-2build1",
+          "distro": "jammy",
+          "csaf_product_context": null
+        },
+        "current": {
+          "status": "under_investigation",
+          "statements": [
+            {
+              "id": 12516181,
+              "document_id": 22356,
+              "source_id": 1,
+              "source": "Canonical Ubuntu VEX",
+              "status": "under_investigation",
+              "identity": {
+                "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                "version": "1.3-2build1",
+                "distro": "jammy"
+              },
+              "verification": "tls",
+              "sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+              "reason": null,
+              "justification": null,
+              "impact_statement": null,
+              "action_statement": null,
+              "valid_until": "2026-11-16T10:01:24.802997+00:00"
+            }
+          ],
+          "valid_until": "2026-11-16T10:01:24.802997+00:00",
+          "reasons": []
+        },
+        "source_as_of": {
+          "as_of": "2026-10-17T10:01:24.802997+00:00",
+          "result": {
+            "status": "under_investigation",
+            "statements": [
+              {
+                "id": 12516181,
+                "document_id": 22356,
+                "source_id": 1,
+                "source": "Canonical Ubuntu VEX",
+                "status": "under_investigation",
+                "identity": {
+                  "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                  "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+                  "version": "1.3-2build1",
+                  "distro": "jammy"
+                },
+                "verification": "tls",
+                "sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+                "reason": null,
+                "justification": null,
+                "impact_statement": null,
+                "action_statement": null,
+                "valid_until": "2026-11-16T10:01:24.802997+00:00"
+              }
+            ],
+            "valid_until": "2026-11-16T10:01:24.802997+00:00",
+            "reasons": []
+          }
+        },
+        "wrong_version": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "incorrect_image_as_package_digest": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "seconds": 0.0333511440003349
+      },
+      "redhat-vex": {
+        "cve": "CVE-2026-73619",
+        "context": {
+          "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+          "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+          "version": "4.6.31-1.el9ap",
+          "csaf_product_context": {
+            "publisher": "https://www.redhat.com",
+            "products": [
+              {
+                "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+              }
+            ]
+          }
+        },
+        "current": {
+          "status": "affected",
+          "statements": [
+            {
+              "id": 28121946,
+              "document_id": 112453,
+              "source_id": 5,
+              "source": "Red Hat CSAF VEX",
+              "status": "affected",
+              "identity": {
+                "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                "version": "4.6.31-1.el9ap",
+                "csaf_product_context": {
+                  "publisher": "https://www.redhat.com",
+                  "products": [
+                    {
+                      "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+                    }
+                  ]
+                },
+                "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+                "csaf_relationship": "default_component_of"
+              },
+              "verification": "tls",
+              "sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+              "reason": null,
+              "justification": null,
+              "impact_statement": "A flaw was found in GitPython. This vulnerability allows an attacker to read arbitrary files from the filesystem. By exploiting an incomplete denylist in the `unsafe_git_archive_options` guard, an attacker can supply specific options, such as `--add-file` or `--add-virtual-file`, to the `Repo.archive()` function. This leads to unauthorized information disclosure at the privileges of the process running GitPython.\ngitpython: GitPython: Arbitrary file read vulnerability via `Repo.archive()`\nThis is a Moderate impact flaw in GitPython that allows an attacker to read arbitrary files from the filesystem. The vulnerability arises from an incomplete denylist in the `unsafe_git_archive_options` guard, which can be bypassed by supplying specific options to the `Repo.archive()` function. This could lead to unauthorized information disclosure in Red Hat products utilizing affected versions of GitPython, such as Red Hat OpenStack Platform and Red Hat Satellite.\nThe CVSS score(s) listed for this vulnerability do not reflect the associated product's status, and are included for informational purposes to better understand the severity of this vulnerability.",
+              "action_statement": null,
+              "valid_until": "2026-11-17T08:52:23+00:00"
+            }
+          ],
+          "valid_until": "2026-11-17T08:52:23+00:00",
+          "reasons": []
+        },
+        "source_as_of": {
+          "as_of": "2026-10-18T08:52:23+00:00",
+          "result": {
+            "status": "affected",
+            "statements": [
+              {
+                "id": 28121946,
+                "document_id": 112453,
+                "source_id": 5,
+                "source": "Red Hat CSAF VEX",
+                "status": "affected",
+                "identity": {
+                  "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                  "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+                  "version": "4.6.31-1.el9ap",
+                  "csaf_product_context": {
+                    "publisher": "https://www.redhat.com",
+                    "products": [
+                      {
+                        "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+                      }
+                    ]
+                  },
+                  "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+                  "csaf_relationship": "default_component_of"
+                },
+                "verification": "tls",
+                "sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+                "reason": null,
+                "justification": null,
+                "impact_statement": "A flaw was found in GitPython. This vulnerability allows an attacker to read arbitrary files from the filesystem. By exploiting an incomplete denylist in the `unsafe_git_archive_options` guard, an attacker can supply specific options, such as `--add-file` or `--add-virtual-file`, to the `Repo.archive()` function. This leads to unauthorized information disclosure at the privileges of the process running GitPython.\ngitpython: GitPython: Arbitrary file read vulnerability via `Repo.archive()`\nThis is a Moderate impact flaw in GitPython that allows an attacker to read arbitrary files from the filesystem. The vulnerability arises from an incomplete denylist in the `unsafe_git_archive_options` guard, which can be bypassed by supplying specific options to the `Repo.archive()` function. This could lead to unauthorized information disclosure in Red Hat products utilizing affected versions of GitPython, such as Red Hat OpenStack Platform and Red Hat Satellite.\nThe CVSS score(s) listed for this vulnerability do not reflect the associated product's status, and are included for informational purposes to better understand the severity of this vulnerability.",
+                "action_statement": null,
+                "valid_until": "2026-11-17T08:52:23+00:00"
+              }
+            ],
+            "valid_until": "2026-11-17T08:52:23+00:00",
+            "reasons": []
+          }
+        },
+        "wrong_version": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "incorrect_image_as_package_digest": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "seconds": 0.022130271998321405
+      },
+      "suse-vex": {
+        "cve": "CVE-2015-4588",
+        "context": {
+          "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+          "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+          "version": "0_2-7",
+          "csaf_product_context": {
+            "publisher": "https://www.suse.com/",
+            "products": [
+              {
+                "cpe": "cpe:/o:suse:sled:15:sp5"
+              }
+            ]
+          }
+        },
+        "current": {
+          "status": "not_affected",
+          "statements": [
+            {
+              "id": 28876828,
+              "document_id": 117698,
+              "source_id": 6,
+              "source": "SUSE CSAF VEX",
+              "status": "not_affected",
+              "identity": {
+                "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                "version": "0_2-7",
+                "csaf_product_context": {
+                  "publisher": "https://www.suse.com/",
+                  "products": [
+                    {
+                      "cpe": "cpe:/o:suse:sled:15:sp5"
+                    }
+                  ]
+                },
+                "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+                "csaf_relationship": "default_component_of"
+              },
+              "verification": "tls",
+              "sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+              "reason": null,
+              "justification": null,
+              "impact_statement": "Heap-based buffer overflow in the DecodeImage function in libwmf 0.2.8.4 allows remote attackers to cause a denial of service (crash) or possibly execute arbitrary code via a crafted \"run-length count\" in an image in a WMF file.",
+              "action_statement": null,
+              "valid_until": "2026-11-18T00:17:25+00:00"
+            }
+          ],
+          "valid_until": "2026-11-18T00:17:25+00:00",
+          "reasons": []
+        },
+        "source_as_of": {
+          "as_of": "2026-10-19T00:17:25+00:00",
+          "result": {
+            "status": "not_affected",
+            "statements": [
+              {
+                "id": 28876828,
+                "document_id": 117698,
+                "source_id": 6,
+                "source": "SUSE CSAF VEX",
+                "status": "not_affected",
+                "identity": {
+                  "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                  "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+                  "version": "0_2-7",
+                  "csaf_product_context": {
+                    "publisher": "https://www.suse.com/",
+                    "products": [
+                      {
+                        "cpe": "cpe:/o:suse:sled:15:sp5"
+                      }
+                    ]
+                  },
+                  "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+                  "csaf_relationship": "default_component_of"
+                },
+                "verification": "tls",
+                "sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+                "reason": null,
+                "justification": null,
+                "impact_statement": "Heap-based buffer overflow in the DecodeImage function in libwmf 0.2.8.4 allows remote attackers to cause a denial of service (crash) or possibly execute arbitrary code via a crafted \"run-length count\" in an image in a WMF file.",
+                "action_statement": null,
+                "valid_until": "2026-11-18T00:17:25+00:00"
+              }
+            ],
+            "valid_until": "2026-11-18T00:17:25+00:00",
+            "reasons": []
+          }
+        },
+        "wrong_version": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "incorrect_image_as_package_digest": {
+          "status": "no_vex",
+          "statements": [],
+          "valid_until": null,
+          "reasons": [
+            "no_vex"
+          ]
+        },
+        "seconds": 0.009776214999874355
+      }
+    }
+  },
+  "bounded_queries": {
+    "production_candidate_limit": 10000,
+    "normal_batch_results": [
+      {
+        "status": "under_investigation",
+        "statements": [
+          {
+            "id": 12516181,
+            "document_id": 22356,
+            "source_id": 1,
+            "source": "Canonical Ubuntu VEX",
+            "status": "under_investigation",
+            "identity": {
+              "product_id": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+              "purl": "pkg:deb/ubuntu/ssldump@1.3-2build1?arch=source&distro=jammy",
+              "version": "1.3-2build1",
+              "distro": "jammy"
+            },
+            "verification": "tls",
+            "sha256": "06224bcdc403c47fa5ce235f7cd7dbb091132d02d0b34069b156aa08d0cca3be",
+            "reason": null,
+            "justification": null,
+            "impact_statement": null,
+            "action_statement": null,
+            "valid_until": "2026-11-16T10:01:24.802997+00:00"
+          }
+        ],
+        "valid_until": "2026-11-16T10:01:24.802997+00:00",
+        "reasons": []
+      },
+      {
+        "status": "affected",
+        "statements": [
+          {
+            "id": 28121946,
+            "document_id": 112453,
+            "source_id": 5,
+            "source": "Red Hat CSAF VEX",
+            "status": "affected",
+            "identity": {
+              "product_id": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+              "purl": "pkg:rpm/redhat/automation-controller@4.6.31-1.el9ap?arch=src",
+              "version": "4.6.31-1.el9ap",
+              "csaf_product_context": {
+                "publisher": "https://www.redhat.com",
+                "products": [
+                  {
+                    "cpe": "cpe:/a:redhat:ansible_automation_platform:2"
+                  }
+                ]
+              },
+              "csaf_product_id": "red_hat_ansible_automation_platform_2:automation-controller.src",
+              "csaf_relationship": "default_component_of"
+            },
+            "verification": "tls",
+            "sha256": "3ff3da8b8c5e86de90b8ee8359c41ef1187ddea695dc190c8e5e38fe7020e27d",
+            "reason": null,
+            "justification": null,
+            "impact_statement": "A flaw was found in GitPython. This vulnerability allows an attacker to read arbitrary files from the filesystem. By exploiting an incomplete denylist in the `unsafe_git_archive_options` guard, an attacker can supply specific options, such as `--add-file` or `--add-virtual-file`, to the `Repo.archive()` function. This leads to unauthorized information disclosure at the privileges of the process running GitPython.\ngitpython: GitPython: Arbitrary file read vulnerability via `Repo.archive()`\nThis is a Moderate impact flaw in GitPython that allows an attacker to read arbitrary files from the filesystem. The vulnerability arises from an incomplete denylist in the `unsafe_git_archive_options` guard, which can be bypassed by supplying specific options to the `Repo.archive()` function. This could lead to unauthorized information disclosure in Red Hat products utilizing affected versions of GitPython, such as Red Hat OpenStack Platform and Red Hat Satellite.\nThe CVSS score(s) listed for this vulnerability do not reflect the associated product's status, and are included for informational purposes to better understand the severity of this vulnerability.",
+            "action_statement": null,
+            "valid_until": "2026-11-17T08:52:23+00:00"
+          }
+        ],
+        "valid_until": "2026-11-17T08:52:23+00:00",
+        "reasons": []
+      },
+      {
+        "status": "not_affected",
+        "statements": [
+          {
+            "id": 28876828,
+            "document_id": 117698,
+            "source_id": 6,
+            "source": "SUSE CSAF VEX",
+            "status": "not_affected",
+            "identity": {
+              "product_id": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+              "purl": "pkg:rpm/suse/libwmf@0_2-7?upstream=libwmf-0:0_2-7.src.rpm",
+              "version": "0_2-7",
+              "csaf_product_context": {
+                "publisher": "https://www.suse.com/",
+                "products": [
+                  {
+                    "cpe": "cpe:/o:suse:sled:15:sp5"
+                  }
+                ]
+              },
+              "csaf_product_id": "SUSE Linux Enterprise Desktop 15 SP5:libwmf-0_2-7",
+              "csaf_relationship": "default_component_of"
+            },
+            "verification": "tls",
+            "sha256": "4f32c60ff1d9637b13edbb9aae766fe00ee49a718f3ebd7933ab84eedcb1e868",
+            "reason": null,
+            "justification": null,
+            "impact_statement": "Heap-based buffer overflow in the DecodeImage function in libwmf 0.2.8.4 allows remote attackers to cause a denial of service (crash) or possibly execute arbitrary code via a crafted \"run-length count\" in an image in a WMF file.",
+            "action_statement": null,
+            "valid_until": "2026-11-18T00:17:25+00:00"
+          }
+        ],
+        "valid_until": "2026-11-18T00:17:25+00:00",
+        "reasons": []
+      }
+    ],
+    "overflow_control": {
+      "temporary_process_local_limit": 0,
+      "result": {
+        "status": "under_investigation",
+        "statements": [],
+        "valid_until": null,
+        "reasons": [
+          "candidate_limit"
+        ]
+      },
+      "restored_limit": 10000
+    },
+    "seconds": 0.0147133099999337,
+    "exact_pairs": true,
+    "raw_document_text_loaded": false,
+    "complete_database_manifest_loaded": false,
+    "no_full_statement_aggregate": true,
+    "candidate_query_examples": [
+      {
+        "phase": "bounded_query_controls",
+        "sql_sha256": "c16a87f924d7c0f898018e3dace0c1441f88a6bf3293cdbc2c575342d91861c4",
+        "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s), (%(param_1_2_1)s, %(param_1_2_2)s), (%(param_1_3_1)s, %(param_1_3_2)s)) LIMIT %(param_2)s::INTEGER",
+        "count": 1,
+        "bound_parameters": {
+          "param_2": 10001
+        }
+      },
+      {
+        "phase": "bounded_query_controls",
+        "sql_sha256": "6c7d679877abb1ba9efa1fe38a35f60564426c3f6dd2c881616a3b3b8a0657e0",
+        "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) LIMIT %(param_2)s::INTEGER",
+        "count": 1,
+        "bound_parameters": {
+          "param_2": 1
+        }
+      }
+    ]
+  },
+  "finished_at": "2026-10-20T04:43:55.313022+00:00",
+  "seconds_total": 5.190792265999335,
+  "sql_statement_counts": {
+    "installed_precondition": 3,
+    "repeat_install": 5,
+    "package_status": 4,
+    "runtime_sources_api": 20,
+    "catalog_token": 2,
+    "scoped_lookup_examples": 169,
+    "bounded_enrichment_setup": 4,
+    "enrichment_examples": 14,
+    "worker_package_identity": 18,
+    "bounded_query_controls": 3
+  },
+  "sql_trace": [
+    {
+      "phase": "installed_precondition",
+      "sql_sha256": "54b8c5023bb4a4669c79d868cd5dca87db18111d5251602264feed27959d974c",
+      "sql": "SELECT intelligence_package_installs.id, intelligence_package_installs.sequence, intelligence_package_installs.version, CAST(intelligence_package_installs.manifest ->> %(manifest_1)s::TEXT AS VARCHAR) AS signed_hash FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "installed_precondition",
+      "sql_sha256": "7d7a32b4db8ecc25e96348aa1a25e139c08bba00ab43a0c6faaa3c7e0e7127fd",
+      "sql": "SELECT intelligence_package_catalogs.source_key FROM intelligence_package_catalogs WHERE intelligence_package_catalogs.install_id = %(install_id_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "installed_precondition",
+      "sql_sha256": "aea22f890b31b3e872f2a98271b489e95ecf23ef7b66f861f3a0df9f0658d32c",
+      "sql": "SELECT intelligence_package_state.id AS intelligence_package_state_id, intelligence_package_state.status AS intelligence_package_state_status, intelligence_package_state.last_error AS intelligence_package_state_last_error, intelligence_package_state.updated_at AS intelligence_package_state_updated_at FROM intelligence_package_state WHERE intelligence_package_state.id = %(pk_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "repeat_install",
+      "sql_sha256": "53f9c5919f605d8f14e46eb22f417f626bf5e5349449a02633f7c935068b9e48",
+      "sql": "SELECT pg_advisory_xact_lock(719303016241)",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "repeat_install",
+      "sql_sha256": "e437be2744752ef42d63e0d1be7fc4c6cfba8bcdf5d3044ac4843af8b9f75af5",
+      "sql": "SELECT intelligence_package_installs.id, intelligence_package_installs.version, intelligence_package_installs.sequence, CAST(intelligence_package_installs.manifest ->> %(manifest_1)s::TEXT AS VARCHAR) AS signed_manifest_sha256 FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "repeat_install",
+      "sql_sha256": "7d7a32b4db8ecc25e96348aa1a25e139c08bba00ab43a0c6faaa3c7e0e7127fd",
+      "sql": "SELECT intelligence_package_catalogs.source_key FROM intelligence_package_catalogs WHERE intelligence_package_catalogs.install_id = %(install_id_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "repeat_install",
+      "sql_sha256": "aea22f890b31b3e872f2a98271b489e95ecf23ef7b66f861f3a0df9f0658d32c",
+      "sql": "SELECT intelligence_package_state.id AS intelligence_package_state_id, intelligence_package_state.status AS intelligence_package_state_status, intelligence_package_state.last_error AS intelligence_package_state_last_error, intelligence_package_state.updated_at AS intelligence_package_state_updated_at FROM intelligence_package_state WHERE intelligence_package_state.id = %(pk_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "repeat_install",
+      "sql_sha256": "b11acdab3d2bc31d9f612182ea79d102e893d27e9e58406167fb82b846db4bef",
+      "sql": "UPDATE intelligence_package_state SET updated_at=%(updated_at)s::TIMESTAMP WITH TIME ZONE WHERE intelligence_package_state.id = %(intelligence_package_state_id)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "package_status",
+      "sql_sha256": "01e42f5437fe0e26382cf5946cb56d393af9384805c153037e677150a4918257",
+      "sql": "SELECT intelligence_package_installs.version, intelligence_package_installs.sequence, intelligence_package_installs.installed_at, intelligence_package_installs.counts, CAST(intelligence_package_installs.manifest ->> %(manifest_1)s::TEXT AS VARCHAR) AS built_at, intelligence_package_installs.manifest -> %(manifest_2)s::TEXT AS exclusions, (SELECT COALESCE(jsonb_agg( entry.value::jsonb - 'exploitation_sha256s' - 'risk_enrichment_sha256s' ORDER BY entry.ordinal), '[]'::jsonb) FROM json_array_elements(intelligence_package_installs.manifest -> 'sources') WITH ORDINALITY AS entry(value, ordinal)) AS sources FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "package_status",
+      "sql_sha256": "aea22f890b31b3e872f2a98271b489e95ecf23ef7b66f861f3a0df9f0658d32c",
+      "sql": "SELECT intelligence_package_state.id AS intelligence_package_state_id, intelligence_package_state.status AS intelligence_package_state_status, intelligence_package_state.last_error AS intelligence_package_state_last_error, intelligence_package_state.updated_at AS intelligence_package_state_updated_at FROM intelligence_package_state WHERE intelligence_package_state.id = %(pk_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "package_status",
+      "sql_sha256": "1b6c187c765d798071949fdc0c88fcb17094b90ac9190781e0ccb6084e94a103",
+      "sql": "SELECT vex_sources.id, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_sources",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "package_status",
+      "sql_sha256": "f912585ca6997f28d14bab757fb2c63d285884f4147288c83604979f535e59e1",
+      "sql": "SELECT intelligence_package_installs.version, intelligence_package_installs.sequence, intelligence_package_installs.installed_at, intelligence_package_installs.counts FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 20
+      }
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "88fb90df10172f52de3852379636a675df21d9aed1e5db24ff9be5cb74685f98",
+      "sql": "SELECT vex_documents.source_id, count(*) AS count_1 FROM vex_documents GROUP BY vex_documents.source_id",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "c3546a3f1681621f668198b34d0ec4bb870fcc930b3d40370992432e373f7b97",
+      "sql": "SELECT vex_documents.source_id, max(vex_documents.issued_at) AS max_1 FROM vex_documents GROUP BY vex_documents.source_id",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "0108d60499e19f5eba5691665437b3f34eda29fe8e4a1bdb0387e71b0c871eaa",
+      "sql": "SELECT vex_sources.id, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_sources ORDER BY vex_sources.id",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "2254d50f0a75f6833673ddecbc0d1ded35c807e6086d0f8a56c08b889f52f417",
+      "sql": "SELECT count(*) FROM (SELECT statement.id FROM vex_documents AS document CROSS JOIN LATERAL (SELECT id FROM vex_statements WHERE document_id = document.id LIMIT %(bound)s) AS statement WHERE document.source_id = %(source_id)s LIMIT %(bound)s) AS bounded_statements",
+      "count": 13,
+      "bound_parameters": {
+        "bound": 10001
+      }
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "01e42f5437fe0e26382cf5946cb56d393af9384805c153037e677150a4918257",
+      "sql": "SELECT intelligence_package_installs.version, intelligence_package_installs.sequence, intelligence_package_installs.installed_at, intelligence_package_installs.counts, CAST(intelligence_package_installs.manifest ->> %(manifest_1)s::TEXT AS VARCHAR) AS built_at, intelligence_package_installs.manifest -> %(manifest_2)s::TEXT AS exclusions, (SELECT COALESCE(jsonb_agg( entry.value::jsonb - 'exploitation_sha256s' - 'risk_enrichment_sha256s' ORDER BY entry.ordinal), '[]'::jsonb) FROM json_array_elements(intelligence_package_installs.manifest -> 'sources') WITH ORDINALITY AS entry(value, ordinal)) AS sources FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "aea22f890b31b3e872f2a98271b489e95ecf23ef7b66f861f3a0df9f0658d32c",
+      "sql": "SELECT intelligence_package_state.id AS intelligence_package_state_id, intelligence_package_state.status AS intelligence_package_state_status, intelligence_package_state.last_error AS intelligence_package_state_last_error, intelligence_package_state.updated_at AS intelligence_package_state_updated_at FROM intelligence_package_state WHERE intelligence_package_state.id = %(pk_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "1b6c187c765d798071949fdc0c88fcb17094b90ac9190781e0ccb6084e94a103",
+      "sql": "SELECT vex_sources.id, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_sources",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "runtime_sources_api",
+      "sql_sha256": "f912585ca6997f28d14bab757fb2c63d285884f4147288c83604979f535e59e1",
+      "sql": "SELECT intelligence_package_installs.version, intelligence_package_installs.sequence, intelligence_package_installs.installed_at, intelligence_package_installs.counts FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 20
+      }
+    },
+    {
+      "phase": "catalog_token",
+      "sql_sha256": "24cc534ca06222584b4d95d102d10afe3e7aab8c641977640b52b3c207ab9b35",
+      "sql": "SELECT intelligence_package_installs.version, intelligence_package_installs.sequence, CAST(intelligence_package_installs.manifest ->> %(manifest_1)s::TEXT AS VARCHAR) AS payload_sha256 FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "catalog_token",
+      "sql_sha256": "54507b819815839dcf82a733778b76285ec1b06a3fafc0e12f48c4503c8e4246",
+      "sql": "SELECT vex_sources.name, vex_sources.enabled, vex_sources.trusted, vex_sources.max_age_days FROM vex_sources ORDER BY vex_sources.id",
+      "count": 1,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "19c9af82e50994d17326f881bcf6dd306c92f10ef03e76fde586a335ac8592bb",
+      "sql": "SELECT vex_sources.id, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_sources WHERE vex_sources.name = %(name_1)s::VARCHAR",
+      "count": 3,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "ac245ec0f4fe5fc6fe2ce9261ac07d55311a52b063f5abb8c68d6f9bb2c1b751",
+      "sql": "SELECT vex_documents.id, vex_documents.verification, vex_documents.verification_key, vex_documents.source_url FROM vex_documents WHERE vex_documents.source_id = %(source_id_1)s::INTEGER AND vex_documents.withdrawn IS false AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE AND vex_documents.issued_at > %(issued_at_2)s::TIMESTAMP WITH TIME ZONE ORDER BY vex_documents.issued_at DESC, vex_documents.id DESC LIMIT %(param_1)s::INTEGER",
+      "count": 3,
+      "bound_parameters": {
+        "param_1": 128
+      }
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "95cca65b46b16ecd9954112c72fb225190fa0d30c76524c18740c31f2e4bdd17",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.issued_at, vex_documents.source_url, vex_documents.document_key, vex_documents.sha256 FROM vex_statements JOIN vex_documents ON vex_statements.document_id = vex_documents.id WHERE vex_documents.source_id = %(source_id_1)s::INTEGER AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE AND (vex_statements.product_id LIKE %(product_id_1)s::VARCHAR || '%%' ESCAPE '/') AND vex_statements.product_id LIKE %(product_id_2)s::VARCHAR AND CAST((vex_statements.identity ->> %(identity_1)s::TEXT) AS VARCHAR) IS NOT NULL AND CAST((vex_statements.identity ->> %(identity_2)s::TEXT) AS VARCHAR) != %(param_1)s::VARCHAR AND CAST((vex_statements.identity ->> %(identity_3)s::TEXT) AS VARCHAR) IS NOT NULL AND vex_documents.id = %(id_2)s::INTEGER ORDER BY vex_statements.id LIMIT %(param_2)s::INTEGER",
+      "count": 131,
+      "bound_parameters": {
+        "param_2": 32
+      }
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "6c7d679877abb1ba9efa1fe38a35f60564426c3f6dd2c881616a3b3b8a0657e0",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) LIMIT %(param_2)s::INTEGER",
+      "count": 17,
+      "bound_parameters": {
+        "param_2": 10001
+      }
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "14eff11e1b20c0dc16ae31a2046903375e9adf2feb0b5d88b35a915474a5a037",
+      "sql": "SELECT vex_documents.source_id, vex_documents.document_key, max(vex_documents.issued_at) AS max_1 FROM vex_documents WHERE (vex_documents.source_id, vex_documents.document_key) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE GROUP BY vex_documents.source_id, vex_documents.document_key",
+      "count": 14,
+      "bound_parameters": {
+        "param_1_1_1": 1
+      }
+    },
+    {
+      "phase": "scoped_lookup_examples",
+      "sql_sha256": "76896e5924527e5eb385713bd19d97b1934e8993a722bba4c65cb6de9b72b403",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.issued_at, vex_documents.source_url, vex_documents.document_key, vex_documents.sha256 FROM vex_statements JOIN vex_documents ON vex_statements.document_id = vex_documents.id WHERE vex_documents.source_id = %(source_id_1)s::INTEGER AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE AND (vex_statements.product_id LIKE %(product_id_1)s::VARCHAR || '%%' ESCAPE '/') AND vex_statements.product_id LIKE %(product_id_2)s::VARCHAR AND CAST((vex_statements.identity ->> %(identity_1)s::TEXT) AS VARCHAR) IS NOT NULL AND CAST((vex_statements.identity ->> %(identity_2)s::TEXT) AS VARCHAR) != %(param_1)s::VARCHAR AND CAST((vex_statements.identity ->> %(identity_3)s::TEXT) AS VARCHAR) IS NOT NULL AND vex_statements.cve = %(cve_1)s::VARCHAR LIMIT %(param_2)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_2": 32
+      }
+    },
+    {
+      "phase": "bounded_enrichment_setup",
+      "sql_sha256": "8f6b4928deceee0de55552766cf683b17ef307851ed86b39fd4a8b321c39d00d",
+      "sql": "SELECT intelligence_package_catalogs.id, intelligence_package_catalogs.metadata_json FROM intelligence_package_catalogs WHERE intelligence_package_catalogs.install_id = %(install_id_1)s::INTEGER AND intelligence_package_catalogs.source_key = %(source_key_1)s::VARCHAR",
+      "count": 2,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "bounded_enrichment_setup",
+      "sql_sha256": "b9328feb7777c695dbdea6380459b42982d5aa5d38458201be3b7830ab062e38",
+      "sql": "SELECT intelligence_records.sha256 FROM intelligence_records JOIN intelligence_package_members ON intelligence_package_members.record_id = intelligence_records.id WHERE intelligence_package_members.catalog_id = %(catalog_id_1)s::INTEGER LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 128
+      }
+    },
+    {
+      "phase": "bounded_enrichment_setup",
+      "sql_sha256": "b041cb000fda12b723a7e68eed6012e9761a1667c8f4e4a2aaebf27a76fef94b",
+      "sql": "SELECT intelligence_records.sha256 FROM intelligence_records JOIN intelligence_package_members ON intelligence_package_members.record_id = intelligence_records.id WHERE intelligence_package_members.catalog_id = %(catalog_id_1)s::INTEGER AND CAST((intelligence_records.data ->> %(data_1)s::TEXT) AS FLOAT) > %(param_1)s::INTEGER LIMIT %(param_2)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 0,
+        "param_2": 128
+      }
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "19c9af82e50994d17326f881bcf6dd306c92f10ef03e76fde586a335ac8592bb",
+      "sql": "SELECT vex_sources.id, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_sources WHERE vex_sources.name = %(name_1)s::VARCHAR",
+      "count": 2,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "894e4524135e94499dc32c05a8c492c75ab6859cdfdb26f8be4391a674a7e1c1",
+      "sql": "SELECT intelligence_records.id, intelligence_records.source_id, intelligence_records.kind, intelligence_records.record_id, intelligence_records.cve, intelligence_records.product, intelligence_records.data, intelligence_records.sha256, intelligence_records.acquired_at, intelligence_records.source_url, intelligence_records.package_version FROM intelligence_records WHERE intelligence_records.source_id = %(source_id_1)s::INTEGER AND intelligence_records.kind = %(kind_1)s::VARCHAR AND intelligence_records.sha256 IN (%(sha256_1_1)s::VARCHAR, %(sha256_1_2)s::VARCHAR, %(sha256_1_3)s::VARCHAR, %(sha256_1_4)s::VARCHAR, %(sha256_1_5)s::VARCHAR, %(sha256_1_6)s::VARCHAR, %(sha256_1_7)s::VARCHAR, %(sha256_1_8)s::VARCHAR, %(sha256_1_9)s::VARCHAR, %(sha256_1_10)s::VARCHAR, %(sha256_1_11)s::VARCHAR, %(sha256_1_12)s::VARCHAR, %(sha256_1_13)s::VARCHAR, %(sha256_1_14)s::VARCHAR, %(sha256_1_15)s::VARCHAR, %(sha256_1_16)s::VARCHAR, %(sha256_1_17)s::VARCHAR, %(sha256_1_18)s::VARCHAR, %(sha256_1_19)s::VARCHAR, %(sha256_1_20)s::VARCHAR, %(sha256_1_21)s::VARCHAR, %(sha256_1_22)s::VARCHAR, %(sha256_1_23)s::VARCHAR, %(sha256_1_24)s::VARCHAR, %(sha256_1_25)s::VARCHAR, %(sha256_1_26)s::VARCHAR, %(sha256_1_27)s::VARCHAR, %(sha256_1_28)s::VARCHAR, %(sha256_1_29)s::VARCHAR, %(sha256_1_30)s::VARCHAR, %(sha256_1_31)s::VARCHAR, %(sha256_1_32)s::VARCHAR, %(sha256_1_33)s::VARCHAR, %(sha256_1_34)s::VARCHAR, %(sha256_1_35)s::VARCHAR, %(sha256_1_36)s::VARCHAR, %(sha256_1_37)s::VARCHAR, %(sha256_1_38)s::VARCHAR, %(sha256_1_39)s::VARCHAR, %(sha256_1_40)s::VARCHAR, %(sha256_1_41)s::VARCHAR, %(sha256_1_42)s::VARCHAR, %(sha256_1_43)s::VARCHAR, %(sha256_1_44)s::VARCHAR, %(sha256_1_45)s::VARCHAR, %(sha256_1_46)s::VARCHAR, %(sha256_1_47)s::VARCHAR, %(sha256_1_48)s::VARCHAR, %(sha256_1_49)s::VARCHAR, %(sha256_1_50)s::VARCHAR, %(sha256_1_51)s::VARCHAR, %(sha256_1_52)s::VARCHAR, %(sha256_1_53)s::VARCHAR, %(sha256_1_54)s::VARCHAR, %(sha256_1_55)s::VARCHAR, %(sha256_1_56)s::VARCHAR, %(sha256_1_57)s::VARCHAR, %(sha256_1_58)s::VARCHAR, %(sha256_1_59)s::VARCHAR, %(sha256_1_60)s::VARCHAR, %(sha256_1_61)s::VARCHAR, %(sha256_1_62)s::VARCHAR, %(sha256_1_63)s::VARCHAR, %(sha256_1_64)s::VARCHAR, %(sha256_1_65)s::VARCHAR, %(sha256_1_66)s::VARCHAR, %(sha256_1_67)s::VARCHAR, %(sha256_1_68)s::VARCHAR, %(sha256_1_69)s::VARCHAR, %(sha256_1_70)s::VARCHAR, %(sha256_1_71)s::VARCHAR, %(sha256_1_72)s::VARCHAR, %(sha256_1_73)s::VARCHAR, %(sha256_1_74)s::VARCHAR, %(sha256_1_75)s::VARCHAR, %(sha256_1_76)s::VARCHAR, %(sha256_1_77)s::VARCHAR, %(sha256_1_78)s::VARCHAR, %(sha256_1_79)s::VARCHAR, %(sha256_1_80)s::VARCHAR, %(sha256_1_81)s::VARCHAR, %(sha256_1_82)s::VARCHAR, %(sha256_1_83)s::VARCHAR, %(sha256_1_84)s::VARCHAR, %(sha256_1_85)s::VARCHAR, %(sha256_1_86)s::VARCHAR, %(sha256_1_87)s::VARCHAR, %(sha256_1_88)s::VARCHAR, %(sha256_1_89)s::VARCHAR, %(sha256_1_90)s::VARCHAR, %(sha256_1_91)s::VARCHAR, %(sha256_1_92)s::VARCHAR, %(sha256_1_93)s::VARCHAR, %(sha256_1_94)s::VARCHAR, %(sha256_1_95)s::VARCHAR, %(sha256_1_96)s::VARCHAR, %(sha256_1_97)s::VARCHAR, %(sha256_1_98)s::VARCHAR, %(sha256_1_99)s::VARCHAR, %(sha256_1_100)s::VARCHAR, %(sha256_1_101)s::VARCHAR, %(sha256_1_102)s::VARCHAR, %(sha256_1_103)s::VARCHAR, %(sha256_1_104)s::VARCHAR, %(sha256_1_105)s::VARCHAR, %(sha256_1_106)s::VARCHAR, %(sha256_1_107)s::VARCHAR, %(sha256_1_108)s::VARCHAR, %(sha256_1_109)s::VARCHAR, %(sha256_1_110)s::VARCHAR, %(sha256_1_111)s::VARCHAR, %(sha256_1_112)s::VARCHAR, %(sha256_1_113)s::VARCHAR, %(sha256_1_114)s::VARCHAR, %(sha256_1_115)s::VARCHAR, %(sha256_1_116)s::VARCHAR, %(sha256_1_117)s::VARCHAR, %(sha256_1_118)s::VARCHAR, %(sha256_1_119)s::VARCHAR, %(sha256_1_120)s::VARCHAR, %(sha256_1_121)s::VARCHAR, %(sha256_1_122)s::VARCHAR, %(sha256_1_123)s::VARCHAR, %(sha256_1_124)s::VARCHAR, %(sha256_1_125)s::VARCHAR, %(sha256_1_126)s::VARCHAR, %(sha256_1_127)s::VARCHAR, %(sha256_1_128)s::VARCHAR) LIMIT %(param_1)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "8d1194bc78e605b001aca5d2f0980d134b91d6d166d55fd91ab55397e1834d75",
+      "sql": "SELECT intelligence_records.id FROM intelligence_records WHERE intelligence_records.source_id = %(source_id_1)s::INTEGER AND intelligence_records.cve = %(cve_1)s::VARCHAR LIMIT %(param_1)s::INTEGER",
+      "count": 2,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "fd173c00f7bf5b35a1a9c0971ba4fe2b1d3b9f4c457479ca3759bb8f5cc489a0",
+      "sql": "SELECT intelligence_package_catalogs.id, intelligence_package_catalogs.record_count, intelligence_package_catalogs.metadata_json, intelligence_package_installs.version, vex_sources.enabled, vex_sources.trusted, vex_sources.max_age_days FROM intelligence_package_catalogs JOIN intelligence_package_installs ON intelligence_package_installs.id = intelligence_package_catalogs.install_id JOIN vex_sources ON vex_sources.id = intelligence_package_catalogs.source_id WHERE intelligence_package_catalogs.install_id = (SELECT intelligence_package_installs.id FROM intelligence_package_installs ORDER BY intelligence_package_installs.sequence DESC LIMIT %(param_1)s::INTEGER) AND intelligence_package_catalogs.record_count > %(record_count_1)s::INTEGER AND intelligence_package_catalogs.source_key = %(source_key_1)s::VARCHAR AND intelligence_package_catalogs.kind = %(kind_1)s::VARCHAR",
+      "count": 4,
+      "bound_parameters": {
+        "param_1": 1
+      }
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "9e161dadf6ae7573f4600fe3e0f7b36db4b5b076d07f2657b51de7d17ffcc00b",
+      "sql": "SELECT intelligence_records.cve FROM intelligence_records JOIN intelligence_package_members ON intelligence_package_members.record_id = intelligence_records.id WHERE intelligence_package_members.catalog_id = %(catalog_id_1)s::INTEGER AND intelligence_records.cve IN (%(cve_1_1)s::VARCHAR, %(cve_1_2)s::VARCHAR)",
+      "count": 2,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "fbc3bfd74d540eddf2d6367a2d8d19d80285d4cf43ef0626ea6079b554c0d6d7",
+      "sql": "SELECT intelligence_records.id, intelligence_records.source_id, intelligence_records.kind, intelligence_records.record_id, intelligence_records.cve, intelligence_records.product, intelligence_records.data, intelligence_records.sha256, intelligence_records.acquired_at, intelligence_records.source_url, intelligence_records.package_version FROM intelligence_records WHERE intelligence_records.source_id = %(source_id_1)s::INTEGER AND intelligence_records.kind = %(kind_1)s::VARCHAR AND intelligence_records.sha256 IN (%(sha256_1_1)s::VARCHAR, %(sha256_1_2)s::VARCHAR, %(sha256_1_3)s::VARCHAR, %(sha256_1_4)s::VARCHAR, %(sha256_1_5)s::VARCHAR, %(sha256_1_6)s::VARCHAR, %(sha256_1_7)s::VARCHAR, %(sha256_1_8)s::VARCHAR, %(sha256_1_9)s::VARCHAR, %(sha256_1_10)s::VARCHAR, %(sha256_1_11)s::VARCHAR, %(sha256_1_12)s::VARCHAR, %(sha256_1_13)s::VARCHAR, %(sha256_1_14)s::VARCHAR, %(sha256_1_15)s::VARCHAR, %(sha256_1_16)s::VARCHAR, %(sha256_1_17)s::VARCHAR, %(sha256_1_18)s::VARCHAR, %(sha256_1_19)s::VARCHAR, %(sha256_1_20)s::VARCHAR, %(sha256_1_21)s::VARCHAR, %(sha256_1_22)s::VARCHAR, %(sha256_1_23)s::VARCHAR, %(sha256_1_24)s::VARCHAR, %(sha256_1_25)s::VARCHAR, %(sha256_1_26)s::VARCHAR, %(sha256_1_27)s::VARCHAR, %(sha256_1_28)s::VARCHAR, %(sha256_1_29)s::VARCHAR, %(sha256_1_30)s::VARCHAR, %(sha256_1_31)s::VARCHAR, %(sha256_1_32)s::VARCHAR, %(sha256_1_33)s::VARCHAR, %(sha256_1_34)s::VARCHAR, %(sha256_1_35)s::VARCHAR, %(sha256_1_36)s::VARCHAR, %(sha256_1_37)s::VARCHAR, %(sha256_1_38)s::VARCHAR, %(sha256_1_39)s::VARCHAR, %(sha256_1_40)s::VARCHAR, %(sha256_1_41)s::VARCHAR, %(sha256_1_42)s::VARCHAR, %(sha256_1_43)s::VARCHAR, %(sha256_1_44)s::VARCHAR, %(sha256_1_45)s::VARCHAR, %(sha256_1_46)s::VARCHAR, %(sha256_1_47)s::VARCHAR, %(sha256_1_48)s::VARCHAR, %(sha256_1_49)s::VARCHAR, %(sha256_1_50)s::VARCHAR, %(sha256_1_51)s::VARCHAR, %(sha256_1_52)s::VARCHAR, %(sha256_1_53)s::VARCHAR, %(sha256_1_54)s::VARCHAR, %(sha256_1_55)s::VARCHAR, %(sha256_1_56)s::VARCHAR, %(sha256_1_57)s::VARCHAR, %(sha256_1_58)s::VARCHAR, %(sha256_1_59)s::VARCHAR, %(sha256_1_60)s::VARCHAR, %(sha256_1_61)s::VARCHAR, %(sha256_1_62)s::VARCHAR, %(sha256_1_63)s::VARCHAR, %(sha256_1_64)s::VARCHAR, %(sha256_1_65)s::VARCHAR, %(sha256_1_66)s::VARCHAR, %(sha256_1_67)s::VARCHAR, %(sha256_1_68)s::VARCHAR, %(sha256_1_69)s::VARCHAR, %(sha256_1_70)s::VARCHAR, %(sha256_1_71)s::VARCHAR, %(sha256_1_72)s::VARCHAR, %(sha256_1_73)s::VARCHAR, %(sha256_1_74)s::VARCHAR, %(sha256_1_75)s::VARCHAR, %(sha256_1_76)s::VARCHAR, %(sha256_1_77)s::VARCHAR, %(sha256_1_78)s::VARCHAR, %(sha256_1_79)s::VARCHAR, %(sha256_1_80)s::VARCHAR, %(sha256_1_81)s::VARCHAR, %(sha256_1_82)s::VARCHAR, %(sha256_1_83)s::VARCHAR, %(sha256_1_84)s::VARCHAR, %(sha256_1_85)s::VARCHAR, %(sha256_1_86)s::VARCHAR, %(sha256_1_87)s::VARCHAR, %(sha256_1_88)s::VARCHAR, %(sha256_1_89)s::VARCHAR, %(sha256_1_90)s::VARCHAR, %(sha256_1_91)s::VARCHAR, %(sha256_1_92)s::VARCHAR, %(sha256_1_93)s::VARCHAR, %(sha256_1_94)s::VARCHAR, %(sha256_1_95)s::VARCHAR, %(sha256_1_96)s::VARCHAR, %(sha256_1_97)s::VARCHAR, %(sha256_1_98)s::VARCHAR, %(sha256_1_99)s::VARCHAR, %(sha256_1_100)s::VARCHAR, %(sha256_1_101)s::VARCHAR, %(sha256_1_102)s::VARCHAR, %(sha256_1_103)s::VARCHAR, %(sha256_1_104)s::VARCHAR, %(sha256_1_105)s::VARCHAR, %(sha256_1_106)s::VARCHAR, %(sha256_1_107)s::VARCHAR, %(sha256_1_108)s::VARCHAR, %(sha256_1_109)s::VARCHAR, %(sha256_1_110)s::VARCHAR, %(sha256_1_111)s::VARCHAR, %(sha256_1_112)s::VARCHAR, %(sha256_1_113)s::VARCHAR, %(sha256_1_114)s::VARCHAR, %(sha256_1_115)s::VARCHAR, %(sha256_1_116)s::VARCHAR, %(sha256_1_117)s::VARCHAR, %(sha256_1_118)s::VARCHAR, %(sha256_1_119)s::VARCHAR, %(sha256_1_120)s::VARCHAR, %(sha256_1_121)s::VARCHAR, %(sha256_1_122)s::VARCHAR, %(sha256_1_123)s::VARCHAR, %(sha256_1_124)s::VARCHAR, %(sha256_1_125)s::VARCHAR, %(sha256_1_126)s::VARCHAR, %(sha256_1_127)s::VARCHAR, %(sha256_1_128)s::VARCHAR) AND CAST((intelligence_records.data ->> %(data_1)s::TEXT) AS FLOAT) > %(param_1)s::INTEGER LIMIT %(param_2)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_1": 0,
+        "param_2": 1
+      }
+    },
+    {
+      "phase": "enrichment_examples",
+      "sql_sha256": "3e0f17c295bdd5c048e9c7be92b9395c92902b507c51a8fd176adee62fb2d7c1",
+      "sql": "SELECT intelligence_records.cve, intelligence_records.data FROM intelligence_records JOIN intelligence_package_members ON intelligence_package_members.record_id = intelligence_records.id WHERE intelligence_package_members.catalog_id = %(catalog_id_1)s::INTEGER AND intelligence_records.cve IN (%(cve_1_1)s::VARCHAR, %(cve_1_2)s::VARCHAR)",
+      "count": 2,
+      "bound_parameters": {}
+    },
+    {
+      "phase": "worker_package_identity",
+      "sql_sha256": "6c7d679877abb1ba9efa1fe38a35f60564426c3f6dd2c881616a3b3b8a0657e0",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) LIMIT %(param_2)s::INTEGER",
+      "count": 9,
+      "bound_parameters": {
+        "param_2": 10001
+      }
+    },
+    {
+      "phase": "worker_package_identity",
+      "sql_sha256": "14eff11e1b20c0dc16ae31a2046903375e9adf2feb0b5d88b35a915474a5a037",
+      "sql": "SELECT vex_documents.source_id, vex_documents.document_key, max(vex_documents.issued_at) AS max_1 FROM vex_documents WHERE (vex_documents.source_id, vex_documents.document_key) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE GROUP BY vex_documents.source_id, vex_documents.document_key",
+      "count": 9,
+      "bound_parameters": {
+        "param_1_1_1": 1
+      }
+    },
+    {
+      "phase": "bounded_query_controls",
+      "sql_sha256": "c16a87f924d7c0f898018e3dace0c1441f88a6bf3293cdbc2c575342d91861c4",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s), (%(param_1_2_1)s, %(param_1_2_2)s), (%(param_1_3_1)s, %(param_1_3_2)s)) LIMIT %(param_2)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_2": 10001
+      }
+    },
+    {
+      "phase": "bounded_query_controls",
+      "sql_sha256": "0043291f4e2e2783758e66e7464d4f50604f1f4f3633e72894863fa2cbdb9e26",
+      "sql": "SELECT vex_documents.source_id, vex_documents.document_key, max(vex_documents.issued_at) AS max_1 FROM vex_documents WHERE (vex_documents.source_id, vex_documents.document_key) IN ((%(param_1_1_1)s, %(param_1_1_2)s), (%(param_1_2_1)s, %(param_1_2_2)s), (%(param_1_3_1)s, %(param_1_3_2)s)) AND vex_documents.issued_at <= %(issued_at_1)s::TIMESTAMP WITH TIME ZONE GROUP BY vex_documents.source_id, vex_documents.document_key",
+      "count": 1,
+      "bound_parameters": {
+        "param_1_1_1": 1,
+        "param_1_2_1": 5,
+        "param_1_3_1": 6
+      }
+    },
+    {
+      "phase": "bounded_query_controls",
+      "sql_sha256": "6c7d679877abb1ba9efa1fe38a35f60564426c3f6dd2c881616a3b3b8a0657e0",
+      "sql": "SELECT vex_statements.id, vex_statements.document_id, vex_statements.cve, vex_statements.product_id, vex_statements.identity, vex_statements.status, vex_statements.justification, vex_statements.impact, vex_statements.action, vex_documents.id AS id_1, vex_documents.source_id, vex_documents.sha256, vex_documents.format, vex_documents.document_key, vex_documents.version, vex_documents.issued_at, vex_documents.retrieved_at, vex_documents.source_url, vex_documents.verification, vex_documents.verification_key, vex_documents.withdrawn, vex_sources.id AS id_2, vex_sources.name, vex_sources.allowed_hosts, vex_sources.trusted, vex_sources.public_key, vex_sources.trust_reason, vex_sources.authoritative_prefixes, vex_sources.max_age_days, vex_sources.enabled, vex_sources.last_success, vex_sources.last_error, vex_sources.etags FROM vex_statements JOIN vex_documents ON vex_documents.id = vex_statements.document_id JOIN vex_sources ON vex_sources.id = vex_documents.source_id WHERE (vex_statements.cve, vex_statements.product_id) IN ((%(param_1_1_1)s, %(param_1_1_2)s)) LIMIT %(param_2)s::INTEGER",
+      "count": 1,
+      "bound_parameters": {
+        "param_2": 1
+      }
+    }
+  ],
+  "sql_writes": [
+    {
+      "phase": "repeat_install",
+      "sql": "UPDATE intelligence_package_state SET updated_at=%(updated_at)s::TIMESTAMP WITH TIME ZONE WHERE intelligence_package_state.id = %(intelligence_package_state_id)s::INTEGER"
+    }
+  ],
+  "blocked_connections": []
+}

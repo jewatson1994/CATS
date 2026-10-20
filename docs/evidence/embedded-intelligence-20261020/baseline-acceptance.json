@@ -1,0 +1,403 @@
+{
+  "started_at": "2026-10-20T02:55:58.108294+00:00",
+  "database_backend": "postgresql",
+  "corpus": "shipped signed distribution",
+  "network_policy": "blocked except explicitly loopback database",
+  "blocked_connections": [],
+  "preexisting_install_count": 1,
+  "install": {
+    "outcome": "unchanged",
+    "seconds": 0.05598887700034538
+  },
+  "package": {
+    "status": "installed",
+    "version": "f831ad715c94b118f43d96da0321fb279c1c017c722d1aae62830e1f01d29f79",
+    "sequence": 2026101901,
+    "built_at": "2026-10-20T02:31:30.610436+00:00",
+    "installed_at": "2026-10-20T02:55:44.717694+00:00",
+    "last_error": null,
+    "counts": {
+      "vex": 44013,
+      "exploitation": 1748,
+      "advisory": 42350,
+      "vex_documents": 44013,
+      "vex_statements": 5773747,
+      "vex_products": 428074,
+      "sources": 4,
+      "records": 44098
+    },
+    "sources": [
+      {
+        "acquired_at": "2026-10-20T02:31:05.731234+00:00",
+        "allowed_hosts": [
+          "security-metadata.canonical.com",
+          "github.com"
+        ],
+        "attribution": "Canonical Ubuntu VEX",
+        "authoritative_prefixes": [
+          "pkg:deb/ubuntu/"
+        ],
+        "category": "vex",
+        "counts": {
+          "vex": 44013,
+          "vex_documents": 44013,
+          "vex_statements": 5773747,
+          "vex_products": 428074
+        },
+        "coverage": "Bounded whole Ubuntu CVE documents",
+        "id": "ubuntu-vex",
+        "license": "CC-BY-SA-4.0",
+        "max_age_days": 30,
+        "name": "Canonical Ubuntu VEX",
+        "provenance": {
+          "acquired_at": "2026-10-20T02:31:05.731234+00:00",
+          "bytes": 75142992,
+          "last_modified": "Mon, 19 Oct 2026 06:23:55 GMT",
+          "sha256": "fa6500c0c191b9b8a1d74acd87b3ed209f0dbca723b72c51f7dbbdedcf69b886",
+          "tls_verified": true,
+          "url": "https://security-metadata.canonical.com/vex/vex-all.tar.xz"
+        },
+        "selection": {
+          "archive_documents": 78793,
+          "archive_uncompressed_bytes": 28475331061,
+          "documents_with_versioned_purls": 43181,
+          "excluded": {
+            "ubuntu_canonical_size_above_limit": 26562,
+            "ubuntu_invalid_ValueError:Unsupported VEX format/version": 14,
+            "ubuntu_non_cve_documents": 8204
+          },
+          "max_canonical_document_bytes": 65536,
+          "measured_size_cohorts": {
+            "131072": {
+              "canonical_bytes": 1034215551,
+              "documents": 48465,
+              "product_statements": 9989246
+            },
+            "262144": {
+              "canonical_bytes": 1221997072,
+              "documents": 49607,
+              "product_statements": 11882487
+            },
+            "65536": {
+              "canonical_bytes": 615415873,
+              "documents": 44027,
+              "product_statements": 5774215
+            }
+          },
+          "normalized_statements": 5773747,
+          "policy": "Complete CVE documents whose canonical JSON fits the stated size cap; no statements truncated",
+          "versioned_purl_statements": 5773747
+        },
+        "trusted": true,
+        "url": "https://security-metadata.canonical.com/vex/vex-all.tar.xz",
+        "expires_at": "2026-11-19T02:31:05.731234+00:00",
+        "health": "loaded",
+        "enabled": true
+      },
+      {
+        "acquired_at": "2026-10-20T02:31:05.901008+00:00",
+        "allowed_hosts": [
+          "www.cisa.gov"
+        ],
+        "attribution": "CISA Known Exploited Vulnerabilities",
+        "authoritative_prefixes": [],
+        "category": "exploitation",
+        "counts": {
+          "exploitation": 1748
+        },
+        "coverage": "Entire current KEV catalog",
+        "id": "cisa-kev",
+        "license": "CC0-1.0",
+        "max_age_days": 30,
+        "name": "CISA Known Exploited Vulnerabilities",
+        "provenance": {
+          "acquired_at": "2026-10-20T02:31:05.901008+00:00",
+          "bytes": 1792713,
+          "last_modified": "Fri, 16 Oct 2026 17:15:48 GMT",
+          "sha256": "b6e27975f6635ecfc546fbd4fd6e444ba63a07ab2abc8876229d77fe083d357d",
+          "tls_verified": true,
+          "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+        },
+        "trusted": true,
+        "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        "expires_at": "2026-11-19T02:31:05.901008+00:00",
+        "health": "loaded",
+        "enabled": true
+      },
+      {
+        "acquired_at": "2026-10-20T02:31:06.400397+00:00",
+        "allowed_hosts": [
+          "secdb.alpinelinux.org"
+        ],
+        "attribution": "Alpine SecDB v3.24",
+        "authoritative_prefixes": [],
+        "category": "advisory",
+        "counts": {
+          "advisory": 10094
+        },
+        "coverage": "Latest stable main and community SecDB",
+        "id": "alpine-secdb",
+        "license": "CC-BY-SA-4.0",
+        "max_age_days": 30,
+        "name": "Alpine SecDB v3.24",
+        "provenance": {
+          "community": {
+            "acquired_at": "2026-10-20T02:31:06.985787+00:00",
+            "bytes": 162016,
+            "last_modified": "Mon, 19 Oct 2026 23:39:39 GMT",
+            "sha256": "37ccc723f92585382a615066c7deafdb1bc36e277d6d6964e9c611bc79e0f3e9",
+            "tls_verified": true,
+            "url": "https://secdb.alpinelinux.org/v3.24/community.json"
+          },
+          "main": {
+            "acquired_at": "2026-10-20T02:31:06.400397+00:00",
+            "bytes": 91739,
+            "last_modified": "Mon, 19 Oct 2026 22:45:16 GMT",
+            "sha256": "cf5cd27300cac5ee2f7bfcedef429f531dd1b17dad9b5547a94fefb3582f8bbf",
+            "tls_verified": true,
+            "url": "https://secdb.alpinelinux.org/v3.24/main.json"
+          },
+          "release_index": {
+            "acquired_at": "2026-10-20T02:31:04.434479+00:00",
+            "bytes": 2710,
+            "last_modified": null,
+            "sha256": "a6bbac87d8b3bd4542143909f27a17ccad3701a051082daaee480e44a4104bd6",
+            "tls_verified": true,
+            "url": "https://secdb.alpinelinux.org/"
+          }
+        },
+        "trusted": true,
+        "url": "https://secdb.alpinelinux.org/v3.24/main.json",
+        "expires_at": "2026-11-19T02:31:06.400397+00:00",
+        "health": "loaded",
+        "enabled": true
+      },
+      {
+        "acquired_at": "2026-10-20T02:31:30.464580+00:00",
+        "allowed_hosts": [
+          "codeload.github.com",
+          "github.com"
+        ],
+        "attribution": "GitHub Reviewed Advisory Database",
+        "authoritative_prefixes": [],
+        "category": "advisory",
+        "counts": {
+          "advisory": 32256
+        },
+        "coverage": "All GitHub-reviewed advisories having CVE aliases",
+        "id": "ghsa-reviewed",
+        "license": "CC-BY-4.0",
+        "max_age_days": 30,
+        "name": "GitHub Reviewed Advisory Database",
+        "provenance": {
+          "acquired_at": "2026-10-20T02:31:30.464580+00:00",
+          "bytes": 140917028,
+          "last_modified": null,
+          "sha256": "3783260af281a0038dc48d30d8ba5ab6d2652fc4ca428d998b333f9734d51d83",
+          "tls_verified": true,
+          "url": "https://codeload.github.com/github/advisory-database/tar.gz/refs/heads/main"
+        },
+        "trusted": true,
+        "url": "https://codeload.github.com/github/advisory-database/tar.gz/refs/heads/main",
+        "expires_at": "2026-11-19T02:31:30.464580+00:00",
+        "health": "loaded",
+        "enabled": true
+      }
+    ],
+    "exclusions": [
+      {
+        "counts": {
+          "alpine-secdb_duplicate_records": 8,
+          "alpine_non_cve_identifiers": 95,
+          "ghsa_reviewed_without_cve": 4654,
+          "ubuntu_canonical_size_above_limit": 26562,
+          "ubuntu_invalid_ValueError:Unsupported VEX format/version": 14,
+          "ubuntu_non_cve_documents": 8204
+        },
+        "reason": "Full archive exceeds practical startup storage; whole-document selection cap applies, USN advisories excluded because CVE identifiers are aliases.",
+        "source": "ubuntu-vex"
+      },
+      {
+        "reason": "Red Hat/SUSE/OSV are not included in this release; Chainguard/Wolfi, Debian and EPSS await redistribution-term verification.",
+        "source": "other_publishers"
+      }
+    ],
+    "history": [
+      {
+        "version": "f831ad715c94b118f43d96da0321fb279c1c017c722d1aae62830e1f01d29f79",
+        "sequence": 2026101901,
+        "installed_at": "2026-10-20T02:55:44.717694+00:00",
+        "counts": {
+          "vex": 44013,
+          "exploitation": 1748,
+          "advisory": 42350,
+          "vex_documents": 44013,
+          "vex_statements": 5773747,
+          "vex_products": 428074,
+          "sources": 4,
+          "records": 44098
+        }
+      }
+    ]
+  },
+  "repeat": {
+    "outcome": "unchanged",
+    "seconds": 0.050005273000351735
+  },
+  "upgrade": {
+    "outcome": "installed",
+    "seconds": 101.72950215499986,
+    "sequence": 2026101902,
+    "kind": "Same real payload, temporary signed newer-sequence manifest; original release files unchanged",
+    "revision_counts_unchanged": true
+  },
+  "downgrade": {
+    "outcome": "older_skipped",
+    "seconds": 0.04927941300047678
+  },
+  "database_counts": {
+    "documents": 44013,
+    "statements": 5773747,
+    "supplemental_records": 44098
+  },
+  "lookup": {
+    "seconds": 0.01915495300090697,
+    "cve": "CVE-2001-1593",
+    "identity": {
+      "product_id": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+      "purl": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+      "version": "1:4.14-1.3",
+      "distro": "trusty"
+    },
+    "exact": {
+      "status": "stale",
+      "statements": [
+        {
+          "id": 5773747,
+          "document_id": 44013,
+          "source_id": 1,
+          "source": "Canonical Ubuntu VEX",
+          "status": "not_affected",
+          "identity": {
+            "product_id": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+            "purl": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+            "version": "1:4.14-1.3",
+            "distro": "trusty"
+          },
+          "verification": "tls",
+          "sha256": "7d70a54162d175c5db9cf8d0743c1b27650d3949b08d7dc8baf821326293e138",
+          "reason": "stale",
+          "justification": "vulnerable_code_not_present",
+          "impact_statement": "This package (for the given release), while related to the CVE in some way, is not affected by the issue. CVE Notes / justification: ",
+          "action_statement": null,
+          "valid_until": "2026-05-24T08:07:01.049618+00:00"
+        }
+      ],
+      "valid_until": null,
+      "reasons": [
+        "stale"
+      ]
+    },
+    "mismatch": {
+      "status": "no_vex",
+      "statements": [],
+      "valid_until": null,
+      "reasons": [
+        "no_vex"
+      ]
+    }
+  },
+  "score_scenario": {
+    "description": "Conservative missing-enrichment scenario using real imported VEX result",
+    "inputs": {
+      "severity": "high",
+      "epss": null,
+      "kev": false,
+      "intelligence_current": false
+    },
+    "result": {
+      "score": 75.0,
+      "band": "high",
+      "uncertain": true,
+      "reasons": [
+        "Severity contribution",
+        "Uncertainty floor applied"
+      ],
+      "vex": {
+        "status": "stale",
+        "statements": [
+          {
+            "id": 5773747,
+            "document_id": 44013,
+            "source_id": 1,
+            "source": "Canonical Ubuntu VEX",
+            "status": "not_affected",
+            "identity": {
+              "product_id": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+              "purl": "pkg:deb/ubuntu/a2ps@1:4.14-1.3?arch=ppc64el&distro=trusty",
+              "version": "1:4.14-1.3",
+              "distro": "trusty"
+            },
+            "verification": "tls",
+            "sha256": "7d70a54162d175c5db9cf8d0743c1b27650d3949b08d7dc8baf821326293e138",
+            "reason": "stale",
+            "justification": "vulnerable_code_not_present",
+            "impact_statement": "This package (for the given release), while related to the CVE in some way, is not affected by the issue. CVE Notes / justification: ",
+            "action_statement": null,
+            "valid_until": "2026-05-24T08:07:01.049618+00:00"
+          }
+        ],
+        "valid_until": null,
+        "reasons": [
+          "stale"
+        ]
+      }
+    }
+  },
+  "kev_overlay": {
+    "cve": "CVE-2025-24893",
+    "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "catalog": {
+      "state": "LOADED",
+      "records": 1748,
+      "metadata": {
+        "date_released": "2026-10-20T02:31:05.901008+00:00",
+        "expires_at": "2026-11-19T02:31:05.901008+00:00",
+        "basis": "embedded-signed-package",
+        "package_version": "f831ad715c94b118f43d96da0321fb279c1c017c722d1aae62830e1f01d29f79",
+        "source": "cisa-kev",
+        "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+        "prior_catalog": {
+          "state": "MISSING"
+        }
+      }
+    },
+    "unknown_control": "CVE-1900-0000",
+    "unknown_preserved": true,
+    "score_scenario": {
+      "description": "Low-severity missing-EPSS scenario with real affirmative KEV membership",
+      "result": {
+        "score": 95,
+        "band": "critical",
+        "uncertain": true,
+        "reasons": [
+          "Severity contribution",
+          "Uncertainty floor applied",
+          "KEV override applied"
+        ],
+        "vex": {
+          "status": "unknown"
+        }
+      }
+    }
+  },
+  "database_bytes": 3785554967,
+  "passed": true,
+  "sql_statements": {
+    "install": 9,
+    "repeat": 7,
+    "upgrade": 88213,
+    "downgrade": 5,
+    "lookup": 17
+  }
+}

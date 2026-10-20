@@ -1,0 +1,70 @@
+{
+  "completed_at": "2026-10-20T03:51:50.695000+00:00",
+  "audit": "BoundedTarInfo streaming validation of exact locked source archives",
+  "caps": {
+    "extension_bytes": 1048576,
+    "metadata_bytes": 67108864,
+    "extension_depth": 32,
+    "pax_fields": 256
+  },
+  "inputs": [
+    {
+      "input": "ubuntu-vex.tar.xz",
+      "sha256": "fa6500c0c191b9b8a1d74acd87b3ed209f0dbca723b72c51f7dbbdedcf69b886",
+      "bytes": 75142992,
+      "members": 78822,
+      "regular_members": 78793,
+      "member_bytes": 28475331061,
+      "pax_fields_max": 0,
+      "metadata_bytes": 0,
+      "extension_headers": 0,
+      "extension_bytes_max": 0,
+      "extension_depth_max": 0,
+      "elapsed_seconds": 157.31
+    },
+    {
+      "input": "vulnrichment.tar.gz",
+      "sha256": "7fa0f238d2a93b1822ea93d85baf19979f6c04fd1b316b3a7c53d26cd28c92a1",
+      "bytes": 102205859,
+      "members": 201896,
+      "regular_members": 201289,
+      "member_bytes": 1280070026,
+      "pax_fields_max": 1,
+      "metadata_bytes": 1024,
+      "extension_headers": 1,
+      "extension_bytes_max": 52,
+      "extension_depth_max": 1,
+      "elapsed_seconds": 53.7
+    },
+    {
+      "input": "redhat-vex.tar.zst",
+      "sha256": "50e6aa3cd24430a5e60c9f9ff7ada312e85375a43a112e73a884a509b0aeb7de",
+      "bytes": 373262380,
+      "members": 71849,
+      "regular_members": 71849,
+      "member_bytes": 22159788284,
+      "pax_fields_max": 0,
+      "metadata_bytes": 0,
+      "extension_headers": 0,
+      "extension_bytes_max": 0,
+      "extension_depth_max": 0,
+      "elapsed_seconds": 110.06
+    },
+    {
+      "input": "ghsa.tar.gz",
+      "sha256": "3783260af281a0038dc48d30d8ba5ab6d2652fc4ca428d998b333f9734d51d83",
+      "bytes": 140917028,
+      "members": 782730,
+      "regular_members": 391272,
+      "member_bytes": 614388550,
+      "pax_fields_max": 1,
+      "metadata_bytes": 1024,
+      "extension_headers": 1,
+      "extension_bytes_max": 52,
+      "extension_depth_max": 1,
+      "elapsed_seconds": 315.67,
+      "audit_run": "original complete streaming pass"
+    }
+  ],
+  "failures": 0
+}

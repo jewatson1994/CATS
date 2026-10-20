@@ -1,0 +1,2 @@
+# Optional release-builder dependency only; the portal does not decompress upstream zstd.
+zstandard==0.25.0

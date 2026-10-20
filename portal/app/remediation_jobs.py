@@ -15,7 +15,7 @@ worker_context = ContextVar("remediation_worker_context", default=None)
 
 # Bump whenever planning semantics change; persisted previews must not survive
 # changes to the decisions or evidence that a user is asked to approve.
-PLAN_REVISION = 1
+PLAN_REVISION = 2
 PLAN_REVIEW_REQUIRED = "The remediation planner has changed. Open Remediate from the service to review and confirm a new plan."
 PLAN_CHANGED = "The retained source or remediation plan no longer matches your confirmation. Open Remediate from the service to review and confirm a new plan."
 
@@ -49,11 +49,12 @@ def _source(db, service_id, source_id=None):
 
 def request_plan(db, service, actor_id, finding_type=None, finding_id=None, preview=False):
     source = _source(db, service.id)
+    vex_token = native_vex_token(db, service.id)
     # Exact execution and finding scope: previews share the service plan's worker
     # result, never a second synchronous planner or an unbound newer snapshot.
-    payload = {"planner_revision": PLAN_REVISION, "source_execution_id": source.id, "source_version_id": source.service_version_id,
+    payload = {"native_vex_token": vex_token, "planner_revision": PLAN_REVISION, "source_execution_id": source.id, "source_version_id": source.service_version_id,
                "finding_type": finding_type, "finding_id": finding_id}
-    key = f"plan:v{PLAN_REVISION}:{service.id}:{actor_id}:{source.id}:{source.payload_digest}:{finding_type}:{finding_id}"
+    key = f"plan:v{PLAN_REVISION}:{service.id}:{actor_id}:{source.id}:{source.payload_digest}:{finding_type}:{finding_id}:{vex_token}"
     job = submit(db, kind="remediation_plan", payload=payload, service_id=service.id,
         requested_by_id=actor_id, source_execution_id=source.id, dedupe_key=key)
     state = {"job_id": job.id, "status": job.status, "stage": job.stage,
@@ -76,6 +77,8 @@ def confirmed_plan(db, service, source_id, digest, finding_type, finding_id):
     for job in jobs:
         payload = job.payload or {}
         if (payload.get("finding_type"), payload.get("finding_id"), payload.get("source_version_id")) != (finding_type, finding_id, source.service_version_id):
+            continue
+        if payload.get("native_vex_token") != native_vex_token(db, service.id):
             continue
         plan = (job.result or {}).get("plan") or {}
         if payload.get("planner_revision") != PLAN_REVISION or plan.get("planner_revision") != PLAN_REVISION:
@@ -103,3 +106,53 @@ def enqueue_record(db, record, kind, attempt_id=None, requested_by_id=None):
     return submit(db, kind=kind, payload=payload, service_id=record.service_id,
         requested_by_id=requested_by_id or record.requested_by_id, source_execution_id=record.source_execution_id,
         version=str(record.source_version_id or ""), dedupe_key=key, max_attempts=3)
+
+
+def native_vex_token(db, service_id, now=None):
+    """Bind prospective work to currently effective evidence, including expiry."""
+    from . import native_vex as nv
+    from .risk_profiles import utcnow, digest
+    from .native_vex_models import VexDispositionEvaluation as Evaluation, VexDispositionService as State, VexDispositionPolicy as Policy
+    evaluation = db.scalar(select(Evaluation.id).select_from(Evaluation).join(State, State.service_id == Evaluation.service_id)
+        .join(Policy, Policy.id == 1).where(Evaluation.service_id == service_id, *nv.current_evaluation(now or utcnow())))
+    return digest({'policy': nv.cache_token(db), 'evaluation': evaluation})
+
+
+def filter_native_vex_images(db, service_id, execution_id, plan, now=None):
+    """Filter new image proposals only; retained scanner/job evidence is immutable.
+
+    An image is removed when every observation or every proposed entry is excluded. Mixed
+    images remain patch candidates; scanner entries are removed only on an exact
+    CVE/package/version/image match with no unresolved duplicate observation.
+    """
+    from . import native_vex as nv
+    from .risk_profiles import utcnow
+    from .models import Finding, FindingObservation as Observation
+    now = now or utcnow()
+    rows = db.execute(select(Observation, Finding.cve, nv.observation_excluded(Observation.id, now))
+        .join(Finding, Finding.id == Observation.finding_id).where(Finding.service_id == service_id,
+            Observation.execution_id == execution_id)).all()
+    images, identities = {}, {}
+    for observation, cve, excluded in rows:
+        image = str(observation.image or '').strip()
+        images.setdefault(image, []).append(bool(excluded))
+        key = (image, cve, observation.package, observation.installed_version)
+        identities.setdefault(key, []).append(bool(excluded))
+    kept = []
+    for image in plan.get('images', []):
+        reference = str(image.get('original') or '').strip()
+        payload_entries = image.get('vulnerabilities', [])
+        payload_verified = all(identities.get((reference, item.get('cve'), item.get('package'), item.get('installed_version')))
+            for item in payload_entries)
+        if images.get(reference) and all(images[reference]) and payload_verified:
+            continue
+        if 'vulnerabilities' in image:
+            image['vulnerabilities'] = [item for item in image['vulnerabilities']
+                if not (identities.get((reference, item.get('cve'), item.get('package'), item.get('installed_version')))
+                    and all(identities[(reference, item.get('cve'), item.get('package'), item.get('installed_version'))]))]
+        # An emptied scoped proposal must never become an unrestricted image patch.
+        if payload_entries and not image.get('vulnerabilities'):
+            continue
+        kept.append(image)
+    plan['images'] = kept
+    return plan

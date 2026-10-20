@@ -16,7 +16,10 @@ def test_real_postgres_concurrent_claim_and_lease_recovery():
     schema = 'cats_job_test_' + uuid.uuid4().hex
     with engine.begin() as db:
         db.execute(text(f'CREATE SCHEMA "{schema}"'))
-    isolated = engine.execution_options(schema_translate_map={None: schema})
+    # Raw trigger/function DDL is not rewritten by schema_translate_map.
+    # Scope every connection so both SQLAlchemy and that DDL use this schema.
+    isolated = create_engine(os.environ['CATS_TEST_POSTGRES_URL'],
+                             connect_args={'options': f'-c search_path={schema}'})
     sessions = sessionmaker(bind=isolated, expire_on_commit=False)
     try:
         Base.metadata.create_all(isolated)
@@ -44,6 +47,7 @@ def test_real_postgres_concurrent_claim_and_lease_recovery():
         with sessions() as db:
             assert db.get(DurableJob, original.id).status == 'completed'
     finally:
+        isolated.dispose()
         with engine.begin() as db:
             db.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         engine.dispose()

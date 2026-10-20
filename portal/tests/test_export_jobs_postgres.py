@@ -22,7 +22,10 @@ def test_real_postgres_all_archive_uses_one_snapshot_during_concurrent_scan(tmp_
     schema = "cats_export_test_" + uuid.uuid4().hex
     with engine.begin() as db:
         db.execute(text(f'CREATE SCHEMA "{schema}"'))
-    isolated = engine.execution_options(schema_translate_map={None: schema})
+    # Raw trigger/function DDL is not rewritten by schema_translate_map.
+    # Scope every connection so both SQLAlchemy and that DDL use this schema.
+    isolated = create_engine(os.environ['CATS_TEST_POSTGRES_URL'],
+                             connect_args={'options': f'-c search_path={schema}'})
     sessions = sessionmaker(bind=isolated, expire_on_commit=False)
     monkeypatch.setenv("CATS_EXPORT_JOB_ROOT", str(tmp_path / "exports"))
     try:
@@ -77,6 +80,7 @@ def test_real_postgres_all_archive_uses_one_snapshot_during_concurrent_scan(tmp_
             values = [cell.value for row in workbook.active for cell in row]
             assert "Original Service" in values and "Replacement Service" not in values
     finally:
+        isolated.dispose()
         with engine.begin() as db:
             db.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
         engine.dispose()

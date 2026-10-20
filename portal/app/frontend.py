@@ -21,7 +21,7 @@ from .frontend_admin import project_admin
 from .frontend_policies import policies_data
 
 PAGE_MEDIA_TYPE = "application/vnd.cats.page+json"
-MIGRATED_PAGES = frozenset({"cyber_approvals.html", "approved_releases.html", "approved_release_destinations.html", "jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
+MIGRATED_PAGES = frozenset({"risk_intelligence.html", "cyber_approvals.html", "approved_releases.html", "approved_release_destinations.html", "jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
                             "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html", "public_results.html", "patch_results.html", "finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html",
                             "service_overview.html", "service_activity.html", "service_history.html",
                             "service_dependencies.html", "service_artifacts.html", "service_validation.html",
@@ -109,7 +109,7 @@ def _service_data(data, context, can, formatters):
     now = context.get("now")
     active_exception = context.get("active_exception")
     for key, fields, due_key in (
-        ("findings", ("id", "cve", "severity", "active"), "due_dates"),
+        ("findings", ("id", "cve", "severity", "active", "effective_disposition", "vex_excluded_observations"), "due_dates"),
         ("policy_findings", ("id", "finding", "title", "severity", "active", "framework", "target", "description", "remediation"), "policy_due_dates")):
         data[key] = []
         for finding in context.get(key, []):

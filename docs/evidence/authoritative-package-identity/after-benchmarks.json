@@ -1,0 +1,205 @@
+{
+  "schema_version": 1,
+  "as_of": "2026-10-20T05:40:57.930104+00:00",
+  "kind": "real retained observations, repeated only for scaling",
+  "script_sha256": "e03474579e4650a48dc3e6670fab389e6675b078cc80e9f900736d0cc5d589ec",
+  "helper_sha256": "16250313e02f4c10df9fb807e6d44b3f4085ecc004f2ec3ff5bdd60e06e627db",
+  "code_sha256": {
+    "container_intelligence.py": "a5e2b771a19c5b6ef6be7f745ea3a9260fb6e5b4c5da8fce12f099059c413111",
+    "package_identity_resolution.py": "b03697e33a6b65a6d011c36978edfe59b4279184cd17ca70287e8196802caa05",
+    "vex_intelligence.py": "915e54c257a8c1a26a5d379179ed413505386a15e77ee305bed3ff8e907929d0",
+    "packaged_risk_intelligence.py": "cb92be0172b1d2265edf5a772e04833a44ebee639d94c5892a9e06945409f305"
+  },
+  "batch_size": 250,
+  "benchmarks": [
+    {
+      "name": "single_finding",
+      "observations": 1,
+      "distinct_findings": 1,
+      "images": 1,
+      "batches": 1,
+      "queries": 7,
+      "seconds": 0.010459,
+      "process_cpu_seconds": 0.007547,
+      "sampled_process_peak_rss_bytes": 261173248,
+      "process_lifetime_peak_rss_bytes": 266174464,
+      "status_counts": {
+        "no_vex": 1
+      },
+      "metric_sums": {
+        "direct_candidate_count": 0,
+        "resolved_candidate_count": 0,
+        "resolved_identity_count": 2,
+        "direct_applicable_count": 0,
+        "resolved_applicable_count": 0
+      }
+    },
+    {
+      "name": "1000_observations",
+      "observations": 1000,
+      "distinct_findings": 426,
+      "images": 6,
+      "batches": 4,
+      "queries": 28,
+      "seconds": 0.733479,
+      "process_cpu_seconds": 0.415601,
+      "sampled_process_peak_rss_bytes": 268390400,
+      "process_lifetime_peak_rss_bytes": 267390976,
+      "status_counts": {
+        "no_vex": 1000
+      },
+      "metric_sums": {
+        "direct_candidate_count": 0,
+        "resolved_candidate_count": 0,
+        "resolved_identity_count": 484,
+        "direct_applicable_count": 0,
+        "resolved_applicable_count": 0
+      }
+    },
+    {
+      "name": "10000_observations",
+      "observations": 10000,
+      "distinct_findings": 483,
+      "images": 7,
+      "batches": 40,
+      "queries": 280,
+      "seconds": 7.464165,
+      "process_cpu_seconds": 4.080802,
+      "sampled_process_peak_rss_bytes": 282615808,
+      "process_lifetime_peak_rss_bytes": 281874432,
+      "status_counts": {
+        "no_vex": 10000
+      },
+      "metric_sums": {
+        "direct_candidate_count": 0,
+        "resolved_candidate_count": 0,
+        "resolved_identity_count": 5301,
+        "direct_applicable_count": 0,
+        "resolved_applicable_count": 0
+      }
+    },
+    {
+      "name": "multiple_images_one_service",
+      "observations": 1118,
+      "distinct_findings": 483,
+      "images": 7,
+      "batches": 5,
+      "queries": 35,
+      "seconds": 1.021068,
+      "process_cpu_seconds": 0.569249,
+      "sampled_process_peak_rss_bytes": 283430912,
+      "process_lifetime_peak_rss_bytes": 282783744,
+      "status_counts": {
+        "no_vex": 1118
+      },
+      "metric_sums": {
+        "direct_candidate_count": 0,
+        "resolved_candidate_count": 0,
+        "resolved_identity_count": 595,
+        "direct_applicable_count": 0,
+        "resolved_applicable_count": 0
+      }
+    }
+  ],
+  "notes": [
+    "Warm/unknown OS and database cache; no cold-cache claim.",
+    "Real corpus remains PostgreSQL-enforced read-only; all workloads include VEX, advisory, KEV and EPSS.",
+    "Repeated observations are load tests, not additional unique scanned findings.",
+    "Per-job CPU and process RSS overlap during concurrency and must not be summed; database CPU/RSS are not measured.",
+    "RSS includes Python and prior root-cause/evaluation input materialization; lifetime peak is cumulative.",
+    "Real inputs have zero applicable statements; controlled positive evidence is explicitly separate."
+  ],
+  "concurrent": {
+    "jobs": 4,
+    "observations_per_job": 1000,
+    "seconds_wall": 3.043648,
+    "queries": 112,
+    "job_metrics": [
+      {
+        "observations": 1000,
+        "distinct_findings": 426,
+        "images": 6,
+        "batches": 4,
+        "queries": 28,
+        "seconds": 2.86024,
+        "process_cpu_seconds": 3.227485,
+        "sampled_process_peak_rss_bytes": 304885760,
+        "process_lifetime_peak_rss_bytes": 304033792,
+        "status_counts": {
+          "no_vex": 1000
+        },
+        "metric_sums": {
+          "direct_candidate_count": 0,
+          "resolved_candidate_count": 0,
+          "resolved_identity_count": 484,
+          "direct_applicable_count": 0,
+          "resolved_applicable_count": 0
+        }
+      },
+      {
+        "observations": 1000,
+        "distinct_findings": 426,
+        "images": 6,
+        "batches": 4,
+        "queries": 28,
+        "seconds": 3.030303,
+        "process_cpu_seconds": 3.450765,
+        "sampled_process_peak_rss_bytes": 304885760,
+        "process_lifetime_peak_rss_bytes": 304033792,
+        "status_counts": {
+          "no_vex": 1000
+        },
+        "metric_sums": {
+          "direct_candidate_count": 0,
+          "resolved_candidate_count": 0,
+          "resolved_identity_count": 484,
+          "direct_applicable_count": 0,
+          "resolved_applicable_count": 0
+        }
+      },
+      {
+        "observations": 1000,
+        "distinct_findings": 426,
+        "images": 6,
+        "batches": 4,
+        "queries": 28,
+        "seconds": 3.013276,
+        "process_cpu_seconds": 3.43264,
+        "sampled_process_peak_rss_bytes": 304885760,
+        "process_lifetime_peak_rss_bytes": 304033792,
+        "status_counts": {
+          "no_vex": 1000
+        },
+        "metric_sums": {
+          "direct_candidate_count": 0,
+          "resolved_candidate_count": 0,
+          "resolved_identity_count": 484,
+          "direct_applicable_count": 0,
+          "resolved_applicable_count": 0
+        }
+      },
+      {
+        "observations": 1000,
+        "distinct_findings": 426,
+        "images": 6,
+        "batches": 4,
+        "queries": 28,
+        "seconds": 3.028734,
+        "process_cpu_seconds": 3.445955,
+        "sampled_process_peak_rss_bytes": 304885760,
+        "process_lifetime_peak_rss_bytes": 304033792,
+        "status_counts": {
+          "no_vex": 1000
+        },
+        "metric_sums": {
+          "direct_candidate_count": 0,
+          "resolved_candidate_count": 0,
+          "resolved_identity_count": 484,
+          "direct_applicable_count": 0,
+          "resolved_applicable_count": 0
+        }
+      }
+    ]
+  },
+  "code_unchanged_during_run": true
+}

@@ -19,6 +19,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+# Fail the connected image build if its offline intelligence payload is missing or altered.
+RUN python -m app.embedded_intelligence --verify
 COPY validator_server.py ./validator_server.py
 COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

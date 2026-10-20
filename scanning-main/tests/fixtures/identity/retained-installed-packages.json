@@ -1,0 +1,307 @@
+{
+  "description": "Factual installed-package record excerpts from the immutable CATS container audit. No downloaded index or VEX statement; no inferred source equivalence. Projection omits file lists and other nonidentity metadata. Raw file hashes identify the full original records.",
+  "records": [
+    {
+      "capture": "ubuntu",
+      "raw_file": "ubuntu.syft.json",
+      "raw_sha256": "820a19648c801e03721cc3079ace1b0c7d9515ba60bc7bb225be771a2b2027e7",
+      "image_digest": "sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+      "repository_digests": [
+        "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
+      ],
+      "captured_at": "2026-10-20T05:00:51.318023+00:00",
+      "descriptor": {
+        "name": "syft",
+        "version": "1.31.0"
+      },
+      "schema": {
+        "version": "16.0.37",
+        "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+      },
+      "distro": {
+        "prettyName": "Ubuntu 22.04.5 LTS",
+        "name": "Ubuntu",
+        "id": "ubuntu",
+        "idLike": [
+          "debian"
+        ],
+        "version": "22.04.5 LTS (Jammy Jellyfish)",
+        "versionID": "22.04",
+        "versionCodename": "jammy",
+        "homeURL": "https://www.ubuntu.com/",
+        "supportURL": "https://help.ubuntu.com/",
+        "bugReportURL": "https://bugs.launchpad.net/ubuntu/",
+        "privacyPolicyURL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+      },
+      "source": {
+        "type": "directory",
+        "name": "/tmp/cats-rootfs"
+      },
+      "artifact": {
+        "id": "9007b87848ac548a",
+        "name": "bsdutils",
+        "version": "1:2.37.2-4ubuntu3.5",
+        "type": "deb",
+        "foundBy": "dpkg-db-cataloger",
+        "locations": [
+          {
+            "path": "/var/lib/dpkg/status",
+            "accessPath": "/var/lib/dpkg/status",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "purl": "pkg:deb/ubuntu/bsdutils@1%3A2.37.2-4ubuntu3.5?arch=amd64&distro=ubuntu-22.04&upstream=util-linux%402.37.2-4ubuntu3.5",
+        "metadataType": "dpkg-db-entry",
+        "metadata": {
+          "package": "bsdutils",
+          "source": "util-linux",
+          "version": "1:2.37.2-4ubuntu3.5",
+          "sourceVersion": "2.37.2-4ubuntu3.5",
+          "architecture": "amd64"
+        }
+      }
+    },
+    {
+      "capture": "debian-12-9",
+      "raw_file": "debian-12-9.syft.json",
+      "raw_sha256": "c0d24590de15294cb547c0da8dca350162dec9444a5e2812653dd7112e79dfbd",
+      "image_digest": "sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+      "repository_digests": [
+        "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc"
+      ],
+      "captured_at": "2026-10-20T05:03:19.604760+00:00",
+      "descriptor": {
+        "name": "syft",
+        "version": "1.31.0"
+      },
+      "schema": {
+        "version": "16.0.37",
+        "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+      },
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "source": {
+        "type": "directory",
+        "name": "/tmp/cats-rootfs"
+      },
+      "artifact": {
+        "id": "5356c86cb07da262",
+        "name": "bash",
+        "version": "5.2.15-2+b7",
+        "type": "deb",
+        "foundBy": "dpkg-db-cataloger",
+        "locations": [
+          {
+            "path": "/var/lib/dpkg/status",
+            "accessPath": "/var/lib/dpkg/status",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "purl": "pkg:deb/debian/bash@5.2.15-2%2Bb7?arch=amd64&distro=debian-12&upstream=bash%405.2.15-2",
+        "metadataType": "dpkg-db-entry",
+        "metadata": {
+          "package": "bash",
+          "source": "bash",
+          "version": "5.2.15-2+b7",
+          "sourceVersion": "5.2.15-2",
+          "architecture": "amd64"
+        }
+      }
+    },
+    {
+      "capture": "debian-12-9",
+      "raw_file": "debian-12-9.syft.json",
+      "raw_sha256": "c0d24590de15294cb547c0da8dca350162dec9444a5e2812653dd7112e79dfbd",
+      "image_digest": "sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+      "repository_digests": [
+        "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc"
+      ],
+      "captured_at": "2026-10-20T05:03:19.604760+00:00",
+      "descriptor": {
+        "name": "syft",
+        "version": "1.31.0"
+      },
+      "schema": {
+        "version": "16.0.37",
+        "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+      },
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "source": {
+        "type": "directory",
+        "name": "/tmp/cats-rootfs"
+      },
+      "artifact": {
+        "id": "c02171bf930643dd",
+        "name": "adduser",
+        "version": "3.134",
+        "type": "deb",
+        "foundBy": "dpkg-db-cataloger",
+        "locations": [
+          {
+            "path": "/var/lib/dpkg/status",
+            "accessPath": "/var/lib/dpkg/status",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "purl": "pkg:deb/debian/adduser@3.134?arch=all&distro=debian-12",
+        "metadataType": "dpkg-db-entry",
+        "metadata": {
+          "package": "adduser",
+          "source": "",
+          "version": "3.134",
+          "sourceVersion": "",
+          "architecture": "all"
+        }
+      }
+    },
+    {
+      "capture": "redhat-ubi",
+      "raw_file": "redhat-ubi.syft.json",
+      "raw_sha256": "4ef227e11f3db2b17bd3bb1fb9ce59e9c14961778c880b160ee849ff2cf165fc",
+      "image_digest": "sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+      "repository_digests": [
+        "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc"
+      ],
+      "captured_at": "2026-10-20T05:01:14.799254+00:00",
+      "descriptor": {
+        "name": "syft",
+        "version": "1.31.0"
+      },
+      "schema": {
+        "version": "16.0.37",
+        "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+      },
+      "distro": {
+        "prettyName": "Red Hat Enterprise Linux 9.6 (Plow)",
+        "name": "Red Hat Enterprise Linux",
+        "id": "rhel",
+        "idLike": [
+          "fedora"
+        ],
+        "version": "9.6 (Plow)",
+        "versionID": "9.6",
+        "homeURL": "https://www.redhat.com/",
+        "bugReportURL": "https://issues.redhat.com/",
+        "cpeName": "cpe:/o:redhat:enterprise_linux:9::baseos"
+      },
+      "source": {
+        "type": "directory",
+        "name": "/tmp/cats-rootfs"
+      },
+      "artifact": {
+        "id": "90adf6fb45a677e1",
+        "name": "acl",
+        "version": "2.3.1-4.el9",
+        "type": "rpm",
+        "foundBy": "rpm-db-cataloger",
+        "locations": [
+          {
+            "path": "/var/lib/rpm/rpmdb.sqlite",
+            "accessPath": "/var/lib/rpm/rpmdb.sqlite",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "purl": "pkg:rpm/redhat/acl@2.3.1-4.el9?arch=x86_64&distro=rhel-9.6&upstream=acl-2.3.1-4.el9.src.rpm",
+        "metadataType": "rpm-db-entry",
+        "metadata": {
+          "name": "acl",
+          "version": "2.3.1",
+          "epoch": null,
+          "architecture": "x86_64",
+          "release": "4.el9",
+          "sourceRpm": "acl-2.3.1-4.el9.src.rpm",
+          "vendor": "Red Hat, Inc.",
+          "modularityLabel": ""
+        }
+      }
+    },
+    {
+      "capture": "suse",
+      "raw_file": "suse.syft.json",
+      "raw_sha256": "d8f09a578655f8e44634f96e93f7cf0d40df051cdff2fde368682fb68bc260f3",
+      "image_digest": "sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+      "repository_digests": [
+        "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb"
+      ],
+      "captured_at": "2026-10-20T05:01:22.070047+00:00",
+      "descriptor": {
+        "name": "syft",
+        "version": "1.31.0"
+      },
+      "schema": {
+        "version": "16.0.37",
+        "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+      },
+      "distro": {
+        "prettyName": "SUSE Linux Enterprise Server 15 SP6",
+        "name": "SLES",
+        "id": "sles",
+        "idLike": [
+          "suse"
+        ],
+        "version": "15-SP6",
+        "versionID": "15.6",
+        "cpeName": "cpe:/o:suse:sles:15:sp6"
+      },
+      "source": {
+        "type": "directory",
+        "name": "/tmp/cats-rootfs"
+      },
+      "artifact": {
+        "id": "4371a5db5753515c",
+        "name": "aaa_base",
+        "version": "84.87+git20180409.04c9dae-150300.10.28.2",
+        "type": "rpm",
+        "foundBy": "rpm-db-cataloger",
+        "locations": [
+          {
+            "path": "/usr/lib/sysimage/rpm/Packages.db",
+            "accessPath": "/usr/lib/sysimage/rpm/Packages.db",
+            "annotations": {
+              "evidence": "primary"
+            }
+          }
+        ],
+        "purl": "pkg:rpm/sles/aaa_base@84.87%2Bgit20180409.04c9dae-150300.10.28.2?arch=x86_64&distro=sles-15.6&upstream=aaa_base-84.87%2Bgit20180409.04c9dae-150300.10.28.2.src.rpm",
+        "metadataType": "rpm-db-entry",
+        "metadata": {
+          "name": "aaa_base",
+          "version": "84.87+git20180409.04c9dae",
+          "epoch": null,
+          "architecture": "x86_64",
+          "release": "150300.10.28.2",
+          "sourceRpm": "aaa_base-84.87+git20180409.04c9dae-150300.10.28.2.src.rpm",
+          "vendor": "SUSE LLC <https://www.suse.com/>",
+          "modularityLabel": ""
+        }
+      }
+    }
+  ]
+}

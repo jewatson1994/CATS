@@ -196,7 +196,7 @@ def _classification_select(db, service_id, configuration, now, latest_id, findin
     exception = select(ExceptionRecord.id).where(
         ExceptionRecord.finding_id == F.id, ExceptionRecord.revoked_at.is_(None),
         ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-    eligible, rule, _ = m._risk_finding_expressions({service_id: configuration}, now, exception, overdue=true())
+    eligible, rule, _ = m._risk_finding_expressions({service_id: configuration}, now, exception, overdue=true(), native_disposition=False)
     defaults = observation_metadata({})
     evidence = O.evidence
     if postgresql:
@@ -531,7 +531,9 @@ def predicates(configurations, now):
     does not include the exception test, exactly like the live expression.
     """
     from .main import _raw_overdue_expression
-    return FC.eligible, FC.excepted.is_(True), and_(FC.noncompliant_rule, _raw_overdue_expression(FC, configurations, now))
+    from .native_vex import finding_excluded
+    applicable = or_(FC.excepted.is_(True), ~finding_excluded(FC.finding_id, now))
+    return and_(FC.eligible, applicable), FC.excepted.is_(True), and_(FC.noncompliant_rule, applicable, _raw_overdue_expression(FC, configurations, now))
 
 
 # ---------------------------------------------------------------- background

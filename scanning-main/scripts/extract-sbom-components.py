@@ -5,14 +5,16 @@ import json
 from pathlib import Path
 import sys
 
+from sbom_identity import IDENTITY_LIMITS, document_identity, package_identity, package_purl, purl_fields
 
-LIMITS = {"name": 300, "version": 200, "ecosystem": 80, "purl": 700,
+
+LIMITS = {"name": 300, "version": 200, "ecosystem": 80, "purl": 1500,
           "image": 1000, "cpe": 700, "supplier": 300, "author": 300,
           "architecture": 120, "hashes": 1000, "copyright": 500,
           "license_declared": 500, "license_detected": 500,
           "license_expression": 500, "license_source": 120,
           "location": 1000, "sbom": 300, "image_digest": 180,
-          "dependency_parents": 1000, "dependency_children": 1000}
+          "dependency_parents": 1000, "dependency_children": 1000, **IDENTITY_LIMITS}
 
 
 def text(value):
@@ -35,7 +37,7 @@ def license_text(items):
     return "; ".join(dict.fromkeys(values))
 
 
-def normalize(artifact, image, digest, sbom_name, source, graph=None):
+def normalize(artifact, image, digest, sbom_name, source, graph=None, image_identity=None):
     if not isinstance(artifact, dict):
         return None
     name = artifact.get("name") or artifact.get("PackageName")
@@ -69,18 +71,27 @@ def normalize(artifact, image, digest, sbom_name, source, graph=None):
     location = locations[0].get("path") if locations and isinstance(locations[0], dict) else ""
     reference = artifact.get("bom-ref") or artifact.get("SPDXID") or artifact.get("id")
     parents, children = (graph or {}).get(reference, ((), ()))
+    purl = package_purl(artifact)
+    described = purl_fields(purl)
     fields = {"name": name, "version": artifact.get("version") or artifact.get("versionInfo"),
-              "ecosystem": artifact.get("type") or artifact.get("primaryPackagePurpose"),
-              "purl": artifact.get("purl"), "image": image, "image_digest": digest,
+              "ecosystem": described.get("ecosystem") or artifact.get("type") or artifact.get("primaryPackagePurpose"),
+              "purl": purl, "image": image, "image_digest": digest,
               "cpe": cpe, "supplier": supplier, "author": artifact.get("author") or artifact.get("originator"),
-              "architecture": metadata.get("architecture") or artifact.get("architecture"),
+              "architecture": metadata.get("architecture") or artifact.get("architecture") or described.get("architecture"),
               "hashes": hash_text, "copyright": artifact.get("copyright") or artifact.get("copyrightText"),
               "license_declared": declared, "license_detected": detected, "license_expression": expression,
               "license_source": source if declared or detected or expression else "",
               "location": location, "sbom": sbom_name,
               "dependency_parents": "; ".join(parents[:12]),
               "dependency_children": "; ".join(children[:12])}
-    return {key: text(value)[:LIMITS[key]] for key, value in fields.items() if text(value)}
+    fields.update(image_identity or {})
+    fields.update(package_identity(artifact))
+    # Omit oversized identity values rather than alter them by truncation.
+    result = {key: text(value) for key, value in fields.items()
+              if key != "purl" and text(value) and len(text(value)) <= LIMITS[key]}
+    if purl:
+        result["purl"] = purl
+    return result
 
 
 def main(root: Path, output: Path) -> None:
@@ -90,9 +101,13 @@ def main(root: Path, output: Path) -> None:
         image_path = path.with_suffix(".image")
         if not image_path.is_file():
             continue
-        image = image_path.read_text(encoding="utf-8").strip()[:1000]
+        image = image_path.read_text(encoding="utf-8").strip()
+        if not image or len(image) > LIMITS["image"]:
+            continue
         digest_path = path.with_suffix(".digest")
-        digest = digest_path.read_text(encoding="utf-8").strip()[:180] if digest_path.is_file() else ""
+        digest = digest_path.read_text(encoding="utf-8").strip() if digest_path.is_file() else ""
+        if len(digest) > LIMITS["image_digest"]:
+            digest = ""
         try:
             sbom = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(sbom, dict):
@@ -126,11 +141,20 @@ def main(root: Path, output: Path) -> None:
             for parent, child in edges[:100000]:
                 graph.setdefault(parent, [[], []])[1].append(child)
                 graph.setdefault(child, [[], []])[0].append(parent)
+            image_identity = document_identity(sbom)
+            provenance_path = path.with_suffix(".provenance")
+            if provenance_path.is_file():
+                try:
+                    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+                    if isinstance(provenance, dict):
+                        image_identity.update(document_identity({"source": {"metadata": provenance}}))
+                except (OSError, ValueError, UnicodeError):
+                    pass
             images.append(image)
             for artifact in artifacts:
                 if len(components) >= 50000:
                     break
-                row = normalize(artifact, image, digest, path.name, source, graph)
+                row = normalize(artifact, image, digest, path.name, source, graph, image_identity)
                 if row:
                     components.append(row)
         except (OSError, ValueError, UnicodeError):

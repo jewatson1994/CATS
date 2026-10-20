@@ -1,0 +1,5619 @@
+{
+  "schema_version": 1,
+  "capture_kind": "live_scan",
+  "image_key": "alpine-3-20-0",
+  "image": "alpine:3.20.0",
+  "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+  "image_id": "sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+  "repo_digests": [
+    "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd"
+  ],
+  "platform": {
+    "os": "linux",
+    "architecture": "amd64"
+  },
+  "oci_labels": {},
+  "distro": {
+    "prettyName": "Alpine Linux v3.20",
+    "name": "Alpine Linux",
+    "id": "alpine",
+    "versionID": "3.20.0",
+    "homeURL": "https://alpinelinux.org/",
+    "bugReportURL": "https://gitlab.alpinelinux.org/alpine/aports/-/issues"
+  },
+  "sbom_source": {
+    "id": "2afdf17470169d88e535d3038a23d7d28349ad73856250401d70b43130250fee",
+    "name": "/tmp/cats-rootfs",
+    "version": "",
+    "type": "directory",
+    "metadata": {
+      "path": "/tmp/cats-rootfs"
+    }
+  },
+  "scanner_descriptor": "1.31.0",
+  "capture": {
+    "started_at": "2026-10-20T05:03:19.932092+00:00",
+    "completed_at": "2026-10-20T05:03:23.149673+00:00",
+    "seconds": 3.217,
+    "scanner_exit_code": 0,
+    "cataloger_mode": "default",
+    "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/alpine-3-20-0.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/alpine-3-20-0.syft.json; grype sbom:/evidence/alpine-3-20-0.syft.json --only-fixed -o json > /evidence/alpine-3-20-0.grype.json"
+  },
+  "counts": {
+    "sbom_components": 14,
+    "components_with_purls": 14,
+    "components_with_valid_purls": 14,
+    "components_by_ecosystem": {
+      "apk": 14
+    },
+    "vulnerability_findings": 69,
+    "unique_vulnerability_package_version_purl": 69,
+    "findings_by_ecosystem": {
+      "apk": 69
+    }
+  },
+  "components": [
+    {
+      "id": "194e469765239c4e",
+      "name": "alpine-baselayout",
+      "version": "3.6.5-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/alpine-baselayout@3.6.5-r0?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "3.6.5-r0",
+        "architecture": "x86_64",
+        "originPackage": "alpine-baselayout",
+        "package": "alpine-baselayout"
+      }
+    },
+    {
+      "id": "b9b938d306dff5db",
+      "name": "alpine-baselayout-data",
+      "version": "3.6.5-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/alpine-baselayout-data@3.6.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=alpine-baselayout",
+      "metadata": {
+        "version": "3.6.5-r0",
+        "architecture": "x86_64",
+        "originPackage": "alpine-baselayout",
+        "package": "alpine-baselayout-data"
+      }
+    },
+    {
+      "id": "5b1675d781ec723a",
+      "name": "alpine-keys",
+      "version": "2.4-r1",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/alpine-keys@2.4-r1?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "2.4-r1",
+        "architecture": "x86_64",
+        "originPackage": "alpine-keys",
+        "package": "alpine-keys"
+      }
+    },
+    {
+      "id": "671038b5f2cb3a3a",
+      "name": "apk-tools",
+      "version": "2.14.4-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/apk-tools@2.14.4-r0?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "2.14.4-r0",
+        "architecture": "x86_64",
+        "originPackage": "apk-tools",
+        "package": "apk-tools"
+      }
+    },
+    {
+      "id": "ee9649a911fd0430",
+      "name": "busybox",
+      "version": "1.36.1-r28",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "1.36.1-r28",
+        "architecture": "x86_64",
+        "originPackage": "busybox",
+        "package": "busybox"
+      }
+    },
+    {
+      "id": "f8854e0bb6e3acf4",
+      "name": "busybox-binsh",
+      "version": "1.36.1-r28",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "metadata": {
+        "version": "1.36.1-r28",
+        "architecture": "x86_64",
+        "originPackage": "busybox",
+        "package": "busybox-binsh"
+      }
+    },
+    {
+      "id": "65194e8cd68442cf",
+      "name": "ca-certificates-bundle",
+      "version": "20240226-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/ca-certificates-bundle@20240226-r0?arch=x86_64&distro=alpine-3.20.0&upstream=ca-certificates",
+      "metadata": {
+        "version": "20240226-r0",
+        "architecture": "x86_64",
+        "originPackage": "ca-certificates",
+        "package": "ca-certificates-bundle"
+      }
+    },
+    {
+      "id": "fcf4ed76cdd18a1d",
+      "name": "libcrypto3",
+      "version": "3.3.0-r2",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "metadata": {
+        "version": "3.3.0-r2",
+        "architecture": "x86_64",
+        "originPackage": "openssl",
+        "package": "libcrypto3"
+      }
+    },
+    {
+      "id": "874d02b923d858a1",
+      "name": "libssl3",
+      "version": "3.3.0-r2",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "metadata": {
+        "version": "3.3.0-r2",
+        "architecture": "x86_64",
+        "originPackage": "openssl",
+        "package": "libssl3"
+      }
+    },
+    {
+      "id": "d3d609391a838c28",
+      "name": "musl",
+      "version": "1.2.5-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "1.2.5-r0",
+        "architecture": "x86_64",
+        "originPackage": "musl",
+        "package": "musl"
+      }
+    },
+    {
+      "id": "817e39f718de68b8",
+      "name": "musl-utils",
+      "version": "1.2.5-r0",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+      "metadata": {
+        "version": "1.2.5-r0",
+        "architecture": "x86_64",
+        "originPackage": "musl",
+        "package": "musl-utils"
+      }
+    },
+    {
+      "id": "9898bc37fd3ad7cd",
+      "name": "scanelf",
+      "version": "1.3.7-r2",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/scanelf@1.3.7-r2?arch=x86_64&distro=alpine-3.20.0&upstream=pax-utils",
+      "metadata": {
+        "version": "1.3.7-r2",
+        "architecture": "x86_64",
+        "originPackage": "pax-utils",
+        "package": "scanelf"
+      }
+    },
+    {
+      "id": "ebd6bbc076e47795",
+      "name": "ssl_client",
+      "version": "1.36.1-r28",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "metadata": {
+        "version": "1.36.1-r28",
+        "architecture": "x86_64",
+        "originPackage": "busybox",
+        "package": "ssl_client"
+      }
+    },
+    {
+      "id": "a36b587caf20794b",
+      "name": "zlib",
+      "version": "1.3.1-r1",
+      "type": "apk",
+      "purl": "pkg:apk/alpine/zlib@1.3.1-r1?arch=x86_64&distro=alpine-3.20.0",
+      "metadata": {
+        "version": "1.3.1-r1",
+        "architecture": "x86_64",
+        "originPackage": "zlib",
+        "package": "zlib"
+      }
+    }
+  ],
+  "findings": [
+    {
+      "cve": "CVE-2024-6119",
+      "aliases": [
+        "CVE-2024-6119"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-6119",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-6119",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-6119"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-6119",
+              "versionConstraint": "< 3.3.2-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-6119",
+      "aliases": [
+        "CVE-2024-6119"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-6119",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-6119",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-6119"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-6119",
+              "versionConstraint": "< 3.3.2-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15467",
+      "aliases": [
+        "CVE-2025-15467"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-15467",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15467",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15467"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15467",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15467",
+      "aliases": [
+        "CVE-2025-15467"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-15467",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15467",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15467"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15467",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-5535",
+      "aliases": [
+        "CVE-2024-5535"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-5535",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-5535",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-5535"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.1-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-5535",
+              "versionConstraint": "< 3.3.1-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.1-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-5535",
+      "aliases": [
+        "CVE-2024-5535"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-5535",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-5535",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-5535"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.1-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-5535",
+              "versionConstraint": "< 3.3.1-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.1-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-9143",
+      "aliases": [
+        "CVE-2024-9143"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-9143",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-9143",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-9143"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-9143",
+              "versionConstraint": "< 3.3.2-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-9143",
+      "aliases": [
+        "CVE-2024-9143"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-9143",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-9143",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-9143"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-9143",
+              "versionConstraint": "< 3.3.2-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-4741",
+      "aliases": [
+        "CVE-2024-4741"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-4741",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-4741",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-4741"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.0-r3"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-4741",
+              "versionConstraint": "< 3.3.0-r3 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.0-r3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-4741",
+      "aliases": [
+        "CVE-2024-4741"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-4741",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-4741",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-4741"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.0-r3"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-4741",
+              "versionConstraint": "< 3.3.0-r3 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.0-r3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28388",
+      "aliases": [
+        "CVE-2026-28388"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28388",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28388",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28388"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28388",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28388",
+      "aliases": [
+        "CVE-2026-28388"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28388",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28388",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28388"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28388",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28389",
+      "aliases": [
+        "CVE-2026-28389"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28389",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28389",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28389"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28389",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28389",
+      "aliases": [
+        "CVE-2026-28389"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28389",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28389",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28389"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28389",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-12797",
+      "aliases": [
+        "CVE-2024-12797"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-12797",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-12797",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-12797"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.3-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-12797",
+              "versionConstraint": "< 3.3.3-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.3-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-12797",
+      "aliases": [
+        "CVE-2024-12797"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-12797",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-12797",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-12797"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.3-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-12797",
+              "versionConstraint": "< 3.3.3-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.3-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9231",
+      "aliases": [
+        "CVE-2025-9231"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9231",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9231",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9231"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9231",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9231",
+      "aliases": [
+        "CVE-2025-9231"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9231",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9231",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9231"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9231",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9230",
+      "aliases": [
+        "CVE-2025-9230"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9230",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9230",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9230"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9230",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9230",
+      "aliases": [
+        "CVE-2025-9230"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9230",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9230",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9230"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9230",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9232",
+      "aliases": [
+        "CVE-2025-9232"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9232",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9232",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9232"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9232",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-9232",
+      "aliases": [
+        "CVE-2025-9232"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-9232",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-9232",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-9232"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.5-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-9232",
+              "versionConstraint": "< 3.3.5-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.5-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-31790",
+      "aliases": [
+        "CVE-2026-31790"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-31790",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-31790",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-31790"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-31790",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-31790",
+      "aliases": [
+        "CVE-2026-31790"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-31790",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-31790",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-31790"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-31790",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28387",
+      "aliases": [
+        "CVE-2026-28387"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28387",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28387",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28387"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28387",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28387",
+      "aliases": [
+        "CVE-2026-28387"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28387",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28387",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28387"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28387",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69421",
+      "aliases": [
+        "CVE-2025-69421"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69421",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69421",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69421"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69421",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69421",
+      "aliases": [
+        "CVE-2025-69421"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69421",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69421",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69421"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69421",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69420",
+      "aliases": [
+        "CVE-2025-69420"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69420",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69420",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69420"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69420",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69420",
+      "aliases": [
+        "CVE-2025-69420"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69420",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69420",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69420"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69420",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28390",
+      "aliases": [
+        "CVE-2026-28390"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28390",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28390",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28390"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28390",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-28390",
+      "aliases": [
+        "CVE-2026-28390"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-28390",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-28390",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-28390"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-28390",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69419",
+      "aliases": [
+        "CVE-2025-69419"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69419",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69419",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69419"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69419",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69419",
+      "aliases": [
+        "CVE-2025-69419"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69419",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69419",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69419"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69419",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15468",
+      "aliases": [
+        "CVE-2025-15468"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-15468",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15468",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15468"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15468",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-15468",
+      "aliases": [
+        "CVE-2025-15468"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-15468",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-15468",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-15468"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-15468",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-31789",
+      "aliases": [
+        "CVE-2026-31789"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-31789",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-31789",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-31789"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-31789",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-31789",
+      "aliases": [
+        "CVE-2026-31789"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Critical",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-31789",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-31789",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-31789"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.7-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-31789",
+              "versionConstraint": "< 3.3.7-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.7-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-22796",
+      "aliases": [
+        "CVE-2026-22796"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-22796",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-22796",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-22796"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-22796",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-22796",
+      "aliases": [
+        "CVE-2026-22796"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-22796",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-22796",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-22796"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-22796",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-13176",
+      "aliases": [
+        "CVE-2024-13176"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-13176",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-13176",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-13176"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-13176",
+              "versionConstraint": "< 3.3.2-r2 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-13176",
+      "aliases": [
+        "CVE-2024-13176"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-13176",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-13176",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-13176"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.2-r2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-13176",
+              "versionConstraint": "< 3.3.2-r2 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.2-r2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-26519",
+      "aliases": [
+        "CVE-2025-26519"
+      ],
+      "package": "musl",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "d3d609391a838c28",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d3d609391a838c28",
+        "sbom_artifact": {
+          "id": "d3d609391a838c28",
+          "name": "musl",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-26519",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-26519",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-26519"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-26519",
+              "versionConstraint": "< 1.2.5-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r1"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-26519",
+              "versionConstraint": "< 1.2.5-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-26519",
+      "aliases": [
+        "CVE-2025-26519"
+      ],
+      "package": "musl-utils",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+      "ecosystem": "apk",
+      "artifact_id": "817e39f718de68b8",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl-utils"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "817e39f718de68b8",
+        "sbom_artifact": {
+          "id": "817e39f718de68b8",
+          "name": "musl-utils",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl-utils"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-26519",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-26519",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-26519"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r1"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-26519",
+              "versionConstraint": "< 1.2.5-r1 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-66199",
+      "aliases": [
+        "CVE-2025-66199"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-66199",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-66199",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-66199"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-66199",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-66199",
+      "aliases": [
+        "CVE-2025-66199"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-66199",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-66199",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-66199"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-66199",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42364",
+      "aliases": [
+        "CVE-2023-42364"
+      ],
+      "package": "busybox",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "ee9649a911fd0430",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ee9649a911fd0430",
+        "sbom_artifact": {
+          "id": "ee9649a911fd0430",
+          "name": "busybox",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42364",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42364",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42364"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42364",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42364",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42364",
+      "aliases": [
+        "CVE-2023-42364"
+      ],
+      "package": "busybox-binsh",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "f8854e0bb6e3acf4",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox-binsh"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "f8854e0bb6e3acf4",
+        "sbom_artifact": {
+          "id": "f8854e0bb6e3acf4",
+          "name": "busybox-binsh",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox-binsh"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42364",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42364",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42364"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42364",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42364",
+      "aliases": [
+        "CVE-2023-42364"
+      ],
+      "package": "ssl_client",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "ebd6bbc076e47795",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "ssl_client"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ebd6bbc076e47795",
+        "sbom_artifact": {
+          "id": "ebd6bbc076e47795",
+          "name": "ssl_client",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "ssl_client"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42364",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42364",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42364"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42364",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42365",
+      "aliases": [
+        "CVE-2023-42365"
+      ],
+      "package": "busybox",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "ee9649a911fd0430",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ee9649a911fd0430",
+        "sbom_artifact": {
+          "id": "ee9649a911fd0430",
+          "name": "busybox",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42365",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42365",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42365"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42365",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42365",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42365",
+      "aliases": [
+        "CVE-2023-42365"
+      ],
+      "package": "busybox-binsh",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "f8854e0bb6e3acf4",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox-binsh"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "f8854e0bb6e3acf4",
+        "sbom_artifact": {
+          "id": "f8854e0bb6e3acf4",
+          "name": "busybox-binsh",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox-binsh"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42365",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42365",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42365"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42365",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2023-42365",
+      "aliases": [
+        "CVE-2023-42365"
+      ],
+      "package": "ssl_client",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "ebd6bbc076e47795",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "ssl_client"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ebd6bbc076e47795",
+        "sbom_artifact": {
+          "id": "ebd6bbc076e47795",
+          "name": "ssl_client",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "ssl_client"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2023-42365",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2023-42365",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2023-42365"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r29"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2023-42365",
+              "versionConstraint": "< 1.36.1-r29 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r29"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40200",
+      "aliases": [
+        "CVE-2026-40200"
+      ],
+      "package": "musl",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "d3d609391a838c28",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d3d609391a838c28",
+        "sbom_artifact": {
+          "id": "d3d609391a838c28",
+          "name": "musl",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-40200",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40200",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40200"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r3"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40200",
+              "versionConstraint": "< 1.2.5-r3 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r3"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40200",
+              "versionConstraint": "< 1.2.5-r3 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-40200",
+      "aliases": [
+        "CVE-2026-40200"
+      ],
+      "package": "musl-utils",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+      "ecosystem": "apk",
+      "artifact_id": "817e39f718de68b8",
+      "severity": "High",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl-utils"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "817e39f718de68b8",
+        "sbom_artifact": {
+          "id": "817e39f718de68b8",
+          "name": "musl-utils",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl-utils"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-40200",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-40200",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-40200"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r3"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-40200",
+              "versionConstraint": "< 1.2.5-r3 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r3"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-27171",
+      "aliases": [
+        "CVE-2026-27171"
+      ],
+      "package": "zlib",
+      "installed_version": "1.3.1-r1",
+      "purl": "pkg:apk/alpine/zlib@1.3.1-r1?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "a36b587caf20794b",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/zlib@1.3.1-r1?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.3.1-r1",
+          "architecture": "x86_64",
+          "originPackage": "zlib",
+          "package": "zlib"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "a36b587caf20794b",
+        "sbom_artifact": {
+          "id": "a36b587caf20794b",
+          "name": "zlib",
+          "version": "1.3.1-r1",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/zlib@1.3.1-r1?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.3.1-r1",
+            "architecture": "x86_64",
+            "originPackage": "zlib",
+            "package": "zlib"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-27171",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-27171",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-27171"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.3.2-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "zlib",
+                "version": "1.3.1-r1"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-27171",
+              "versionConstraint": "< 1.3.2-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.3.2-r0"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "zlib",
+                "version": "1.3.1-r1"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-27171",
+              "versionConstraint": "< 1.3.2-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.3.2-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-22795",
+      "aliases": [
+        "CVE-2026-22795"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-22795",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-22795",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-22795"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-22795",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-22795",
+      "aliases": [
+        "CVE-2026-22795"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-22795",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-22795",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-22795"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-22795",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-68160",
+      "aliases": [
+        "CVE-2025-68160"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-68160",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-68160",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-68160"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-68160",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-68160",
+      "aliases": [
+        "CVE-2025-68160"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-68160",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-68160",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-68160"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-68160",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-6042",
+      "aliases": [
+        "CVE-2026-6042"
+      ],
+      "package": "musl",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "d3d609391a838c28",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "d3d609391a838c28",
+        "sbom_artifact": {
+          "id": "d3d609391a838c28",
+          "name": "musl",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-6042",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-6042",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-6042"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-6042",
+              "versionConstraint": "< 1.2.5-r2 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r2"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-6042",
+              "versionConstraint": "< 1.2.5-r2 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2026-6042",
+      "aliases": [
+        "CVE-2026-6042"
+      ],
+      "package": "musl-utils",
+      "installed_version": "1.2.5-r0",
+      "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+      "ecosystem": "apk",
+      "artifact_id": "817e39f718de68b8",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+        "artifact_metadata": {
+          "version": "1.2.5-r0",
+          "architecture": "x86_64",
+          "originPackage": "musl",
+          "package": "musl-utils"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "817e39f718de68b8",
+        "sbom_artifact": {
+          "id": "817e39f718de68b8",
+          "name": "musl-utils",
+          "version": "1.2.5-r0",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/musl-utils@1.2.5-r0?arch=x86_64&distro=alpine-3.20.0&upstream=musl",
+          "metadata": {
+            "version": "1.2.5-r0",
+            "architecture": "x86_64",
+            "originPackage": "musl",
+            "package": "musl-utils"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2026-6042",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2026-6042",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2026-6042"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.2.5-r2"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "musl",
+                "version": "1.2.5-r0"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2026-6042",
+              "versionConstraint": "< 1.2.5-r2 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.2.5-r2"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69418",
+      "aliases": [
+        "CVE-2025-69418"
+      ],
+      "package": "libcrypto3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "fcf4ed76cdd18a1d",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libcrypto3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "fcf4ed76cdd18a1d",
+        "sbom_artifact": {
+          "id": "fcf4ed76cdd18a1d",
+          "name": "libcrypto3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libcrypto3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libcrypto3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69418",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69418",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69418"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69418",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-69418",
+      "aliases": [
+        "CVE-2025-69418"
+      ],
+      "package": "libssl3",
+      "installed_version": "3.3.0-r2",
+      "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+      "ecosystem": "apk",
+      "artifact_id": "874d02b923d858a1",
+      "severity": "Medium",
+      "evidence": {
+        "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+        "artifact_metadata": {
+          "version": "3.3.0-r2",
+          "architecture": "x86_64",
+          "originPackage": "openssl",
+          "package": "libssl3"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "874d02b923d858a1",
+        "sbom_artifact": {
+          "id": "874d02b923d858a1",
+          "name": "libssl3",
+          "version": "3.3.0-r2",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/libssl3@3.3.0-r2?arch=x86_64&distro=alpine-3.20.0&upstream=openssl",
+          "metadata": {
+            "version": "3.3.0-r2",
+            "architecture": "x86_64",
+            "originPackage": "openssl",
+            "package": "libssl3"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-69418",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-69418",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-69418"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "3.3.6-r0"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "openssl",
+                "version": "3.3.0-r2"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-69418",
+              "versionConstraint": "< 3.3.6-r0 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "3.3.6-r0"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-46394",
+      "aliases": [
+        "CVE-2025-46394"
+      ],
+      "package": "busybox",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "ee9649a911fd0430",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ee9649a911fd0430",
+        "sbom_artifact": {
+          "id": "ee9649a911fd0430",
+          "name": "busybox",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-46394",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-46394",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46394"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-46394",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-46394",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-46394",
+      "aliases": [
+        "CVE-2025-46394"
+      ],
+      "package": "busybox-binsh",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "f8854e0bb6e3acf4",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox-binsh"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "f8854e0bb6e3acf4",
+        "sbom_artifact": {
+          "id": "f8854e0bb6e3acf4",
+          "name": "busybox-binsh",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox-binsh"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-46394",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-46394",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46394"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-46394",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2025-46394",
+      "aliases": [
+        "CVE-2025-46394"
+      ],
+      "package": "ssl_client",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "ebd6bbc076e47795",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "ssl_client"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ebd6bbc076e47795",
+        "sbom_artifact": {
+          "id": "ebd6bbc076e47795",
+          "name": "ssl_client",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "ssl_client"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2025-46394",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2025-46394",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2025-46394"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2025-46394",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-58251",
+      "aliases": [
+        "CVE-2024-58251"
+      ],
+      "package": "busybox",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+      "ecosystem": "apk",
+      "artifact_id": "ee9649a911fd0430",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ee9649a911fd0430",
+        "sbom_artifact": {
+          "id": "ee9649a911fd0430",
+          "name": "busybox",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-58251",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-58251",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-58251"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-direct-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-58251",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          },
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-58251",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-58251",
+      "aliases": [
+        "CVE-2024-58251"
+      ],
+      "package": "busybox-binsh",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "f8854e0bb6e3acf4",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "busybox-binsh"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "f8854e0bb6e3acf4",
+        "sbom_artifact": {
+          "id": "f8854e0bb6e3acf4",
+          "name": "busybox-binsh",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/busybox-binsh@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "busybox-binsh"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-58251",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-58251",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-58251"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-58251",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "cve": "CVE-2024-58251",
+      "aliases": [
+        "CVE-2024-58251"
+      ],
+      "package": "ssl_client",
+      "installed_version": "1.36.1-r28",
+      "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+      "ecosystem": "apk",
+      "artifact_id": "ebd6bbc076e47795",
+      "severity": "Low",
+      "evidence": {
+        "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+        "artifact_metadata": {
+          "version": "1.36.1-r28",
+          "architecture": "x86_64",
+          "originPackage": "busybox",
+          "package": "ssl_client"
+        },
+        "artifact_metadata_source": "syft_component_joined_by_unique_id_name_version_type",
+        "sbom_component_id": "ebd6bbc076e47795",
+        "sbom_artifact": {
+          "id": "ebd6bbc076e47795",
+          "name": "ssl_client",
+          "version": "1.36.1-r28",
+          "type": "apk",
+          "purl": "pkg:apk/alpine/ssl_client@1.36.1-r28?arch=x86_64&distro=alpine-3.20.0&upstream=busybox",
+          "metadata": {
+            "version": "1.36.1-r28",
+            "architecture": "x86_64",
+            "originPackage": "busybox",
+            "package": "ssl_client"
+          }
+        },
+        "namespace": "alpine:distro:alpine:3.20",
+        "data_source": "https://security.alpinelinux.org/vuln/CVE-2024-58251",
+        "related_vulnerabilities": [
+          {
+            "id": "CVE-2024-58251",
+            "namespace": "nvd:cpe",
+            "dataSource": "https://nvd.nist.gov/vuln/detail/CVE-2024-58251"
+          }
+        ],
+        "fix": {
+          "versions": [
+            "1.36.1-r31"
+          ],
+          "state": "fixed"
+        },
+        "match_details": [
+          {
+            "type": "exact-indirect-match",
+            "matcher": "apk-matcher",
+            "searchedBy": {
+              "distro": {
+                "type": "alpine",
+                "version": "3.20.0"
+              },
+              "package": {
+                "name": "busybox",
+                "version": "1.36.1-r28"
+              },
+              "namespace": "alpine:distro:alpine:3.20"
+            },
+            "found": {
+              "vulnerabilityID": "CVE-2024-58251",
+              "versionConstraint": "< 1.36.1-r31 (apk)"
+            },
+            "fix": {
+              "suggestedVersion": "1.36.1-r31"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "raw_evidence": [
+    {
+      "name": "alpine-3-20-0.syft.json",
+      "bytes": 91288,
+      "sha256": "0c51acf47eba7d6e6439f6b86a2d2027894c51de2320a25b1d57bd69986d973f"
+    },
+    {
+      "name": "alpine-3-20-0.grype.json",
+      "bytes": 306776,
+      "sha256": "7aef717da72801e9a0ff32eae6d81a824ade8a6cc669bc30d3b838da2d526021"
+    },
+    {
+      "name": "alpine-3-20-0.image-inspect.json",
+      "bytes": 1065,
+      "sha256": "114e889c9a798ea696f5010070d4812f4e01e4289e755bae3f4922dff3500742"
+    },
+    {
+      "name": "alpine-3-20-0.scanner.log",
+      "bytes": 136,
+      "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+    },
+    {
+      "name": "alpine-3-20-0.capture.json",
+      "bytes": 495,
+      "sha256": "263963363e1f414450f4feafb7a98f5630f267b3c13cb603c4cde4bbea5de40e"
+    }
+  ]
+}

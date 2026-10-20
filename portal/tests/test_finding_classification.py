@@ -63,7 +63,8 @@ def scan(key, execution, when, cves, *, packages=3, images=2):
                              "fixed_version": f"1.{index % 2 + 1}", "evidence": evidence})
     return {"schema_version": "1.0", "execution_id": execution, "scanned_at": when.isoformat(), "complete": True,
             "skipped_images": [], "fixable_only": True,
-            "service": {"id": key, "name": key.title(), "version": "1.0", "poc": "poc@example.invalid"},
+            "service": {"id": key, "name": key.title(), "version": "1.0", "poc": "poc@example.invalid",
+                        "groups": ["Classification test group"]},
             "findings": findings}
 
 
@@ -227,7 +228,8 @@ def _pages(client, key):
         data.pop("csrf_token", None)
         pages[url] = data
     data = pages[simplified]
-    groups = data.get("simplified_groups") or data.get("groups") or []
+    groups = data["simplified_findings"]
+    assert groups, "Seeded findings must exercise the simplified member endpoints"
     for group in groups[:3]:
         url = f"/api/v1/services/{key}/findings/simplified/{group['group_id']}/members"
         response = client.get(url)

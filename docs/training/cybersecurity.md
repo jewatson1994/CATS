@@ -14,7 +14,7 @@ Click a metric, severity bar, or supported posture item. **Critical** shows top 
 
 ![Critical contributors](screenshots/cybersecurity-critical.jpg)
 
-Green follows compliance policy; yellow marks selected warnings on an otherwise compliant service; red follows non-compliance. Zero vulnerabilities does not establish complete evidence. Review SBOM coverage, KEV/watchlist matches, open/overdue POA&Ms, missing evidence, and validation failures. Use trends/comparison when history exists and the service matrix link for detailed filtering.
+Green follows compliance policy; a separate yellow caution triangle marks warnings on an otherwise green compliant service; red follows non-compliance. Hover over the caution indicator to review the warning explanation. Zero vulnerabilities does not establish complete evidence. Review SBOM coverage, KEV/watchlist matches, open/overdue POA&Ms, missing evidence, and validation failures. Use trends/comparison when history exists and the service matrix link for detailed filtering.
 
 ## Review independently
 
@@ -33,3 +33,7 @@ For validator, registry, CA, and signing prerequisites, follow the [Administrato
 ## Exercise
 
 Investigate a Critical metric, identify a service/package contributor, and explain warning versus compliance state. Review another user's request and describe how a policy change should be validated against retained evidence.
+
+## Risk Policy and native VEX
+
+Use **Administration → Risk Policy** for profiles and assessment review within your authorized groups. Risk scores support prioritization and do not substitute for Cyber approval. Native VEX exclusion is separately controlled in General Policy and can change actionable findings when enabled. Complete the [Risk Policy and VEX walkthrough](risk-policy-and-vex.md) before changing these policies.

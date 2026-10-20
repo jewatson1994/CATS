@@ -2,6 +2,10 @@
 
 Deploy the rebuilt portal image against the existing persistent database after taking a backup. Startup applies the additive identity tables and OIDC mapping/scope columns; no new Compose services or environment variables are required. Rebuild worker images from the same revision so retained-source protection also runs during candidate generation. Existing global mappings retain their meaning until an administrator explicitly reviews and changes them.
 
+## Native VEX disposition upgrade
+
+Upgrade the portal and all workers together. Additive native VEX tables and generation triggers preserve existing evidence and leave automatic exclusions disabled by default. Keep the existing `risk-worker` running against the same database and installed local intelligence snapshot; offline evaluation needs no live feed. Direct development runs `python -m app.risk_worker` with the portal package on the Python path. Review the current preview in Configuration → General Policy before enabling, then verify mixed observations, expiry, rescan/trust invalidation and disabling. Existing jobs, POAMs and Cyber approval history remain preserved. See [native VEX operations and measured limitations](../../docs/native-vex-disposition.md) for the lifecycle, security boundary, benchmark scope and unresolved real-positive applicability gap.
+
 ## OIDC diagnostics
 
 The callback records a structured event with `correlation_id`, `stage`, `reason` and `outcome`. The failure page displays that same reference; administrators can find `auth.oidc_failed` in the audit UI or `OIDC` events in portal logs. Stages distinguish state/cookie validation, configuration, token exchange, token validation, UserInfo, account provisioning, account status and authorization. Reasons distinguish issuer/audience/signature/time failures, identity collisions, required explicit account links and disabled accounts without serializing provider responses or exceptions.

@@ -1,0 +1,16 @@
+Offline release validation:
+Offline metallb bundle: PASS (0.16.1, manifest and image archive hashes verified)
+Offline ingress-nginx bundle: PASS (1.15.1, manifest and image archive hashes verified)
+helm binary: PASS (version.BuildInfo{Version:"v4.2.3", GitCommit:"43e8b7feece8beb0fcba47059ec9b522fd929a64", GitTreeState:"clean", GoVersion:"go1.26.5", KubeClientVersion:"v1.36"})
+kubectl binary: PASS (Client Version: v1.37.0)
+kind binary: PASS (kind v0.33.0 go1.26.7 linux/amd64)
+syft binary: PASS (Application:   syft)
+grype binary: PASS (Application:         grype)
+copa binary: PASS
+Grype DB: PASS (/opt/catscan/grype-db/6/vulnerability.db; 2.9G)
+Path:      /opt/catscan/grype-db/6/vulnerability.db
+Schema:    v6.1.10
+Built:     2026-10-19T06:39:15Z
+From:      https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-10-19T00:32:50Z_1792391955.tar.zst?checksum=sha256%3A13a192236b248579678bbf06cefb2a07a5dcbd00da110cfb5c3e26eb68a7ce58
+Status:    valid
+Grype DB usable offline: PASS

@@ -389,6 +389,9 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
 
 
 PERMISSIONS = {
+    "risk.recommend": "Record informational ISSM risk recommendations",
+    "risk.decide": "Record informational delegated risk decisions",
+    "risk.authorize": "Record informational AO risk decisions",
     "approval.request": "Request Cyber approval of a complete service snapshot",
     "approval.decide": "Approve, deny and revoke Cyber release requests",
     "release.destination.manage": "Configure approved-release OCI destinations",
@@ -440,7 +443,7 @@ SYSTEM_ROLES = {
     "Assessor": ["service.view", "service.export", "audit.view"],
     "Service Manager": ["approval.request", "service.view", "service.export", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
     "Cybersecurity": [
-        "approval.request", "approval.decide",
+        "approval.request", "approval.decide", "risk.recommend",
         "validator.view", "validator.create", "validator.provision", "validator.test",
         "validator.self_test", "validator.rotate_certificate", "validator.upgrade", "validator.remove",
         "artifact.sign", "artifact.publish",

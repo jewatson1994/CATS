@@ -1,0 +1,711 @@
+{
+  "schema_version": 1,
+  "capture_kind": "live_scan",
+  "captured_at": "2026-10-20T05:03:25.428916+00:00",
+  "scanner_image": "cats:1.67",
+  "scanner_image_id": "sha256:3108a4cc12d98dda53f59747064898fb2dafd7d6f0a7a897ed968baed3040346",
+  "scanner_repo_digests": [
+    "cats@sha256:3108a4cc12d98dda53f59747064898fb2dafd7d6f0a7a897ed968baed3040346"
+  ],
+  "syft": {
+    "application": "syft",
+    "buildDate": "[not provided]",
+    "compiler": "gc",
+    "gitCommit": "[not provided]",
+    "gitDescription": "[not provided]",
+    "goVersion": "go1.24.12",
+    "platform": "linux/amd64",
+    "schemaVersion": "16.0.37",
+    "version": "1.31.0"
+  },
+  "grype": {
+    "application": "grype",
+    "buildDate": "[not provided]",
+    "compiler": "gc",
+    "gitCommit": "[not provided]",
+    "gitDescription": "[not provided]",
+    "goVersion": "go1.24.12",
+    "platform": "linux/amd64",
+    "supportedDbSchema": 6,
+    "syftVersion": "v1.31.0",
+    "version": "0.98.0"
+  },
+  "grype_database": {
+    "schemaVersion": "v6.1.10",
+    "from": "https://grype.anchore.io/databases/v6/vulnerability-db_v6.1.10_2026-10-02T00:37:10Z_1791009118.tar.zst?checksum=sha256%3A397565327faac36f757903f87e31ac403a251bed21c0f0ec5b87f912c5143ab6",
+    "built": "2026-10-03T06:31:58Z",
+    "path": "/opt/catscan/grype-db/6/vulnerability.db",
+    "valid": true
+  },
+  "trivy_version": "Version: 0.69.3",
+  "raw_evidence_directory": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\10\\19\\01a1526b-954e-73b2-b46b-e7d15d435d2e\\container-vex-raw-evidence",
+  "method": "docker create/export without execution; Syft directory catalog; Grype sbom --only-fixed",
+  "network": "disabled during scanner execution; no external intelligence retrieval",
+  "finding_denominator": "Grype --only-fixed matches; includes separate package occurrences and aliases exactly as emitted",
+  "purl_validation": "syntax checks: pkg scheme, ecosystem/name/version, percent escapes, unique nonempty qualifiers; no inferred identity equivalence",
+  "images": [
+    {
+      "image_key": "ubuntu",
+      "image": "ubuntu:jammy-20260731.1",
+      "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+      "image_id": "sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+      "distro": {
+        "prettyName": "Ubuntu 22.04.5 LTS",
+        "name": "Ubuntu",
+        "id": "ubuntu",
+        "idLike": [
+          "debian"
+        ],
+        "version": "22.04.5 LTS (Jammy Jellyfish)",
+        "versionID": "22.04",
+        "versionCodename": "jammy",
+        "homeURL": "https://www.ubuntu.com/",
+        "supportURL": "https://help.ubuntu.com/",
+        "bugReportURL": "https://bugs.launchpad.net/ubuntu/",
+        "privacyPolicyURL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+      },
+      "counts": {
+        "sbom_components": 101,
+        "components_with_purls": 101,
+        "components_with_valid_purls": 101,
+        "components_by_ecosystem": {
+          "deb": 101
+        },
+        "vulnerability_findings": 71,
+        "unique_vulnerability_package_version_purl": 71,
+        "findings_by_ecosystem": {
+          "deb": 71
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:00:44.894876+00:00",
+        "completed_at": "2026-10-20T05:00:51.318023+00:00",
+        "seconds": 6.423,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/ubuntu.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/ubuntu.syft.json; grype sbom:/evidence/ubuntu.syft.json --only-fixed -o json > /evidence/ubuntu.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "ubuntu.syft.json",
+          "bytes": 2016220,
+          "sha256": "820a19648c801e03721cc3079ace1b0c7d9515ba60bc7bb225be771a2b2027e7"
+        },
+        {
+          "name": "ubuntu.grype.json",
+          "bytes": 561676,
+          "sha256": "ccb038c9b76c7da3da552a755b3dd1d8655147da6fd97e37eddc5c91509d393a"
+        },
+        {
+          "name": "ubuntu.image-inspect.json",
+          "bytes": 1136,
+          "sha256": "571dc707adc727643a43925be27d92557626a15314f89a0775f40b81b2c2e30d"
+        },
+        {
+          "name": "ubuntu.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "ubuntu.capture.json",
+          "bytes": 435,
+          "sha256": "6eab35cc6f74ac357ed4b231a91e55fd1ca295480c200542170c614d60e8cac3"
+        }
+      ]
+    },
+    {
+      "image_key": "debian",
+      "image": "debian:bookworm-slim",
+      "image_digest": "debian@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+      "image_id": "sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587",
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "counts": {
+        "sbom_components": 88,
+        "components_with_purls": 88,
+        "components_with_valid_purls": 88,
+        "components_by_ecosystem": {
+          "deb": 88
+        },
+        "vulnerability_findings": 0,
+        "unique_vulnerability_package_version_purl": 0,
+        "findings_by_ecosystem": {}
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:00:51.715887+00:00",
+        "completed_at": "2026-10-20T05:00:57.558847+00:00",
+        "seconds": 5.843,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/debian.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/debian.syft.json; grype sbom:/evidence/debian.syft.json --only-fixed -o json > /evidence/debian.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "debian.syft.json",
+          "bytes": 2514596,
+          "sha256": "5d8deebe08ba61a4bcfa51d9d244d43440b3d6e2d05a00d37509cb67f60a3d37"
+        },
+        {
+          "name": "debian.grype.json",
+          "bytes": 889310,
+          "sha256": "055608f022a707c8348ac903e5dc902f5a03f892f2a9ce6aea69cdfddff0ec33"
+        },
+        {
+          "name": "debian.image-inspect.json",
+          "bytes": 1078,
+          "sha256": "a96cdd204607c065761bd6817b6b803b45e53c815550339992cc15c2c5a34b6e"
+        },
+        {
+          "name": "debian.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "debian.capture.json",
+          "bytes": 435,
+          "sha256": "c6efd9800a1ebb26417d7d4f3ddde31de7338560e5cc5523d18ed27063eca98b"
+        }
+      ]
+    },
+    {
+      "image_key": "alpine",
+      "image": "httpd:2.4-alpine",
+      "image_digest": "httpd@sha256:3440c39d8d6f54fa9ad2549e5a60c19ddd435faadc29c1ad28aa795f71888889",
+      "image_id": "sha256:3440c39d8d6f54fa9ad2549e5a60c19ddd435faadc29c1ad28aa795f71888889",
+      "distro": {
+        "prettyName": "Alpine Linux v3.24",
+        "name": "Alpine Linux",
+        "id": "alpine",
+        "versionID": "3.24.2",
+        "homeURL": "https://alpinelinux.org/",
+        "bugReportURL": "https://gitlab.alpinelinux.org/alpine/aports/-/issues"
+      },
+      "counts": {
+        "sbom_components": 42,
+        "components_with_purls": 42,
+        "components_with_valid_purls": 42,
+        "components_by_ecosystem": {
+          "apk": 41,
+          "binary": 1
+        },
+        "vulnerability_findings": 0,
+        "unique_vulnerability_package_version_purl": 0,
+        "findings_by_ecosystem": {}
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:00:57.993710+00:00",
+        "completed_at": "2026-10-20T05:01:04.171511+00:00",
+        "seconds": 6.178,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/alpine.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/alpine.syft.json; grype sbom:/evidence/alpine.syft.json --only-fixed -o json > /evidence/alpine.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "alpine.syft.json",
+          "bytes": 1350350,
+          "sha256": "77a5d294d6745de61ccdcba64eacc115c2cc9a656f898901650a6f9e2f9239a2"
+        },
+        {
+          "name": "alpine.grype.json",
+          "bytes": 350858,
+          "sha256": "b618b61cd8fd4a898b287c555ffed79a507ed9d8eaee8fc61a0df8a674148a26"
+        },
+        {
+          "name": "alpine.image-inspect.json",
+          "bytes": 1923,
+          "sha256": "a2603cddcc3747bbb6eca1624c26fc61e8455e7d56adb7f3955be5d4ef470f3c"
+        },
+        {
+          "name": "alpine.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "alpine.capture.json",
+          "bytes": 435,
+          "sha256": "306cd44891b9722e661c4e6d4a833a5e31404ed8c09e3e2dbd8295d6a62aba20"
+        }
+      ]
+    },
+    {
+      "image_key": "redhat-ubi",
+      "image": "registry.access.redhat.com/ubi9/ubi:9.6",
+      "image_digest": "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+      "image_id": "sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+      "distro": {
+        "prettyName": "Red Hat Enterprise Linux 9.6 (Plow)",
+        "name": "Red Hat Enterprise Linux",
+        "id": "rhel",
+        "idLike": [
+          "fedora"
+        ],
+        "version": "9.6 (Plow)",
+        "versionID": "9.6",
+        "homeURL": "https://www.redhat.com/",
+        "bugReportURL": "https://issues.redhat.com/",
+        "cpeName": "cpe:/o:redhat:enterprise_linux:9::baseos"
+      },
+      "counts": {
+        "sbom_components": 206,
+        "components_with_purls": 206,
+        "components_with_valid_purls": 206,
+        "components_by_ecosystem": {
+          "python": 18,
+          "rpm": 188
+        },
+        "vulnerability_findings": 291,
+        "unique_vulnerability_package_version_purl": 291,
+        "findings_by_ecosystem": {
+          "rpm": 291
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:01:04.581212+00:00",
+        "completed_at": "2026-10-20T05:01:14.799254+00:00",
+        "seconds": 10.218,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/redhat-ubi.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/redhat-ubi.syft.json; grype sbom:/evidence/redhat-ubi.syft.json --only-fixed -o json > /evidence/redhat-ubi.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "redhat-ubi.syft.json",
+          "bytes": 7418058,
+          "sha256": "4ef227e11f3db2b17bd3bb1fb9ce59e9c14961778c880b160ee849ff2cf165fc"
+        },
+        {
+          "name": "redhat-ubi.grype.json",
+          "bytes": 3232528,
+          "sha256": "503a69f162ec7a9091e0020815523129672545a775ba2204d4b62402b001aa82"
+        },
+        {
+          "name": "redhat-ubi.image-inspect.json",
+          "bytes": 2951,
+          "sha256": "954397e8f39d0453471b5ed60ab3ed37aa8bca83510ba6afc4766da192ca09a8"
+        },
+        {
+          "name": "redhat-ubi.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "redhat-ubi.capture.json",
+          "bytes": 452,
+          "sha256": "7e79e192727ef8a3502ccdedb085aee6f08d4e5dbbfc0e30331e5a2ce9976cdf"
+        }
+      ]
+    },
+    {
+      "image_key": "suse",
+      "image": "registry.suse.com/bci/bci-base:15.6",
+      "image_digest": "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+      "image_id": "sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+      "distro": {
+        "prettyName": "SUSE Linux Enterprise Server 15 SP6",
+        "name": "SLES",
+        "id": "sles",
+        "idLike": [
+          "suse"
+        ],
+        "version": "15-SP6",
+        "versionID": "15.6",
+        "cpeName": "cpe:/o:suse:sles:15:sp6"
+      },
+      "counts": {
+        "sbom_components": 146,
+        "components_with_purls": 146,
+        "components_with_valid_purls": 146,
+        "components_by_ecosystem": {
+          "go-module": 2,
+          "rpm": 144
+        },
+        "vulnerability_findings": 334,
+        "unique_vulnerability_package_version_purl": 334,
+        "findings_by_ecosystem": {
+          "go-module": 76,
+          "rpm": 258
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:01:15.259266+00:00",
+        "completed_at": "2026-10-20T05:01:22.070047+00:00",
+        "seconds": 6.811,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/suse.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/suse.syft.json; grype sbom:/evidence/suse.syft.json --only-fixed -o json > /evidence/suse.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "suse.syft.json",
+          "bytes": 3422632,
+          "sha256": "d8f09a578655f8e44634f96e93f7cf0d40df051cdff2fde368682fb68bc260f3"
+        },
+        {
+          "name": "suse.grype.json",
+          "bytes": 2364236,
+          "sha256": "0dae8d9a344e93e5f9e0fddf3551131bef296d1904623835ef799aa13353a974"
+        },
+        {
+          "name": "suse.image-inspect.json",
+          "bytes": 3807,
+          "sha256": "0940c04ad1d075d1579e17ac5cf004da5c8e8389777ba219f8d085bbc803bb5c"
+        },
+        {
+          "name": "suse.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "suse.capture.json",
+          "bytes": 427,
+          "sha256": "7fd6d25d6b97d445211a33b3bfdfa644c9ac3394a50b51189af72a844b8268c5"
+        }
+      ]
+    },
+    {
+      "image_key": "python",
+      "image": "python:3.11.13-slim-bookworm",
+      "image_digest": "python@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+      "image_id": "sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "counts": {
+        "sbom_components": 123,
+        "components_with_purls": 109,
+        "components_with_valid_purls": 109,
+        "components_by_ecosystem": {
+          "binary": 15,
+          "deb": 105,
+          "python": 3
+        },
+        "vulnerability_findings": 181,
+        "unique_vulnerability_package_version_purl": 181,
+        "findings_by_ecosystem": {
+          "binary": 46,
+          "deb": 125,
+          "python": 10
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:01:22.519102+00:00",
+        "completed_at": "2026-10-20T05:01:29.785743+00:00",
+        "seconds": 7.266,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/python.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/python.syft.json; grype sbom:/evidence/python.syft.json --only-fixed -o json > /evidence/python.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "python.syft.json",
+          "bytes": 2970755,
+          "sha256": "9f49fe9a8893f686be719c2832c35fbc48d67a9cd916e8175076f968f1caa357"
+        },
+        {
+          "name": "python.grype.json",
+          "bytes": 1901733,
+          "sha256": "8db09a5ae1fc550b1b0416ce9c8d87f1fe5b063324355a7a2100b1d661d60109"
+        },
+        {
+          "name": "python.image-inspect.json",
+          "bytes": 1558,
+          "sha256": "b6a6baa73e7a100d57ab4d417c4318f2d8f0825d85a77d338f511162e6477b27"
+        },
+        {
+          "name": "python.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "python.capture.json",
+          "bytes": 435,
+          "sha256": "e2536f086e08341f16c3415d5a54d8b715b290f63b51c3e701da0ea59167680b"
+        }
+      ]
+    },
+    {
+      "image_key": "node",
+      "image": "node:20-bookworm-slim",
+      "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+      "image_id": "sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "counts": {
+        "sbom_components": 89,
+        "components_with_purls": 89,
+        "components_with_valid_purls": 89,
+        "components_by_ecosystem": {
+          "binary": 1,
+          "deb": 88
+        },
+        "vulnerability_findings": 58,
+        "unique_vulnerability_package_version_purl": 58,
+        "findings_by_ecosystem": {
+          "binary": 14,
+          "deb": 44
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:01:30.282362+00:00",
+        "completed_at": "2026-10-20T05:01:39.992695+00:00",
+        "seconds": 9.711,
+        "scanner_exit_code": 0,
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/node.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/node.syft.json; grype sbom:/evidence/node.syft.json --only-fixed -o json > /evidence/node.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "node.syft.json",
+          "bytes": 2515928,
+          "sha256": "c6a01a203e6976a5802a0f7471722124cc07abfa590141c3bc43ac848ee93ce2"
+        },
+        {
+          "name": "node.grype.json",
+          "bytes": 1089578,
+          "sha256": "93f9f5bc4e8b07cc12924be8acba787cf27bdd97b1ae7180aa942336c760aa38"
+        },
+        {
+          "name": "node.image-inspect.json",
+          "bytes": 1538,
+          "sha256": "c5d768174771fd14371353aa0acd95334a7899011aa81bd4fb6fb8519f791ca8"
+        },
+        {
+          "name": "node.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "node.capture.json",
+          "bytes": 427,
+          "sha256": "1b4f671f10b4a171586c94b4c8a7c1ea29f0b9a0d7aa706b71f854da33153201"
+        }
+      ]
+    },
+    {
+      "image_key": "debian-12-9",
+      "image": "debian:12.9-slim",
+      "image_digest": "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+      "image_id": "sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "counts": {
+        "sbom_components": 88,
+        "components_with_purls": 88,
+        "components_with_valid_purls": 88,
+        "components_by_ecosystem": {
+          "deb": 88
+        },
+        "vulnerability_findings": 79,
+        "unique_vulnerability_package_version_purl": 79,
+        "findings_by_ecosystem": {
+          "deb": 79
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:03:14.752175+00:00",
+        "completed_at": "2026-10-20T05:03:19.604760+00:00",
+        "seconds": 4.853,
+        "scanner_exit_code": 0,
+        "cataloger_mode": "default",
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/debian-12-9.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/debian-12-9.syft.json; grype sbom:/evidence/debian-12-9.syft.json --only-fixed -o json > /evidence/debian-12-9.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "debian-12-9.syft.json",
+          "bytes": 2510982,
+          "sha256": "c0d24590de15294cb547c0da8dca350162dec9444a5e2812653dd7112e79dfbd"
+        },
+        {
+          "name": "debian-12-9.grype.json",
+          "bytes": 1212667,
+          "sha256": "06c2fc053003f9be10e3b19cbff42de00326a369cd636b32313af41ac137aa01"
+        },
+        {
+          "name": "debian-12-9.image-inspect.json",
+          "bytes": 1074,
+          "sha256": "d633246434c5e54820359a44f1862740e5e21fd84d0e110629a5917466307a4a"
+        },
+        {
+          "name": "debian-12-9.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "debian-12-9.capture.json",
+          "bytes": 487,
+          "sha256": "738b8cfc6faf298d0dbc93461e6164c7656219d6f2d62735a10ba5d87a438699"
+        }
+      ]
+    },
+    {
+      "image_key": "alpine-3-20-0",
+      "image": "alpine:3.20.0",
+      "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+      "image_id": "sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+      "distro": {
+        "prettyName": "Alpine Linux v3.20",
+        "name": "Alpine Linux",
+        "id": "alpine",
+        "versionID": "3.20.0",
+        "homeURL": "https://alpinelinux.org/",
+        "bugReportURL": "https://gitlab.alpinelinux.org/alpine/aports/-/issues"
+      },
+      "counts": {
+        "sbom_components": 14,
+        "components_with_purls": 14,
+        "components_with_valid_purls": 14,
+        "components_by_ecosystem": {
+          "apk": 14
+        },
+        "vulnerability_findings": 69,
+        "unique_vulnerability_package_version_purl": 69,
+        "findings_by_ecosystem": {
+          "apk": 69
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:03:19.932092+00:00",
+        "completed_at": "2026-10-20T05:03:23.149673+00:00",
+        "seconds": 3.217,
+        "scanner_exit_code": 0,
+        "cataloger_mode": "default",
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/alpine-3-20-0.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs -o syft-json > /evidence/alpine-3-20-0.syft.json; grype sbom:/evidence/alpine-3-20-0.syft.json --only-fixed -o json > /evidence/alpine-3-20-0.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "alpine-3-20-0.syft.json",
+          "bytes": 91288,
+          "sha256": "0c51acf47eba7d6e6439f6b86a2d2027894c51de2320a25b1d57bd69986d973f"
+        },
+        {
+          "name": "alpine-3-20-0.grype.json",
+          "bytes": 306776,
+          "sha256": "7aef717da72801e9a0ff32eae6d81a824ade8a6cc669bc30d3b838da2d526021"
+        },
+        {
+          "name": "alpine-3-20-0.image-inspect.json",
+          "bytes": 1065,
+          "sha256": "114e889c9a798ea696f5010070d4812f4e01e4289e755bae3f4922dff3500742"
+        },
+        {
+          "name": "alpine-3-20-0.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "alpine-3-20-0.capture.json",
+          "bytes": 495,
+          "sha256": "263963363e1f414450f4feafb7a98f5630f267b3c13cb603c4cde4bbea5de40e"
+        }
+      ]
+    },
+    {
+      "image_key": "node-image-catalogers",
+      "image": "node:20-bookworm-slim",
+      "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+      "image_id": "sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+      "distro": {
+        "prettyName": "Debian GNU/Linux 12 (bookworm)",
+        "name": "Debian GNU/Linux",
+        "id": "debian",
+        "version": "12 (bookworm)",
+        "versionID": "12",
+        "versionCodename": "bookworm",
+        "homeURL": "https://www.debian.org/",
+        "supportURL": "https://www.debian.org/support",
+        "bugReportURL": "https://bugs.debian.org/"
+      },
+      "counts": {
+        "sbom_components": 293,
+        "components_with_purls": 293,
+        "components_with_valid_purls": 293,
+        "components_by_ecosystem": {
+          "binary": 1,
+          "deb": 88,
+          "npm": 204
+        },
+        "vulnerability_findings": 93,
+        "unique_vulnerability_package_version_purl": 93,
+        "findings_by_ecosystem": {
+          "binary": 14,
+          "deb": 44,
+          "npm": 35
+        }
+      },
+      "capture": {
+        "started_at": "2026-10-20T05:03:25.723754+00:00",
+        "completed_at": "2026-10-20T05:03:36.187475+00:00",
+        "seconds": 10.464,
+        "scanner_exit_code": 0,
+        "cataloger_mode": "image",
+        "scanner_commands": "set -eu; mkdir /tmp/cats-rootfs; tar -xf /evidence/node-image-catalogers.rootfs.tar -C /tmp/cats-rootfs; syft dir:/tmp/cats-rootfs --override-default-catalogers image -o syft-json > /evidence/node-image-catalogers.syft.json; grype sbom:/evidence/node-image-catalogers.syft.json --only-fixed -o json > /evidence/node-image-catalogers.grype.json"
+      },
+      "raw_evidence": [
+        {
+          "name": "node-image-catalogers.syft.json",
+          "bytes": 2963591,
+          "sha256": "87329d427fc52a0939dadd307965e063cca398ca85beca627e2149b72080eb04"
+        },
+        {
+          "name": "node-image-catalogers.grype.json",
+          "bytes": 1225000,
+          "sha256": "0a3ded854bde56138f9bdda8c81a0025a03a72ea669f9e94f880a3d69d171390"
+        },
+        {
+          "name": "node-image-catalogers.image-inspect.json",
+          "bytes": 1538,
+          "sha256": "c5d768174771fd14371353aa0acd95334a7899011aa81bd4fb6fb8519f791ca8"
+        },
+        {
+          "name": "node-image-catalogers.scanner.log",
+          "bytes": 263,
+          "sha256": "9e685622935d100db064240dd4ba07cd9233e39587366304ced2a5b6e37390b7"
+        },
+        {
+          "name": "node-image-catalogers.capture.json",
+          "bytes": 562,
+          "sha256": "475d0f46df520f45632093f0f893920e023c86fe3cbc263c48ef3af79cf78d46"
+        }
+      ]
+    }
+  ],
+  "trivy_offline_attempt": {
+    "exit_code": 1,
+    "log": {
+      "name": "trivy-offline-attempt.log",
+      "bytes": 221,
+      "sha256": "488cf202b487cd668077626f8046ac236dd6bd8e2d0a12f13cb2769b6d9aa0e3"
+    },
+    "diagnostic": "2026-10-20T05:03:36Z\tERROR\t[vulndb] The first run cannot skip downloading DB\n2026-10-20T05:03:36Z\tFATAL\tFatal error\trun error: init error: DB error: database error: --skip-db-update cannot be specified on the first run\n",
+    "limitation": "No embedded Trivy vulnerability database; production pipeline uses Trivy for misconfigurations."
+  }
+}

@@ -20,6 +20,7 @@ import {Page as ServiceArtifacts} from './features/service-artifacts';
 
 /** Infrequent or administrative pages load as separate local chunks. */
 const loaders: Record<string, () => Promise<any>> = {
+  './features/risk_intelligence': () => import('./features/risk_intelligence'),
   './features/cyber_approvals': () => import('./features/cyber_approvals'),
   './features/admin': () => import('./features/admin'),
   './features/audit': () => import('./features/audit'),
@@ -66,6 +67,7 @@ export function lazyComponent<P extends object>(module: string, name: string,
 }
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
+const RiskIntelligence = lazyPage('./features/risk_intelligence', 'Page');
 const Patch = lazyPage('./features/patch', 'Page');
 const CyberApprovals = lazyPage('./features/cyber_approvals', 'Page');
 const ApprovedReleases = lazyPage('./features/cyber_approvals', 'Releases');
@@ -109,7 +111,7 @@ export function preloadPages() {
   return Promise.all(Object.keys(loaders).map(module => load(module).catch(() => undefined)));
 }
 
-const routes = new Set(['/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
+const routes = new Set(['/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
   '/cyber-approvals', '/approved-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
@@ -134,6 +136,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   service_definitions: ServiceDefinitions, exchange: Exchange, purpose_export_template: PurposeExportTemplate,
   jobs: Jobs, remediations: Remediations, service_remediations: ServiceRemediations, remediation_report: RemediationReport, requests: Requests,
   service_architecture: ServiceArchitecture,
+  risk_intelligence: RiskIntelligence,
   admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,
   compliance: Compliance, compliance_frameworks: ComplianceFrameworks, dependency_watchlist: DependencyWatchlist,

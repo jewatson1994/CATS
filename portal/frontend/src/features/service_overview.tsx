@@ -1,3 +1,5 @@
+import {ServiceRisk} from './risk_intelligence';
+import {VexEvidence} from './native_vex';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import {can, requestJson, type PageData} from '../api';
 import {ComposeInventory} from './compose_inventory';
@@ -61,7 +63,7 @@ export function Page({data}: {data: PageData}) {
   const resources = validation.resource_summary || {};
   const chartGraph = data.chart_graph || {};
   const close = () => {dialog.current?.close(); setAction(null);};
-  return <><ServiceHeader data={data}/><ServiceTabs serviceKey={service.service_key} active="overview"/>
+  return <><ServiceHeader data={data}/><ServiceTabs serviceKey={service.service_key} active="overview"/><VexEvidence serviceKey={service.service_key}/><ServiceRisk data={data} serviceKey={service.service_key}/>
     {data.evidence_notice === 'stale' && <p className="error callout callout-danger" role="alert">The evidence changed since this page was opened. Refresh and review the current evidence before removing it.</p>}
     {data.artifact_provenance?.length > 0 && <section className="panel known-artifacts" aria-label="Known Artifacts"><div className="panel-head"><div><h2>Known Artifacts</h2><p>These artifacts match CATS remediation outputs by immutable digest. Evidence below describes the producing candidate; matching artifacts do not establish verification or lineage for the complete release.</p></div></div><Table title="Artifact provenance" columns={['Artifact', 'Produced by', 'Immutable digest', 'Post-remediation scan', 'Runtime verification', 'Signature']} rows={data.artifact_provenance} paginate render={row => <><td>{row.artifact_kind === 'helm' ? 'Helm chart' : 'Image'}<small className="muted"> · {row.identity_type === 'package_sha256' ? 'Package SHA-256' : 'OCI manifest'}</small></td><td>Service {row.source_version || 'Unknown version'} / Remediation {row.revision_number ? `R${row.revision_number}` : row.job_key || 'Unknown revision'}</td><td><code>{row.digest}</code></td><td><StatusBadge value={row.post_remediation_scan || 'NOT_RUN'}/></td><td><StatusBadge value={row.runtime_verification || 'NOT_VERIFIED'}/></td><td><StatusBadge value={row.signature || 'NOT_REQUESTED'}/></td></>}/></section>}
     <nav className="metric-grid metric-filters" aria-label="Filter service findings">{[['active', 'Active Fixable', undefined], ['noncompliant', 'Active Non-Compliance', 'danger'], ['exceptions', 'Active Exceptions', undefined], ['resolved', 'Resolved', undefined], ['warnings', 'Warnings', 'warning']].map(([key, label, tone]) => <MetricCard key={key} label={label} value={data.finding_counts?.[key as string] || 0} tone={tone && data.finding_counts?.[key as string] > 0 ? tone as any : undefined} href={`${root}?overview=false&finding_state=${key}&finding_type=all&page_size=50`}/>)}</nav>

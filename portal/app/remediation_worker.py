@@ -59,8 +59,12 @@ def _handle(ctx, payload):
             execution = db.get(Execution, payload["source_execution_id"])
             if not service or not execution or execution.service_id != service.id or execution.service_version_id != payload.get("source_version_id"):
                 raise JobError("The selected assessment/version is no longer available. Select a retained assessment and rebuild the plan.")
+            if payload.get('native_vex_token') != remediation_jobs.native_vex_token(db, service.id):
+                raise JobError(remediation_jobs.PLAN_CHANGED)
             _, plan = main._retained_remediation_plan(db, service, execution,
                 payload.get("finding_type"), payload.get("finding_id"))
+            if payload.get('native_vex_token') != remediation_jobs.native_vex_token(db, service.id):
+                raise JobError(remediation_jobs.PLAN_CHANGED)
             public = {**main._public_remediation_plan(db, execution, plan), "plan_digest": main.plan_digest(plan),
                       "planner_revision": remediation_jobs.PLAN_REVISION}
             preview = {"images": len({row.get("original") for row in plan.get("images", [])}),

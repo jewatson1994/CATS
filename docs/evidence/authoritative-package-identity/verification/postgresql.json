@@ -1,0 +1,32 @@
+{
+  "mode": "final",
+  "started_at": "2026-10-20T06:25:27.081864+00:00",
+  "base_commit": "745ffd9",
+  "python": "3.12.14",
+  "container": "cats-embedded-audit-db",
+  "host": "127.0.0.1",
+  "port": 55439,
+  "disposable_database": "cats_identity_verify_20261020_914b950420",
+  "postgresql_version": "16.15",
+  "retained_before": {
+    "vex_documents": 44013,
+    "vex_statements": 5773747
+  },
+  "tests": [
+    "portal/tests/test_risk_vex_postgres.py",
+    "portal/tests/test_intelligence_membership.py",
+    "portal/tests/test_durable_jobs_postgres.py",
+    "portal/tests/test_export_jobs_postgres.py",
+    "portal/tests/test_service_bundle.py"
+  ],
+  "elapsed_seconds": 72.92,
+  "exit_code": 0,
+  "pytest_output": "..............................                                           [100%]\n30 passed in 72.35s (0:01:12)\n",
+  "disposable_database_removed": true,
+  "retained_after": {
+    "vex_documents": 44013,
+    "vex_statements": 5773747
+  },
+  "retained_counts_unchanged": true,
+  "finished_at": "2026-10-20T06:26:40.781073+00:00"
+}

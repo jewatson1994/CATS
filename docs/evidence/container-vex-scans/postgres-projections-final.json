@@ -1,0 +1,12 @@
+{
+  "suite": [
+    "test_intelligence_projections"
+  ],
+  "database": "cats_embedded_audit",
+  "database_container": "cats-embedded-audit-db",
+  "database_mode": "SQLite and PostgreSQL parametrized projections; global app SQLite",
+  "exit_code": 0,
+  "duration_seconds": 1.702,
+  "junit_xml": "postgres-projections-final.xml",
+  "output": "..............                                                           [100%]\n- generated xml file: C:\\Users\\lil-j\\.codex\\worktrees\\risk-profiles-vex\\Cyber Hygiene\\docs\\evidence\\container-vex-scans\\postgres-projections-final.xml -\n14 passed in 1.34s\n"
+}

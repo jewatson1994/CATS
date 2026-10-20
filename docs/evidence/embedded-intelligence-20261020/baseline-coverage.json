@@ -1,0 +1,173 @@
+{
+  "scope": "All immutable rows currently stored in this database, including historical revisions; not a claim of current package membership or applicability.",
+  "definitions": {
+    "unique_cve_product_pairs": "Distinct CVE + exact product_id; repeated CVE/USN applicability rows collapse, but differing required CSAF contexts share a pair.",
+    "unique_package_names": "Distinct parsed (PURL type, decoded namespace components, decoded name); excludes version, qualifiers and subpath. Supplemental embedded JSON package names without a normalized product PURL are not counted.",
+    "versioned_purl_statements": "Rows with a PURL and explicit nonempty version. These require an exact observed identity and any distro/CSAF product context; this count is not fresh applicable matches.",
+    "freshness_identity_eligible_statements": "Retained versioned-PURL rows with currently enabled/trusted source authority, current TLS host or signature-key verification, nonwithdrawn document, and original issued_at <= as_of < issued_at + source max_age_days. Historical revisions may overlap. These are row preconditions, NOT unique resolved applicability or conflict-free matches; an exact observed identity and any required distro/CSAF context remain necessary.",
+    "freshness_identity_eligible_csaf_context_statements": "Eligible rows whose normalized identity requires exact resolved CSAF containing-product context. Unresolved CSAF products were excluded by normalization; this is not evidence that the scanned package supplied that context.",
+    "fresh_matches": "Measured separately by real scoped lookup examples at current time; source-as-of diagnostics are explicitly historical."
+  },
+  "freshness_as_of": "2026-10-20T04:25:13.230656+00:00",
+  "freshness_scan_seconds": 6.754763433000335,
+  "totals": {
+    "documents": 44013,
+    "statements": 5773747,
+    "supplemental_records": 44098,
+    "unique_cves_across_all_categories": 71599,
+    "unique_product_ids_across_all_categories": 429579,
+    "unique_vex_cve_product_pairs": 5773747,
+    "unique_vex_cves": 43181,
+    "unique_vex_product_ids": 428074,
+    "statuses": {
+      "affected": 1226103,
+      "fixed": 1451110,
+      "not_affected": 2170970,
+      "under_investigation": 925564
+    },
+    "versioned_statuses": {
+      "affected": 1226103,
+      "fixed": 1451110,
+      "not_affected": 2170970,
+      "under_investigation": 925564
+    },
+    "freshness_identity_eligible_statuses": {
+      "fixed": 422135,
+      "not_affected": 981466,
+      "under_investigation": 855947,
+      "affected": 645963
+    },
+    "fresh_verified_documents": 17865,
+    "freshness_identity_eligible_statements": 2905511,
+    "freshness_identity_eligible_csaf_context_statements": 0,
+    "freshness_identity_eligible_distro_statements": 2905511,
+    "versioned_purl_statements": 5773747,
+    "versioned_csaf_context_statements": 0,
+    "versioned_distro_statements": 5773532,
+    "unique_package_names": 17254
+  },
+  "by_source": [
+    {
+      "name": "CISA Known Exploited Vulnerabilities",
+      "enabled": true,
+      "trusted": true,
+      "max_age_days": 30,
+      "documents": 0,
+      "statements": 0,
+      "supplemental_records": 1748,
+      "statuses": {},
+      "versioned_statuses": {},
+      "categories": {
+        "exploitation": {
+          "records": 1748,
+          "unique_cves": 1748,
+          "unique_product_ids": 736
+        }
+      },
+      "fresh_verified_documents": 0,
+      "freshness_identity_eligible_statements": 0,
+      "freshness_identity_eligible_statuses": {},
+      "freshness_identity_eligible_csaf_context_statements": 0,
+      "freshness_identity_eligible_distro_statements": 0,
+      "unique_cves_across_all_categories": 1748,
+      "unique_package_names": 0,
+      "non_purl_product_ids": 736
+    },
+    {
+      "name": "Alpine SecDB v3.24",
+      "enabled": true,
+      "trusted": true,
+      "max_age_days": 30,
+      "documents": 0,
+      "statements": 0,
+      "supplemental_records": 10094,
+      "statuses": {},
+      "versioned_statuses": {},
+      "categories": {
+        "advisory": {
+          "records": 10094,
+          "unique_cves": 8782,
+          "unique_product_ids": 769
+        }
+      },
+      "fresh_verified_documents": 0,
+      "freshness_identity_eligible_statements": 0,
+      "freshness_identity_eligible_statuses": {},
+      "freshness_identity_eligible_csaf_context_statements": 0,
+      "freshness_identity_eligible_distro_statements": 0,
+      "unique_cves_across_all_categories": 8782,
+      "unique_package_names": 769,
+      "non_purl_product_ids": 0
+    },
+    {
+      "name": "GitHub Reviewed Advisory Database",
+      "enabled": true,
+      "trusted": true,
+      "max_age_days": 30,
+      "documents": 0,
+      "statements": 0,
+      "supplemental_records": 32256,
+      "statuses": {},
+      "versioned_statuses": {},
+      "categories": {
+        "advisory": {
+          "records": 32256,
+          "unique_cves": 32256,
+          "unique_product_ids": 0
+        }
+      },
+      "fresh_verified_documents": 0,
+      "freshness_identity_eligible_statements": 0,
+      "freshness_identity_eligible_statuses": {},
+      "freshness_identity_eligible_csaf_context_statements": 0,
+      "freshness_identity_eligible_distro_statements": 0,
+      "unique_cves_across_all_categories": 32256,
+      "unique_package_names": 0,
+      "non_purl_product_ids": 0
+    },
+    {
+      "name": "Canonical Ubuntu VEX",
+      "enabled": true,
+      "trusted": true,
+      "max_age_days": 30,
+      "documents": 44013,
+      "statements": 5773747,
+      "supplemental_records": 0,
+      "statuses": {
+        "affected": 1226103,
+        "fixed": 1451110,
+        "not_affected": 2170970,
+        "under_investigation": 925564
+      },
+      "versioned_statuses": {
+        "affected": 1226103,
+        "fixed": 1451110,
+        "not_affected": 2170970,
+        "under_investigation": 925564
+      },
+      "categories": {},
+      "earliest_document_issued_at": "2026-03-13T15:36:12.513695+00:00",
+      "latest_document_issued_at": "2026-10-17T10:01:24.802997+00:00",
+      "unique_statement_cves": 43181,
+      "unique_statement_product_ids": 428074,
+      "versioned_purl_statements": 5773747,
+      "versioned_csaf_context_statements": 0,
+      "versioned_distro_statements": 5773532,
+      "fresh_verified_documents": 17865,
+      "freshness_identity_eligible_statements": 2905511,
+      "freshness_identity_eligible_statuses": {
+        "fixed": 422135,
+        "not_affected": 981466,
+        "under_investigation": 855947,
+        "affected": 645963
+      },
+      "freshness_identity_eligible_csaf_context_statements": 0,
+      "freshness_identity_eligible_distro_statements": 2905511,
+      "unique_cve_product_pairs": 5773747,
+      "unique_cves_across_all_categories": 43181,
+      "unique_package_names": 16485,
+      "non_purl_product_ids": 0
+    }
+  ],
+  "seconds": 70.4579331519999
+}

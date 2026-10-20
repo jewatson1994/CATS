@@ -1,0 +1,13 @@
+{
+  "started_at": "2026-10-20T04:43:42.979702+00:00",
+  "image": "cats:embedded-vex-expanded-final",
+  "scope": "Final runtime image; unchanged startup against the database populated by the earlier cold-import image with identical signed payload. No second cold-import timing is claimed.",
+  "image_identity": "sha256:9b001acbe697437fd6466e2ae568f2cb1633a08ca2ed8eaeb2d53760731525a8 1639822758",
+  "repeat_startup_seconds": 4.200634399996488,
+  "health": "{\"status\":\"ok\"}",
+  "network": "container:224c6bb01f394e46d9c63ae01c2f7ae5217973422b36b2992862d524a6309c6c",
+  "database_network": "none",
+  "intelligence_mounts": [],
+  "smoke_exit_code": 0,
+  "finished_at": "2026-10-20T04:43:55.852013+00:00"
+}

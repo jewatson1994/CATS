@@ -1,0 +1,428 @@
+{
+  "schema_version": 1,
+  "kind": "controlled synthetic positive VEX statements, not discovered real matches",
+  "schema": "identity_audit_f1b663955af440dc863cdb285e3774c6",
+  "as_of": "2026-10-20T05:40:57.930104+00:00",
+  "candidate_cap": 10000,
+  "code_sha256": {
+    "container_intelligence.py": "a5e2b771a19c5b6ef6be7f745ea3a9260fb6e5b4c5da8fce12f099059c413111",
+    "package_identity_resolution.py": "b03697e33a6b65a6d011c36978edfe59b4279184cd17ca70287e8196802caa05",
+    "vex_intelligence.py": "915e54c257a8c1a26a5d379179ed413505386a15e77ee305bed3ff8e907929d0"
+  },
+  "script_sha256": "e03474579e4650a48dc3e6670fab389e6675b078cc80e9f900736d0cc5d589ec",
+  "identity_origin": "Exact reconstructed Ubuntu artifact; synthetic CVEs and VEX rows only.",
+  "base_identity": {
+    "raw_purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.26?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+    "scanner_distro": {
+      "name": "ubuntu",
+      "version": "22.04",
+      "idLike": [
+        "debian"
+      ]
+    },
+    "scanner_artifact": {
+      "id": "149054b6b9decf0b",
+      "name": "libssl3",
+      "version": "3.0.2-0ubuntu1.26",
+      "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.26?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+      "type": "deb",
+      "language": "",
+      "metadataType": null,
+      "foundBy": null,
+      "metadata": null,
+      "locations": [
+        {
+          "path": "/var/lib/dpkg/status",
+          "accessPath": "/var/lib/dpkg/status",
+          "annotations": {
+            "evidence": "primary"
+          }
+        },
+        {
+          "path": "/usr/share/doc/libssl3/copyright",
+          "accessPath": "/usr/share/doc/libssl3/copyright",
+          "annotations": {
+            "evidence": "supporting"
+          }
+        },
+        {
+          "path": "/var/lib/dpkg/info/libssl3:amd64.md5sums",
+          "accessPath": "/var/lib/dpkg/info/libssl3:amd64.md5sums",
+          "annotations": {
+            "evidence": "supporting"
+          }
+        }
+      ],
+      "upstreams": [
+        {
+          "name": "openssl"
+        }
+      ],
+      "cpes": [
+        "cpe:2.3:a:libssl3:libssl3:3.0.2-0ubuntu1.26:*:*:*:*:*:*:*"
+      ]
+    },
+    "scanner_source": {
+      "type": "directory",
+      "name": null,
+      "target": "/tmp/cats-rootfs",
+      "metadata": null
+    },
+    "scanner_descriptor": {
+      "name": "grype",
+      "version": "0.98.0",
+      "timestamp": "2026-10-20T05:00:51.002735148Z"
+    },
+    "sbom_descriptor": {
+      "name": "syft",
+      "version": "1.31.0"
+    },
+    "sbom_schema": {
+      "version": "16.0.37",
+      "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.37.json"
+    },
+    "observed_at": null,
+    "evidence_valid_until": null,
+    "aliases": [
+      "CVE-2026-63076"
+    ],
+    "alias_count": 1,
+    "alias_overflow": false,
+    "sbom_artifact": {
+      "id": "149054b6b9decf0b",
+      "name": "libssl3",
+      "version": "3.0.2-0ubuntu1.26",
+      "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.26?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+      "type": "deb",
+      "language": "",
+      "metadataType": "dpkg-db-entry",
+      "foundBy": "dpkg-db-cataloger",
+      "metadata": {
+        "package": "libssl3",
+        "source": "openssl",
+        "version": "3.0.2-0ubuntu1.26",
+        "sourceVersion": "",
+        "architecture": "amd64"
+      },
+      "locations": [
+        {
+          "path": "/var/lib/dpkg/status",
+          "accessPath": "/var/lib/dpkg/status",
+          "annotations": {
+            "evidence": "primary"
+          }
+        },
+        {
+          "path": "/usr/share/doc/libssl3/copyright",
+          "accessPath": "/usr/share/doc/libssl3/copyright",
+          "annotations": {
+            "evidence": "supporting"
+          }
+        },
+        {
+          "path": "/var/lib/dpkg/info/libssl3:amd64.md5sums",
+          "accessPath": "/var/lib/dpkg/info/libssl3:amd64.md5sums",
+          "annotations": {
+            "evidence": "supporting"
+          }
+        }
+      ],
+      "upstreams": null,
+      "cpes": [
+        {
+          "cpe": "cpe:2.3:a:libssl3:libssl3:3.0.2-0ubuntu1.26:*:*:*:*:*:*:*",
+          "source": "syft-generated"
+        }
+      ]
+    },
+    "sbom_distro": {
+      "prettyName": "Ubuntu 22.04.5 LTS",
+      "name": "Ubuntu",
+      "id": "ubuntu",
+      "idLike": [
+        "debian"
+      ],
+      "version": "22.04.5 LTS (Jammy Jellyfish)",
+      "versionID": "22.04",
+      "versionCodename": "jammy",
+      "homeURL": "https://www.ubuntu.com/",
+      "supportURL": "https://help.ubuntu.com/",
+      "bugReportURL": "https://bugs.launchpad.net/ubuntu/",
+      "privacyPolicyURL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+    },
+    "sbom_source": {
+      "type": "directory",
+      "name": "/tmp/cats-rootfs",
+      "target": null,
+      "metadata": {
+        "userInput": null,
+        "imageID": null,
+        "manifestDigest": null,
+        "repoDigests": null,
+        "architecture": null,
+        "os": null,
+        "labels": null,
+        "annotations": null
+      }
+    },
+    "image_provenance": null,
+    "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+    "raw_installed_version": "3.0.2-0ubuntu1.26",
+    "version_normalization": null,
+    "context": {
+      "product_id": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.26?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+      "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1.26?arch=amd64&distro=ubuntu-22.04&upstream=openssl",
+      "version": "3.0.2-0ubuntu1.26",
+      "distro": "ubuntu-22.04"
+    },
+    "reasons": [],
+    "package": {
+      "type": "deb",
+      "name": "ubuntu/libssl3",
+      "version": "3.0.2-0ubuntu1.26",
+      "qualifiers": {
+        "arch": "amd64",
+        "distro": "ubuntu-22.04",
+        "upstream": "openssl"
+      },
+      "subpath": null
+    }
+  },
+  "selected_resolved_candidate": {
+    "kind": "authoritative_resolved",
+    "context": {
+      "product_id": "pkg:deb/ubuntu/openssl@3.0.2-0ubuntu1.26?arch=source&distro=jammy",
+      "purl": "pkg:deb/ubuntu/openssl@3.0.2-0ubuntu1.26?arch=source&distro=jammy",
+      "version": "3.0.2-0ubuntu1.26",
+      "distro": "jammy"
+    },
+    "relationship": "installed_binary_to_source",
+    "eligible": true,
+    "publisher_scope": {
+      "namespace": "ubuntu",
+      "publisher": "canonical"
+    },
+    "provenance_chain": [
+      {
+        "relation": "installed_binary_to_source",
+        "source": "https://www.debian.org/doc/debian-policy/ch-controlfields.html#source",
+        "evidence_path": "sbom_artifact.metadata",
+        "source_version": {
+          "name": "syft",
+          "version": "1.31.0"
+        },
+        "observed_at": null,
+        "details": {
+          "binary_name": "libssl3",
+          "binary_version": "3.0.2-0ubuntu1.26",
+          "binary_architecture": "amd64",
+          "source_name": "openssl",
+          "source_version": "3.0.2-0ubuntu1.26",
+          "source_version_defaulted": true,
+          "source_name_defaulted": false,
+          "metadata_type": "dpkg-db-entry",
+          "cataloger": "dpkg-db-cataloger",
+          "parser_reference": "https://github.com/anchore/syft/blob/v1.31.0/syft/pkg/cataloger/debian/parse_dpkg_db.go",
+          "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f"
+        }
+      },
+      {
+        "relation": "installed_distribution_release",
+        "source": "scanner_os_release",
+        "evidence_path": "sbom_distro",
+        "source_version": {
+          "name": "syft",
+          "version": "1.31.0"
+        },
+        "observed_at": null,
+        "details": {
+          "id": "ubuntu",
+          "version": "22.04",
+          "codename": "jammy",
+          "observed_distro": "ubuntu-22.04",
+          "release_consistency_reference": "https://releases.ubuntu.com/22.04/"
+        }
+      },
+      {
+        "relation": "vendor_purl_representation",
+        "source": "https://github.com/canonical/ubuntu-security-notices/tree/main/vex",
+        "evidence_path": "context.purl",
+        "source_version": {
+          "name": "syft",
+          "version": "1.31.0"
+        },
+        "observed_at": null,
+        "details": {
+          "product_id": "pkg:deb/ubuntu/openssl@3.0.2-0ubuntu1.26?arch=source&distro=jammy",
+          "relationship": "installed_binary_to_source"
+        }
+      }
+    ],
+    "valid_until": null
+  },
+  "cases": [
+    {
+      "name": "resolved_positive",
+      "synthetic_statements": 1,
+      "queries": 2,
+      "seconds": 0.006365,
+      "process_cpu_seconds": 0.004879,
+      "sampled_process_peak_rss_bytes": 301785088,
+      "process_lifetime_peak_rss_bytes": 304033792,
+      "status": "not_affected",
+      "reasons": [],
+      "returned_statements": 1,
+      "direct_candidates": 0,
+      "resolved_candidates": 1,
+      "direct_applicable": 0,
+      "resolved_applicable": 1,
+      "cve_present": true,
+      "resolution_outcome": "multiple_valid_candidate_identities",
+      "query_plan": {
+        "planning_ms": 0.13,
+        "execution_ms": 0.046,
+        "output_rows": 1,
+        "nodes": 6,
+        "indexes": [
+          "ix_identity_audit_f1b663955af440dc863cdb285e3774c6_vex__02cb"
+        ],
+        "vex_sequential_scans": 0,
+        "limit_nodes": [
+          {
+            "actual_rows": 1,
+            "loops": 1,
+            "planned_rows": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolved_high_fanout_at_cap",
+      "synthetic_statements": 10000,
+      "queries": 2,
+      "seconds": 0.958041,
+      "process_cpu_seconds": 0.96607,
+      "sampled_process_peak_rss_bytes": 327127040,
+      "process_lifetime_peak_rss_bytes": 327467008,
+      "status": "not_affected",
+      "reasons": [],
+      "returned_statements": 10000,
+      "direct_candidates": 0,
+      "resolved_candidates": 10000,
+      "direct_applicable": 0,
+      "resolved_applicable": 10000,
+      "cve_present": true,
+      "resolution_outcome": "multiple_valid_candidate_identities",
+      "query_plan": {
+        "planning_ms": 0.177,
+        "execution_ms": 3.544,
+        "output_rows": 10000,
+        "nodes": 7,
+        "indexes": [
+          "ix_identity_audit_f1b663955af440dc863cdb285e3774c6_vex__02cb"
+        ],
+        "vex_sequential_scans": 0,
+        "limit_nodes": [
+          {
+            "actual_rows": 10000,
+            "loops": 1,
+            "planned_rows": 9999
+          }
+        ]
+      }
+    },
+    {
+      "name": "resolved_high_fanout_overflow",
+      "synthetic_statements": 10001,
+      "queries": 1,
+      "seconds": 0.847795,
+      "process_cpu_seconds": 0.856487,
+      "sampled_process_peak_rss_bytes": 341536768,
+      "process_lifetime_peak_rss_bytes": 341856256,
+      "status": "under_investigation",
+      "reasons": [
+        "candidate_limit"
+      ],
+      "returned_statements": 0,
+      "direct_candidates": 0,
+      "resolved_candidates": 0,
+      "direct_applicable": 0,
+      "resolved_applicable": 0,
+      "cve_present": null,
+      "resolution_outcome": "multiple_valid_candidate_identities",
+      "query_plan": {
+        "planning_ms": 0.105,
+        "execution_ms": 3.726,
+        "output_rows": 10001,
+        "nodes": 7,
+        "indexes": [
+          "ix_identity_audit_f1b663955af440dc863cdb285e3774c6_vex__02cb"
+        ],
+        "vex_sequential_scans": 0,
+        "limit_nodes": [
+          {
+            "actual_rows": 10001,
+            "loops": 1,
+            "planned_rows": 10001
+          }
+        ]
+      }
+    },
+    {
+      "name": "direct_derived_conflict",
+      "synthetic_statements": 2,
+      "queries": 2,
+      "seconds": 0.003493,
+      "process_cpu_seconds": 0.002894,
+      "sampled_process_peak_rss_bytes": 321630208,
+      "process_lifetime_peak_rss_bytes": 341856256,
+      "status": "conflicting",
+      "reasons": [
+        "direct_derived_conflict",
+        "identity_evidence_conflict"
+      ],
+      "returned_statements": 2,
+      "direct_candidates": 1,
+      "resolved_candidates": 1,
+      "direct_applicable": 1,
+      "resolved_applicable": 1,
+      "cve_present": true,
+      "resolution_outcome": "multiple_valid_candidate_identities",
+      "query_plan": {
+        "planning_ms": 0.093,
+        "execution_ms": 0.05,
+        "output_rows": 2,
+        "nodes": 7,
+        "indexes": [
+          "ix_identity_audit_f1b663955af440dc863cdb285e3774c6_vex__02cb"
+        ],
+        "vex_sequential_scans": 0,
+        "limit_nodes": [
+          {
+            "actual_rows": 2,
+            "loops": 1,
+            "planned_rows": 2
+          }
+        ]
+      }
+    }
+  ],
+  "isolation": "New random schema in one transaction; production corpus untouched; entire transaction rolled back.",
+  "notes": [
+    "VEX evaluator only; excludes advisory/KEV/EPSS because this measures positive materialization and limits.",
+    "Single warm/unknown-cache run per controlled case; small private schema planner choices are separate from real-corpus plans.",
+    "Trust is fixture setup within an isolated transaction, not a newly accepted vendor document."
+  ],
+  "identity_candidate_limit": {
+    "configured_limit": 1,
+    "outcome": "insufficient_identity_evidence",
+    "reasons": [
+      "identity_candidate_limit"
+    ],
+    "retained_candidate_kinds": [
+      "exact_observed"
+    ]
+  },
+  "schema_removed": true,
+  "query_plans_sha256": "600454e30f517056026282320e0046a200ffdf90db446c94e322da1d64c6d3d3"
+}

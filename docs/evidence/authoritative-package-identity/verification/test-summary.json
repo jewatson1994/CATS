@@ -1,0 +1,74 @@
+{
+  "baseline_commit": "745ffd99172bd46ab2a67d2f5a6df54465e1b320",
+  "branch": "feature/risk-profiles-vex",
+  "backend": {
+    "passed": 750,
+    "skipped": 16,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 130.567,
+    "classification_passed": 21,
+    "resolver_integration_passed": 226
+  },
+  "scanner": {
+    "passed": 20,
+    "bash_syntax": "passed",
+    "seconds": 10.25
+  },
+  "frontend": {
+    "files": 49,
+    "passed": 342,
+    "typescript": "passed",
+    "changed_files_eslint": "passed"
+  },
+  "full_repository_eslint": {
+    "result": "failed",
+    "preexisting_unchanged_since_baseline": true,
+    "file": "portal/frontend/src/features/remediations.tsx",
+    "line": 242,
+    "unused_variables": [
+      "planning",
+      "setPlanning"
+    ]
+  },
+  "limitations": [
+    "Backend optional PostgreSQL tests were skipped in the ordinary run; separate PostgreSQL results are recorded independently.",
+    "Existing jsdom scrollTo warnings were nonfatal.",
+    "Full 29.2-million-statement cold import was not repeated; signed payload is unchanged."
+  ],
+  "postgresql": {
+    "version": "16.15",
+    "passed": 30,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 72.35,
+    "disposable_database_removed": true,
+    "retained_counts_unchanged": true,
+    "baseline_fixture_reproduction": {
+      "commit": "745ffd9",
+      "passed": 13,
+      "failed": 2,
+      "errors": 1,
+      "report": "postgresql-baseline.json"
+    }
+  },
+  "sqlite_service_bundles": {
+    "passed": 6,
+    "seconds": 3.67
+  },
+  "focused_validation": {
+    "passed": 361,
+    "failed": 0,
+    "errors": 0,
+    "seconds": 6.48,
+    "report": "validation-order.xml",
+    "subset_of_backend": true
+  },
+  "independent_resolver_review": {
+    "input_combinations": 327,
+    "mismatches": 0,
+    "reviewed_resolver_sha256": "fbed691dd56ebdeae084f17f3c74dd503618b715badab1a912ce9b53db016ca6",
+    "final_resolver_sha256": "b03697e33a6b65a6d011c36978edfe59b4279184cd17ca70287e8196802caa05",
+    "final_change": "Removed trailing blank lines only; Python AST equality verified."
+  }
+}

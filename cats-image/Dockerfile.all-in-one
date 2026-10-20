@@ -57,6 +57,8 @@ RUN sed -i 's/^psycopg\[binary\]==/psycopg==/' /tmp/cats-portal-requirements.txt
     && rm -f /tmp/cats-portal-requirements.txt
 
 COPY portal/app ./app
+# Fail the connected image build if its offline intelligence payload is missing or altered.
+RUN /opt/cats-venv/bin/python -m app.embedded_intelligence --verify
 COPY portal/requirements.txt ./requirements.txt
 COPY portal/validator_server.py ./validator_server.py
 COPY cats-image/cats-entrypoint.py /usr/local/bin/cats-entrypoint.py

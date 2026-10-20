@@ -33,6 +33,8 @@ def prepare_findings_view(db, service, now, configuration, service_view_callback
     proxy = SimpleNamespace(**{
         column.key: getattr(service, column.key) for column in service.__table__.columns
     })
+    from .native_vex import excluded_finding_ids
+    proxy._native_vex_excluded_ids = excluded_finding_ids(db, proxy.id, now)
     proxy.findings = _rows(db, Finding, Finding.service_id == service.id, order_by=Finding.id)
     proxy.policy_findings = _rows(db, PolicyFinding, PolicyFinding.service_id == service.id,
                                   order_by=PolicyFinding.id)

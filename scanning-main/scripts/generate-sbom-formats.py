@@ -10,6 +10,8 @@ from pathlib import Path
 import uuid
 import xml.etree.ElementTree as ET
 
+from sbom_identity import document_identity, identity_comment, identity_properties, package_identity
+
 
 FORMAT_ALIASES = {
     "syft": "syft-json",
@@ -97,6 +99,9 @@ def cdx_document(raw: dict, image: str, digest: str, spec_version: str, timestam
         }
         if artifact.get("purl"):
             item["purl"] = artifact["purl"]
+        properties = identity_properties(package_identity(artifact))
+        if properties:
+            item["properties"] = properties
         components.append(item)
     return {
         "bomFormat": "CycloneDX",
@@ -106,7 +111,7 @@ def cdx_document(raw: dict, image: str, digest: str, spec_version: str, timestam
         "metadata": {
             "timestamp": timestamp,
             "tools": [{"vendor": "Anchore", "name": text(descriptor.get("name"), "Syft"), "version": generator_version}],
-            "properties": [{"name": "cats:source", "value": source}, {"name": "cats:digest", "value": digest or ""}],
+            "properties": [{"name": "cats:source", "value": source}, {"name": "cats:digest", "value": digest or ""}] + identity_properties(document_identity(raw)),
         },
         "components": components,
     }
@@ -135,6 +140,10 @@ def cdx_xml(document: dict) -> bytes:
         ET.SubElement(component, "version").text = item["version"]
         if item.get("purl"):
             ET.SubElement(component, "purl").text = item["purl"]
+        if item.get("properties"):
+            properties = ET.SubElement(component, "properties")
+            for property_item in item["properties"]:
+                ET.SubElement(properties, "property", {"name": property_item["name"]}).text = property_item["value"]
         licenses = ET.SubElement(component, "licenses")
         license_item = item["licenses"][0]["license"]["id"]
         ET.SubElement(licenses, "license").append(ET.Element("id"))
@@ -155,6 +164,7 @@ def spdx_document(raw: dict, image: str, digest: str, timestamp: str) -> dict:
             "name": text(artifact.get("name"), "unknown"),
             "versionInfo": text(artifact.get("version"), "unknown"),
             "downloadLocation": "NOASSERTION",
+            "comment": identity_comment(package_identity(artifact)),
             "filesAnalyzed": False,
             "licenseConcluded": "NOASSERTION",
             "licenseDeclared": artifact_license(artifact),
@@ -167,7 +177,7 @@ def spdx_document(raw: dict, image: str, digest: str, timestamp: str) -> dict:
         "name": source,
         "documentNamespace": namespace,
         "creationInfo": {"created": timestamp, "creators": [f"Tool: {text(descriptor.get('name'), 'Syft')} {text(descriptor.get('version'), 'unknown')}"]},
-        "documentComment": f"CATS source={source}; digest={digest or 'unknown'}",
+        "documentComment": f"CATS source={source}; digest={digest or 'unknown'}\n" + identity_comment(document_identity(raw)),
         "packages": packages,
     }
 
@@ -192,6 +202,16 @@ def main() -> int:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     raw = json.loads(input_path.read_text(encoding="utf-8"))
+    provenance_path = input_path.with_suffix(".provenance")
+    if provenance_path.is_file():
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            if isinstance(provenance, dict):
+                # Use an explicit metadata extension, preserving Syft source type.
+                identity = document_identity({"source": {"metadata": provenance}})
+                raw.setdefault("metadata", {}).setdefault("properties", []).extend(identity_properties(identity))
+        except (OSError, ValueError, UnicodeError):
+            pass
     timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     formats = requested_formats(args.formats)
     base = input_path.stem

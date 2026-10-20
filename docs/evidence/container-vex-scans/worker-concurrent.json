@@ -1,0 +1,1467 @@
+{
+  "jobs": [
+    {
+      "assessment_id_before_rollback": 9,
+      "service_id_before_rollback": 13,
+      "execution_id_before_rollback": 13,
+      "seconds_worker": 15.894036,
+      "classification_and_scan_rows_unchanged": true,
+      "owning_groups": 1,
+      "seconds_classification": 0.11235,
+      "worker_sql_statements": 77,
+      "scope": "retained normalized scanner observations -> real classification -> real saved risk assessment; HTTP ingest and durable queue scheduling are outside this check",
+      "classification_snapshot_sha256": "594c7428e9f37e547bb041f776611a75f1276860d463c9dced009f8a5cb98670",
+      "denominator": "unique original scanner vulnerability identifiers (CVE or advisory ID) per service; database uniqueness is service_id + cve",
+      "observations": 1118,
+      "findings": 483,
+      "summary": {
+        "coverage": {
+          "denominator": "unique_findings",
+          "as_of": "2026-10-20T05:41:56.201127+00:00",
+          "total_findings": 483,
+          "counts": {
+            "authoritative_vex": 0,
+            "applicable_vex": 0,
+            "advisory_only": 111,
+            "kev": 0,
+            "epss": 483,
+            "no_intelligence": 0,
+            "unresolved_identity": 0,
+            "stale_or_conflicting": 0,
+            "cve_absent": 1,
+            "identity_rejected": 482
+          },
+          "definitions": {
+            "authoritative_vex": "Exact CVE/PURL candidate; trust, freshness and product context may still reject it.",
+            "applicable_vex": "At least one trusted current statement with exact identity and required product context. Conflicts remain unresolved.",
+            "no_intelligence": "No current applicable VEX, current advisory reference, affirmative KEV or available EPSS.",
+            "identity_rejected": "An exact candidate failed identity requirements, or an explicitly labelled different-product sample proves CVE presence. Date/revision rejections alone do not count.",
+            "denominator": "Distinct active finding IDs, unioned across observations and sources. Image denominators use distinct finding IDs in that image; image totals overlap."
+          },
+          "images": [
+            {
+              "image": "ubuntu:jammy-20260731.1",
+              "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+              "total_findings": 36,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 36,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 36
+              }
+            },
+            {
+              "image": "registry.access.redhat.com/ubi9/ubi:9.6",
+              "image_digest": "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+              "total_findings": 191,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 191,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 191
+              }
+            },
+            {
+              "image": "registry.suse.com/bci/bci-base:15.6",
+              "image_digest": "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+              "total_findings": 208,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 66,
+                "kev": 0,
+                "epss": 208,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 208
+              }
+            },
+            {
+              "image": "python:3.11.13-slim-bookworm",
+              "image_digest": "python@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+              "total_findings": 128,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 10,
+                "kev": 0,
+                "epss": 128,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 128
+              }
+            },
+            {
+              "image": "debian:12.9-slim",
+              "image_digest": "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+              "total_findings": 55,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 55,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 55
+              }
+            },
+            {
+              "image": "node:20-bookworm-slim",
+              "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+              "total_findings": 83,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 35,
+                "kev": 0,
+                "epss": 83,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 1,
+                "identity_rejected": 82
+              }
+            },
+            {
+              "image": "alpine:3.20.0",
+              "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+              "total_findings": 33,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 33,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 33
+              }
+            }
+          ]
+        },
+        "counts": {
+          "low": 0,
+          "medium": 270,
+          "high": 201,
+          "critical": 12
+        },
+        "findings": 483,
+        "observations": 1118,
+        "max_score": 100,
+        "uncertain": 483,
+        "visual_only": true,
+        "assessment_state": "assessed"
+      },
+      "provenance": {
+        "algorithm": 2,
+        "configuration": {
+          "severity_weights": {
+            "unknown": 40,
+            "negligible": 5,
+            "low": 15,
+            "medium": 35,
+            "high": 65,
+            "critical": 85
+          },
+          "epss_weight": 15,
+          "kev_override": 95,
+          "missing_floor": 40,
+          "age_weight": 10,
+          "age_days": 90,
+          "exception_multiplier": 1.0,
+          "fix_weight": 5,
+          "uncertainty_weight": 10,
+          "vex_not_affected_multiplier": 0.25,
+          "thresholds": {
+            "low": 0,
+            "medium": 30,
+            "high": 60,
+            "critical": 85
+          },
+          "max_age_hours": 24,
+          "authority_labels": {
+            "recommendation": "Cyber recommendation",
+            "delegated_approval": "Delegated approval",
+            "ao_decision": "Authorizing Official decision"
+          }
+        },
+        "policy_digest": "790ef80a1adb66669221407190c74e8c2e386285e923043787628a5272d380f3",
+        "assignment": {
+          "scope": "builtin",
+          "scope_id": 0,
+          "assignment_id": null
+        },
+        "catalog_token": "118111a85132189424338a2dbaf78114622403934403c0f98bf5c6e68bfa36bc",
+        "intelligence": {
+          "basis": "approval-request",
+          "captured_at": "2026-10-20T05:41:56.201127+00:00",
+          "kev": {
+            "state": "LOADED",
+            "records": 1748,
+            "metadata": {
+              "date_released": "2026-10-20T02:31:05.901008+00:00",
+              "expires_at": "2026-11-19T02:31:05.901008+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "cisa-kev",
+              "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 1629,
+                "metadata": {
+                  "catalog_version": "2026.06.25",
+                  "date_released": "2026-06-25T19:03:21.8037Z"
+                }
+              }
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "records": 391411,
+            "metadata": {
+              "score_date": "2026-10-19T12:00:27+00:00",
+              "model_version": "v2026.06.15",
+              "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+              "expires_at": "2026-10-26T12:00:27+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "first-epss",
+              "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 343948,
+                "metadata": {
+                  "model_version": "v2026.06.15",
+                  "score_date": "2026-06-29T12:00:29Z"
+                }
+              }
+            }
+          }
+        },
+        "intelligence_current": true,
+        "catalog_metadata": {
+          "kev": {
+            "state": "LOADED",
+            "metadata": {
+              "catalog_version": "2026.06.25",
+              "date_released": "2026-06-25T19:03:21.8037Z"
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "metadata": {
+              "model_version": "v2026.06.15",
+              "score_date": "2026-06-29T12:00:29Z"
+            }
+          }
+        },
+        "packaged_catalog_token": "02c107f2db4a94972bda0a7a9e8161d806a8f809f3d00d7596be676c367d531e",
+        "classification_token": "b8f31274ca8cb41dbc4529b17559951220e219f4f1d92f4c1b5c3ea2efb7dd09",
+        "vex_token": "3202e728f7cf30c38aef2c96368f468ffff3f56f5bfd2a3a3d606b4f37dc0875",
+        "classification_digest": "1cbb17be9cc8d96ad3fa56b68207a144adbcecd5428ac6697123b7aa5cc8f9e2",
+        "preview": false,
+        "source_execution_id": 13,
+        "scan_current": true
+      },
+      "details_sha256": "fc11128f78b38f0eb2cbb43ee438a0de6814963fbec5b4eb355aeb9e21deff55",
+      "vex_statuses": {
+        "no_vex": 1118
+      },
+      "identity_reasons": {},
+      "job": 1,
+      "as_of": "2026-10-20T05:41:56.201127+00:00",
+      "inputs": [
+        {
+          "image_key": "ubuntu",
+          "sha256": "7fb89c8918caec971819635bae167cd45313f7fc6d7c9a5c3859c37cbe907bca",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:00:51.318023+00:00",
+          "observations": 71
+        },
+        {
+          "image_key": "debian-12-9",
+          "sha256": "aeb0f134e1283e95c0f6dafd1cb3a2afedca7668505f1f2d6e363c1ab71b0d7b",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:19.604760+00:00",
+          "observations": 79
+        },
+        {
+          "image_key": "alpine-3-20-0",
+          "sha256": "22f170d3854f3ee0b7a0f9f5ca600ec0fb2a8db02d63b6888bcc04c31ce547e9",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:23.149673+00:00",
+          "observations": 69
+        },
+        {
+          "image_key": "redhat-ubi",
+          "sha256": "9d664049631888125d122bc4aaf37d35330a89621e42a403b0429f50d140915d",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:14.799254+00:00",
+          "observations": 291
+        },
+        {
+          "image_key": "suse",
+          "sha256": "d902a598cd96cfa890b62ea9b7b2222988458a4635a67324ea86523f7eddb151",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:22.070047+00:00",
+          "observations": 334
+        },
+        {
+          "image_key": "python",
+          "sha256": "649ef4b82ff263b60b168e32aeab10d590550c12d45a8a78d501f428712060ee",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:29.785743+00:00",
+          "observations": 181
+        },
+        {
+          "image_key": "node-image-catalogers",
+          "sha256": "19e57313c9a397ddb32259fceb0d29fd5fd594f4325a4f228b8ca2458d82a5ce",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:36.187475+00:00",
+          "observations": 93
+        }
+      ],
+      "fixture_vex_injected": false,
+      "intelligence_tokens_unchanged": true,
+      "rollback_verified": true,
+      "commits_allowed": false,
+      "database_note": "No persistent rows; PostgreSQL sequences may advance",
+      "global_application_engine": "disposable in-memory SQLite; actual work explicitly bound to populated PostgreSQL",
+      "sql_statements_including_staging_and_verification": 1248,
+      "mutations_before_rollback": {
+        "groups": 1,
+        "services": 1,
+        "service_posture": 5,
+        "service_groups": 1,
+        "executions": 1,
+        "finding_classification_changes": 2,
+        "findings": 1,
+        "finding_observations": 2,
+        "dependency_projections": 1118,
+        "finding_classifications": 2,
+        "finding_classification_state": 2,
+        "risk_assessments": 1
+      }
+    },
+    {
+      "assessment_id_before_rollback": 7,
+      "service_id_before_rollback": 14,
+      "execution_id_before_rollback": 12,
+      "seconds_worker": 14.64794,
+      "classification_and_scan_rows_unchanged": true,
+      "owning_groups": 1,
+      "seconds_classification": 0.129989,
+      "worker_sql_statements": 77,
+      "scope": "retained normalized scanner observations -> real classification -> real saved risk assessment; HTTP ingest and durable queue scheduling are outside this check",
+      "classification_snapshot_sha256": "9a7c44016a1416c327af947852a86c8d649d7b33d0c29cfc1916bd82315d15c0",
+      "denominator": "unique original scanner vulnerability identifiers (CVE or advisory ID) per service; database uniqueness is service_id + cve",
+      "observations": 1118,
+      "findings": 483,
+      "summary": {
+        "coverage": {
+          "denominator": "unique_findings",
+          "as_of": "2026-10-20T05:41:56.201127+00:00",
+          "total_findings": 483,
+          "counts": {
+            "authoritative_vex": 0,
+            "applicable_vex": 0,
+            "advisory_only": 111,
+            "kev": 0,
+            "epss": 483,
+            "no_intelligence": 0,
+            "unresolved_identity": 0,
+            "stale_or_conflicting": 0,
+            "cve_absent": 1,
+            "identity_rejected": 482
+          },
+          "definitions": {
+            "authoritative_vex": "Exact CVE/PURL candidate; trust, freshness and product context may still reject it.",
+            "applicable_vex": "At least one trusted current statement with exact identity and required product context. Conflicts remain unresolved.",
+            "no_intelligence": "No current applicable VEX, current advisory reference, affirmative KEV or available EPSS.",
+            "identity_rejected": "An exact candidate failed identity requirements, or an explicitly labelled different-product sample proves CVE presence. Date/revision rejections alone do not count.",
+            "denominator": "Distinct active finding IDs, unioned across observations and sources. Image denominators use distinct finding IDs in that image; image totals overlap."
+          },
+          "images": [
+            {
+              "image": "ubuntu:jammy-20260731.1",
+              "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+              "total_findings": 36,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 36,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 36
+              }
+            },
+            {
+              "image": "registry.access.redhat.com/ubi9/ubi:9.6",
+              "image_digest": "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+              "total_findings": 191,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 191,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 191
+              }
+            },
+            {
+              "image": "registry.suse.com/bci/bci-base:15.6",
+              "image_digest": "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+              "total_findings": 208,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 66,
+                "kev": 0,
+                "epss": 208,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 208
+              }
+            },
+            {
+              "image": "python:3.11.13-slim-bookworm",
+              "image_digest": "python@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+              "total_findings": 128,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 10,
+                "kev": 0,
+                "epss": 128,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 128
+              }
+            },
+            {
+              "image": "debian:12.9-slim",
+              "image_digest": "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+              "total_findings": 55,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 55,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 55
+              }
+            },
+            {
+              "image": "node:20-bookworm-slim",
+              "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+              "total_findings": 83,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 35,
+                "kev": 0,
+                "epss": 83,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 1,
+                "identity_rejected": 82
+              }
+            },
+            {
+              "image": "alpine:3.20.0",
+              "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+              "total_findings": 33,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 33,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 33
+              }
+            }
+          ]
+        },
+        "counts": {
+          "low": 0,
+          "medium": 270,
+          "high": 201,
+          "critical": 12
+        },
+        "findings": 483,
+        "observations": 1118,
+        "max_score": 100,
+        "uncertain": 483,
+        "visual_only": true,
+        "assessment_state": "assessed"
+      },
+      "provenance": {
+        "algorithm": 2,
+        "configuration": {
+          "severity_weights": {
+            "unknown": 40,
+            "negligible": 5,
+            "low": 15,
+            "medium": 35,
+            "high": 65,
+            "critical": 85
+          },
+          "epss_weight": 15,
+          "kev_override": 95,
+          "missing_floor": 40,
+          "age_weight": 10,
+          "age_days": 90,
+          "exception_multiplier": 1.0,
+          "fix_weight": 5,
+          "uncertainty_weight": 10,
+          "vex_not_affected_multiplier": 0.25,
+          "thresholds": {
+            "low": 0,
+            "medium": 30,
+            "high": 60,
+            "critical": 85
+          },
+          "max_age_hours": 24,
+          "authority_labels": {
+            "recommendation": "Cyber recommendation",
+            "delegated_approval": "Delegated approval",
+            "ao_decision": "Authorizing Official decision"
+          }
+        },
+        "policy_digest": "790ef80a1adb66669221407190c74e8c2e386285e923043787628a5272d380f3",
+        "assignment": {
+          "scope": "builtin",
+          "scope_id": 0,
+          "assignment_id": null
+        },
+        "catalog_token": "118111a85132189424338a2dbaf78114622403934403c0f98bf5c6e68bfa36bc",
+        "intelligence": {
+          "basis": "approval-request",
+          "captured_at": "2026-10-20T05:41:56.201127+00:00",
+          "kev": {
+            "state": "LOADED",
+            "records": 1748,
+            "metadata": {
+              "date_released": "2026-10-20T02:31:05.901008+00:00",
+              "expires_at": "2026-11-19T02:31:05.901008+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "cisa-kev",
+              "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 1629,
+                "metadata": {
+                  "catalog_version": "2026.06.25",
+                  "date_released": "2026-06-25T19:03:21.8037Z"
+                }
+              }
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "records": 391411,
+            "metadata": {
+              "score_date": "2026-10-19T12:00:27+00:00",
+              "model_version": "v2026.06.15",
+              "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+              "expires_at": "2026-10-26T12:00:27+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "first-epss",
+              "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 343948,
+                "metadata": {
+                  "model_version": "v2026.06.15",
+                  "score_date": "2026-06-29T12:00:29Z"
+                }
+              }
+            }
+          }
+        },
+        "intelligence_current": true,
+        "catalog_metadata": {
+          "kev": {
+            "state": "LOADED",
+            "metadata": {
+              "catalog_version": "2026.06.25",
+              "date_released": "2026-06-25T19:03:21.8037Z"
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "metadata": {
+              "model_version": "v2026.06.15",
+              "score_date": "2026-06-29T12:00:29Z"
+            }
+          }
+        },
+        "packaged_catalog_token": "02c107f2db4a94972bda0a7a9e8161d806a8f809f3d00d7596be676c367d531e",
+        "classification_token": "027843be3d192b460d037fa8a2ab4bfdb44fb928be59d3e9dae5bf397110891e",
+        "vex_token": "3202e728f7cf30c38aef2c96368f468ffff3f56f5bfd2a3a3d606b4f37dc0875",
+        "classification_digest": "1cbb17be9cc8d96ad3fa56b68207a144adbcecd5428ac6697123b7aa5cc8f9e2",
+        "preview": false,
+        "source_execution_id": 12,
+        "scan_current": true
+      },
+      "details_sha256": "c7eff53d3a468eee9489f4937f8eae95377ea6998956ba1f74b252aae02860f9",
+      "vex_statuses": {
+        "no_vex": 1118
+      },
+      "identity_reasons": {},
+      "job": 2,
+      "as_of": "2026-10-20T05:41:56.201127+00:00",
+      "inputs": [
+        {
+          "image_key": "ubuntu",
+          "sha256": "7fb89c8918caec971819635bae167cd45313f7fc6d7c9a5c3859c37cbe907bca",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:00:51.318023+00:00",
+          "observations": 71
+        },
+        {
+          "image_key": "debian-12-9",
+          "sha256": "aeb0f134e1283e95c0f6dafd1cb3a2afedca7668505f1f2d6e363c1ab71b0d7b",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:19.604760+00:00",
+          "observations": 79
+        },
+        {
+          "image_key": "alpine-3-20-0",
+          "sha256": "22f170d3854f3ee0b7a0f9f5ca600ec0fb2a8db02d63b6888bcc04c31ce547e9",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:23.149673+00:00",
+          "observations": 69
+        },
+        {
+          "image_key": "redhat-ubi",
+          "sha256": "9d664049631888125d122bc4aaf37d35330a89621e42a403b0429f50d140915d",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:14.799254+00:00",
+          "observations": 291
+        },
+        {
+          "image_key": "suse",
+          "sha256": "d902a598cd96cfa890b62ea9b7b2222988458a4635a67324ea86523f7eddb151",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:22.070047+00:00",
+          "observations": 334
+        },
+        {
+          "image_key": "python",
+          "sha256": "649ef4b82ff263b60b168e32aeab10d590550c12d45a8a78d501f428712060ee",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:29.785743+00:00",
+          "observations": 181
+        },
+        {
+          "image_key": "node-image-catalogers",
+          "sha256": "19e57313c9a397ddb32259fceb0d29fd5fd594f4325a4f228b8ca2458d82a5ce",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:36.187475+00:00",
+          "observations": 93
+        }
+      ],
+      "fixture_vex_injected": false,
+      "intelligence_tokens_unchanged": true,
+      "rollback_verified": true,
+      "commits_allowed": false,
+      "database_note": "No persistent rows; PostgreSQL sequences may advance",
+      "global_application_engine": "disposable in-memory SQLite; actual work explicitly bound to populated PostgreSQL",
+      "sql_statements_including_staging_and_verification": 1248,
+      "mutations_before_rollback": {
+        "groups": 1,
+        "services": 1,
+        "service_posture": 5,
+        "service_groups": 1,
+        "executions": 1,
+        "finding_classification_changes": 2,
+        "findings": 1,
+        "finding_observations": 2,
+        "dependency_projections": 1118,
+        "finding_classifications": 2,
+        "finding_classification_state": 2,
+        "risk_assessments": 1
+      }
+    },
+    {
+      "assessment_id_before_rollback": 10,
+      "service_id_before_rollback": 11,
+      "execution_id_before_rollback": 10,
+      "seconds_worker": 15.944247,
+      "classification_and_scan_rows_unchanged": true,
+      "owning_groups": 1,
+      "seconds_classification": 0.689545,
+      "worker_sql_statements": 77,
+      "scope": "retained normalized scanner observations -> real classification -> real saved risk assessment; HTTP ingest and durable queue scheduling are outside this check",
+      "classification_snapshot_sha256": "dff91cd2f32f32fc1dfb973dadf646be3b24ec1e6364dc54635929a591096078",
+      "denominator": "unique original scanner vulnerability identifiers (CVE or advisory ID) per service; database uniqueness is service_id + cve",
+      "observations": 1118,
+      "findings": 483,
+      "summary": {
+        "coverage": {
+          "denominator": "unique_findings",
+          "as_of": "2026-10-20T05:41:56.201127+00:00",
+          "total_findings": 483,
+          "counts": {
+            "authoritative_vex": 0,
+            "applicable_vex": 0,
+            "advisory_only": 111,
+            "kev": 0,
+            "epss": 483,
+            "no_intelligence": 0,
+            "unresolved_identity": 0,
+            "stale_or_conflicting": 0,
+            "cve_absent": 1,
+            "identity_rejected": 482
+          },
+          "definitions": {
+            "authoritative_vex": "Exact CVE/PURL candidate; trust, freshness and product context may still reject it.",
+            "applicable_vex": "At least one trusted current statement with exact identity and required product context. Conflicts remain unresolved.",
+            "no_intelligence": "No current applicable VEX, current advisory reference, affirmative KEV or available EPSS.",
+            "identity_rejected": "An exact candidate failed identity requirements, or an explicitly labelled different-product sample proves CVE presence. Date/revision rejections alone do not count.",
+            "denominator": "Distinct active finding IDs, unioned across observations and sources. Image denominators use distinct finding IDs in that image; image totals overlap."
+          },
+          "images": [
+            {
+              "image": "ubuntu:jammy-20260731.1",
+              "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+              "total_findings": 36,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 36,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 36
+              }
+            },
+            {
+              "image": "registry.access.redhat.com/ubi9/ubi:9.6",
+              "image_digest": "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+              "total_findings": 191,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 191,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 191
+              }
+            },
+            {
+              "image": "registry.suse.com/bci/bci-base:15.6",
+              "image_digest": "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+              "total_findings": 208,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 66,
+                "kev": 0,
+                "epss": 208,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 208
+              }
+            },
+            {
+              "image": "python:3.11.13-slim-bookworm",
+              "image_digest": "python@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+              "total_findings": 128,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 10,
+                "kev": 0,
+                "epss": 128,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 128
+              }
+            },
+            {
+              "image": "debian:12.9-slim",
+              "image_digest": "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+              "total_findings": 55,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 55,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 55
+              }
+            },
+            {
+              "image": "node:20-bookworm-slim",
+              "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+              "total_findings": 83,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 35,
+                "kev": 0,
+                "epss": 83,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 1,
+                "identity_rejected": 82
+              }
+            },
+            {
+              "image": "alpine:3.20.0",
+              "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+              "total_findings": 33,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 33,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 33
+              }
+            }
+          ]
+        },
+        "counts": {
+          "low": 0,
+          "medium": 270,
+          "high": 201,
+          "critical": 12
+        },
+        "findings": 483,
+        "observations": 1118,
+        "max_score": 100,
+        "uncertain": 483,
+        "visual_only": true,
+        "assessment_state": "assessed"
+      },
+      "provenance": {
+        "algorithm": 2,
+        "configuration": {
+          "severity_weights": {
+            "unknown": 40,
+            "negligible": 5,
+            "low": 15,
+            "medium": 35,
+            "high": 65,
+            "critical": 85
+          },
+          "epss_weight": 15,
+          "kev_override": 95,
+          "missing_floor": 40,
+          "age_weight": 10,
+          "age_days": 90,
+          "exception_multiplier": 1.0,
+          "fix_weight": 5,
+          "uncertainty_weight": 10,
+          "vex_not_affected_multiplier": 0.25,
+          "thresholds": {
+            "low": 0,
+            "medium": 30,
+            "high": 60,
+            "critical": 85
+          },
+          "max_age_hours": 24,
+          "authority_labels": {
+            "recommendation": "Cyber recommendation",
+            "delegated_approval": "Delegated approval",
+            "ao_decision": "Authorizing Official decision"
+          }
+        },
+        "policy_digest": "790ef80a1adb66669221407190c74e8c2e386285e923043787628a5272d380f3",
+        "assignment": {
+          "scope": "builtin",
+          "scope_id": 0,
+          "assignment_id": null
+        },
+        "catalog_token": "118111a85132189424338a2dbaf78114622403934403c0f98bf5c6e68bfa36bc",
+        "intelligence": {
+          "basis": "approval-request",
+          "captured_at": "2026-10-20T05:41:56.201127+00:00",
+          "kev": {
+            "state": "LOADED",
+            "records": 1748,
+            "metadata": {
+              "date_released": "2026-10-20T02:31:05.901008+00:00",
+              "expires_at": "2026-11-19T02:31:05.901008+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "cisa-kev",
+              "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 1629,
+                "metadata": {
+                  "catalog_version": "2026.06.25",
+                  "date_released": "2026-06-25T19:03:21.8037Z"
+                }
+              }
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "records": 391411,
+            "metadata": {
+              "score_date": "2026-10-19T12:00:27+00:00",
+              "model_version": "v2026.06.15",
+              "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+              "expires_at": "2026-10-26T12:00:27+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "first-epss",
+              "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 343948,
+                "metadata": {
+                  "model_version": "v2026.06.15",
+                  "score_date": "2026-06-29T12:00:29Z"
+                }
+              }
+            }
+          }
+        },
+        "intelligence_current": true,
+        "catalog_metadata": {
+          "kev": {
+            "state": "LOADED",
+            "metadata": {
+              "catalog_version": "2026.06.25",
+              "date_released": "2026-06-25T19:03:21.8037Z"
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "metadata": {
+              "model_version": "v2026.06.15",
+              "score_date": "2026-06-29T12:00:29Z"
+            }
+          }
+        },
+        "packaged_catalog_token": "02c107f2db4a94972bda0a7a9e8161d806a8f809f3d00d7596be676c367d531e",
+        "classification_token": "e527bf5300bea6939b4343edc4dd9a1bfdd89c99fa2aee63fc30bc4b959997db",
+        "vex_token": "3202e728f7cf30c38aef2c96368f468ffff3f56f5bfd2a3a3d606b4f37dc0875",
+        "classification_digest": "1cbb17be9cc8d96ad3fa56b68207a144adbcecd5428ac6697123b7aa5cc8f9e2",
+        "preview": false,
+        "source_execution_id": 10,
+        "scan_current": true
+      },
+      "details_sha256": "745a25df0be46fcdde35be4d03514e347e0a7eccdbe76191905c7ad832f39c77",
+      "vex_statuses": {
+        "no_vex": 1118
+      },
+      "identity_reasons": {},
+      "job": 3,
+      "as_of": "2026-10-20T05:41:56.201127+00:00",
+      "inputs": [
+        {
+          "image_key": "ubuntu",
+          "sha256": "7fb89c8918caec971819635bae167cd45313f7fc6d7c9a5c3859c37cbe907bca",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:00:51.318023+00:00",
+          "observations": 71
+        },
+        {
+          "image_key": "debian-12-9",
+          "sha256": "aeb0f134e1283e95c0f6dafd1cb3a2afedca7668505f1f2d6e363c1ab71b0d7b",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:19.604760+00:00",
+          "observations": 79
+        },
+        {
+          "image_key": "alpine-3-20-0",
+          "sha256": "22f170d3854f3ee0b7a0f9f5ca600ec0fb2a8db02d63b6888bcc04c31ce547e9",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:23.149673+00:00",
+          "observations": 69
+        },
+        {
+          "image_key": "redhat-ubi",
+          "sha256": "9d664049631888125d122bc4aaf37d35330a89621e42a403b0429f50d140915d",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:14.799254+00:00",
+          "observations": 291
+        },
+        {
+          "image_key": "suse",
+          "sha256": "d902a598cd96cfa890b62ea9b7b2222988458a4635a67324ea86523f7eddb151",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:22.070047+00:00",
+          "observations": 334
+        },
+        {
+          "image_key": "python",
+          "sha256": "649ef4b82ff263b60b168e32aeab10d590550c12d45a8a78d501f428712060ee",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:29.785743+00:00",
+          "observations": 181
+        },
+        {
+          "image_key": "node-image-catalogers",
+          "sha256": "19e57313c9a397ddb32259fceb0d29fd5fd594f4325a4f228b8ca2458d82a5ce",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:36.187475+00:00",
+          "observations": 93
+        }
+      ],
+      "fixture_vex_injected": false,
+      "intelligence_tokens_unchanged": true,
+      "rollback_verified": true,
+      "commits_allowed": false,
+      "database_note": "No persistent rows; PostgreSQL sequences may advance",
+      "global_application_engine": "disposable in-memory SQLite; actual work explicitly bound to populated PostgreSQL",
+      "sql_statements_including_staging_and_verification": 1248,
+      "mutations_before_rollback": {
+        "groups": 1,
+        "services": 1,
+        "service_posture": 5,
+        "service_groups": 1,
+        "executions": 1,
+        "finding_classification_changes": 2,
+        "findings": 1,
+        "finding_observations": 2,
+        "dependency_projections": 1118,
+        "finding_classifications": 2,
+        "finding_classification_state": 2,
+        "risk_assessments": 1
+      }
+    },
+    {
+      "assessment_id_before_rollback": 8,
+      "service_id_before_rollback": 12,
+      "execution_id_before_rollback": 11,
+      "seconds_worker": 15.422504,
+      "classification_and_scan_rows_unchanged": true,
+      "owning_groups": 1,
+      "seconds_classification": 0.664806,
+      "worker_sql_statements": 77,
+      "scope": "retained normalized scanner observations -> real classification -> real saved risk assessment; HTTP ingest and durable queue scheduling are outside this check",
+      "classification_snapshot_sha256": "68f0bd35fa60dfff8c1261a53ca24059fe2585bdbeafa7d1739dd2d560b5abd2",
+      "denominator": "unique original scanner vulnerability identifiers (CVE or advisory ID) per service; database uniqueness is service_id + cve",
+      "observations": 1118,
+      "findings": 483,
+      "summary": {
+        "coverage": {
+          "denominator": "unique_findings",
+          "as_of": "2026-10-20T05:41:56.201127+00:00",
+          "total_findings": 483,
+          "counts": {
+            "authoritative_vex": 0,
+            "applicable_vex": 0,
+            "advisory_only": 111,
+            "kev": 0,
+            "epss": 483,
+            "no_intelligence": 0,
+            "unresolved_identity": 0,
+            "stale_or_conflicting": 0,
+            "cve_absent": 1,
+            "identity_rejected": 482
+          },
+          "definitions": {
+            "authoritative_vex": "Exact CVE/PURL candidate; trust, freshness and product context may still reject it.",
+            "applicable_vex": "At least one trusted current statement with exact identity and required product context. Conflicts remain unresolved.",
+            "no_intelligence": "No current applicable VEX, current advisory reference, affirmative KEV or available EPSS.",
+            "identity_rejected": "An exact candidate failed identity requirements, or an explicitly labelled different-product sample proves CVE presence. Date/revision rejections alone do not count.",
+            "denominator": "Distinct active finding IDs, unioned across observations and sources. Image denominators use distinct finding IDs in that image; image totals overlap."
+          },
+          "images": [
+            {
+              "image": "ubuntu:jammy-20260731.1",
+              "image_digest": "ubuntu@sha256:3b06811b2afd352be909dd088a004166d665dc76d38b13eada33522a9d915c6f",
+              "total_findings": 36,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 36,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 36
+              }
+            },
+            {
+              "image": "registry.access.redhat.com/ubi9/ubi:9.6",
+              "image_digest": "registry.access.redhat.com/ubi9/ubi@sha256:dec374e05cc13ebbc0975c9f521f3db6942d27f8ccdf06b180160490eef8bdbc",
+              "total_findings": 191,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 191,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 191
+              }
+            },
+            {
+              "image": "registry.suse.com/bci/bci-base:15.6",
+              "image_digest": "registry.suse.com/bci/bci-base@sha256:c4bd6f1a43a3d80e9345e75a0e115e9a34daee55120ad4ba2f14d71bd29ba1eb",
+              "total_findings": 208,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 66,
+                "kev": 0,
+                "epss": 208,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 208
+              }
+            },
+            {
+              "image": "python:3.11.13-slim-bookworm",
+              "image_digest": "python@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1",
+              "total_findings": 128,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 10,
+                "kev": 0,
+                "epss": 128,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 128
+              }
+            },
+            {
+              "image": "debian:12.9-slim",
+              "image_digest": "debian@sha256:12c396bd585df7ec21d5679bb6a83d4878bc4415ce926c9e5ea6426d23c60bdc",
+              "total_findings": 55,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 55,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 55
+              }
+            },
+            {
+              "image": "node:20-bookworm-slim",
+              "image_digest": "node@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0",
+              "total_findings": 83,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 35,
+                "kev": 0,
+                "epss": 83,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 1,
+                "identity_rejected": 82
+              }
+            },
+            {
+              "image": "alpine:3.20.0",
+              "image_digest": "alpine@sha256:77726ef6b57ddf65bb551896826ec38bc3e53f75cdde31354fbffb4f25238ebd",
+              "total_findings": 33,
+              "counts": {
+                "authoritative_vex": 0,
+                "applicable_vex": 0,
+                "advisory_only": 0,
+                "kev": 0,
+                "epss": 33,
+                "no_intelligence": 0,
+                "unresolved_identity": 0,
+                "stale_or_conflicting": 0,
+                "cve_absent": 0,
+                "identity_rejected": 33
+              }
+            }
+          ]
+        },
+        "counts": {
+          "low": 0,
+          "medium": 270,
+          "high": 201,
+          "critical": 12
+        },
+        "findings": 483,
+        "observations": 1118,
+        "max_score": 100,
+        "uncertain": 483,
+        "visual_only": true,
+        "assessment_state": "assessed"
+      },
+      "provenance": {
+        "algorithm": 2,
+        "configuration": {
+          "severity_weights": {
+            "unknown": 40,
+            "negligible": 5,
+            "low": 15,
+            "medium": 35,
+            "high": 65,
+            "critical": 85
+          },
+          "epss_weight": 15,
+          "kev_override": 95,
+          "missing_floor": 40,
+          "age_weight": 10,
+          "age_days": 90,
+          "exception_multiplier": 1.0,
+          "fix_weight": 5,
+          "uncertainty_weight": 10,
+          "vex_not_affected_multiplier": 0.25,
+          "thresholds": {
+            "low": 0,
+            "medium": 30,
+            "high": 60,
+            "critical": 85
+          },
+          "max_age_hours": 24,
+          "authority_labels": {
+            "recommendation": "Cyber recommendation",
+            "delegated_approval": "Delegated approval",
+            "ao_decision": "Authorizing Official decision"
+          }
+        },
+        "policy_digest": "790ef80a1adb66669221407190c74e8c2e386285e923043787628a5272d380f3",
+        "assignment": {
+          "scope": "builtin",
+          "scope_id": 0,
+          "assignment_id": null
+        },
+        "catalog_token": "118111a85132189424338a2dbaf78114622403934403c0f98bf5c6e68bfa36bc",
+        "intelligence": {
+          "basis": "approval-request",
+          "captured_at": "2026-10-20T05:41:56.201127+00:00",
+          "kev": {
+            "state": "LOADED",
+            "records": 1748,
+            "metadata": {
+              "date_released": "2026-10-20T02:31:05.901008+00:00",
+              "expires_at": "2026-11-19T02:31:05.901008+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "cisa-kev",
+              "source_url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 1629,
+                "metadata": {
+                  "catalog_version": "2026.06.25",
+                  "date_released": "2026-06-25T19:03:21.8037Z"
+                }
+              }
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "records": 391411,
+            "metadata": {
+              "score_date": "2026-10-19T12:00:27+00:00",
+              "model_version": "v2026.06.15",
+              "acquired_at": "2026-10-20T03:13:04.363223+00:00",
+              "expires_at": "2026-10-26T12:00:27+00:00",
+              "basis": "embedded-signed-package",
+              "package_version": "91235078016fa5245c98d9c651ae4dfa9e5fd0e55220cc221ad74b4c98e61a6e",
+              "source": "first-epss",
+              "source_url": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+              "prior_catalog": {
+                "state": "LOADED",
+                "records": 343948,
+                "metadata": {
+                  "model_version": "v2026.06.15",
+                  "score_date": "2026-06-29T12:00:29Z"
+                }
+              }
+            }
+          }
+        },
+        "intelligence_current": true,
+        "catalog_metadata": {
+          "kev": {
+            "state": "LOADED",
+            "metadata": {
+              "catalog_version": "2026.06.25",
+              "date_released": "2026-06-25T19:03:21.8037Z"
+            }
+          },
+          "epss": {
+            "state": "LOADED",
+            "metadata": {
+              "model_version": "v2026.06.15",
+              "score_date": "2026-06-29T12:00:29Z"
+            }
+          }
+        },
+        "packaged_catalog_token": "02c107f2db4a94972bda0a7a9e8161d806a8f809f3d00d7596be676c367d531e",
+        "classification_token": "c93895151e7bbd45c338cd01beeb6db78bb1a35855bbb2c199dd629cc3992d95",
+        "vex_token": "3202e728f7cf30c38aef2c96368f468ffff3f56f5bfd2a3a3d606b4f37dc0875",
+        "classification_digest": "1cbb17be9cc8d96ad3fa56b68207a144adbcecd5428ac6697123b7aa5cc8f9e2",
+        "preview": false,
+        "source_execution_id": 11,
+        "scan_current": true
+      },
+      "details_sha256": "447f98e69026921d06f91c57d622eeb7c8029007bad24210802a90e58db05185",
+      "vex_statuses": {
+        "no_vex": 1118
+      },
+      "identity_reasons": {},
+      "job": 4,
+      "as_of": "2026-10-20T05:41:56.201127+00:00",
+      "inputs": [
+        {
+          "image_key": "ubuntu",
+          "sha256": "7fb89c8918caec971819635bae167cd45313f7fc6d7c9a5c3859c37cbe907bca",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:00:51.318023+00:00",
+          "observations": 71
+        },
+        {
+          "image_key": "debian-12-9",
+          "sha256": "aeb0f134e1283e95c0f6dafd1cb3a2afedca7668505f1f2d6e363c1ab71b0d7b",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:19.604760+00:00",
+          "observations": 79
+        },
+        {
+          "image_key": "alpine-3-20-0",
+          "sha256": "22f170d3854f3ee0b7a0f9f5ca600ec0fb2a8db02d63b6888bcc04c31ce547e9",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:23.149673+00:00",
+          "observations": 69
+        },
+        {
+          "image_key": "redhat-ubi",
+          "sha256": "9d664049631888125d122bc4aaf37d35330a89621e42a403b0429f50d140915d",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:14.799254+00:00",
+          "observations": 291
+        },
+        {
+          "image_key": "suse",
+          "sha256": "d902a598cd96cfa890b62ea9b7b2222988458a4635a67324ea86523f7eddb151",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:22.070047+00:00",
+          "observations": 334
+        },
+        {
+          "image_key": "python",
+          "sha256": "649ef4b82ff263b60b168e32aeab10d590550c12d45a8a78d501f428712060ee",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:01:29.785743+00:00",
+          "observations": 181
+        },
+        {
+          "image_key": "node-image-catalogers",
+          "sha256": "19e57313c9a397ddb32259fceb0d29fd5fd594f4325a4f228b8ca2458d82a5ce",
+          "capture_kind": "live_scan",
+          "captured_at": "2026-10-20T05:03:36.187475+00:00",
+          "observations": 93
+        }
+      ],
+      "fixture_vex_injected": false,
+      "intelligence_tokens_unchanged": true,
+      "rollback_verified": true,
+      "commits_allowed": false,
+      "database_note": "No persistent rows; PostgreSQL sequences may advance",
+      "global_application_engine": "disposable in-memory SQLite; actual work explicitly bound to populated PostgreSQL",
+      "sql_statements_including_staging_and_verification": 1248,
+      "mutations_before_rollback": {
+        "groups": 1,
+        "services": 1,
+        "service_posture": 5,
+        "service_groups": 1,
+        "executions": 1,
+        "finding_classification_changes": 2,
+        "findings": 1,
+        "finding_observations": 2,
+        "dependency_projections": 1118,
+        "finding_classifications": 2,
+        "finding_classification_state": 2,
+        "risk_assessments": 1
+      }
+    }
+  ],
+  "concurrent_jobs": 4,
+  "concurrency": "four independent real refresh_assessment calls, synchronized after retained evidence staging and real classification; no durable queue scheduling",
+  "seconds_total_including_staging_and_verification": 33.127568,
+  "worker_sql_statements": 308,
+  "process_peak_rss_mib": 430.914,
+  "rollback_verified": true,
+  "fixture_vex_injected": false
+}
