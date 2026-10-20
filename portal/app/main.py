@@ -11311,7 +11311,7 @@ def save_signing_configuration(
                  enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove",
                  approval_validity_days=lifetime)
     db.commit()
-    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+    return RedirectResponse("/admin/configuration?saved=1#signing", status_code=303)
 
 
 @app.get("/admin/configuration/signing/public-key", response_class=PlainTextResponse)

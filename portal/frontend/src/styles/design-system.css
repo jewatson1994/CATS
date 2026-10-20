@@ -603,10 +603,10 @@ td > dl dd { margin: 0; font-weight: 600; text-transform: capitalize; }
 .admin-workspace.settings-workspace .image-signing-form .signing-section h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; }
 .admin-workspace.settings-workspace .image-signing-form .signing-key-grid { display: grid; gap: 20px; }
 .admin-workspace.settings-workspace .image-signing-form .signing-key-grid > label,
-.admin-workspace.settings-workspace .image-signing-form .signing-lifetime { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 6px 20px; align-items: center; min-width: 0; margin: 0; }
-.admin-workspace.settings-workspace .image-signing-form label > small { grid-column: 2; max-width: 58ch; }
+.admin-workspace.settings-workspace .image-signing-form .signing-lifetime { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: start; max-width: 520px; min-width: 0; margin: 0; }
+.admin-workspace.settings-workspace .image-signing-form label > small { grid-column: 1; max-width: none; }
 .admin-workspace.settings-workspace .image-signing-form small, .admin-workspace.settings-workspace .image-signing-form .signing-note { font-size: var(--text-xs); line-height: 1.6; color: var(--text-muted); margin: 0; }
-.admin-workspace.settings-workspace .image-signing-form input[type="password"][name="key_password"] { width: 100%; max-width: 360px; }
+.admin-workspace.settings-workspace .image-signing-form input[type="password"][name="key_password"] { width: 100%; max-width: 520px; }
 .admin-workspace.settings-workspace .image-signing-form input[type="number"][name="approval_validity_days"] { width: 110px; max-width: 100%; }
 .admin-workspace.settings-workspace .image-signing-form .checkbox-label { display: flex; align-items: center; gap: 8px; margin: 0; }
 .admin-workspace.settings-workspace .image-signing-form input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; flex: 0 0 16px; }
