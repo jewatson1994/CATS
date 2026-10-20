@@ -127,6 +127,10 @@ def test_cve_filter_is_exact_active_scoped_and_applied_before_paging(portfolio_d
                        first_seen=now, last_seen=now, episode_started=now))
     db.commit()
     data = portfolio(db, auth(), cve="  cve-2026-12345  ", page_size=1, page=2)
+    abbreviated = portfolio(db, auth(), cve=" 2026-12345 ", page_size=1, page=2)
+    assert abbreviated["rows"] == data["rows"]
+    assert abbreviated["pagination"] == data["pagination"]
+    assert abbreviated["cve"] == "CVE-2026-12345"
     assert data["cve"] == "CVE-2026-12345"
     assert data["pagination"]["total"] == 2
     assert data["pagination"]["pages"] == 2

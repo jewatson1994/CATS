@@ -513,6 +513,10 @@ dialog > .secondary-button:last-child { margin-top: var(--space-3); }
 .finding-filter-field > span { color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; }
 .finding-filter-field > .multi-select-filter > summary { border-radius: var(--radius-md); border-color: var(--border-strong) !important; }
 .finding-filters label { font-size: var(--text-xs); font-weight: 500; }
+.finding-filters .multi-select-options { min-width: 100%; width: max-content; box-sizing: border-box; }
+.finding-filters .multi-select-options label { display: flex; justify-content: flex-start; align-items: center; gap: 8px; margin: 0; }
+.finding-filters .multi-select-options input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; min-width: 0; margin: 0; }
+
 .finding-actions { min-width: 0 !important; }
 .finding-actions .row-actions, .row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 300px; }
 .finding-actions .secondary-button, .row-actions .secondary-button { margin: 0 !important; }

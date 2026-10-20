@@ -238,6 +238,8 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
         component_ids.update(db.scalars(select(ServiceImage.service_id).where(member_of(ServiceImage.service_id, ids, numeric=True), func.lower(ServiceImage.image_reference).contains(needle, autoescape=True)).distinct()))
         component_ids.update(db.scalars(select(DependencyWatchlistMatch.service_id).join(latest, and_(latest.c.id == DependencyWatchlistMatch.execution_id, latest.c.rank == 1)).where(or_(func.lower(DependencyWatchlistMatch.component_name).contains(needle, autoescape=True), func.lower(DependencyWatchlistMatch.image).contains(needle, autoescape=True))).distinct()))
     cve = cve.strip().upper()
+    if cve and not cve.startswith("CVE-"):
+        cve = "CVE-" + cve
     cve_ids = None
     if cve:
         cve_ids = set(db.scalars(select(Finding.service_id).where(
