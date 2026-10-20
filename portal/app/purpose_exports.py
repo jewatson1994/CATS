@@ -132,9 +132,8 @@ def template_policy(db, kind, group_id=None):
 
 
 def template_for_service(db, kind, service):
-    """Match the existing multi-group policy precedence: highest group ID wins."""
-    groups = sorted(service.groups, key=lambda group: group.id)
-    return template_policy(db, kind, groups[-1].id if groups else None)
+    """Use the owning group; unresolved legacy ownership uses the global template."""
+    return template_policy(db, kind, service.groups[0].id if len(service.groups) == 1 else None)
 
 
 IMPORT_CROSSWALK = {

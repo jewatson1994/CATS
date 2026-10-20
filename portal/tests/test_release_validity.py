@@ -65,3 +65,9 @@ def test_saved_setting_takes_precedence_over_environment(monkeypatch):
     assert validity.new_validity(START, {validity.PORTAL_SETTING: '45'})['validity_days'] == 45
     with pytest.raises(ValueError, match='whole number'):
         validity.new_validity(START, {validity.PORTAL_SETTING: '0'})
+
+
+@pytest.mark.parametrize('groups', [[], [SimpleNamespace(id=1), SimpleNamespace(id=2)]])
+def test_service_validity_refuses_ambiguous_or_missing_owner(groups):
+    with pytest.raises(ValueError, match='exactly one owning group'):
+        validity.for_service(None, SimpleNamespace(groups=groups), START)

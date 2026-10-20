@@ -371,37 +371,50 @@ def test_signed_approval_annotations_are_verified_with_same_values(keys, monkeyp
             assert args[args.index(key + '=' + value) - 1] == '-a'
 
 
-def test_admin_saves_lifetime_without_keys_and_preserves_it_on_key_changes(keys, monkeypatch):
+def test_group_validity_is_separate_from_global_keys(keys, monkeypatch):
     from app import release_validity
+    from app.models import Group
     monkeypatch.setenv(release_validity.SETTING, '90')
     client = new_client()
-    def save(**values):
-        return client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), **values}, follow_redirects=False)
-    assert save(approval_validity_days='45').status_code == 303
-    page = client.get('/admin/configuration', headers={'Accept': 'application/vnd.cats.page+json'})
-    assert page.json()['data']['signing']['approval_validity_days'] == 45
-    assert not page.json()['data']['signing']['configured']
-    response = client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), 'enabled': 'true'},
-                           files={'private_key': ('cosign.key', PRIVATE)}, follow_redirects=False)
+    with SessionLocal() as db:
+        group = Group(name='Validity group'); db.add(group); db.commit(); group_id = group.id
+    response = client.post(f'/admin/signing-policy?group_id={group_id}', data={
+        'csrf_token': csrf(client), 'group_id': str(group_id), 'approval_validity_days': '45'}, follow_redirects=False)
+    assert response.status_code == 303
+    response = client.post('/admin/configuration/signing', data={
+        'csrf_token': csrf(client), 'approval_validity_days': '180'}, follow_redirects=False)
     assert response.status_code == 303
     with SessionLocal() as db:
-        original = json.loads(db.scalar(select(PortalSetting.value).where(PortalSetting.key == signing.SETTING)))
-    assert save(approval_validity_days='60', enabled='true').status_code == 303
-    with SessionLocal() as db:
-        saved = json.loads(db.scalar(select(PortalSetting.value).where(PortalSetting.key == signing.SETTING)))
-        assert saved['private_key'] == original['private_key']
-        assert release_validity.configured_days(main.get_global_configuration(db)) == 60
-    assert save(action='remove').status_code == 303
-    with SessionLocal() as db:
-        assert release_validity.configured_days(main.get_global_configuration(db)) == 60
+        assert release_validity.configured_days(release_validity.settings_for_group(db, group_id)) == 45
+        assert release_validity.configured_days(release_validity.settings_for_group(db, None)) == 90
+    page = client.get('/admin/configuration', headers={'Accept': 'application/vnd.cats.page+json'})
+    assert 'approval_validity_days' not in page.json()['data']['signing']
 
 
 @pytest.mark.parametrize('value', ['0', '3651', '-1', '1.5', 'ninety'])
-def test_admin_rejects_invalid_lifetime_without_mutating_settings(value):
-    from app import release_validity
+def test_admin_rejects_invalid_group_lifetime(value):
+    from app.models import Group
     client = new_client()
-    response = client.post('/admin/configuration/signing', data={'csrf_token': csrf(client), 'approval_validity_days': value})
-    assert response.status_code == 400
     with SessionLocal() as db:
-        assert db.scalar(select(PortalSetting).where(PortalSetting.key == release_validity.PORTAL_SETTING)) is None
-        assert db.scalar(select(PortalSetting).where(PortalSetting.key == signing.SETTING)) is None
+        group = Group(name='Validity group'); db.add(group); db.commit(); group_id = group.id
+    response = client.post(f'/admin/signing-policy?group_id={group_id}', data={
+        'csrf_token': csrf(client), 'group_id': str(group_id), 'approval_validity_days': value})
+    assert response.status_code == 422
+    with SessionLocal() as db:
+        assert db.scalar(select(PortalSetting).where(PortalSetting.key == f'group:{group_id}:cyber_approval_validity_days')) is None
+
+
+def test_group_policy_cannot_be_written_outside_administrators_scope():
+    from app.models import Group
+    with SessionLocal() as db:
+        own, other = Group(name='Owned'), Group(name='Other')
+        db.add_all([own, other]); db.commit()
+        assignment = SimpleNamespace(service_id=None, group_id=own.id, group=own,
+                                     role=SimpleNamespace(name='Cyber', permissions=['config.manage']))
+        actor = AuthContext(SimpleNamespace(id=None, enabled=True, role_assignments=[assignment]),
+                            SimpleNamespace(csrf_token='csrf'))
+        with pytest.raises(main.HTTPException) as exc:
+            main.save_signing_policy(approval_validity_days='30', group_id=str(other.id),
+                                     csrf_token='csrf', db=db, auth=actor)
+        assert exc.value.status_code == 403
+        assert db.scalar(select(PortalSetting).where(PortalSetting.group_id == other.id)) is None

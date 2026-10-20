@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from .auth import require_user, record_audit
 from .export_jobs import queued_export
 from .database import get_db
-from .models import Service, Execution, ExportTemplate, ServiceMetadata, InventoryRecord, ExchangePreview, BundlePreview, PoamEntry, PoamHistory, ServiceTransferProvenance
+from .models import Group, Service, Execution, ExportTemplate, ServiceMetadata, InventoryRecord, ExchangePreview, BundlePreview, PoamEntry, PoamHistory, ServiceTransferProvenance
 from .exchange import META, FIELDS, builtins, validate_template, versions, selected_evidence, context_and_rows, missing_fields, workbook, parse_workbook
 from .exchange_ui import metadata_groups, export_preview
 
@@ -92,7 +92,7 @@ def bundle_preview(request: Request, target_key: str = Form(), csrf_token: str =
         payload=payload,
         expires_at=datetime.now(timezone.utc) + timedelta(minutes=30)))
     db.commit()
-    return page(request, auth, bundle_mode=True, bundle_manifest=manifest, token=token, target_key=target_key, import_mode=mode, history_counts=payload.get("history_counts"))
+    return page(request, auth, bundle_mode=True, bundle_manifest=manifest, token=token, target_key=target_key, import_mode=mode, history_counts=payload.get("history_counts"), owning_groups=list(db.scalars(select(Group).order_by(Group.name))) if mode == "create" else [])
 
 
 def metadata_digest(db, service_id):
@@ -107,7 +107,7 @@ def lock_service(db, service_id):
 
 
 @router.post("/exchange/bundles/confirm/{token}")
-def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(False), db=Depends(get_db), auth=Depends(require_user)):
+def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(False), db=Depends(get_db), auth=Depends(require_user), owning_group_id: int | None = Form(None)):
     csrf(auth, csrf_token)
     preview = db.get(BundlePreview, token)
     if preview is None or preview.user_id != auth.user.id:
@@ -123,6 +123,11 @@ def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(Fa
         raise HTTPException(409, detail="Target changed; preview again")
     if mode == "replace_metadata" and not auth.has("metadata.edit", service.id):
         raise HTTPException(403)
+    owning_group = None
+    if mode == "create":
+        owning_group = db.get(Group, owning_group_id) if owning_group_id else None
+        if owning_group is None:
+            raise HTTPException(422, detail="Choose one existing local owning group for the imported service")
     if service:
         lock_service(db, service.id)
     if db.execute(update(BundlePreview).where(BundlePreview.token == token, BundlePreview.consumed == False, BundlePreview.expires_at > datetime.now(timezone.utc)).values(consumed=True), execution_options={"synchronize_session": False}).rowcount != 1:
@@ -170,6 +175,8 @@ def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(Fa
                     immutable=True, source_metadata={"origin": "legacy_bundle"}))
             db.add(ServiceTransferProvenance(service_id=service.id,
                 detail={"historical_executions": scrub(payloads), "assessment_role": "informational_only"}))
+        if mode == "create":
+            service.groups = [owning_group]
         record_audit(db, auth, "bundle.import", "service", service.id,
             original_service=preview.payload["manifest"]["service_key"], mode=mode, format=preview.payload["manifest"]["schema_version"])
         preview.payload = {"manifest": preview.payload["manifest"], "executions": []}

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from app.service_transfer import parse_service
-from app.models import Service, Execution
+from app.models import Group, Service, Execution
 from test_portal import setup_function, new_client, csrf, SessionLocal, page_data
 from test_exchange import seed
 
@@ -29,7 +29,9 @@ def test_multi_version_round_trip_and_collision():
     with SessionLocal() as db:
         assert db.scalar(select(Service).where(Service.service_key == "copied-service")) is None
     token = page_data(preview)["token"]
-    result = client.post(f"/exchange/bundles/confirm/{token}", data={"csrf_token": csrf(client), "confirm": "true"}, follow_redirects=False)
+    with SessionLocal() as db:
+        owner_id = db.scalar(select(Group.id))
+    result = client.post(f"/exchange/bundles/confirm/{token}", data={"csrf_token": csrf(client), "confirm": "true", "owning_group_id": owner_id}, follow_redirects=False)
     assert result.status_code == 303
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "copied-service"))
@@ -71,6 +73,8 @@ def test_bundle_transaction_rolls_back(monkeypatch):
     data = completed_export(client, "/services/payments-service/bundle.zip").content
     preview = client.post("/exchange/bundles/preview", data={"csrf_token": csrf(client), "target_key": "rollback-service"}, files={"upload": ("bundle.zip", data)})
     token = page_data(preview)["token"]
+    with SessionLocal() as db:
+        owner_id = db.scalar(select(Group.id))
     calls = []
     def failing(name):
         calls.append(1)
@@ -78,6 +82,6 @@ def test_bundle_transaction_rolls_back(monkeypatch):
             raise RuntimeError("test rollback")
     monkeypatch.setattr(service_transfer, "import_phase", failing)
     with pytest.raises(RuntimeError, match="test rollback"):
-        client.post(f"/exchange/bundles/confirm/{token}", data={"csrf_token": csrf(client), "confirm": "true"})
+        client.post(f"/exchange/bundles/confirm/{token}", data={"csrf_token": csrf(client), "confirm": "true", "owning_group_id": owner_id})
     with SessionLocal() as db:
         assert db.scalar(select(Service).where(Service.service_key == "rollback-service")) is None

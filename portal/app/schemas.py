@@ -14,6 +14,14 @@ class ServicePayload(BaseModel):
     poc: str | None = None
     groups: list[str] = Field(default_factory=list)
 
+    @field_validator("groups")
+    @classmethod
+    def validate_owning_group(cls, value: list[str]) -> list[str]:
+        names = list(dict.fromkeys(name.strip() for name in value if name.strip()))
+        if len(names) > 1:
+            raise ValueError("A service must have exactly one owning group")
+        return names
+
     @field_validator("version")
     @classmethod
     def validate_version(cls, value: str) -> str:

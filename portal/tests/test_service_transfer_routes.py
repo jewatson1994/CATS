@@ -4,7 +4,7 @@ from datetime import timedelta
 
 from sqlalchemy import select, func
 
-from app.models import Service, Execution, Finding, ServiceMetadata, BundlePreview
+from app.models import Group, Service, Execution, Finding, ServiceMetadata, BundlePreview
 from app.service_bundle import export_bundle
 from test_portal import setup_function, new_client, csrf, SessionLocal, page_data
 from test_exchange import seed
@@ -17,7 +17,9 @@ def preview(client, data, target, mode="create"):
 def confirm(client, response):
     assert response.status_code == 200, response.text
     token = page_data(response)["token"]
-    return client.post("/exchange/bundles/confirm/" + token, data={"csrf_token": csrf(client), "confirm": "true"}, follow_redirects=False)
+    with SessionLocal() as db:
+        group_id = db.scalar(select(Group.id))
+    return client.post("/exchange/bundles/confirm/" + token, data={"csrf_token": csrf(client), "confirm": "true", "owning_group_id": group_id}, follow_redirects=False)
 
 
 def test_metadata_selected_replace_and_stale_preview():
@@ -97,3 +99,26 @@ def test_bundle_confirmation_replay_and_create_race():
     assert confirm(client, second).status_code == 409
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(Service).where(Service.service_key == "race-target")) == 1
+
+
+def test_new_import_requires_explicit_local_owner_without_consuming_preview():
+    client = new_client()
+    seed(client)
+    bundle = completed_export(client, "/services/payments-service/bundle.zip").content
+    response = preview(client, bundle, "owned-import")
+    token = page_data(response)["token"]
+    endpoint = "/exchange/bundles/confirm/" + token
+    form = {"csrf_token": csrf(client), "confirm": "true"}
+    assert client.post(endpoint, data=form).status_code == 422
+    assert client.post(endpoint, data={**form, "owning_group_id": 999999}).status_code == 422
+    with SessionLocal() as db:
+        assert not db.get(BundlePreview, token).consumed
+        assert db.scalar(select(Service).where(Service.service_key == "owned-import")) is None
+        group = Group(name="Local owner")
+        db.add(group)
+        db.commit()
+        owner_id = group.id
+    assert client.post(endpoint, data={**form, "owning_group_id": owner_id}, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "owned-import"))
+        assert [group.id for group in service.groups] == [owner_id]

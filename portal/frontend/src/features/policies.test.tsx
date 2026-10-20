@@ -44,3 +44,13 @@ it('keeps global warning selections in Workflow independently of group scope',()
  expect(form.closest('.panel')?.querySelector('h2')).toHaveTextContent('Workflow');
  expect(new FormData(form).get('group_id')).toBeNull();
 });
+
+it('saves validity against the selected owning group independently of signing keys',()=>{
+ render(<PolicyPage data={{...data,configuration:{...data.configuration,cyber_approval_validity_days:'45'}}} kind="general"/>);
+ const input=screen.getByLabelText('Approval validity (days)');
+ expect(input).toHaveValue(45);expect(input).toHaveAttribute('min','1');expect(input).toHaveAttribute('max','3650');
+ const form=input.closest('form')!;
+ expect(form).toHaveAttribute('action','/admin/signing-policy?group_id=2');
+ expect(new FormData(form).get('group_id')).toBe('2');
+ expect(form.querySelector('input[name="private_key"]')).toBeNull();
+});

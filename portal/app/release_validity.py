@@ -17,6 +17,33 @@ def configured_days(settings=None):
     return validate_days((settings or {}).get(PORTAL_SETTING, os.environ.get(SETTING, '90')))
 
 
+def settings_for_group(db, group_id):
+    """Resolve an exact owning group's policy, retaining the legacy default."""
+    from sqlalchemy import select
+    from .models import PortalSetting
+    settings = {}
+    default = db.scalar(select(PortalSetting).where(
+        PortalSetting.key == PORTAL_SETTING, PortalSetting.group_id.is_(None)))
+    if default is not None:
+        settings[PORTAL_SETTING] = default.value
+    if group_id is not None:
+        override = db.scalar(select(PortalSetting).where(
+            PortalSetting.key == f'group:{group_id}:{PORTAL_SETTING}',
+            PortalSetting.group_id == group_id))
+        if override is not None:
+            settings[PORTAL_SETTING] = override.value
+    return settings
+
+
+def for_service(db, service, approved_at):
+    groups = service.groups if service is not None else []
+    if len(groups) != 1:
+        raise ValueError('The service must have exactly one owning group before Cyber approval.')
+    group_id = groups[0].id
+    return {**new_validity(approved_at, settings_for_group(db, group_id)),
+            'owning_group_id': group_id}
+
+
 def utc(value):
     # SQLite returns naive UTC values for timezone-aware DateTime columns.
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)

@@ -39,3 +39,13 @@ describe('native exchange workflows',()=>{
     expect(screen.getByRole('checkbox')).toBeRequired();expect(container.querySelector('form')).toHaveAttribute('action','/exchange/bundles/confirm/token');expect(screen.getByText(/2 missing historical/)).toBeInTheDocument();
   });
 });
+
+it('requires one local owning group for a new service import',()=>{
+  render(<Page data={{bundle_mode:true,csrf_token:'csrf',token:'token',target_key:'new',import_mode:'create',bundle_manifest:{format:'cats'},owning_groups:[{id:7,name:'Local Cyber'}]}}/>);
+  const select=screen.getByLabelText(/Owning group/);
+  expect(select).toBeRequired();
+  expect(select).not.toHaveAttribute('multiple');
+  expect(select).toHaveValue('');
+  fireEvent.change(select,{target:{value:'7'}});
+  expect(select).toHaveValue('7');
+});

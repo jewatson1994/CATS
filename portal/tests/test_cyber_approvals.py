@@ -416,3 +416,29 @@ def test_approval_uses_saved_cosign_lifetime_and_freezes_it(db, monkeypatch):
     db.commit()
     approvals.retry(identity, request(), db, auth())
     assert row.snapshot['approval_validity'] == window
+
+
+def test_approval_uses_owning_group_policy_not_reviewers_scope(db):
+    group = db.get(Service, 1).groups[0]
+    db.add(approvals.PortalSetting(key=f'group:{group.id}:cyber_approval_validity_days', group_id=group.id, value='21'))
+    db.add(approvals.PortalSetting(key='cyber_approval_validity_days', value='90'))
+    db.commit()
+    identity = create(db)['id']
+    decide(db, identity)
+    window = db.get(approvals.CyberApproval, identity).snapshot['approval_validity']
+    assert window['validity_days'] == 21
+    assert window['owning_group_id'] == group.id
+    setting = db.scalar(select(approvals.PortalSetting).where(approvals.PortalSetting.group_id == group.id))
+    setting.value = '60'; db.commit()
+    assert db.get(approvals.CyberApproval, identity).snapshot['approval_validity'] == window
+
+
+def test_approval_requires_one_owning_group(db):
+    identity = create(db)['id']
+    service = db.get(Service, 1)
+    service.groups = []
+    db.commit()
+    with pytest.raises(HTTPException, match='') as exc:
+        decide(db, identity)
+    assert exc.value.status_code == 422
+    assert 'exactly one owning group' in exc.value.detail

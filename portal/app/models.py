@@ -110,6 +110,7 @@ class Group(Base):
 
 class ServiceGroup(Base):
     __tablename__ = "service_groups"
+    __table_args__ = (UniqueConstraint("service_id", name="uq_service_owning_group"),)
     service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), primary_key=True)
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), primary_key=True)
 

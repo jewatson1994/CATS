@@ -596,26 +596,33 @@ td > dl dd { margin: 0; font-weight: 600; text-transform: capitalize; }
 .page-refresh-notice { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--muted); font-size: var(--text-sm); }
 
 .settings-workspace #settings-search + small { display: block; margin-bottom: var(--space-4); }
+.config-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.config-section-heading h2 { margin: 0; }
+.settings-workspace .signing-intro { margin: 8px 0 24px; color: var(--text-muted); }
 .signing-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: var(--space-4) 0; font-size: var(--text-sm); color: var(--text-muted); }
 .signing-status code { overflow-wrap: anywhere; }
 .admin-workspace.settings-workspace .image-signing-form { display: grid; gap: 24px; }
 .admin-workspace.settings-workspace .image-signing-form .signing-section { display: grid; gap: 16px; margin: 0; padding: 20px 0 0; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; }
 .admin-workspace.settings-workspace .image-signing-form .signing-section h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; }
-.admin-workspace.settings-workspace .image-signing-form .signing-key-grid { display: grid; gap: 20px; }
+.admin-workspace.settings-workspace .image-signing-form .signing-key-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 24px; }
 .admin-workspace.settings-workspace .image-signing-form .signing-key-grid > label,
-.admin-workspace.settings-workspace .image-signing-form .signing-lifetime { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: start; max-width: 520px; min-width: 0; margin: 0; }
+.admin-workspace.settings-workspace .image-signing-form .signing-lifetime { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; align-items: start; max-width: none; min-width: 0; margin: 0; }
 .admin-workspace.settings-workspace .image-signing-form label > small { grid-column: 1; max-width: none; }
 .admin-workspace.settings-workspace .image-signing-form small, .admin-workspace.settings-workspace .image-signing-form .signing-note { font-size: var(--text-xs); line-height: 1.6; color: var(--text-muted); margin: 0; }
 .admin-workspace.settings-workspace .image-signing-form input[type="password"][name="key_password"] { width: 100%; max-width: 520px; }
 .admin-workspace.settings-workspace .image-signing-form input[type="number"][name="approval_validity_days"] { width: 110px; max-width: 100%; }
 .admin-workspace.settings-workspace .image-signing-form .checkbox-label { display: flex; align-items: center; gap: 8px; margin: 0; }
 .admin-workspace.settings-workspace .image-signing-form input[type="checkbox"] { width: 16px; height: 16px; min-height: 0; margin: 0; flex: 0 0 16px; }
-.admin-workspace.settings-workspace .image-signing-form input[type="file"] { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; height: 36px; padding: 3px; font-size: var(--text-xs); }
-.admin-workspace.settings-workspace .image-signing-form input[type="file"]::file-selector-button { margin: 0 10px 0 0; padding: 5px 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text); font: inherit; cursor: pointer; }
-.admin-workspace.settings-workspace .image-signing-form .signing-note { max-width: 90ch; }
+.admin-workspace.settings-workspace .image-signing-form input[type="file"] { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; height: 36px; padding: 3px; font-size: var(--text-xs); line-height: 28px; }
+.admin-workspace.settings-workspace .image-signing-form input[type="file"]::file-selector-button { box-sizing: border-box; height: 28px; min-height: 0; margin: 0 10px 0 0; padding: 4px 10px; vertical-align: top; border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--text); font: inherit; line-height: 18px; cursor: pointer; }
+.admin-workspace.settings-workspace .image-signing-form .signing-policy-link { margin: 0; font-size: var(--text-sm); color: var(--text-muted); }
+.admin-workspace.settings-workspace .signing-details { margin: 0; padding: 0; border: 0; color: var(--text-muted); font-size: var(--text-sm); }
+.admin-workspace.settings-workspace .signing-details summary { cursor: pointer; }
+.admin-workspace.settings-workspace .signing-details p { max-width: 80ch; margin: 12px 0 0; font-size: var(--text-xs); line-height: 1.6; }
 .admin-workspace.settings-workspace .image-signing-form .config-actions { display: flex; flex-direction: row; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; border: 0; }
 .admin-workspace.settings-workspace .image-signing-form .config-actions button { margin: 0; }
 @media (max-width: 650px) {
+  .admin-workspace.settings-workspace .image-signing-form .signing-key-grid { grid-template-columns: minmax(0, 1fr); }
   .admin-workspace.settings-workspace .image-signing-form .signing-key-grid > label, .admin-workspace.settings-workspace .image-signing-form .signing-lifetime { grid-template-columns: minmax(0, 1fr); }
   .admin-workspace.settings-workspace .image-signing-form label > small { grid-column: 1; }
 }

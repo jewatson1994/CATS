@@ -142,6 +142,8 @@ with migration_transaction(engine) as connection:
     upgrade_validators(connection)
     from .cyber_approval_migrations import upgrade_connection as upgrade_approvals
     upgrade_approvals(connection)
+    from .service_ownership_migrations import upgrade_connection as upgrade_ownership
+    upgrade_ownership(connection)
     upgrade_projection(connection)
     dependency_queries.upgrade_dependency_schema(connection)
     posture.ensure_rows(connection)
@@ -1442,15 +1444,9 @@ def remediation_enabled(db: Session) -> bool:
 
 
 def configuration_for_service(db: Session, service: Service) -> dict[str, str]:
-    """Apply explicit policies for every group assigned to the service.
-
-    Services can belong to more than one group. Using only the numerically
-    smallest group caused a policy saved for another assigned group to be
-    silently ignored. Later group IDs win deterministically when settings
-    overlap.
-    """
+    """Apply the sole owning group's policies; legacy conflicts remain readable."""
     configuration = get_configuration(db, None)
-    for group_id in sorted(group.id for group in service.groups):
+    for group_id in ([service.groups[0].id] if len(service.groups) == 1 else []):
         for setting in db.scalars(select(PortalSetting).where(PortalSetting.group_id == group_id)):
             key = setting.key.split(":", 2)[-1]
             # Runtime settings are global. Ignore legacy group-scoped copies so
@@ -1475,7 +1471,7 @@ def configurations_for_services(
     rules in memory instead.
     """
     base = dict(global_configuration) if global_configuration is not None else get_configuration(db)
-    group_ids = sorted({group.id for service in services for group in service.groups})
+    group_ids = sorted({service.groups[0].id for service in services if len(service.groups) == 1})
     settings_by_group: dict[int, list[PortalSetting]] = {group_id: [] for group_id in group_ids}
     if group_ids:
         for setting in db.scalars(
@@ -1486,7 +1482,7 @@ def configurations_for_services(
     resolved: dict[int, dict[str, str]] = {}
     for service in services:
         configuration = dict(base)
-        for group_id in sorted(group.id for group in service.groups):
+        for group_id in ([service.groups[0].id] if len(service.groups) == 1 else []):
             for setting in settings_by_group.get(group_id, []):
                 key = setting.key.split(":", 2)[-1]
                 if key in GLOBAL_CONFIGURATION_KEYS:
@@ -1927,7 +1923,7 @@ def service_overview_rows_detailed(
     configurations: dict[int, dict[str, str]] = {}
     for service_id in service_ids:
         resolved = dict(configuration)
-        for group_id in sorted(groups_by_service.get(service_id, [])):
+        for group_id in (groups_by_service.get(service_id, []) if len(groups_by_service.get(service_id, [])) == 1 else []):
             for setting in settings_by_group.get(group_id, []):
                 key = setting.key.split(":", 2)[-1]
                 if key not in GLOBAL_CONFIGURATION_KEYS:
@@ -2172,7 +2168,7 @@ def _overview_services_and_configurations(db: Session, auth: AuthContext, config
     configurations: dict[int, dict[str, str]] = {}
     for service_id in service_ids:
         resolved = dict(configuration)
-        for group_id in sorted(groups_by_service.get(service_id, [])):
+        for group_id in (groups_by_service.get(service_id, []) if len(groups_by_service.get(service_id, [])) == 1 else []):
             for setting in settings_by_group.get(group_id, []):
                 key = setting.key.split(":", 2)[-1]
                 if key not in GLOBAL_CONFIGURATION_KEYS:
@@ -3043,8 +3039,13 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         return {"accepted": True, "duplicate": True, "execution_id": existing.id}
 
     service = db.scalar(select(Service).where(Service.service_key == payload.service.id))
+    from .service_ownership import ingest_owner
+    try:
+        owning_group = ingest_owner(db, service, payload.service.groups)
+    except ValueError as exc:
+        raise HTTPException(409 if service else 422, detail=str(exc)) from exc
     if not service:
-        service = Service(service_key=payload.service.id, name=payload.service.name, lifecycle_status="active")
+        service = Service(service_key=payload.service.id, name=payload.service.name, lifecycle_status="active", groups=[owning_group])
         db.add(service)
         db.flush()
     elif archive_state(service):
@@ -3060,16 +3061,6 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         restore_generated_staging_name(service)
         service.lifecycle_status = "active"
     known_service_image_ids = set(db.scalars(select(ServiceImage.id).where(ServiceImage.service_id == service.id)).all())
-    requested_groups = {name.strip() for name in payload.service.groups if name.strip()}
-    existing_groups = {group.name: group for group in service.groups}
-    for group_name in requested_groups:
-        group = db.scalar(select(Group).where(Group.name == group_name))
-        if not group:
-            group = Group(name=group_name)
-            db.add(group)
-            db.flush()
-        if group_name not in existing_groups:
-            service.groups.append(group)
     scan_scope = payload.scan_scope or "service"
     scope_image = (payload.scope_image or "").strip() or None
     finding_images = {str(item.image).strip() for item in payload.findings if str(item.image).strip()}
@@ -10313,6 +10304,7 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
     groups = manageable_groups(db, auth) if auth.has("config.manage") else []
     selected_group_id = requested_group_scope(group_id or (str(groups[0].id) if groups else None), db, auth) if groups else None
     configuration = get_configuration(db, selected_group_id)
+    configuration[release_validity.PORTAL_SETTING] = release_validity.settings_for_group(db, selected_group_id).get(release_validity.PORTAL_SETTING, os.environ.get(release_validity.SETTING, "90"))
     configuration["log_level"] = get_global_configuration(db).get("log_level", configuration.get("log_level", "INFO"))
     try:
         retention_days = int(configuration.get("audit_retention_days", "365") or "365")
@@ -10501,6 +10493,16 @@ def edit_service(
         raise HTTPException(404)
     if not name.strip():
         raise HTTPException(422, detail="Service name is required")
+    if len(group_ids) != 1:
+        raise HTTPException(422, detail="Select exactly one owning group")
+    owning_group = db.get(Group, group_ids[0])
+    if owning_group is None:
+        raise HTTPException(422, detail="The selected owning group does not exist")
+    previous_group_ids = {group.id for group in service.groups}
+    if previous_group_ids != {owning_group.id}:
+        # Editing metadata does not itself grant permission to transfer a service.
+        if not auth.can_manage_group(owning_group.id) or not all(auth.can_manage_group(group_id) for group_id in previous_group_ids) or (not previous_group_ids and not auth.can_manage_group(None)):
+            raise HTTPException(403, detail="Changing ownership requires administration of both the current and destination groups; unassigned services require a global administrator")
     previous = {
         "name": service.name, "description": service.description, "owner": service.owner,
         "poc": service.poc, "manual_version": service.manual_version,
@@ -10511,7 +10513,7 @@ def edit_service(
     service.owner = owner.strip()[:240] or None
     service.poc = poc.strip()[:240] or None
     service.manual_version = manual_version.strip()[:120] or None
-    service.groups = list(db.scalars(select(Group).where(Group.id.in_(group_ids))).all()) if group_ids else []
+    service.groups = [owning_group]
     current = {
         "name": service.name, "description": service.description, "owner": service.owner,
         "poc": service.poc, "manual_version": service.manual_version,
@@ -10766,8 +10768,10 @@ def evidence_policy_page(request: Request, group_id: str = "", db: Session = Dep
 def workflow_policy_page(request: Request, group_id: str = "", db: Session = Depends(get_db), auth: AuthContext = Depends(require_config_scope)):
     groups = manageable_groups(db, auth)
     selected_group_id = requested_group_scope(group_id or (str(groups[0].id) if groups else None), db, auth)
+    configuration = get_configuration(db, selected_group_id)
+    configuration[release_validity.PORTAL_SETTING] = release_validity.settings_for_group(db, selected_group_id).get(release_validity.PORTAL_SETTING, os.environ.get(release_validity.SETTING, "90"))
     return templates.TemplateResponse(request, "workflow_policy.html", page_context(
-        auth, configuration=get_configuration(db, selected_group_id),
+        auth, configuration=configuration,
         cyber_warning_policy=parse_json(get_global_configuration(db).get("cyber_warning_policy"), {}),
         saved=request.query_params.get("saved") == "1", groups=groups,
         selected_group_id=selected_group_id,
@@ -11279,12 +11283,10 @@ def save_signing_configuration(
     csrf_token: str = Form(), private_key: UploadFile | None = File(None),
     public_key: UploadFile | None = File(None), key_password: str = Form(""),
     enabled: bool = Form(False), action: str = Form("save"),
-    approval_validity_days: str | None = Form(None),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
 ):
     check_csrf(auth, csrf_token)
     try:
-        lifetime = release_validity.validate_days(approval_validity_days) if action == "save" and approval_validity_days is not None else None
         current = {} if action == "remove" or (private_key and private_key.filename) else signing.configuration(get_global_configuration(db))
         if action == "remove":
             current = {}
@@ -11305,13 +11307,31 @@ def save_signing_configuration(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     _set_config_value(db, auth, signing.SETTING, json.dumps(current), None)
-    if lifetime is not None:
-        _set_config_value(db, auth, release_validity.PORTAL_SETTING, str(lifetime), None)
     record_audit(db, auth, "configuration.signing_updated", "portal", "global",
-                 enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove",
-                 approval_validity_days=lifetime)
+                 enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove")
     db.commit()
     return RedirectResponse("/admin/configuration?saved=1#signing", status_code=303)
+
+
+@app.post("/admin/signing-policy")
+def save_signing_policy(
+    approval_validity_days: str = Form(), group_id: str = Form(),
+    csrf_token: str = Form(), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_config_scope),
+):
+    check_csrf(auth, csrf_token)
+    selected_group_id = requested_group_scope(group_id, db, auth)
+    if selected_group_id is None or db.get(Group, selected_group_id) is None:
+        raise HTTPException(422, detail="Select an existing owning group for the signing validity policy")
+    try:
+        days = release_validity.validate_days(approval_validity_days)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    _set_config_value(db, auth, release_validity.PORTAL_SETTING, str(days), selected_group_id)
+    record_audit(db, auth, "signing_policy.updated", "group", str(selected_group_id),
+                 approval_validity_days=days)
+    db.commit()
+    return RedirectResponse(f"/admin/general-policy?saved=1&group_id={selected_group_id}", status_code=303)
 
 
 @app.get("/admin/configuration/signing/public-key", response_class=PlainTextResponse)

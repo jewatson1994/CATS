@@ -15,7 +15,6 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 
 from .secrets import decrypt_secret, encrypt_secret
-from . import release_validity
 
 SETTING = "image_signing"
 MAX_KEY_BYTES = 32 * 1024
@@ -34,14 +33,10 @@ def configuration(settings: dict) -> dict:
 
 def public_metadata(settings: dict) -> dict:
     try:
-        lifetime = {"approval_validity_days": release_validity.configured_days(settings)}
-    except ValueError as exc:
-        lifetime = {"approval_validity_days": "", "error": str(exc)}
-    try:
         value = configuration(settings)
     except ValueError:
-        return {**lifetime, "enabled": True, "configured": False, "error": "Signing configuration is invalid. Upload a key pair to repair it; publishing is blocked."}
-    return {**lifetime, "enabled": value.get("enabled") is True, "configured": bool(value.get("private_key")),
+        return {"enabled": True, "configured": False, "error": "Signing configuration is invalid. Upload a key pair to repair it; publishing is blocked."}
+    return {"enabled": value.get("enabled") is True, "configured": bool(value.get("private_key")),
             "fingerprint": value.get("fingerprint", ""), "updated_at": value.get("updated_at", "")}
 
 

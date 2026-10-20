@@ -136,7 +136,7 @@ def test_scoped_users_only_see_their_services_and_share_rows_safely(shadow):
         db.add(group); db.flush()
         members = [db.scalar(select(Service).where(Service.service_key == key)) for key in ("visible-one", "visible-two")]
         for member in members:
-            member.groups.append(group)
+            member.groups = [group]
         role = db.scalar(select(Role).where(Role.name == "Assessor"))
         user = User(username="scoped-posture", display_name="Scoped", password_hash=hash_password("test-password-long"),
                     must_change_password=False)

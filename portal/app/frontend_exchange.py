@@ -64,6 +64,7 @@ def template(source):
 def exchange_data(context):
     if 'bundle_mode' in context:
         data = {'bundle_mode': True, **fields(context, ('token', 'target_key', 'import_mode'))}
+        data['owning_groups'] = [fields(group, ('id', 'name')) for group in context.get('owning_groups', [])]
         if 'bundle_manifest' in context:
             source = context['bundle_manifest']
             manifest = fields(source, ('format', 'schema_version', 'semantics', 'assessment', 'exported_at', 'exported_by', 'service_key', 'service_name', 'current_version', 'warning'))

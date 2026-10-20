@@ -67,7 +67,7 @@ def payload(execution_id, scanned_at, cves, service_id="payments-service", compl
     return {
         "schema_version": "1.0", "execution_id": execution_id,
         "scanned_at": scanned_at.isoformat(), "complete": complete, "skipped_images": skipped_images or [], "fixable_only": True,
-        "service": {"id": service_id, "name": service_id.replace("-", " ").title(), "version": "2.4.1", "poc": "cats-test-poc@example.invalid"},
+        "service": {"id": service_id, "name": service_id.replace("-", " ").title(), "version": "2.4.1", "poc": "cats-test-poc@example.invalid", "groups": ["Test group"]},
         "findings": [{"cve": cve, "severity": "High", "image": f"registry/payments:{execution_id}",
                       "package": "openssl", "fixed_version": "9.9", "evidence": {"description": "Test vulnerability"}}
                      for cve in cves],
@@ -778,7 +778,7 @@ def test_service_remediation_creates_auditable_review_candidate(monkeypatch):
 def test_remediation_feature_defaults_off_and_blocks_backend_without_hiding_history():
     client = new_client()
     with SessionLocal() as db:
-        db.add(Service(service_key="payments-service", name="Payments Service"))
+        db.add(Service(service_key="payments-service", name="Payments Service", groups=[Group(name="Test group")]))
         db.commit()
     assert page_data(client.get("/admin/configuration"))["configuration"]["remediation_enabled"] == "false"
     page = client.get("/services/payments-service?remediations=true&tab=pipeline")
@@ -1332,16 +1332,15 @@ def test_configuration_findings_age_resolve_and_recur_by_stable_identity():
         assert finding.active and finding.recurrence_count == 1
 
 
-def test_group_scoped_manager_can_act_when_service_has_multiple_groups():
+def test_group_scoped_manager_can_act_for_service_owning_group():
     admin = new_client()
     policy_payload = payload("group-policy", datetime.now(timezone.utc), [])
     policy_payload["policy_findings"] = [{"finding": "KSV-GROUP", "fingerprint": "group-config"}]
     assert admin.post("/api/v1/pipeline-results", json=policy_payload, headers=pipeline_headers).status_code == 201
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
-        first_group = Group(name="First Group")
         assigned_group = Group(name="Assigned Group")
-        service.groups.extend([first_group, assigned_group])
+        service.groups = [assigned_group]
         db.flush()
         role = db.scalar(select(Role).where(Role.name == "Service Manager"))
         user = User(username="group-manager", display_name="Group Manager",
@@ -1379,7 +1378,7 @@ def test_group_scoped_access_is_not_global():
             service = Service(service_key="payments-service", name="Payments", owner="Platform")
             db.add(service)
             db.flush()
-        service.groups.append(group)
+        service.groups = [group]
         role = db.scalar(select(Role).where(Role.name == "Service Manager"))
         user = User(username="scoped", display_name="Scoped", password_hash=hash_password("test-password-long"), must_change_password=False)
         db.add(user)
@@ -1491,7 +1490,7 @@ def test_risk_overlay_filters_active_findings_before_age_drives_noncompliance():
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
         group = Group(name="Risk Overlay Group")
-        service.groups.append(group)
+        service.groups = [group]
         db.add(group)
         db.flush()
         findings = {finding.cve: finding for finding in service.findings}
@@ -1546,6 +1545,7 @@ def test_administrator_can_edit_service_metadata():
     response = client.post("/admin/services/payments-service", data={
         "csrf_token": csrf(client), "name": "Payments Platform", "owner": "Cyber Team",
         "description": "Payments service metadata", "poc": "owner@example.invalid", "manual_version": "3.0",
+        "group_ids": detail["view"]["service"]["groups"][0]["id"],
     }, follow_redirects=False)
     assert response.status_code == 303
     page = client.get("/services/payments-service").text
@@ -1554,6 +1554,7 @@ def test_administrator_can_edit_service_metadata():
 
 def test_edit_service_preserves_service_tab_query_rename_and_confirmation():
     client = new_client(); ingest(client)
+    owning_group_id = page_data(client.get("/services/payments-service"))["view"]["service"]["groups"][0]["id"]
     destinations = [
         "/services/payments-service?overview=true",
         "/services/payments-service?architecture=true",
@@ -1567,6 +1568,7 @@ def test_edit_service_preserves_service_tab_query_rename_and_confirmation():
         response = client.post("/admin/services/payments-service", data={
             "csrf_token": csrf(client),
             "name": f"Payments Platform {index}",
+            "group_ids": owning_group_id,
             "return_to": destination,
         }, follow_redirects=False)
         assert response.status_code == 303
@@ -1879,7 +1881,9 @@ def test_service_snapshot_separates_staged_services_from_active_and_archived():
     with SessionLocal() as db:
         service = db.scalar(select(Service).where(Service.service_key == "helm-test"))
         assert service.lifecycle_status == "staged"
-    ingested = ingest(client, execution="helm-test-run", service_id="helm-test")
+    body = payload("helm-test-run", datetime.now(timezone.utc), [], service_id="helm-test")
+    body["service"]["groups"] = []  # Retain the staged service owner.
+    ingested = client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
     assert ingested.status_code == 201
     assert "helm-test" in [view["service"]["service_key"] for view in page_data(client.get("/"))["views"]]
     with SessionLocal() as db:
@@ -1924,6 +1928,7 @@ def test_staged_service_promotes_on_any_ingested_finding_or_evidence():
     assert response.status_code == 303
 
     data = payload("staged-evidence-run", datetime.now(timezone.utc), ["CVE-2026-9999"], service_id="staged-evidence")
+    data["service"]["groups"] = []
     data["policy_findings"] = [{
         "finding": "KSV-999", "severity": "High", "target": "Deployment/staged-evidence",
     }]
@@ -1960,6 +1965,7 @@ def test_generated_staged_name_is_restored_idempotently_without_changing_identit
         assert service.staging_name_generated is True and service.staging_original_name == "torture-test"
 
     body = helm_payload("torture-lifecycle-run", "torture-test")
+    body["service"]["groups"] = []
     # Reproduce the reported client behavior: the submitted display name still
     # contains CATS' generated staging label.
     body["service"]["name"] = "Staged — torture-test"
@@ -2009,7 +2015,7 @@ def test_user_owned_staged_prefix_is_never_stripped_without_generation_metadata(
     client = new_client()
     with SessionLocal() as db:
         service = Service(service_key="production-app", name="Staged — Production Application",
-                          lifecycle_status="staged", staging_name_generated=False)
+                          lifecycle_status="staged", staging_name_generated=False, groups=[Group(name="Test group")])
         db.add(service); db.commit(); service_id = service.id
     body = payload("production-app-run", datetime.now(timezone.utc), [], service_id="production-app")
     body["service"]["name"] = "Staged — Production Application"
@@ -2464,7 +2470,7 @@ def test_service_configuration_does_not_reapply_legacy_global_group_settings():
         group = Group(name="Scoped group")
         service = Service(service_key="global-config-service", name="Global config service", manual_version="1")
         db.add_all([group, service]); db.flush()
-        service.groups.append(group)
+        service.groups = [group]
         db.add(PortalSetting(key="display_timezone", group_id=None, value="UTC"))
         db.add(PortalSetting(key=f"group:{group.id}:display_timezone", group_id=group.id, value="America/New_York"))
         db.commit(); db.refresh(service)
@@ -3083,3 +3089,62 @@ def test_focused_findings_export_projects_current_observations_without_evidence(
     assert sheet.max_row == 2
     assert sheet.cell(2, 2).value == 'CVE-LATEST'
     assert not any('raw_payload' in sql or 'finding_observations.evidence' in sql for sql in statements)
+
+
+def test_service_ownership_ingestion_rejects_missing_multiple_and_changed_owner():
+    client = new_client()
+    body = payload("owner-first", datetime.now(timezone.utc), [])
+    body["service"]["groups"] = []
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 422
+    body["service"]["groups"] = ["A", "B"]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 422
+    body["service"]["groups"] = ["A"]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    body["execution_id"] = "owner-second"
+    body["service"]["groups"] = ["B"]
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 409
+    body["service"]["groups"] = []
+    assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service).where(Service.service_key == "payments-service"))
+        assert [group.name for group in service.groups] == ["A"]
+
+
+def test_service_ownership_edit_rejects_empty_and_multiple_and_allows_transfer():
+    client = new_client()
+    assert ingest(client).status_code == 201
+    with SessionLocal() as db:
+        other = Group(name="Other")
+        db.add(other); db.commit()
+        other_id = other.id
+        service = db.scalar(select(Service))
+        original_id = service.groups[0].id
+    form = {"csrf_token": csrf(client), "name": "Payments"}
+    assert client.post("/admin/services/payments-service", data=form, follow_redirects=False).status_code == 422
+    form["group_ids"] = [original_id, other_id]
+    assert client.post("/admin/services/payments-service", data=form, follow_redirects=False).status_code == 422
+    form["group_ids"] = other_id
+    assert client.post("/admin/services/payments-service", data=form, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        assert [g.id for g in db.scalar(select(Service)).groups] == [other_id]
+
+
+def test_service_ownership_editor_cannot_transfer_without_group_authority():
+    client = new_client()
+    assert ingest(client).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        other = Group(name="Other")
+        role = Role(name="Metadata editor", permissions=["service.edit", "service.view"])
+        user = User(username="metadata-editor", display_name="Editor", password_hash=hash_password("test-password-long"), must_change_password=False)
+        db.add_all([other, role, user]); db.flush()
+        db.add(UserRoleAssignment(user_id=user.id, role_id=role.id, service_id=service.id))
+        db.commit()
+        original_id, other_id = service.groups[0].id, other.id
+    editor = new_client("metadata-editor")
+    form = {"csrf_token": csrf(editor), "name": "Permitted metadata edit", "group_ids": original_id}
+    assert editor.post("/admin/services/payments-service", data=form, follow_redirects=False).status_code == 303
+    form["group_ids"] = other_id
+    assert editor.post("/admin/services/payments-service", data=form, follow_redirects=False).status_code == 403
+    with SessionLocal() as db:
+        assert [g.id for g in db.scalar(select(Service)).groups] == [original_id]

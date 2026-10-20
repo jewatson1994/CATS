@@ -408,7 +408,7 @@ def resolve_configurations(db, service_ids, configuration):
     resolved = {}
     for service_id in service_ids:
         values = dict(configuration)
-        for group_id in sorted(groups.get(service_id, [])):
+        for group_id in (groups.get(service_id, []) if len(groups.get(service_id, [])) == 1 else []):
             for setting in settings.get(group_id, []):
                 key = setting.key.split(":", 2)[-1]
                 if key not in m.GLOBAL_CONFIGURATION_KEYS:

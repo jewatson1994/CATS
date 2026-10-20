@@ -1,7 +1,7 @@
 """Safe, explicit policy administration projections (no authentication settings)."""
 from .frontend_exchange import fields, value, scalar, permit
 
-CONFIG_FIELDS = ('audit_retention_days', 'log_level', 'skipped_images_incomplete', 'incomplete_noncompliant', 'warning_days', 'exception_max_days', 'hardening_overdue_days', 'hardening_noncompliant', 'compliance_mode', 'overdue_days', 'minimum_severity', 'kev_enabled', 'kev_noncompliant', 'epss_enabled')
+CONFIG_FIELDS = ('cyber_approval_validity_days', 'audit_retention_days', 'log_level', 'skipped_images_incomplete', 'incomplete_noncompliant', 'warning_days', 'exception_max_days', 'hardening_overdue_days', 'hardening_noncompliant', 'compliance_mode', 'overdue_days', 'minimum_severity', 'kev_enabled', 'kev_noncompliant', 'epss_enabled')
 
 
 # Names used by record_audit calls. Unknown fields and nested objects never cross

@@ -274,7 +274,7 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
     if decision == 'approved' and row.status == 'pending':
         snapshot = dict(row.snapshot)
         try:
-            snapshot['approval_validity'] = release_validity.new_validity(decided_at, _settings(db))
+            snapshot['approval_validity'] = release_validity.for_service(db, db.get(Service, row.service_id), decided_at)
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from None
         if not row.destination_id:
