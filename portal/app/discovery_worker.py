@@ -77,7 +77,7 @@ def handle(ctx, payload):
             'completeness':'invalid', 'diagnostics':[{'code':'invalid_source','message':'Source is malformed, unsafe, or exceeds discovery limits.'}],
             'metrics':{}, 'tool_versions':{}}
     if isinstance(runner, RenderCache):
-        inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses)
+        inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses, dependency_scoped_renders=runner.scoped_renders)
     inventory['selection'] = selected
     inventory['archive_hash'] = payload['source_hash']
     ctx.check()

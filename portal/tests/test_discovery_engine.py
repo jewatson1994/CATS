@@ -488,3 +488,96 @@ def test_flux_kustomization_native_transform_before_substitution(tmp_path):
     assert calls[1]['images'][0]['newTag'] == '${TAG}'
     assert result['images'][0]['reference'] == 'nginx:final'
     assert result['completeness'] == 'complete'
+
+
+@pytest.mark.parametrize('kind', ['ConfigMap', 'Secret'])
+def test_flux_missing_optional_values_reference_is_complete(tmp_path, kind):
+    write(tmp_path, 'chart/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    release = {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'test'}, 'spec': {'chart': {'spec': {'chart': 'chart'}}, 'valuesFrom': [{'kind': kind, 'name': 'absent', 'optional': True}]}}
+    write(tmp_path, 'release.yaml', yaml.safe_dump(release))
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append(args)
+        return 'apiVersion: v1\nkind: Pod\nmetadata: {name: test}\nspec: {containers: [{name: web, image: nginx:1}]}'
+    result = run_discovery(tmp_path, runner=runner)
+    assert len(calls) == 1
+    assert result['completeness'] == 'complete'
+    assert not result['diagnostics']
+    assert not any(n['name'] == 'absent' for n in result['nodes'])
+
+
+@pytest.mark.parametrize('reference,resource,code', [
+    ({'kind': 'ConfigMap', 'name': 'absent', 'optional': 'true'}, None, 'invalid_flux_values_reference'),
+    ({'kind': 'Pod', 'name': 'absent', 'optional': True}, None, 'invalid_flux_values_reference'),
+    ({'kind': 'ConfigMap', 'name': 'config', 'optional': True}, {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'config'}, 'data': {'other': 'value'}}, 'unsupported_flux_values_input'),
+    ({'kind': 'Secret', 'name': 'config', 'optional': True}, {'apiVersion': 'v1', 'kind': 'Secret', 'metadata': {'name': 'config'}, 'stringData': {'values.yaml': 'token: NEVER_RETAIN'}}, 'secret_values_not_rendered'),
+])
+def test_flux_optional_values_remain_fail_closed(tmp_path, reference, resource, code):
+    write(tmp_path, 'chart/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    release = {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'test'}, 'spec': {'chart': {'spec': {'chart': 'chart'}}, 'valuesFrom': [reference]}}
+    write(tmp_path, 'release.yaml', yaml.safe_dump_all([release] + ([resource] if resource else [])))
+    calls = []
+    result = run_discovery(tmp_path, runner=lambda *args: calls.append(args) or '')
+    assert not calls
+    assert code in {d['code'] for d in result['diagnostics']}
+    assert 'flux_render_blocked_by_values' in {d['code'] for d in result['diagnostics']}
+    assert 'NEVER_RETAIN' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('chart_ref', [False, True])
+def test_flux_chart_values_files_replace_defaults_in_order(tmp_path, chart_ref):
+    write(tmp_path, 'chart/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    write(tmp_path, 'chart/values.yaml', 'defaultOnly: must-not-survive\nimage: {tag: default}')
+    write(tmp_path, 'chart/first.yaml', 'image: {repository: nginx, tag: first}')
+    write(tmp_path, 'chart/last.yaml', 'image: {tag: last}')
+    chart_spec = {'chart': 'chart', 'valuesFiles': ['first.yaml', 'absent.yaml', 'last.yaml'], 'ignoreMissingValuesFiles': True}
+    spec = {'values': {'image': {'tag': 'inline'}}}
+    documents = []
+    if chart_ref:
+        spec['chartRef'] = {'kind': 'HelmChart', 'name': 'test-chart'}
+        documents.append({'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'HelmChart', 'metadata': {'name': 'test-chart'}, 'spec': chart_spec})
+    else:
+        spec['chart'] = {'spec': chart_spec}
+    documents.append({'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'test'}, 'spec': spec})
+    write(tmp_path, 'release.yaml', yaml.safe_dump_all(documents))
+    calls = []
+    def runner(tool, args, cwd):
+        if '-f' in args:
+            calls.append(args)
+            assert yaml.safe_load((Path(args[2]) / 'values.yaml').read_text()) == {'image': {'repository': 'nginx', 'tag': 'last'}}
+            assert yaml.safe_load(Path(args[args.index('-f') + 1]).read_text()) == {'image': {'tag': 'inline'}}
+        return ''
+    result = run_discovery(tmp_path, runner=runner)
+    assert len(calls) == 1
+    assert 'unsupported_flux_chart_values_files' not in {d['code'] for d in result['diagnostics']}
+    assert 'defaultOnly' in (tmp_path / 'chart/values.yaml').read_text()
+
+
+@pytest.mark.parametrize('selected', ['missing.yaml', '../outside.yaml', '/outside.yaml'])
+def test_flux_chart_values_files_invalid_paths_block_render(tmp_path, selected):
+    write(tmp_path, 'chart/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    release = {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'test'}, 'spec': {'chart': {'spec': {'chart': 'chart', 'valuesFiles': [selected]}}}}
+    write(tmp_path, 'release.yaml', yaml.safe_dump(release))
+    calls = []
+    result = run_discovery(tmp_path, runner=lambda *args: calls.append(args) or '')
+    assert not calls
+    assert 'unsupported_flux_chart_values_files' in {d['code'] for d in result['diagnostics']}
+
+
+
+def test_flux_chart_values_files_use_git_source_root(tmp_path):
+    write(tmp_path, 'snapshot/charts/app/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    write(tmp_path, 'snapshot/environment.yaml', 'image: {tag: from-source}')
+    documents = [
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'GitRepository', 'metadata': {'name': 'repo'}, 'spec': {}},
+        {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'test'}, 'spec': {'chart': {'spec': {'chart': 'charts/app', 'sourceRef': {'kind': 'GitRepository', 'name': 'repo'}, 'valuesFiles': ['environment.yaml']}}}},
+    ]
+    write(tmp_path, 'release.yaml', yaml.safe_dump_all(documents))
+    captured = []
+    def runner(tool, args, cwd):
+        if '-f' in args:
+            captured.append(yaml.safe_load((Path(args[2]) / 'values.yaml').read_text()))
+        return ''
+    result = run_discovery(tmp_path, {'source_map': {'GitRepository/default/repo': 'snapshot'}}, runner=runner)
+    assert captured == [{'image': {'tag': 'from-source'}}]
+    assert 'unsupported_flux_chart_values_files' not in {d['code'] for d in result['diagnostics']}

@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 import re
+import shutil
 import tempfile
 from pathlib import Path
 import yaml
@@ -817,7 +818,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         raise ValueError()
                     if chart_ref_key[0] == 'HelmChart':
                         chart_spec = resources[chart_ref_key].get('spec', {})
-                        if not isinstance(chart_spec, dict) or set(chart_spec) - {'chart', 'version', 'sourceRef', 'interval', 'reconcileStrategy', 'suspend'} or chart_spec.get('suspend'):
+                        if not isinstance(chart_spec, dict) or set(chart_spec) - {'chart', 'version', 'sourceRef', 'interval', 'reconcileStrategy', 'suspend', 'valuesFiles', 'ignoreMissingValuesFiles'} or chart_spec.get('suspend'):
                             raise ValueError()
                     elif chart_ref_key[0] != 'OCIRepository':
                         raise ValueError()
@@ -842,11 +843,17 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if not isinstance(ref, dict):
                     issue('invalid_flux_values_reference', rid, path)
                     continue
-                if not all(isinstance(v, str) for v in (ref.get('kind', 'Secret'), namespace, ref.get('name'))):
+                if (set(ref) - {'kind', 'name', 'valuesKey', 'targetPath', 'optional'}
+                        or ref.get('kind', 'Secret') not in ('Secret', 'ConfigMap')
+                        or not all(isinstance(v, str) and v for v in (namespace, ref.get('name'), ref.get('valuesKey', 'values.yaml')))
+                        or ('optional' in ref and not isinstance(ref['optional'], bool))):
                     issue('invalid_flux_values_reference', rid, path)
                     continue
-                reference(release_id, ref.get('kind', 'Secret'), ref.get('name'), namespace, rid, path, 'uses_values')
                 resource_key = (ref.get('kind', 'Secret'), namespace, ref.get('name'))
+                if resource_key not in resources and resource_key not in ambiguous_resources and ref.get('optional') is True:
+                    # Flux optional applies only to an absent object, not missing keys or Secrets.
+                    continue
+                reference(release_id, ref.get('kind', 'Secret'), ref.get('name'), namespace, rid, path, 'uses_values')
                 if resource_key in ambiguous_resources:
                     issue('ambiguous_flux_values_reference', rid, path)
                     continue
@@ -927,6 +934,36 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics']):
                     issue('flux_render_blocked_by_values', rid, path)
                     continue
+                chart_values = None
+                if (not isinstance(chart_spec.get('valuesFiles', []), list)
+                        or not isinstance(chart_spec.get('ignoreMissingValuesFiles', False), bool)):
+                    issue('unsupported_flux_chart_values_files', rid, path)
+                    continue
+                if chart_spec.get('valuesFiles'):
+                    try:
+                        selected_files = chart_spec['valuesFiles']
+                        if (not isinstance(selected_files, list) or len(selected_files) > 50
+                                or not isinstance(chart_spec.get('ignoreMissingValuesFiles', False), bool)):
+                            raise ValueError()
+                        values_base = local
+                        if source_ref.get('kind') in ('GitRepository', 'OCIRepository'):
+                            values_base = local_source((source_ref['kind'], source_ref.get('namespace', chart_ref_key[1] if chart_ref_key else release_ns), source_ref.get('name')))
+                        chart_values = {}
+                        for selected_file in selected_files:
+                            if not isinstance(selected_file, str) or not selected_file or len(selected_file) > 500:
+                                raise ValueError()
+                            value_file = compose._inside(values_base, selected_file)
+                            if not value_file.exists() and chart_spec.get('ignoreMissingValuesFiles') is True:
+                                continue
+                            if not value_file.is_file() or value_file.stat().st_size > compose.MAX_FILE:
+                                raise ValueError()
+                            value_documents = _documents(value_file.read_text(encoding='utf-8-sig'))
+                            if len(value_documents) != 1 or not isinstance(value_documents[0], dict):
+                                raise ValueError()
+                            chart_values = _merge(chart_values, value_documents[0])
+                    except (ValueError, TypeError, OSError, UnicodeError, compose.ComposeInputError, yaml.YAMLError):
+                        issue('unsupported_flux_chart_values_files', rid, path)
+                        continue
                 values_path = base / ('.discovery-values-' + rid + '.yaml')
                 if values_path.exists():
                     raise ValueError()
@@ -935,7 +972,18 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 release_namespace = spec.get('targetNamespace', namespace)
                 if not all(isinstance(value, str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', value) for value in (release_name, release_namespace)):
                     raise ValueError()
-                render('helm', ['template', release_name, str(local), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *targets], rid, path, spec.get('postRenderers'))
+                def render_release(chart_directory):
+                    render('helm', ['template', release_name, str(chart_directory), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *targets], rid, path, spec.get('postRenderers'))
+                if chart_values is None:
+                    render_release(local)
+                else:
+                    # Flux replaces chart defaults with the ordered selection; Helm -f alone
+                    # would incorrectly preserve omitted defaults. Never mutate a shared chart.
+                    with tempfile.TemporaryDirectory(prefix='.discovery-chart-', dir=base) as chartdir:
+                        prepared_chart = Path(chartdir) / 'chart'
+                        shutil.copytree(local, prepared_chart, ignore=lambda directory, names: [Path(chartdir).name] if Path(directory) == base else [])
+                        (prepared_chart / 'values.yaml').write_text(yaml.safe_dump(chart_values), encoding='utf-8')
+                        render_release(prepared_chart)
                 values_path.unlink()
                 result['edges'].append(dict(source=rid, target=child_rid, kind='renders'))
             except (ValueError, TypeError, OSError, AttributeError, compose.ComposeInputError):

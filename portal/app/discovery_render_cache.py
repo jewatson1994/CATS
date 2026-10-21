@@ -11,7 +11,7 @@ class RenderCache:
     def __init__(self, runner, directory, scope, version, maximum=64 * 1024 * 1024):
         self.runner, self.directory = runner, Path(directory)
         self.scope, self.version, self.maximum = scope, version, maximum
-        self.hits = self.misses = 0
+        self.hits = self.misses = self.scoped_renders = 0
 
     def identity(self, tool, args, cwd):
         base = Path(cwd).resolve()
@@ -20,7 +20,7 @@ class RenderCache:
             return None
         digest = hashlib.sha256()
         normalized = [str(arg).replace(str(base), '/source') for arg in args]
-        digest.update(json.dumps([self.scope, tool, version, normalized, 'render-cache-v1']).encode())
+        digest.update(json.dumps([self.scope, tool, version, normalized, 'render-cache-v2']).encode())
         total = 0
         for path in sorted(base.rglob('*')):
             if path.is_symlink():
@@ -39,8 +39,11 @@ class RenderCache:
         return digest.hexdigest()
 
     def __call__(self, tool, args, cwd):
+        from .discovery_render_inputs import render_inputs
         try:
-            return self._cached_call(tool, args, cwd)
+            with render_inputs(tool, args, cwd) as (selected_args, selected_cwd, scoped):
+                self.scoped_renders += int(scoped)
+                return self._cached_call(tool, selected_args, selected_cwd)
         except OSError:
             return self.runner(tool, args, cwd)
 
