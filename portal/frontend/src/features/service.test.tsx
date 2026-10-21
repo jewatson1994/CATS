@@ -97,3 +97,22 @@ describe('native service finding pages', () => {
     expect(screen.queryByRole('button', { name: 'Request Exception' })).not.toBeInTheDocument();
   });
 });
+
+it('links to a dedicated VEX evidence view inside Findings', () => {
+  render(<Page data={fixture()}/>);
+  expect(screen.getByRole('link', {name: 'VEX evidence'})).toHaveAttribute('href', '/services/sample?findings=true&findings_view=raw&vex_evidence=true');
+  expect(screen.queryByText('Automatic VEX disposition and evidence')).not.toBeInTheDocument();
+});
+
+it('opens VEX evidence directly from its Findings tab', () => {
+  window.history.replaceState({}, '', '/services/sample?findings=true&findings_view=raw&vex_evidence=true');
+  vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+  try {
+    render(<Page data={fixture()}/>);
+    expect(screen.getByRole('link', {name: 'VEX evidence'})).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('heading', {name: 'Automatic VEX disposition and evidence'})).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Apply filters'})).not.toBeInTheDocument();
+  } finally {
+    window.history.replaceState({}, '', '/');
+  }
+});

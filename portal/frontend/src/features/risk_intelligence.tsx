@@ -172,7 +172,7 @@ export function Page({data}:{data:PageData}) {
 
 export function ServiceRisk({data,serviceKey}:{data:PageData,serviceKey:string}) {
   const [open,setOpen]=useState(false);
-  return <details className="panel padded" onToggle={e=>setOpen(e.currentTarget.open)}><summary>Risk Profile, technical assessment and Cyber decisions</summary>{open&&<ServiceView data={data} serviceKey={serviceKey} configuration={null}/>}</details>;
+  return <article className="overview-dashboard-card service-risk-card" style={open?{gridColumn:"1 / -1"}:undefined}><h3>Risk Profile</h3><p>Review the technical assessment, group profile and Cyber decisions for this service.</p><button type="button" className="secondary-button" aria-expanded={open} aria-controls="service-risk-assessment" onClick={()=>setOpen(!open)}>{open?"Hide assessment":"View assessment"}</button>{open&&<div id="service-risk-assessment"><ServiceView data={data} serviceKey={serviceKey} configuration={null}/></div>}</article>;
 }
 export function IntelligenceSettings({data}:{data:PageData}) {
   const [open,setOpen]=useState(false);

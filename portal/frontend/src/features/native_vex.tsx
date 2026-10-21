@@ -3,8 +3,9 @@ import {can, requestJson, type PageData} from '../api';
 import {useResource, IntelligenceSettings} from './risk_intelligence';
 
 type Row=Record<string, any>;
-export function VexEvidence({serviceKey,findingId}:{serviceKey:string,findingId?:number}) {
+export function VexEvidence({serviceKey,findingId,expanded=false}:{serviceKey:string,findingId?:number,expanded?:boolean}) {
   const [open,setOpen]=useState(false);
+  if(expanded)return <section className="panel padded"><h2>Automatic VEX disposition and evidence</h2><Evidence serviceKey={serviceKey} findingId={findingId}/></section>;
   return <details className="panel padded" onToggle={e=>setOpen(e.currentTarget.open)}><summary>Automatic VEX disposition and evidence</summary>{open&&<Evidence serviceKey={serviceKey} findingId={findingId}/>}</details>;
 }
 function Evidence({serviceKey,findingId}:{serviceKey:string,findingId?:number}) {

@@ -91,3 +91,10 @@ it('shows persisted Compose services and declared configuration safely', () => {
   expect(inventory).toHaveTextContent('<script>hello</script>');
   expect(inventory.querySelector('script')).toBeNull();
 });
+
+it('shows Risk Profile as a card without VEX evidence on Overview', () => {
+  render(<Page data={fixture()}/>);
+  expect(screen.getByRole('heading', {name: 'Risk Profile'}).closest('article')).toHaveClass('overview-dashboard-card');
+  expect(screen.getByRole('button', {name: 'View assessment'})).toHaveAttribute('aria-expanded', 'false');
+  expect(screen.queryByText('Automatic VEX disposition and evidence')).not.toBeInTheDocument();
+});
