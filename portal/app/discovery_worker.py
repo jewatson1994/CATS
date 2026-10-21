@@ -14,23 +14,34 @@ def upload_root():
     return Path(os.environ.get('CATS_DISCOVERY_UPLOAD_ROOT', '/data/discovery-uploads'))
 
 def configured_artifact_resolver():
-    # Only process configuration can select the manifest; job payloads cannot.
-    from .discovery_artifacts import LocalArtifactResolver, ArtifactResolutionError
-    configured = os.environ.get('CATS_DISCOVERY_ARTIFACT_MANIFEST', '').strip()
-    if not configured:
-        return None
-    manifest = Path(configured)
-    if not manifest.is_absolute() or manifest.resolve().is_relative_to(upload_root().resolve()):
-        raise JobError('Discovery artifact mirror configuration is invalid.')
+    # Only process configuration can select manifests; job payloads cannot.
+    from .discovery_artifacts import (LocalArtifactResolver, ApprovedHTTPSArtifactResolver,
+                                     ArtifactResolverChain, ArtifactResolutionError)
+    def admin_path(name):
+        configured = os.environ.get(name, '').strip()
+        if not configured:
+            return None
+        path = Path(configured)
+        if not path.is_absolute() or path.resolve().is_relative_to(upload_root().resolve()):
+            raise JobError('Discovery artifact mirror configuration is invalid.')
+        return path
+    local_path = admin_path('CATS_DISCOVERY_ARTIFACT_MANIFEST')
+    remote_path = admin_path('CATS_DISCOVERY_HTTPS_ARTIFACT_MANIFEST')
+    ca_file = admin_path('CATS_DISCOVERY_ARTIFACT_CA_FILE')
     try:
-        return LocalArtifactResolver(manifest)
+        local = LocalArtifactResolver(local_path) if local_path else None
+        remote = ApprovedHTTPSArtifactResolver(remote_path, ca_file=ca_file) if remote_path else None
+        return ArtifactResolverChain(local, remote) if local and remote else local or remote
     except ArtifactResolutionError:
         raise JobError('Discovery artifact mirror configuration is invalid.') from None
 
 
+
 def handle(ctx, payload):
     from .discovery_engine import run_discovery, DiscoveryError
-    from .discovery_renderer import isolated_runner
+    from .discovery_renderer import isolated_runner, tool_version
+    from .discovery_render_cache import RenderCache
+    import tempfile
     token = payload.get('source_id', '')
     if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
         raise JobError('Invalid discovery source identity')
@@ -48,19 +59,25 @@ def handle(ctx, payload):
             ctx.stage(args[0], kwargs.get('progress'))
     selected = dict(payload.get('options', {}))
     artifact_resolver = configured_artifact_resolver()
+    runner = isolated_runner
+    if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true':
+        runner = RenderCache(isolated_runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
+                             str(payload['group_id']) + ':' + token, tool_version)
     try:
         with decrypted_source(source, token, payload['source_hash'], ctx.check) as plaintext:
             input_path = plaintext
             if plaintext.name == 'chart-reference.txt':
                 selected.update(reference=plaintext.read_text().strip(), reference_kind='chart')
                 input_path = None
-            inventory = run_discovery(input_path, options=selected, runner=isolated_runner, progress=progress, artifact_resolver=artifact_resolver)
+            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver)
     except SourceStorageError as exc:
         raise JobError(str(exc)) from None
     except DiscoveryError:
         inventory = {'schema_version':'1.0', 'roots':[], 'nodes':[], 'edges':[], 'images':[],
             'completeness':'invalid', 'diagnostics':[{'code':'invalid_source','message':'Source is malformed, unsafe, or exceeds discovery limits.'}],
             'metrics':{}, 'tool_versions':{}}
+    if isinstance(runner, RenderCache):
+        inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses)
     inventory['selection'] = selected
     inventory['archive_hash'] = payload['source_hash']
     ctx.check()

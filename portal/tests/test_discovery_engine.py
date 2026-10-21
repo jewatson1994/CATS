@@ -443,3 +443,48 @@ def test_flux_kustomization_rejects_sensitive_substitution_keys(tmp_path):
     assert not result['images']
     assert result['completeness'] != 'complete'
     assert 'PRIVATE_VALUE' not in json.dumps(result)
+
+@pytest.mark.parametrize('kind', ['OCIRepository', 'HelmChart'])
+def test_flux_chartref_local_artifacts(tmp_path, kind):
+    write(tmp_path, 'artifact/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    source_spec = {'chart': 'artifact', 'sourceRef': {'kind': 'GitRepository', 'name': 'git'}} if kind == 'HelmChart' else {'url': 'oci://example.test/chart'}
+    write(tmp_path, 'flux.yaml', yaml.safe_dump_all([
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'GitRepository', 'metadata': {'name': 'git'}, 'spec': {}},
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': kind, 'metadata': {'name': 'chart'}, 'spec': source_spec},
+        {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'app'}, 'spec': {'chartRef': {'kind': kind, 'name': 'chart'}}}
+    ]))
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append((tool, args))
+        if args[1] == 'discovery':
+            return ''
+        return 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: nginx:1}]}'
+    result = run_discovery(tmp_path, {'source_map': {'OCIRepository/default/chart': 'artifact', 'GitRepository/default/git': '.'}}, runner=runner)
+    assert result['completeness'] == 'complete'
+    assert any(tool == 'helm' and args[1] == 'app' for tool, args in calls)
+
+
+def test_flux_chartref_unsupported_kind_blocks_render(tmp_path):
+    write(tmp_path, 'flux.yaml', yaml.safe_dump({'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'app'}, 'spec': {'chartRef': {'kind': 'Bucket', 'name': 'chart'}}}))
+    result = run_discovery(tmp_path, runner=lambda *args: pytest.fail('Unresolved chart must not render'))
+    assert 'flux_chart_reference_unresolved' in {d['code'] for d in result['diagnostics']}
+
+
+def test_flux_kustomization_native_transform_before_substitution(tmp_path):
+    options = flux_kustomization_fixture(tmp_path, {'substitute': {'TAG': 'final'}})
+    docs = list(yaml.safe_load_all((tmp_path / 'flux.yaml').read_text()))
+    docs[-1]['spec'].update({'targetNamespace': 'prod', 'namePrefix': 'production-', 'images': [{'name': 'nginx', 'newTag': '${TAG}'}]})
+    write(tmp_path, 'flux.yaml', yaml.safe_dump_all(docs))
+    calls = []
+    def runner(tool, args, cwd):
+        folder = Path(args[1])
+        config = yaml.safe_load((folder / 'kustomization.yaml').read_text())
+        calls.append(config)
+        return (folder / ('resources.yaml' if 'namespace' in config else 'pod.yaml')).read_text()
+    result = run_discovery(tmp_path, options, runner=runner)
+    assert len(calls) == 2
+    assert calls[1]['namespace'] == 'prod'
+    assert calls[1]['namePrefix'] == 'production-'
+    assert calls[1]['images'][0]['newTag'] == '${TAG}'
+    assert result['images'][0]['reference'] == 'nginx:final'
+    assert result['completeness'] == 'complete'

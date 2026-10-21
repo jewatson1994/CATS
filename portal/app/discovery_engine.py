@@ -706,7 +706,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     if not local.is_dir() or not any((local / name).is_file() for name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')):
                         raise ValueError()
                     # Rendering-changing controller fields require their own implementation.
-                    supported = {'sourceRef', 'path', 'interval', 'retryInterval', 'timeout', 'prune', 'wait', 'force', 'postBuild', 'dependsOn', 'suspend'}
+                    supported = {'sourceRef', 'path', 'interval', 'retryInterval', 'timeout', 'prune', 'wait', 'force', 'postBuild', 'dependsOn', 'suspend', 'targetNamespace', 'namePrefix', 'nameSuffix', 'images', 'patches'}
                     if set(spec) - supported or spec.get('suspend'):
                         issue('flux_kustomization_options_not_evaluated', rid, path)
                         continue
@@ -738,7 +738,23 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     substitutions.update(inline)
                     if any(not isinstance(k, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) or compose._SECRET_NAME.search(k) or not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.:/@+\-]*', v) or any(secret in v for secret in secret_values) for k, v in substitutions.items()):
                         raise ValueError()
+                    transform = {key: spec[key] for key in ('namePrefix', 'nameSuffix', 'images', 'patches') if key in spec}
+                    if 'targetNamespace' in spec:
+                        transform['namespace'] = spec['targetNamespace']
+                    patches = transform.get('patches', [])
+                    if not isinstance(patches, list) or any(not isinstance(patch, dict) or set(patch) - {'patch', 'target'} or not isinstance(patch.get('patch'), str) for patch in patches):
+                        raise ValueError()
                     def substitute_output(output):
+                        if transform:
+                            with tempfile.TemporaryDirectory(prefix='.discovery-flux-', dir=base) as transformdir:
+                                transformbase = Path(transformdir)
+                                (transformbase / 'resources.yaml').write_text(output, encoding='utf-8')
+                                configuration = {'apiVersion': 'kustomize.config.k8s.io/v1beta1', 'kind': 'Kustomization', 'resources': ['resources.yaml'], **transform}
+                                (transformbase / 'kustomization.yaml').write_text(yaml.safe_dump(configuration), encoding='utf-8')
+                                output = runner('kustomize', ['build', str(transformbase)], str(base))
+                                if isinstance(output, dict):
+                                    result['tool_versions']['kustomize'] = _text(output.get('version', 'unknown'))
+                                    output = output['stdout']
                         if not post:
                             return output
                         rendered = []
@@ -765,7 +781,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 except (ValueError, TypeError, AttributeError, OSError, compose.ComposeInputError):
                     issue('flux_kustomization_source_or_substitution_unresolved', rid, path)
                 continue
-            if doc.get('kind') == 'HelmRepository' and artifact_resolver is not None:
+            if doc.get('kind') == 'HelmChart' or (doc.get('kind') == 'HelmRepository' and artifact_resolver is not None):
                 meta = doc.get('metadata', {})
                 helm_source_declarations.append(((doc.get('kind'), meta.get('namespace', 'default'), meta.get('name')), rid, path))
                 continue
@@ -789,9 +805,28 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if isinstance(dependency, dict):
                     reference(release_id, 'HelmRelease', dependency.get('name'), dependency.get('namespace', release_ns), rid, path, 'depends_on')
             chart_spec = spec.get('chart', {}).get('spec', {}) if isinstance(spec.get('chart'), dict) else {}
+            chart_ref = spec.get('chartRef')
+            chart_ref_key = None
+            if chart_ref is not None:
+                try:
+                    if not isinstance(chart_ref, dict) or set(chart_ref) - {'kind', 'name', 'namespace'} or 'chart' in spec:
+                        raise ValueError()
+                    chart_ref_key = (chart_ref.get('kind'), chart_ref.get('namespace', release_ns), chart_ref.get('name'))
+                    reference(release_id, chart_ref_key[0], chart_ref_key[2], chart_ref_key[1], rid, path, 'uses_source')
+                    if chart_ref_key in ambiguous_resources or chart_ref_key not in resources:
+                        raise ValueError()
+                    if chart_ref_key[0] == 'HelmChart':
+                        chart_spec = resources[chart_ref_key].get('spec', {})
+                        if not isinstance(chart_spec, dict) or set(chart_spec) - {'chart', 'version', 'sourceRef', 'interval', 'reconcileStrategy', 'suspend'} or chart_spec.get('suspend'):
+                            raise ValueError()
+                    elif chart_ref_key[0] != 'OCIRepository':
+                        raise ValueError()
+                except (ValueError, TypeError):
+                    issue('flux_chart_reference_unresolved', rid, path)
+                    continue
             source_ref = chart_spec.get('sourceRef', {}) if isinstance(chart_spec, dict) else {}
             if isinstance(source_ref, dict):
-                reference(release_id, source_ref.get('kind', 'HelmRepository'), source_ref.get('name'), source_ref.get('namespace', release_ns), rid, path, 'uses_source')
+                reference(release_id, source_ref.get('kind', 'HelmRepository'), source_ref.get('name'), source_ref.get('namespace', chart_ref_key[1] if chart_ref_key else release_ns), rid, path, 'uses_source')
             release_key = _id(path, doc)
             if release_key in rendered_releases:
                 continue
@@ -847,11 +882,21 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if spec.get('dependsOn'):
                 issue('flux_dependency_readiness_not_verified', rid, path)
             try:
-                chart = spec.get('chart', {}).get('spec', {}).get('chart')
+                chart = chart_spec.get('chart')
                 chart = options.get('chart_map', {}).get(chart, chart)
                 local = compose._inside(base, str(chart))
+                if chart_ref_key and chart_ref_key[0] == 'OCIRepository':
+                    package = local_source(chart_ref_key)
+                    candidates = list(package.rglob('Chart.yaml'))
+                    if not candidates:
+                        raise ValueError()
+                    depth = min(len(p.relative_to(package).parts) for p in candidates)
+                    candidates = [p for p in candidates if len(p.relative_to(package).parts) == depth]
+                    if len(candidates) != 1:
+                        raise ValueError()
+                    local = candidates[0].parent
                 if not (local / 'Chart.yaml').is_file():
-                    source_key = (source_ref.get('kind', 'HelmRepository'), source_ref.get('namespace', release_ns), source_ref.get('name'))
+                    source_key = (source_ref.get('kind', 'HelmRepository'), source_ref.get('namespace', chart_ref_key[1] if chart_ref_key else release_ns), source_ref.get('name'))
                     source_document = resources.get(source_key)
                     if source_key in ambiguous_resources or not isinstance(source_document, dict):
                         raise ValueError()
@@ -876,6 +921,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         resolved_helm_sources.add(source_key)
                     if not (local / 'Chart.yaml').is_file():
                         raise ValueError()
+                if chart_ref_key:
+                    resolved_helm_sources.add(chart_ref_key)
                 child_rid = root(local.relative_to(base).as_posix(), 'helm')
                 if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics']):
                     issue('flux_render_blocked_by_values', rid, path)
@@ -893,7 +940,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 result['edges'].append(dict(source=rid, target=child_rid, kind='renders'))
             except (ValueError, TypeError, OSError, AttributeError, compose.ComposeInputError):
                 issue('flux_chart_source_unavailable', rid, path)
-            if any(key in spec for key in ('dependsOn', 'chartRef', 'kubeConfig')):
+            if any(key in spec for key in ('kubeConfig',)):
                 issue('flux_controller_semantics_not_evaluated', rid, path)
             queue.extend(rendered_documents)
             rendered_documents.clear()
