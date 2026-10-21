@@ -248,7 +248,7 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
              'group_id':1,'options':{}}
     stages=[]
     checkpoints=[]
-    def discover(source,options,runner,progress,artifact_resolver=None):
+    def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None):
         assert runner is discovery_renderer.isolated_runner
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})
@@ -327,3 +327,31 @@ def test_confirm_cannot_stage_without_accounts_authority_or_valid_inventory(api)
     assert post(client, '/own/confirm', {**data,'root_ids':['unknown']}).status_code == 422
     assert db.scalar(select(Service).where(Service.service_key == 'unauthorized')) is None
     assert post(client, '/own/confirm', {**data,'new_service_key':'one'}).status_code == 409
+
+
+def test_supplements_are_scoped_immutable_and_encrypted(api, tmp_path):
+    client, db, _ = api
+    old, original = job(db)
+    job(db, 'foreign', 2)
+    folder=tmp_path/old.payload['source_id']; folder.mkdir()
+    (folder/old.payload['filename']).write_bytes(b'original encrypted source')
+    endpoint='/api/discovery/own/supplements'
+    fields={'acknowledge_non_secret':'true', 'target_path':'chart'}
+    upload={'upload':('values.yaml', b'image: nginx:1', 'text/plain')}
+    assert client.post('/api/discovery/foreign/supplements', data=fields, files=upload).status_code == 404
+    assert client.post(endpoint, data=fields, files=upload).status_code == 403
+    response=client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token':'csrf'})
+    assert response.status_code == 200, response.text
+    new=db.get(DurableJob, response.json()['job_id'])
+    supplement=new.payload['supplements'][0]
+    assert new.payload['source_id'] == old.payload['source_id']
+    assert supplement['parent_inventory_id'] == original.id
+    assert supplement['parent_content_hash'] == original.content_hash
+    assert 'supplements' not in old.payload
+    assert original.content_hash == '1'*64
+    encrypted=tmp_path/supplement['source_id']/supplement['filename']
+    assert b'image: nginx:1' not in encrypted.read_bytes()
+    with decrypted_source(encrypted, supplement['source_id'], supplement['source_hash']) as plain:
+        assert plain.read_bytes() == b'image: nginx:1'
+    fields['target_path']='../outside'
+    assert client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token':'csrf'}).status_code == 422

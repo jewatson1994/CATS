@@ -57,3 +57,49 @@ it('offers service staging only with group authority and sends one owner through
   const mutation = fetch.mock.calls.find(([,init]) => init?.method === 'POST');
   expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({csrf_token:'token',new_service_key:'new-service',root_ids:['root'],acknowledge_partial:true});
 });
+
+it('uploads supplemental files with resolution choices and opens the new immutable version', async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(
+    init?.method === 'POST' ? {job_id: 'job-2'} :
+    url.endsWith('/job-2') ? {job: {id: 'job-2', status: 'completed', group_id: 1}, inventory: {...inventory, images: [{reference: 'redis:7', root_id: 'root'}]}} :
+    url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory} : catalog
+  ), {headers: {'Content-Type': 'application/json'}}));
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{csrf_token: 'supplement-token'}}/>);
+  fireEvent.click(await screen.findByRole('button', {name: 'job-1 completed'}));
+  await screen.findByText('nginx:1');
+  fireEvent.click(screen.getByText('Supply missing files'));
+  const choices = {values_files: ['dependencies/values.yaml'], environment: 'staging'};
+  fireEvent.change(screen.getByLabelText('Resolution settings'), {target: {value: JSON.stringify(choices)}});
+  const file = new File(['image: redis:7'], 'values.yaml', {type: 'text/yaml'});
+  fireEvent.change(screen.getByLabelText('Missing files or archive'), {target: {files: [file]}});
+  // jsdom does not propagate fireEvent's FileList into native FormData(form).
+  // Bridge only file extraction; all named fields use the real form serializer.
+  const NativeFormData = FormData;
+  vi.stubGlobal('FormData', class extends NativeFormData {
+    constructor(form?: HTMLFormElement) {
+      super(form);
+      form?.querySelectorAll<HTMLInputElement>('input[type="file"]').forEach(input => {
+        if (input.files?.[0]) this.set(input.name, input.files[0]);
+      });
+    }
+  });
+  fireEvent.change(screen.getByLabelText(/Destination directory/), {target: {value: 'dependencies'}});
+  fireEvent.click(screen.getByRole('checkbox', {name: /These files contain no passwords/}));
+  fireEvent.submit(screen.getByRole('button', {name: 'Add files and resolve new version'}).closest('form')!);
+  await screen.findByText('redis:7');
+  const mutations = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+  expect(mutations).toHaveLength(1);
+  expect(new URL(mutations[0][0]).pathname).toBe('/api/discovery/job-1/supplements');
+  const body = mutations[0][1]?.body as FormData;
+  expect(body).toBeInstanceOf(FormData);
+  expect(body.get('upload')).toBeInstanceOf(File);
+  expect((body.get('upload') as File).name).toBe('values.yaml');
+  expect((body.get('upload') as File).size).toBe(file.size);
+  expect(body.get('target_path')).toBe('dependencies');
+  expect(body.get('acknowledge_non_secret')).toBe('true');
+  expect(body.get('csrf_token')).toBe('supplement-token');
+  expect(JSON.parse(String(body.get('options')))).toEqual(choices);
+  expect(fetch.mock.calls.some(([url]) => new URL(url).pathname === '/api/discovery/job-2')).toBe(true);
+  expect(screen.queryByText('nginx:1')).not.toBeInTheDocument();
+});

@@ -187,7 +187,7 @@ class ApprovedHTTPSArtifactResolver:
     identities and never supply URLs. No ambient proxies, credentials or redirects.
     """
 
-    def __init__(self, manifest_path, *, ca_file=None):
+    def __init__(self, manifest_path, *, ca_file=None, cache_directory=None):
         manifest = Path(manifest_path).absolute()
         if any(p.is_symlink() for p in (manifest, *manifest.parents)):
             raise ArtifactResolutionError('Mirror links are not allowed.')
@@ -229,6 +229,8 @@ class ApprovedHTTPSArtifactResolver:
         self._opener = request.build_opener(request.ProxyHandler({}),
             request.HTTPSHandler(context=context), _NoRedirect())
         self._cache = {}
+        self._disk_cache = Path(cache_directory) if cache_directory else None
+        self.cache_hits = 0
 
     def resolve(self, kind, reference, version):
         key = _identity(kind, reference, version)
@@ -237,6 +239,15 @@ class ApprovedHTTPSArtifactResolver:
         if key in self._cache:
             return self._cache[key]
         url, expected, name = self._entries[key]
+        from .discovery_artifact_cache import read_cached, write_cached
+        cache_id = hashlib.sha256(json.dumps([key, url, expected]).encode()).hexdigest()
+        cached = read_cached(self._disk_cache, cache_id, expected)
+        if cached is not None:
+            self.cache_hits += 1
+            identity_hash = hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
+            suffix = '.tar.gz' if name.lower().endswith('.tar.gz') else Path(name).suffix.lower()
+            return ResolvedArtifact(cached, 'artifact' + suffix, expected, kind, identity_hash,
+                                    'admin-approved-https-mirror')
         started = time.monotonic()
         data = bytearray()
         try:
@@ -270,6 +281,7 @@ class ApprovedHTTPSArtifactResolver:
         suffix = '.tar.gz' if name.lower().endswith('.tar.gz') else Path(name).suffix.lower()
         result = ResolvedArtifact(bytes(data), 'artifact' + suffix, digest, kind, identity_hash,
                                   'admin-approved-https-mirror')
+        write_cached(self._disk_cache, cache_id, bytes(data))
         # Bound retained bytes per discovery invocation, even with many identities.
         if sum(len(item.data) for item in self._cache.values()) + len(data) <= compose.MAX_TOTAL:
             self._cache[key] = result

@@ -108,3 +108,25 @@ def test_no_network_fallback_after_local_failure():
             pytest.fail('Integrity failure must not trigger network fallback')
     with pytest.raises(a.ArtifactResolutionError, match='checksum'):
         a.ArtifactResolverChain(Local(), Remote()).resolve('helm', 'chart', '1')
+
+def test_persistent_cache_reauthorizes_and_checks_integrity(tmp_path, monkeypatch):
+    import base64
+    monkeypatch.setenv('CATS_CONFIG_ENCRYPTION_KEY', base64.urlsafe_b64encode(b'x'*32).decode())
+    path = manifest(tmp_path)
+    cache = tmp_path / 'cache'
+    first = a.ApprovedHTTPSArtifactResolver(path, cache_directory=cache)
+    first._opener = Opener()
+    first.resolve('helm', 'oci://registry.example/chart', '1.2.3')
+    second = a.ApprovedHTTPSArtifactResolver(path, cache_directory=cache)
+    second._opener = Opener(b'wrong')
+    assert second.resolve('helm', 'oci://registry.example/chart', '1.2.3').data == b'archive'
+    assert second.cache_hits == 1 and not second._opener.calls
+    stored = next(cache.glob('*.artifact'))
+    assert b'archive' not in stored.read_bytes()
+    stored.write_bytes(b'corrupt')
+    with pytest.raises(a.ArtifactResolutionError, match='checksum'):
+        second.resolve('helm', 'oci://registry.example/chart', '1.2.3')
+    path.write_text(json.dumps(dict(version=2, allowed_origins=['https://mirror.example'], artifacts=[])))
+    revoked = a.ApprovedHTTPSArtifactResolver(path, cache_directory=cache)
+    with pytest.raises(a.ArtifactResolutionError, match='Exact artifact'):
+        revoked.resolve('helm', 'oci://registry.example/chart', '1.2.3')

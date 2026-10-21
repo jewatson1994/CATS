@@ -120,7 +120,7 @@ def _text(v):
 def _image(v):
     return isinstance(v, str) and len(v) <= 512 and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@+-]*', v))
 
-def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None):
+def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None):
     options = options or {}
     if not isinstance(options, dict):
         raise DiscoveryError('Options must be a mapping.')
@@ -321,7 +321,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     with tempfile.TemporaryDirectory(prefix='cats-discovery-mirror-') as mirror:
                         staged_artifact = artifact.stage(Path(mirror))
                         nested_options = {k: v for k, v in options.items() if k not in ('reference', 'reference_kind', 'reference_version')}
-                        resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver)
+                        resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver, supplemental_inputs)
                         resolved['artifact_provenance'] = [staged_artifact['provenance'], *resolved.get('artifact_provenance', [])]
                         return resolved
                 except (ValueError, OSError):
@@ -372,6 +372,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         except (compose.ComposeInputError, OSError, ValueError):
             raise DiscoveryError('Source archive is invalid or unsafe.') from None
         base = Path(staged['root'])
+        if supplemental_inputs:
+            from .discovery_supplements import apply_supplements
+            try:
+                result['supplemental_provenance'] = apply_supplements(base, supplemental_inputs)
+            except (compose.ComposeInputError, OSError, ValueError):
+                raise DiscoveryError('Supplemental inputs are unsafe, conflict, or exceed limits.') from None
         files = sorted(p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file())
         digest = hashlib.sha256()
         for path in files:
@@ -388,7 +394,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             try:
                 parsed[path] = _documents((base / path).read_text(encoding='utf-8-sig'))
             except (ValueError, yaml.YAMLError, UnicodeError, RecursionError):
-                issue('invalid_or_unsupported_document', path=path)
+                # Compose owns custom tags such as !reset and !override. Its
+                # native/fallback pass below reports invalid selected inputs.
+                if path not in compose_files and Path(path).name not in ('compose.override.yaml', 'compose.override.yml', 'docker-compose.override.yaml', 'docker-compose.override.yml'):
+                    issue('invalid_or_unsupported_document', path=path)
         kustomizations = [p for p in kustomizations if not any(isinstance(doc, dict) and 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', '')) for doc in parsed.get(p, []))]
         collect_secrets([doc for docs in parsed.values() for doc in docs])
         managed_paths = {p for p in parsed if any(Path(k).parent == Path('.') or Path(k).parent in Path(p).parents for k in kustomizations)}
@@ -570,6 +579,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 candidate = (Path(path).parent / suffix).as_posix()
                 if candidate in files:
                     selection.append(candidate)
+                    break
             model = compose.discover(base, selection, profiles=options.get('profiles'))
             native_services = None
             if runner is not None:
@@ -590,6 +600,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     else:
                         result['tool_versions'].setdefault('compose', 'unknown')
                     documents = _documents(output)
+                    if len(documents) != 1:
+                        raise ValueError()
                     native_services = documents[0]['services']
                     if not isinstance(native_services, dict):
                         raise ValueError()
@@ -610,7 +622,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         continue
                     nid = node(rid, 'ComposeService', name, path, 'rendered')
                     safe_service = next((item for item in model['services'] if item['name'] == name), None)
-                    if safe_service is not None and safe_service.get('image') is None:
+                    sensitive_image = any(d.get('code') == 'sensitive_interpolation' and d.get('service') == name for d in model['issues'])
+                    if sensitive_image and safe_service is not None and safe_service.get('image') is None:
                         issue('compose_image_requires_safe_resolution', rid, path)
                     else:
                         image(service.get('image'), rid, nid, path)
@@ -642,7 +655,20 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                             name = volume.get('source') if volume.get('type') == 'volume' else volume.get('target')
                             if name:
                                 edge(source_id, node(rid, 'ComposeVolume', name, path, 'rendered'), 'uses_volume')
+            # Native config owns Compose syntax, merging, interpolation, includes,
+            # extends and profile selection. The conservative fallback cannot
+            # veto those semantics after a successful native resolution.
+            native_resolved = {
+                'unsupported_feature', 'invalid_input', 'compose_schema',
+                'required_variable', 'unresolved_variable', 'interpolation',
+                'unsupported_dotenv', 'unresolved_image', 'unresolved_profiles',
+                'missing_dependency', 'no_active_services',
+            }
+            if native_services is not None and not native_services:
+                issue('no_active_services', rid, path)
             for diagnostic in model['issues']:
+                if native_services is not None and diagnostic.get('code') in native_resolved:
+                    continue
                 issue(diagnostic.get('code', 'compose_input_incomplete'), rid, path)
         for path, documents in parsed.items():
             if not next(a for a in ADAPTERS if a.technology == 'legacy').matches(path, documents):

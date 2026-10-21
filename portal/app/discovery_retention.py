@@ -35,6 +35,8 @@ def cleanup_sources(session_factory, batch_size=100):
             if path.is_file():
                 path.unlink()
                 removed += 1
+            from .discovery_supplements import remove_supplement_sources
+            remove_supplement_sources(upload_root(), siblings)
             for job in siblings:
                 job.result = {**job.result, 'source_expired': True}
             db.commit()

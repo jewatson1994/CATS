@@ -197,6 +197,83 @@ async def retry(job_id: str, request: Request, auth: AuthContext = Depends(requi
     job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id)
     return {'job_id':job.id}
 
+@router.post('/{job_id}/supplements')
+async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+    from .discovery_supplements import MAX_SUPPLEMENTS
+    from .compose_ingestion import _relative, ComposeInputError
+    old = get_job(db, auth, job_id, True)
+    parent = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == old.id))
+    if old.status != 'completed' or parent is None:
+        raise HTTPException(409, 'Discovery must finish before supplying dependencies')
+    chain = old.payload.get('supplements', [])
+    if len(chain) >= MAX_SUPPLEMENTS:
+        raise HTTPException(422, 'Supplemental upload limit reached; submit a new source bundle')
+    if not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
+        raise HTTPException(410, 'Discovery source expired; upload it again')
+    maximum = min(128*1024*1024, max(1, int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024)))))
+    receive, received = request._receive, 0
+    async def bounded_receive():
+        nonlocal received
+        message = await receive()
+        received += len(message.get('body', b''))
+        if received > maximum + 131072:
+            raise HTTPException(413, 'Discovery upload exceeds size limit')
+        return message
+    request._receive = bounded_receive
+    form = await request.form(max_files=1, max_fields=5, max_part_size=65536)
+    try:
+        csrf(auth, form.get('csrf_token', request.headers.get('X-CSRF-Token', '')))
+        if form.get('acknowledge_non_secret') != 'true':
+            raise HTTPException(422, 'Confirm that supplemental files contain no secrets or credentials')
+        try:
+            target_path = _relative(str(form.get('target_path', '.')))
+            selected = options(json.loads(str(form.get('options', json.dumps(old.payload.get('options', {}))))))
+        except (ValueError, TypeError, ComposeInputError):
+            raise HTTPException(422, 'Invalid supplemental path or options') from None
+        upload = form.get('upload')
+        if not isinstance(upload, UploadFile):
+            raise HTTPException(422, 'Supply one dependency file or archive')
+        filename = str(upload.filename or '')
+        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,180}', filename) or filename in ('.', '..'):
+            raise HTTPException(422, 'Supply a simple filename without directories')
+        try:
+            storage_key()
+        except SourceStorageError:
+            raise HTTPException(503, 'Discovery source encryption is not configured') from None
+        identity = uuid.uuid4().hex
+        folder = upload_root() / identity
+        folder.mkdir(parents=True, mode=0o750)
+        target = folder / filename
+        try:
+            digest, size = hashlib.sha256(), 0
+            with encrypted_writer(target, identity) as stream:
+                while chunk := await upload.read(1024*1024):
+                    size += len(chunk)
+                    if size > maximum:
+                        raise HTTPException(413, 'Discovery upload exceeds size limit')
+                    stream.write(chunk)
+                    digest.update(chunk)
+            if not size:
+                raise HTTPException(422, 'Supplemental upload is empty')
+            if os.name == 'posix':
+                gid = int(os.getenv('CATS_DISCOVERY_GID', '10003'))
+                os.chown(folder, -1, gid)
+                os.chown(target, -1, gid)
+                target.chmod(0o640)
+            record = dict(source_id=identity, filename=filename, source_hash=digest.hexdigest(), target_path=target_path,
+                          parent_job_id=old.id, parent_inventory_id=parent.id, parent_content_hash=parent.content_hash)
+            payload = {**old.payload, 'options': selected, 'previous_job_id': old.id, 'supplements': [*chain, record]}
+            job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id, commit=False)
+            record_audit(db, auth, 'discovery.supplement.submitted', 'discovery', job.id, parent_job_id=old.id, parent_inventory_id=parent.id, source_hash=digest.hexdigest())
+            db.commit()
+            return {'job_id': job.id}
+        except BaseException:
+            target.unlink(missing_ok=True)
+            folder.rmdir()
+            raise
+    finally:
+        await form.close()
+
 @router.post('/{job_id}/confirm')
 async def confirm(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     data = await body(request, auth)
@@ -296,12 +373,14 @@ async def forget_source(job_id: str, request: Request, auth: AuthContext = Depen
     await body(request, auth)
     job = get_job(db, auth, job_id, True)
     source_id = job.payload['source_id']
-    siblings = db.scalars(select(DurableJob).where(DurableJob.kind == 'discovery'))
+    siblings = db.scalars(select(DurableJob).where(DurableJob.kind == 'discovery', DurableJob.payload['source_id'].as_string() == source_id)).all()
     if any(j.payload.get('source_id') == source_id and j.status in ('queued','running') for j in siblings):
         raise HTTPException(409, 'Source is still in use')
     path = upload_root() / source_id / job.payload['filename']
     if not path.is_symlink() and path.resolve().is_relative_to(upload_root().resolve()):
         path.unlink(missing_ok=True)
+    from .discovery_supplements import remove_supplement_sources
+    remove_supplement_sources(upload_root(), siblings)
     record_audit(db, auth, 'discovery.source.removed', 'discovery', job.id)
     db.commit()
     return {'job_id': job.id, 'source_removed': True}

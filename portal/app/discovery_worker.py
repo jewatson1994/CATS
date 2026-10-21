@@ -1,9 +1,11 @@
 """Durable discovery execution; native renderers run in a separate sandbox."""
+from contextlib import ExitStack
 import hashlib
 import json
 import os
 from pathlib import Path
 import uuid
+import tempfile
 from sqlalchemy import select
 from . import models, discovery_models
 from .durable_jobs import JobError, run_worker
@@ -30,7 +32,7 @@ def configured_artifact_resolver():
     ca_file = admin_path('CATS_DISCOVERY_ARTIFACT_CA_FILE')
     try:
         local = LocalArtifactResolver(local_path) if local_path else None
-        remote = ApprovedHTTPSArtifactResolver(remote_path, ca_file=ca_file) if remote_path else None
+        remote = ApprovedHTTPSArtifactResolver(remote_path, ca_file=ca_file, cache_directory=(Path(tempfile.gettempdir()) / 'cats-discovery-artifact-cache') if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true' else None) if remote_path else None
         return ArtifactResolverChain(local, remote) if local and remote else local or remote
     except ArtifactResolutionError:
         raise JobError('Discovery artifact mirror configuration is invalid.') from None
@@ -64,12 +66,26 @@ def handle(ctx, payload):
         runner = RenderCache(isolated_runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
                              str(payload['group_id']) + ':' + token, tool_version)
     try:
-        with decrypted_source(source, token, payload['source_hash'], ctx.check) as plaintext:
+        with ExitStack() as stack:
+            plaintext = stack.enter_context(decrypted_source(source, token, payload['source_hash'], ctx.check))
+            supplements = []
+            from .discovery_supplements import MAX_SUPPLEMENTS
+            if len(payload.get('supplements', [])) > MAX_SUPPLEMENTS:
+                raise JobError('Too many supplemental uploads.')
+            for item in payload.get('supplements', []):
+                identity = item['source_id']
+                if len(identity) != 32 or any(c not in '0123456789abcdef' for c in identity):
+                    raise JobError('Invalid supplemental source identity')
+                path = upload_root() / identity / item['filename']
+                if path.parent.resolve() != (upload_root() / identity).resolve() or path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(upload_root().resolve()):
+                    raise JobError('Supplemental source expired or unavailable.')
+                plain = stack.enter_context(decrypted_source(path, identity, item['source_hash'], ctx.check))
+                supplements.append({**item, 'plaintext': plain})
             input_path = plaintext
             if plaintext.name == 'chart-reference.txt':
                 selected.update(reference=plaintext.read_text().strip(), reference_kind='chart')
                 input_path = None
-            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver)
+            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver, supplemental_inputs=supplements)
     except SourceStorageError as exc:
         raise JobError(str(exc)) from None
     except DiscoveryError:
@@ -78,6 +94,8 @@ def handle(ctx, payload):
             'metrics':{}, 'tool_versions':{}}
     if isinstance(runner, RenderCache):
         inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses, dependency_scoped_renders=runner.scoped_renders)
+    if payload.get('supplements'):
+        inventory['supplemental_sources'] = payload['supplements']
     inventory['selection'] = selected
     inventory['archive_hash'] = payload['source_hash']
     ctx.check()
