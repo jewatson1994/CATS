@@ -170,3 +170,56 @@ def test_group_template_inheritance_default_and_service_export():
     assert client.get(f"/admin/general-policy?group_id={child_id}").status_code == 200
     assert client.post(f"/admin/general-policy/group-parent?group_id={parent_id}",
                        data={"csrf_token": csrf(client), "parent_id": str(child_id)}).status_code == 422
+
+
+def test_old_saved_templates_preserve_layout_and_load_policy_page():
+    import json
+
+    client = new_client()
+    with SessionLocal() as db:
+        parent = Group(name="Old templates")
+        child = Group(name="Inherited templates")
+        db.add_all([parent, child])
+        db.flush()
+        child.parent_id = parent.id
+        parent_id, child_id = parent.id, child.id
+        originals = {}
+        for kind in ("poam", "asset_list", "ppsm"):
+            columns = list(reversed(default_template(kind)[:-2]))
+            columns[0]["heading"] = "Custom heading"
+            columns[0]["enabled"] = True
+            for key, payload in (
+                (f"purpose_export_template:{kind}", columns),
+                (f"group:{parent_id}:purpose_export_template:{kind}",
+                 {"mode": "custom", "columns": columns}),
+            ):
+                originals[key] = json.dumps(payload)
+                db.add(PortalSetting(key=key, value=originals[key]))
+        db.commit()
+        for kind in ("poam", "asset_list", "ppsm"):
+            expected = json.loads(originals[f"purpose_export_template:{kind}"])
+            for group_id in (None, parent_id, child_id):
+                actual = template_policy(db, kind, group_id)[0]
+                assert actual[:-2] == expected
+                assert all(not c["enabled"] for c in actual[-2:])
+                assert validate_template(kind, actual) == actual
+        assert all(db.scalar(select(PortalSetting).where(PortalSetting.key == key)).value == value
+                   for key, value in originals.items())
+    assert client.get(f"/admin/general-policy?group_id={parent_id}").status_code == 200
+    assert client.get(f"/admin/general-policy?group_id={child_id}").status_code == 200
+    assert client.get(f"/admin/general-policy/export-templates/poam?group_id={child_id}").status_code == 200
+
+
+def test_saved_template_compatibility_does_not_weaken_validation():
+    import pytest
+    from app.purpose_exports import _saved_template
+
+    old = default_template("poam")[:-2]
+    with pytest.raises(ValueError):
+        validate_template("poam", old)
+    for invalid in ([], old + [old[0]],
+                    [dict(old[0], field="unknown")] + old[1:],
+                    [dict(old[0], heading="=FORMULA()")] + old[1:],
+                    [dict(c, enabled=False) for c in old]):
+        with pytest.raises(ValueError):
+            _saved_template("poam", invalid)

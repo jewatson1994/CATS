@@ -89,6 +89,21 @@ def validate_template(kind, columns):
             for c in columns]
 
 
+def _saved_template(kind, columns):
+    """Extend older saved layouts without changing their selected export columns.
+
+    Only persisted layouts get compatibility handling. New submissions must still
+    contain every catalog field, and malformed saved columns remain invalid.
+    """
+    defaults = default_template(kind)
+    if not isinstance(columns, list) or not columns:
+        return validate_template(kind, columns)
+    present = {c.get("field") for c in columns
+               if isinstance(c, dict) and isinstance(c.get("field"), str)}
+    additions = [dict(c, enabled=False) for c in defaults if c["field"] not in present]
+    return validate_template(kind, columns + additions)
+
+
 def setting_key(kind):
     if kind not in CATALOG:
         raise ValueError("Unknown export template")
@@ -99,7 +114,7 @@ def template_for(db, kind):
     setting = db.scalar(select(PortalSetting).where(PortalSetting.key == setting_key(kind)))
     if setting is None:
         return default_template(kind), False
-    return validate_template(kind, json.loads(setting.value)), True
+    return _saved_template(kind, json.loads(setting.value)), True
 
 
 def policy_key(kind, group_id):
@@ -127,7 +142,7 @@ def template_policy(db, kind, group_id=None):
             if payload.get("mode") == "default":
                 return default_template(kind), "CATS Default", ("default" if current.id == group_id else "inherit")
             if payload.get("mode") == "custom":
-                columns = validate_template(kind, payload.get("columns"))
+                columns = _saved_template(kind, payload.get("columns"))
                 return columns, (f"Custom for {current.name}" if current.id == group_id else f"Inherited from {current.name}"), ("custom" if current.id == group_id else "inherit")
         current = db.get(Group, current.parent_id) if current.parent_id is not None else None
     columns, legacy = template_for(db, kind)
