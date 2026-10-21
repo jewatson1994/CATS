@@ -61,7 +61,7 @@ export interface PageData {
   can?: Record<string, Record<string, boolean>>;
   next_path?: string;
   pending_request_count?: number;
-  actionable_notifications?: {label: string; service: string}[];
+  actionable_notifications?: {label: string; service: string; href?: string}[];
   cats_deployed_version?: string;
   [key: string]: any;
 }

@@ -41,11 +41,11 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
         {!!data.pending_request_count && <span className="notification-badge">{data.pending_request_count}</span>}
       </summary><div className="notification-popover"><strong>Notifications</strong>
         {data.actionable_notifications?.length ? <>{data.actionable_notifications.map((item, index) =>
-          <a key={index} href="/requests">{item.label}<small>{item.service}</small></a>)}
+          <a key={index} href={item.href || "/requests"}>{item.label}<small>{item.service}</small></a>)}
           <a className="notification-all" href="/requests">View all requests</a></> : <span className="muted">No action required.</span>}
       </div></details>
-      {(can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy) &&
-        <a className="admin-entry" aria-label="Administration" title="Administration" href={can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration' : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : '/admin/approved-release-destinations'}><Icon name="gear"/></a>}
+      {(data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy) &&
+        <a className="admin-entry" aria-label="Administration" title="Administration" href={data.may_manage_accounts || can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration' : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : '/admin/approved-release-destinations'}><Icon name="gear"/></a>}
       <details className="user-menu"><summary>{user.display_name}<Icon name="chevron"/></summary><div className="menu-popover">
         <details className="appearance-menu"><summary>Appearance</summary><form method="post" action="/account/appearance">
           <input type="hidden" name="csrf_token" value={data.csrf_token}/><input type="hidden" name="next_path" value={window.location.pathname + window.location.search}/>

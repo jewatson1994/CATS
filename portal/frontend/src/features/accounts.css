@@ -1,0 +1,8 @@
+.role-assignment-form {display:grid; gap:1rem}
+.role-assignment-form fieldset {min-width:0; padding:1rem; border:1px solid var(--border, #cbd5e1); border-radius:.5rem}
+.assignment-service-list {max-height:16rem; overflow:auto; display:grid; gap:.5rem; margin-top:.75rem}
+.assignment-service-list label {display:flex; align-items:center; gap:.6rem}
+.assignment-service-list label[hidden] {display:none}
+.assignment-service-list input {width:auto}
+.account-method-tabs {display:flex; gap:.5rem; flex-wrap:wrap; margin:1rem 0}
+.account-method-tabs button[aria-pressed="true"] {outline:2px solid currentColor; outline-offset:2px}

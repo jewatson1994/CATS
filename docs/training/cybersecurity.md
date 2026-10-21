@@ -2,7 +2,7 @@
 
 [Training index](README.md) · [Service workflows](service-manager.md)
 
-Cybersecurity can review/edit scoped services, ingest scans, execute remediation, review governance, remove evidence, restore archived services, view audit records, configure security policy, and manage validators/signing. The built-in role excludes accounts/roles, permanent service deletion, and some specialized administrative exports.
+Cybersecurity can review/edit scoped services, ingest scans, execute remediation, review governance, remove evidence, restore archived services, view audit records, configure security policy, and manage validators/signing. Cybersecurity can also stage services and manage eligible account role grants within its authorized groups. Global account administration, identity linking, permanent service deletion, and some specialized administrative exports remain administrator responsibilities.
 
 ## Investigate dashboard metrics
 
@@ -37,3 +37,11 @@ Investigate a Critical metric, identify a service/package contributor, and expla
 ## Risk Policy and native VEX
 
 Use **Administration → Risk Policy** for profiles and assessment review within your authorized groups. Risk scores support prioritization and do not substitute for Cyber approval. Native VEX exclusion is separately controlled in General Policy and can change actionable findings when enabled. Complete the [Risk Policy and VEX walkthrough](risk-policy-and-vex.md) before changing these policies.
+
+## Onboard accounts within your groups
+
+A signed-in account with no effective permissions sees only: **Contact your cybersecurity POC for access.** Its pending request appears in the notification bell for Cybersecurity users. Open the request to reach **Accounts & Roles**.
+
+Choose **Claim as Assessor**. A single authorized group is preselected; when you cover several groups, select the appropriate one before claiming. Claiming grants Assessor access only to that group, not your own Cybersecurity permissions. The user can refresh their existing session to enter CATS. Once claimed, the request is no longer available to other reviewers.
+
+Use the **Local**, **OIDC**, and **Both** tabs to distinguish sign-in methods. Both means the account has a local password and a linked OIDC identity. Use the role assignment dialog to choose a role and its scope. Cybersecurity can grant only eligible roles within its groups and cannot grant global administration or alter externally managed OIDC grants. Global administrators manage identity linking and account lifecycle actions.

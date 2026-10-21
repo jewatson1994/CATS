@@ -20,7 +20,7 @@ describe('native administration workflows', () => {
     const {container} = render(<Admin data={{...permissions, users: [], roles: [], services: [], groups: [], permission_catalog: {'audit.view': 'Review events'}, user_rows: [
       {user: {id: 1, display_name: 'Jane', username: 'jane', auth_source: 'local', enabled: true, is_self: true}, assignments: [{id: 7, role: 'Reviewer', group: 'Team', service: 'All services in group'}], permissions: ['audit.view']},
       {user: {id: 2, display_name: 'Pat', username: 'pat', auth_source: 'oidc', enabled: false}, assignments: [], permissions: []}]}}/>);
-    expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Username', 'Enabled', 'Source', 'Last login']);
+    expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Username', 'Enabled', 'Sign-in methods', 'Last login']);
     expect(screen.queryByText('Reviewer')).not.toBeVisible();
     fireEvent.click(screen.getByRole('button', {name: 'jane'}));
     const account = screen.getByRole('dialog', {name: 'Account: jane'});
@@ -28,19 +28,20 @@ describe('native administration workflows', () => {
     expect(within(account).getByText('Team')).toBeVisible();
     expect(account.querySelector('form[action="/admin/assignments"] input[name="user_id"]')).toHaveValue('1');
     expect(account.querySelector('form[action="/admin/assignments"] input[name="csrf_token"]')).toHaveValue('csrf');
-    expect(container.querySelectorAll('.account-record')).toHaveLength(2);
+    expect(container.querySelectorAll('.account-record')).toHaveLength(1);
     for (const action of ['/admin/users', '/admin/roles', '/admin/assignments', '/admin/groups']) {
       const form = container.querySelector(`form[action="${action}"]`);
       expect(form?.closest('dialog')).not.toBeNull();
       expect(form?.querySelector('input[name="csrf_token"]')).toHaveValue('csrf');
     }
     expect(container.querySelector('.account-assignment')).toHaveTextContent('ReviewerTeamAll services in group');
-    fireEvent.change(screen.getByRole('searchbox'), {target: {value: 'PAT'}});
+    fireEvent.click(screen.getByRole('button', {name: 'OIDC (1)'}));
+    fireEvent.change(screen.getByLabelText('Find an account'), {target: {value: 'PAT'}});
     expect(container.querySelectorAll('.account-record')).toHaveLength(1);
     expect(container.querySelector('.account-record')).toHaveTextContent('Pat');
     expect(Array.from(container.querySelectorAll('tbody tr > td')).slice(1).map(cell => cell.textContent)).toEqual(['Disabled', 'OIDC', 'Never']);
-    fireEvent.change(screen.getByRole('searchbox'), {target: {value: 'missing'}});
-    expect(screen.getByText('No accounts match your search.')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Find an account'), {target: {value: 'missing'}});
+    expect(screen.getByText('No accounts match this sign-in method and search.')).toBeInTheDocument();
   });
   it('preserves account actions while preventing self-disable/delete and nonlocal reset', () => {
     const {container} = render(<Admin data={{...permissions, users: [], roles: [], services: [], groups: [], permission_catalog: {'audit.view': 'Review events'}, user_rows: [
@@ -51,6 +52,7 @@ describe('native administration workflows', () => {
     expect(container.querySelector('form[action="/admin/users/1/delete"]')).toBeNull();
     expect(container.querySelector('form[action="/admin/users/1/reset-password"] input[name="temporary_password"]')).toHaveAttribute('minlength', '14');
     expect(container.querySelector('form[action="/admin/users/2/reset-password"]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', {name: 'OIDC (1)'}));
     expect(container.querySelector('form[action="/admin/users/2/delete"] input[name="csrf_token"]')).toHaveValue('csrf');
     fireEvent.click(screen.getByRole('button', {name: 'pat'}));
     expect(screen.getByRole('button', {name: 'Enable'})).toBeVisible();

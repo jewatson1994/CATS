@@ -12,6 +12,7 @@ def project_admin(data, name, context, can=None, formatters=None):
     data.update(_fields(context, ("saved", "error", "selected_group_id", "shown_count", "retained_count", "next_show")))
     for permission in ("user.manage", "role.manage", "config.manage", "audit.view"):
         data.setdefault("can", {})[permission] = {"*": bool(can(permission)) if callable(can) else False}
+    data["may_assign_roles"] = bool(context.get("may_assign_roles"))
     data["groups"] = rows("groups", ("id", "name"))
     if name in {"admin.html", "staging.html"}:
         data["stage_groups"] = rows("stage_groups", ("id", "name"))
@@ -27,10 +28,11 @@ def project_admin(data, name, context, can=None, formatters=None):
         for row in context.get("user_rows", []):
             user = _field(row, "user")
             projected = _fields(user, ("id", "username", "display_name", "auth_source", "enabled"))
+            projected["sign_in_methods"] = strings(_field(row, "sign_in_methods", []))
             projected["is_self"] = _field(user, "id") == _field(context.get("current_user"), "id")
             projected["last_login_at"] = _formatted(_field(user, "last_login_at"), formatters.get("cats_datetime"))
             data["user_rows"].append({"user": projected,
-                "assignments": [_fields(item, ("id", "role", "group", "service", "source", "active", "permissions")) for item in _field(row, "assignments", [])],
+                "assignments": [_fields(item, ("id", "role", "group", "service", "source", "active", "permissions", "may_remove")) for item in _field(row, "assignments", [])],
                 "eligibility": [_fields(item, ("role", "mapping_id", "active", "mode")) for item in _field(row, "eligibility", [])],
                 "application_permissions": strings(_field(row, "application_permissions", [])),
                 "permissions": [key for key in _field(row, "permissions", []) if key in catalog]})

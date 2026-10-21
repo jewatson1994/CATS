@@ -161,6 +161,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
     can = context.get("can")
     path = request.url.path
     data = {
+        "may_claim_accounts": bool(context.get("may_claim_accounts")),
+        "may_manage_accounts": bool(context.get("may_manage_accounts")),
         "current_user": _fields(user, ("display_name", "theme")) if user is not None else None,
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},
@@ -168,7 +170,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
                         for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
         "pending_poam_count": _scalar(context.get("pending_poam_count", 0)),
-        "actionable_notifications": [_fields(item, ("label", "service"))
+        "actionable_notifications": [_fields(item, ("label", "service", "href"))
                                      for item in context.get("actionable_notifications", [])],
         "cats_deployed_version": _scalar(deployed_version),
         "request_path": path,

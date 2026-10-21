@@ -4,7 +4,7 @@ import {Csrf} from '../components/Form';
 
 export function AdminTabs({data, selected}: {data: PageData; selected: string}) {
   const group = data.selected_group_id ? `?group_id=${data.selected_group_id}` : '';
-  const items = [['accounts', '/admin', 'Accounts & roles', can(data, 'user.manage')], ['configuration', '/admin/configuration', 'Settings', can(data, 'config.manage')],
+  const items = [['accounts', '/admin', 'Accounts & roles', can(data, 'user.manage') || can(data, 'role.manage') || data.may_assign_roles === true || data.may_manage_accounts === true], ['configuration', '/admin/configuration', 'Settings', can(data, 'config.manage')],
     ['general', `/admin/general-policy${group}`, 'General Policy', can(data, 'audit.view') || can(data, 'config.manage')],
     ['compliance', '/admin/compliance-frameworks', 'Hardening Policy', can(data, 'config.manage')], ['vulnerability', `/admin/compliance${group}`, 'Vulnerability Policy', can(data, 'config.manage')],
     ['risk', `/admin/risk-policy${group}`, 'Risk Policy', Boolean(data.may_manage_risk_policy) || can(data, 'config.manage')],

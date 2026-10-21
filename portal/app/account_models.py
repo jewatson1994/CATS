@@ -30,3 +30,14 @@ class AccountChangePreview(Base):
     payload: Mapped[dict] = mapped_column(JSON)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     consumed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class AccountAccessRequest(Base):
+    """One durable request per account; compare-and-set protects competing claims."""
+    __tablename__ = "account_access_requests"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    claimed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))

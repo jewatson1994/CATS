@@ -460,6 +460,8 @@ from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
 app.include_router(account_router)
+from . import access_requests
+app.include_router(access_requests.router)
 from .jobs_view import router as jobs_router
 from .export_jobs import router as export_jobs_router
 app.include_router(jobs_router)
@@ -473,6 +475,34 @@ app.add_middleware(PerformanceMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 snapshot_logger = logging.getLogger("cats.snapshot")
 PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))))
+
+
+ACCESS_PENDING_MESSAGE = "Contact your cybersecurity POC for access."
+
+
+def access_pending_response():
+    return HTMLResponse("<!doctype html><html><head><title>CATS</title></head>"
+        '<body style="margin:0;min-height:100vh;display:grid;place-items:center;'
+        'background:#081411;color:#e4efeb;font:18px system-ui">'
+        '<p>Contact your cybersecurity POC for access.</p></body></html>',
+        headers={"Cache-Control": "no-store"})
+
+
+@app.middleware("http")
+async def pending_access_gate(request: Request, call_next):
+    # Authenticated accounts without effective access must not fall through to
+    # anonymous/public workflows or receive a navigation/data payload.
+    if request.cookies.get(SESSION_COOKIE) and request.url.path not in {"/logout"}:
+        with SessionLocal() as db:
+            auth = optional_user(request, db)
+            if auth and not access_requests.has_effective_access(auth):
+                access_requests.register_pending_request(db, auth)
+                db.commit()
+                if request.url.path.startswith("/api/") or request.method != "GET":
+                    return JSONResponse({"detail": ACCESS_PENDING_MESSAGE}, status_code=403,
+                                        headers={"Cache-Control": "no-store"})
+                return access_pending_response()
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -1313,6 +1343,10 @@ def page_context(auth: AuthContext, **values):
                 if not auth.has(permission, item.service_id):
                     continue
                 actionable_notifications.append({"label": item.request_type.replace("_", " ").title(), "service": item.name or "Service"})
+            access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
+                                     "href": "/admin#access-requests"}
+                                    for item in access_requests.list_pending_requests(nav_db, auth)]
+            actionable_notifications = access_notifications + actionable_notifications
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
             # as the navigation count, so counting them in memory avoids a
@@ -1326,6 +1360,8 @@ def page_context(auth: AuthContext, **values):
         # An unknown revision must never share a partition with a known one.
         cache_scope_value = f"uncached-{uuid.uuid4().hex}"
     return {
+        "may_claim_accounts": access_requests.is_cybersecurity(auth),
+        "may_manage_accounts": auth.has("user.manage") or access_requests.is_cybersecurity(auth),
         "may_manage_risk_policy": any(a.service_id is None and "config.manage" in (a.role.permissions or []) for a in auth.effective_assignments),
         "current_user": auth.user,
         "cache_scope": cache_scope_value,
@@ -1499,14 +1535,38 @@ def configurations_for_services(
 
 
 def manageable_groups(db: Session, auth: AuthContext) -> list[Group]:
-    groups = db.scalars(select(Group).order_by(Group.name)).all()
-    if any(a.service_id is None and a.group_id is None and a.role.name == "Administrator" for a in auth.effective_assignments):
-        return groups
-    allowed = {
-        a.group_id for a in auth.effective_assignments
-        if a.group_id is not None and a.service_id is None and a.role.name == "Cybersecurity" and "config.manage" in (a.role.permissions or [])
-    }
-    return [group for group in groups if group.id in allowed]
+    from .access_requests import authorized_claim_groups
+    if auth.has("user.manage"):
+        return list(db.scalars(select(Group).order_by(Group.name)))
+    return authorized_claim_groups(db, auth)
+
+
+def require_account_operator(auth: AuthContext = Depends(require_user)) -> AuthContext:
+    from .access_requests import can_manage_accounts
+    if not can_manage_accounts(auth) and not auth.has("role.manage"):
+        raise HTTPException(403, detail="Account management access required")
+    return auth
+
+
+def scoped_assignment_visible(assignment: UserRoleAssignment, group_ids: set[int]) -> bool:
+    if assignment.group_id is not None:
+        return assignment.group_id in group_ids
+    return bool(assignment.service and assignment.service.groups
+                and {g.id for g in assignment.service.groups} <= group_ids)
+
+
+def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int) -> bool:
+    from .auth import SYSTEM_ROLES
+    permissions = set(role.permissions or [])
+    if permissions & APPLICATION_PERMISSIONS:
+        if not (role.system and role.name in {"Assessor", "Cybersecurity"}
+                and permissions == set(SYSTEM_ROLES[role.name])):
+            return False
+    available = set()
+    for assignment in auth.effective_assignments:
+        if assignment.service_id is None and assignment.group_id in (None, group_id):
+            available.update(assignment.role.permissions or [])
+    return bool(permissions) and permissions <= PERMISSIONS.keys() and (permissions - APPLICATION_PERMISSIONS) <= available
 
 
 def requested_group_scope(group_id: str | int | None, db: Session, auth: AuthContext) -> int | None:
@@ -2680,8 +2740,8 @@ def _oidc_callback(request: Request, db: Session):
                           user_agent=request.headers.get("user-agent"), source_ip=request.client.host if request.client else None)
     db.add(session)
     auth_context = AuthContext(user, session)
-    has_access = any(auth_context.has(permission) or bool(auth_context.accessible_service_ids(permission))
-                     for permission in PERMISSIONS)
+    has_access = access_requests.has_effective_access(auth_context)
+    access_requests.register_pending_request(db, auth_context)
     event = oidc_diagnostic("authorization", "access_assigned" if has_access else "no_assigned_access", outcome="success")
     record_audit(db, auth_context, "auth.oidc_login", "user", user.id, **event)
     db.commit()
@@ -2709,10 +2769,7 @@ def _oidc_failure_response(message, reference):
 
 @app.get("/account/access")
 def account_access(request: Request, auth: AuthContext = Depends(require_user)):
-    return templates.TemplateResponse(request, "request_error.html", {
-        "auth": auth, "title": "Signed in successfully",
-        "detail": "Your identity was verified, but no CATS access is assigned. Ask a CATS administrator to review your role eligibility and service or group assignments. Existing sessions receive scope updates on their next request.",
-    }, headers={"Cache-Control": "no-store"})
+    return RedirectResponse("/", status_code=303) if access_requests.has_effective_access(auth) else access_pending_response()
 
 
 @app.post("/login")
@@ -2757,9 +2814,13 @@ def login(
         source_ip=request.client.host if request.client else None,
     )
     db.add(session)
-    record_audit(db, AuthContext(user, session), "auth.login", "user", user.id)
+    auth_context = AuthContext(user, session)
+    access_requests.register_pending_request(db, auth_context)
+    record_audit(db, auth_context, "auth.login", "user", user.id)
     db.commit()
     destination = "/account/password" if user.must_change_password else (next if next.startswith("/") and not next.startswith("//") else "/")
+    if not access_requests.has_effective_access(auth_context):
+        destination = "/account/access"
     response = RedirectResponse(destination, status_code=303)
     response.set_cookie(
         SESSION_COOKIE, raw_token, httponly=True, samesite="strict",
@@ -10409,7 +10470,10 @@ def save_audit_policy(
 
 
 @app.get("/admin", response_class=HTMLResponse)
-def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("user.manage"))):
+def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_account_operator)):
+    scoped = not auth.has("user.manage")
+    allowed_groups = manageable_groups(db, auth)
+    group_ids = {group.id for group in allowed_groups}
     users = db.scalars(select(User).options(
         selectinload(User.role_assignments).selectinload(UserRoleAssignment.role),
         selectinload(User.role_assignments).selectinload(UserRoleAssignment.service),
@@ -10420,7 +10484,16 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
         selectinload(Service.groups), selectinload(Service.archive_events),
     ).order_by(Service.name)).all()
     groups = db.scalars(select(Group).order_by(Group.name)).all()
-    stage_groups = manageable_groups(db, auth)
+    stage_groups = allowed_groups
+    if scoped:
+        groups = allowed_groups
+        services = [service for service in services if service.groups and {g.id for g in service.groups} <= group_ids]
+        roles = [role for role in roles if any(scoped_role_allowed(auth, role, gid) for gid in group_ids)]
+        users = [user for user in users if any(scoped_assignment_visible(a, group_ids)
+                 for a in AuthContext(user, auth.session).effective_assignments)]
+    from .account_models import OidcAccountIdentity
+    oidc_users = set(db.scalars(select(OidcAccountIdentity.user_id).where(
+        OidcAccountIdentity.user_id.in_([user.id for user in users]))))
     group_summaries = [
         {
             "group": group,
@@ -10436,6 +10509,8 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
         user_auth = AuthContext(user, auth.session)
         effective = user_auth.effective_assignments
         for assignment in user.role_assignments:
+            if scoped and not scoped_assignment_visible(assignment, group_ids):
+                continue
             active = assignment in effective
             assignment_permissions = [p for p in (assignment.role.permissions or [])
                                       if (assignment.service_id is None and assignment.group_id is None)
@@ -10450,24 +10525,31 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
                 ),
                 "id": assignment.id,
                 "source": assignment.source,
+                "may_remove": (auth.has("role.manage") or (scoped and assignment.group_id in group_ids
+                               and scoped_role_allowed(auth, assignment.role, assignment.group_id)))
+                              and assignment.source != "oidc" and not assignment.oidc_mapping_id,
                 "active": active,
                 "permissions": assignment_permissions if active else [],
             })
         eligible_roles = [{"role": entry.mapping.role.name, "mapping_id": entry.mapping_id,
                            "active": entry.mapping.enabled, "mode": entry.mapping.scope_mode}
                           for entry in user.oidc_eligibilities if entry.mapping]
+        if scoped:
+            eligible_roles = []
         user_rows.append({"user": user, "assignments": assignments, "permissions": sorted(permissions),
                           "eligibility": eligible_roles,
-                          "application_permissions": [p for p in PERMISSIONS if user_auth.has(p)]})
+                          "sign_in_methods": (["local"] if user.password_hash else []) + (["oidc"] if user.id in oidc_users else []),
+                          "application_permissions": [] if scoped else [p for p in PERMISSIONS if user_auth.has(p)]})
     return templates.TemplateResponse(request, "admin.html", page_context(
         auth, users=users, user_rows=user_rows, roles=roles, services=services, groups=groups,
         group_summaries=group_summaries, permission_catalog=PERMISSIONS, stage_groups=stage_groups,
         saved=request.query_params.get("saved") == "1",
+        may_assign_roles=auth.has("role.manage") or scoped,
     ))
 
 
 @app.get("/admin/staging", response_class=HTMLResponse)
-def staging_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("user.manage"))):
+def staging_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_account_operator)):
     return templates.TemplateResponse(request, "staging.html", page_context(
         auth, stage_groups=manageable_groups(db, auth), saved=request.query_params.get("saved") == "1",
     ))
@@ -10477,7 +10559,7 @@ def staging_page(request: Request, db: Session = Depends(get_db), auth: AuthCont
 def stage_service(
     service_id: str = Form(), group_id: str = Form(default=""), csrf_token: str = Form(),
     next_path: str = Form(default="/admin/staging"),
-    db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("user.manage")),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_account_operator),
 ):
     check_csrf(auth, csrf_token)
     service_key = service_id.strip()
@@ -10486,7 +10568,7 @@ def stage_service(
     if db.scalar(select(Service).where(Service.service_key == service_key)):
         raise HTTPException(409, detail="That service is already staged or registered")
     groups = manageable_groups(db, auth)
-    if len(groups) == 1:
+    if len(groups) == 1 and not group_id:
         selected_group = groups[0]
     else:
         try:
@@ -11744,9 +11826,13 @@ def assign_role(
     service_id: str = Form(default=""), group_id: str = Form(default=""),
     assignment_mode: str = Form(default="local"), explicit_global: bool = Form(default=False),
     csrf_token: str = Form(), db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_permission("role.manage")),
+    auth: AuthContext = Depends(require_account_operator),
 ):
     check_csrf(auth, csrf_token)
+    scoped = not auth.has("role.manage")
+    from .access_requests import is_cybersecurity
+    if scoped and not is_cybersecurity(auth):
+        raise HTTPException(403, detail="Role management access required")
     user, role = db.get(User, user_id), db.get(Role, role_id)
     if not user or not role:
         raise HTTPException(404)
@@ -11756,9 +11842,23 @@ def assign_role(
             OidcClaimMapping.role_id == role_id, OidcClaimMapping.scope_mode == "cats_managed")):
         raise HTTPException(422, detail="Configure a CATS-managed scope mapping for this role first")
     selected_service_ids = list(dict.fromkeys(service_ids))
-    if not selected_service_ids and service_id:
-        selected_service_ids = [int(service_id)]
-    group_scope = int(group_id) if group_id else None
+    try:
+        if not selected_service_ids and service_id:
+            selected_service_ids = [int(service_id)]
+        group_scope = int(group_id) if group_id else None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(422, detail="Select a valid scope") from exc
+    if scoped:
+        group_ids = {group.id for group in manageable_groups(db, auth)}
+        if assignment_mode != "local" or explicit_global or group_scope not in group_ids:
+            raise HTTPException(403, detail="Select an authorized group for a local grant")
+        if not any(scoped_assignment_visible(a, group_ids) for a in AuthContext(user, auth.session).effective_assignments):
+            raise HTTPException(403, detail="Account is outside your managed groups")
+        if not scoped_role_allowed(auth, role, group_scope):
+            raise HTTPException(403, detail="Role exceeds your delegation authority")
+        group = db.get(Group, group_scope)
+        if any(sid not in {service.id for service in group.services} for sid in selected_service_ids):
+            raise HTTPException(403, detail="Service is outside the selected group")
     if any(not db.get(Service, selected_id) for selected_id in selected_service_ids) or (group_scope is not None and not db.get(Group, group_scope)):
         raise HTTPException(422, detail="The selected scope does not exist")
     if assignment_mode == "cats_scope" and not selected_service_ids and group_scope is None and not explicit_global:
@@ -11797,12 +11897,20 @@ def assign_role(
 @app.post("/admin/assignments/{assignment_id}/delete")
 def remove_assignment(
     assignment_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
-    auth: AuthContext = Depends(require_permission("role.manage")),
+    auth: AuthContext = Depends(require_account_operator),
 ):
     check_csrf(auth, csrf_token)
     assignment = db.get(UserRoleAssignment, assignment_id)
     if not assignment:
         raise HTTPException(404)
+    if assignment.source == "oidc" or assignment.oidc_mapping_id:
+        raise HTTPException(409, detail="OIDC-managed grants must be changed through their mapping")
+    if not auth.has("role.manage"):
+        from .access_requests import is_cybersecurity
+        group_ids = {group.id for group in manageable_groups(db, auth)}
+        if (not is_cybersecurity(auth) or assignment.group_id not in group_ids
+                or not scoped_role_allowed(auth, assignment.role, assignment.group_id)):
+            raise HTTPException(403, detail="Assignment is outside your delegation authority")
     if assignment.user_id == auth.user.id and assignment.role.name == "Administrator":
         raise HTTPException(409, detail="You cannot remove your own Administrator role")
     record_audit(db, auth, "role.unassigned", "user_role_assignment", assignment.id,
@@ -11841,7 +11949,7 @@ def reset_user_password(
 ):
     check_csrf(auth, csrf_token)
     user = db.get(User, user_id)
-    if not user or user.auth_source != "local":
+    if not user or not user.password_hash:
         raise HTTPException(404)
     from .account_models import AccountRetirement
     if db.get(AccountRetirement, user.id):
