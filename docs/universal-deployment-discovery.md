@@ -63,7 +63,7 @@ The dedicated worker runs UID/GID 10003, read-only root, no capabilities, no-new
 
 Native invocation limits: 60 seconds and 16 MiB combined output. Archive limits: 500 files, 32 MiB expanded total and 4 MiB per file; traversal, links, duplicates, malformed archives and excessive YAML structure are rejected. YAML is capped at depth 50 and 30,000 structural nodes. Downstream resource processing is bounded at 2,000 queue entries. These conservative limits intentionally reject some large projects; they are not a claim of support for unlimited repositories.
 
-**Deployment blocker:** Docker's default seccomp policy blocks Bubblewrap setup on the tested host. A temporary default-derived policy passed native tests. Installing that worker-only policy remains pending explicit operator approval; Compose currently fails closed for native rendering on that host. Do not use privileged mode, seccomp-unconfined or writable host `/proc` as a workaround. Hosts must also permit unprivileged user namespaces. The container policy permits sandbox setup; the stricter child filter applies after setup.
+**Container sandbox policy:** Following explicit operator approval, Compose applies `deploy/discovery-seccomp.json` only to the Discovery worker. This default-derived policy permits Bubblewrap setup, which Docker's default profile blocked on the tested host. Do not use privileged mode, seccomp-unconfined or writable host `/proc` as a workaround. Hosts must also permit unprivileged user namespaces. The container policy permits sandbox setup; the stricter child filter applies after setup.
 
 ## Workflow, RBAC and Scan
 
@@ -96,6 +96,6 @@ Recorded on 2026-10-20:
 
 ## Remaining acceptance work
 
-Actual Singularity repository/chart artifacts were not supplied. Its prior all-but-two-chart result has **not** been reproduced; the two unresolved charts cannot be investigated from synthetic fixtures. No real-world Singularity acceptance is claimed.
+The operator confirmed that actual Singularity repository/chart artifacts are available only in their isolated environment and cannot be accessed here. Its prior all-but-two-chart result has **not** been reproduced; the two unresolved charts cannot be investigated from synthetic fixtures. No real-world Singularity acceptance is claimed.
 
 This implementation is a working local-source Discovery workflow, but does not yet fulfill the complete universal mission: approved external/mirror artifact retrieval, full Flux controller semantics, incremental dependency-only rerendering, direct Git ingestion, full release packaging of the sandbox policy, and comprehensive hundred-chart/native/concurrent-worker resource benchmarks remain. Environment labels and ordered file choices are explicit operator selections; automatic reliable environment inference is not claimed. Review currently associates existing services instead of creating them. No automatic scan mode is enabled. Unsupported or incomplete interpretation stays visible and cannot be advertised as complete security coverage.

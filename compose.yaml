@@ -603,6 +603,7 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+      - seccomp=./deploy/discovery-seccomp.json
     cpus: ${CATS_DISCOVERY_CPUS:-1}
     mem_limit: ${CATS_DISCOVERY_MEMORY:-1g}
     pids_limit: 128
