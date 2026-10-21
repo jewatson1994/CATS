@@ -8,12 +8,11 @@ and database); destination is `intelligence-db` (`cats_intelligence` user/databa
 Set `INTELLIGENCE_POSTGRES_PASSWORD` before creating its volume. Changing this setting
 later does not change an already initialized PostgreSQL user's password.
 
-1. With the existing database still running, build the small backup companion and
+1. With the existing database still running, use the backup runtime bundled in the updated CATS image and
    take a restore-verified full backup without starting the updated application:
 
    ```sh
-   docker compose build db-backup
-   docker compose run --rm --no-deps db-backup once
+   docker compose run --rm --no-deps --pull never db-backup once
    ```
 
    Proceed only if it exits successfully. Schedule a maintenance window and stop **all**

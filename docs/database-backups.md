@@ -59,12 +59,18 @@ Interrupted `.pending-*` directories can be removed when no backup is running.
 
 ## Operations
 
-Build this small companion image with `docker compose build db-backup` before
-starting it. This only builds the PostgreSQL/Python backup helper; the CATS
-application can continue using its normal pulled GitHub image. Start the helper
-with `docker compose up -d db-backup`.
+The backup script, PostgreSQL 16 client/server tools, and restore runtime are
+bundled in the same CATS image as the portal. No separate backup image, host-side
+source directory, package download, or build is needed at deployment time.
+Transfer the updated CATS image through your normal offline registry workflow and
+copy the matching Compose file. Existing PostgreSQL service images must also be
+available locally, as for the rest of the stack. Keep your existing `.env` and
+set `CATS_IMAGE` to the updated image tag. `CATS_BACKUP_IMAGE` is no longer used.
 
-Run an immediate backup: `docker compose run --rm db-backup once`.
+Start offline: `docker compose up -d --no-build --pull never db-backup`.
+Run an immediate backup without starting the portal:
+`docker compose run --rm --no-deps --pull never db-backup once`.
+The existing `db` service must already be running.
 It exits nonzero on failure. A lock prevents concurrent jobs using the same
 backup directory. View health with `docker compose ps db-backup`, and inspect
 the mounted `status.json` for the last successful archive. Required table names

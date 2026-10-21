@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-spec = importlib.util.spec_from_file_location('backup', Path(__file__).with_name('backup.py'))
+spec = importlib.util.spec_from_file_location('backup', Path(os.environ.get('BACKUP_MODULE', Path(__file__).with_name('backup.py'))))
 b = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(b)
 
@@ -19,8 +19,8 @@ class BackupTests(unittest.TestCase):
             account = pwd.getpwnam('postgres')
             os.chown(tmp, account.pw_uid, account.pw_gid)
             data = str(Path(tmp) / 'data')
-            b.run(['gosu', 'postgres', 'initdb', '-D', data, '-A', 'trust', '--no-locale'])
-            b.run(['gosu', 'postgres', 'pg_ctl', '-D', data, '-l', str(Path(tmp) / 'log'),
+            b.run(['su-exec', 'postgres', 'initdb', '-D', data, '-A', 'trust', '--no-locale'])
+            b.run(['su-exec', 'postgres', 'pg_ctl', '-D', data, '-l', str(Path(tmp) / 'log'),
                    '-o', f"-c listen_addresses='' -k {tmp}", '-w', 'start'])
             try:
                 b.run(['psql', '-h', tmp, '-U', 'postgres', '-c',
@@ -36,7 +36,7 @@ class BackupTests(unittest.TestCase):
                     with self.assertRaises(RuntimeError):
                         b.restore_verify(directory / 'database.dump')
             finally:
-                b.run(['gosu', 'postgres', 'pg_ctl', '-D', data, '-m', 'immediate', '-w', 'stop'])
+                b.run(['su-exec', 'postgres', 'pg_ctl', '-D', data, '-m', 'immediate', '-w', 'stop'])
 
     def test_schedule(self):
         now = dt.datetime(2026, 10, 21, 3, tzinfo=b.UTC)

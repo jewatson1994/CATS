@@ -59,7 +59,7 @@ def restore_verify(dump):
         scratch = Path(directory)
         os.chown(scratch, account.pw_uid, account.pw_gid)
         data = scratch / 'data'
-        prefix = ['gosu', 'postgres']
+        prefix = ['su-exec', 'postgres']
         run(prefix + ['initdb', '-D', str(data), '-A', 'trust', '--no-locale'], env)
         started = False
         try:

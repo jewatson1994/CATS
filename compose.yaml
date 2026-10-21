@@ -91,9 +91,9 @@ services:
     restart: on-failure:3
 
   db-backup:
-    image: ${CATS_BACKUP_IMAGE:-cats-db-backup:local}
-    build:
-      context: ./deploy/backup
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: ["python3", "/opt/backup/backup.py"]
+    command: ["schedule"]
     environment:
       PGHOST: db
       PGPORT: 5432
