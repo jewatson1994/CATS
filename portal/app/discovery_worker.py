@@ -13,6 +13,21 @@ from .discovery_sources import decrypted_source, SourceStorageError
 def upload_root():
     return Path(os.environ.get('CATS_DISCOVERY_UPLOAD_ROOT', '/data/discovery-uploads'))
 
+def configured_artifact_resolver():
+    # Only process configuration can select the manifest; job payloads cannot.
+    from .discovery_artifacts import LocalArtifactResolver, ArtifactResolutionError
+    configured = os.environ.get('CATS_DISCOVERY_ARTIFACT_MANIFEST', '').strip()
+    if not configured:
+        return None
+    manifest = Path(configured)
+    if not manifest.is_absolute() or manifest.resolve().is_relative_to(upload_root().resolve()):
+        raise JobError('Discovery artifact mirror configuration is invalid.')
+    try:
+        return LocalArtifactResolver(manifest)
+    except ArtifactResolutionError:
+        raise JobError('Discovery artifact mirror configuration is invalid.') from None
+
+
 def handle(ctx, payload):
     from .discovery_engine import run_discovery, DiscoveryError
     from .discovery_renderer import isolated_runner
@@ -32,13 +47,14 @@ def handle(ctx, payload):
         if args and isinstance(args[0], str):
             ctx.stage(args[0], kwargs.get('progress'))
     selected = dict(payload.get('options', {}))
+    artifact_resolver = configured_artifact_resolver()
     try:
         with decrypted_source(source, token, payload['source_hash'], ctx.check) as plaintext:
             input_path = plaintext
             if plaintext.name == 'chart-reference.txt':
                 selected.update(reference=plaintext.read_text().strip(), reference_kind='chart')
                 input_path = None
-            inventory = run_discovery(input_path, options=selected, runner=isolated_runner, progress=progress)
+            inventory = run_discovery(input_path, options=selected, runner=isolated_runner, progress=progress, artifact_resolver=artifact_resolver)
     except SourceStorageError as exc:
         raise JobError(str(exc)) from None
     except DiscoveryError:

@@ -119,7 +119,7 @@ def _text(v):
 def _image(v):
     return isinstance(v, str) and len(v) <= 512 and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@+-]*', v))
 
-def run_discovery(source_path, options=None, runner=None, progress=None):
+def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None):
     options = options or {}
     if not isinstance(options, dict):
         raise DiscoveryError('Options must be a mapping.')
@@ -127,6 +127,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
         selected = options.get(key, [])
         if not isinstance(selected, list) or len(selected) > 50 or any(not isinstance(value, str) or len(value) > 500 for value in selected):
             raise DiscoveryError('Invalid discovery option list.')
+    source_map = options.get('source_map', {})
+    if not isinstance(source_map, dict) or len(source_map) > 200 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 500 or len(v) > 500 for k, v in source_map.items()):
+        raise DiscoveryError('Invalid local source mapping.')
+    source_map = dict(source_map)
     mapping = options.get('chart_map', {})
     if not isinstance(mapping, dict) or len(mapping) > 200 or any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapping.items()):
         raise DiscoveryError('Invalid local chart mapping.')
@@ -310,6 +314,17 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
         result['source_hash'] = 'sha256:' + hashlib.sha256(str(reference).encode()).hexdigest()
         rid = root('reference', 'helm' if options.get('reference_kind') == 'chart' else 'images')
         if options.get('reference_kind') == 'chart':
+            if artifact_resolver is not None:
+                try:
+                    artifact = artifact_resolver.resolve('helm', reference, options.get('reference_version', ''))
+                    with tempfile.TemporaryDirectory(prefix='cats-discovery-mirror-') as mirror:
+                        staged_artifact = artifact.stage(Path(mirror))
+                        nested_options = {k: v for k, v in options.items() if k not in ('reference', 'reference_kind', 'reference_version')}
+                        resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver)
+                        resolved['artifact_provenance'] = [staged_artifact['provenance'], *resolved.get('artifact_provenance', [])]
+                        return resolved
+                except (ValueError, OSError):
+                    issue('approved_artifact_unavailable', rid, 'reference')
             issue('remote_chart_requires_local_artifact', rid, 'reference')
             result['completeness'] = 'blocked'
         else:
@@ -373,6 +388,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 parsed[path] = _documents((base / path).read_text(encoding='utf-8-sig'))
             except (ValueError, yaml.YAMLError, UnicodeError, RecursionError):
                 issue('invalid_or_unsupported_document', path=path)
+        kustomizations = [p for p in kustomizations if not any(isinstance(doc, dict) and 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', '')) for doc in parsed.get(p, []))]
         collect_secrets([doc for docs in parsed.values() for doc in docs])
         managed_paths = {p for p in parsed if any(Path(k).parent == Path('.') or Path(k).parent in Path(p).parents for k in kustomizations)}
         rendered_documents = []
@@ -388,8 +404,76 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
             elif key not in ambiguous_resources:
                 resource_origins[key] = origin
                 resources[key] = document
+        flux_build_paths = set()
+        for documents in parsed.values():
+            for document in documents:
+                if not isinstance(document, dict) or document.get('kind') != 'Kustomization' or 'kustomize.toolkit.fluxcd.io/' not in str(document.get('apiVersion', '')):
+                    continue
+                spec = document.get('spec', {})
+                ref = spec.get('sourceRef', {}) if isinstance(spec, dict) else {}
+                if not isinstance(ref, dict):
+                    continue
+                key = '/'.join(str(v) for v in (ref.get('kind'), ref.get('namespace', document.get('metadata', {}).get('namespace', 'default')), ref.get('name')))
+                if key in source_map:
+                    try:
+                        artifact = compose._inside(base, source_map[key])
+                        local = compose._inside(artifact, spec.get('path', '.'))
+                        flux_build_paths.add(local.relative_to(base).as_posix())
+                    except (ValueError, TypeError, compose.ComposeInputError):
+                        pass
+        acquired_sources = {}
+        staged_artifacts = {}
+        helm_source_declarations, resolved_helm_sources = [], set()
+        artifact_file_count = len(files)
+        artifact_bytes = sum((base / p).stat().st_size for p in files)
+        def stage_artifact(artifact, identity):
+            nonlocal artifact_file_count, artifact_bytes
+            if identity in staged_artifacts:
+                return staged_artifacts[identity]
+            with tempfile.TemporaryDirectory(prefix='.discovery-artifact-', dir=base) as artifact_dir:
+                staged_artifact = artifact.stage(Path(artifact_dir))
+                artifact_files = list(Path(staged_artifact['root']).rglob('*'))
+                artifact_files = [p for p in artifact_files if p.is_file()]
+                new_size = sum(p.stat().st_size for p in artifact_files)
+                if artifact_file_count + len(artifact_files) > compose.MAX_FILES or artifact_bytes + new_size > compose.MAX_TOTAL:
+                    raise ValueError()
+                destination = base / ('.discovery-source-' + _id(*identity))
+                if destination.exists():
+                    raise ValueError()
+                Path(staged_artifact['root']).rename(destination)
+            for artifact_file in destination.rglob('*'):
+                if artifact_file.is_file() and artifact_file.suffix.lower() in ('.yaml', '.yml', '.json') and 'templates' not in artifact_file.relative_to(destination).parts:
+                    try:
+                        collect_secrets(_documents(artifact_file.read_text(encoding='utf-8-sig')))
+                    except (ValueError, yaml.YAMLError, UnicodeError, RecursionError):
+                        # Helm values and templates need not be standalone Kubernetes YAML.
+                        pass
+            artifact_file_count += len(artifact_files)
+            artifact_bytes += new_size
+            result.setdefault('artifact_provenance', []).append(staged_artifact['provenance'])
+            staged_artifacts[identity] = destination
+            return destination
+        def local_source(source_key):
+            mapping_key = '/'.join(source_key)
+            if mapping_key in source_map:
+                return compose._inside(base, source_map[mapping_key])
+            if source_key in acquired_sources:
+                return acquired_sources[source_key]
+            if artifact_resolver is None or source_key in ambiguous_resources or source_key not in resources:
+                raise ValueError()
+            source_document = resources[source_key]
+            source_spec = source_document.get('spec', {})
+            source_kind = {'GitRepository': 'git', 'OCIRepository': 'oci'}.get(source_key[0])
+            ref = source_spec.get('ref', {})
+            allowed = ('commit', 'tag', 'branch') if source_kind == 'git' else ('digest', 'tag')
+            if not source_kind or not isinstance(ref, dict) or len(ref) != 1 or next(iter(ref)) not in allowed:
+                raise ValueError()
+            artifact = artifact_resolver.resolve(source_kind, source_spec.get('url'), next(iter(ref.values())))
+            destination = stage_artifact(artifact, source_key)
+            acquired_sources[source_key] = destination
+            return destination
         rendered_releases = set()
-        def render(tool, args, rid, path, postrenderers=None):
+        def render(tool, args, rid, path, postrenderers=None, output_transform=None):
             if runner is None:
                 issue('native_renderer_unavailable', rid, path)
                 return
@@ -400,6 +484,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                     output = output['stdout']
                 else:
                     result['tool_versions'].setdefault(tool, 'unknown')
+                if output_transform is not None:
+                    output = output_transform(output)
                 documents = _documents(output)
                 for index, postrenderer in enumerate(postrenderers or []):
                     if index >= 10 or not isinstance(postrenderer, dict) or set(postrenderer) != {'kustomize'}:
@@ -462,6 +548,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
             if not adapter.tool:
                 continue
             for path in (p for p in files if adapter.matches(p, parsed.get(p, [])) and not (adapter.tool == 'helm' and vendored_chart(p))):
+                if adapter.tool == 'kustomize' and (path not in kustomizations or Path(path).parent.as_posix() in flux_build_paths):
+                    continue
                 rid = root(Path(path).parent.as_posix(), adapter.technology)
                 args = [*adapter.prefix, str(base / Path(path).parent)]
                 if adapter.tool == 'helm':
@@ -598,6 +686,99 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
             if not flux:
                 continue
             spec = doc.get('spec', {})
+            if doc.get('kind') == 'Kustomization' and isinstance(spec, dict):
+                build_key = _id(path, doc)
+                if build_key in rendered_releases:
+                    continue
+                rendered_releases.add(build_key)
+                meta = doc.get('metadata', {})
+                namespace = meta.get('namespace') or 'default'
+                resource_id = definitions.get(('Kustomization', namespace, str(meta.get('name', ''))))
+                try:
+                    ref = spec.get('sourceRef', {})
+                    source_key = (ref.get('kind'), ref.get('namespace', namespace), ref.get('name'))
+                    reference(resource_id, source_key[0], source_key[2], source_key[1], rid, path, 'uses_source')
+                    mapping_key = '/'.join(source_key)
+                    if source_key in ambiguous_resources or source_key not in resources:
+                        raise ValueError()
+                    artifact = local_source(source_key)
+                    local = compose._inside(artifact, spec.get('path', '.'))
+                    if not local.is_dir() or not any((local / name).is_file() for name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')):
+                        raise ValueError()
+                    # Rendering-changing controller fields require their own implementation.
+                    supported = {'sourceRef', 'path', 'interval', 'retryInterval', 'timeout', 'prune', 'wait', 'force', 'postBuild', 'dependsOn', 'suspend'}
+                    if set(spec) - supported or spec.get('suspend'):
+                        issue('flux_kustomization_options_not_evaluated', rid, path)
+                        continue
+                    if spec.get('dependsOn') or spec.get('wait'):
+                        issue('flux_dependency_readiness_not_verified', rid, path)
+                    post = spec.get('postBuild') or {}
+                    if not isinstance(post, dict) or set(post) - {'substitute', 'substituteFrom'}:
+                        raise ValueError()
+                    substitutions = {}
+                    substitution_refs = post.get('substituteFrom', [])
+                    if not isinstance(substitution_refs, list):
+                        raise ValueError()
+                    for entry in substitution_refs:
+                        if not isinstance(entry, dict) or entry.get('kind') != 'ConfigMap':
+                            raise ValueError()
+                        substitution_key = ('ConfigMap', namespace, entry.get('name'))
+                        reference(resource_id, 'ConfigMap', entry.get('name'), namespace, rid, path, 'uses_configuration')
+                        if substitution_key in ambiguous_resources:
+                            raise ValueError()
+                        config = resources.get(substitution_key)
+                        if config is None and entry.get('optional') is True:
+                            continue
+                        if config is None or not isinstance(config.get('data', {}), dict):
+                            raise ValueError()
+                        substitutions.update(config.get('data', {}))
+                    inline = post.get('substitute', {})
+                    if not isinstance(inline, dict):
+                        raise ValueError()
+                    substitutions.update(inline)
+                    if any(not isinstance(k, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', k) or compose._SECRET_NAME.search(k) or not isinstance(v, str) or not re.fullmatch(r'[A-Za-z0-9_.:/@+\-]*', v) or any(secret in v for secret in secret_values) for k, v in substitutions.items()):
+                        raise ValueError()
+                    def substitute_output(output):
+                        if not post:
+                            return output
+                        rendered = []
+                        for item in _documents(output):
+                            metadata = item.get('metadata', {}) if isinstance(item, dict) else {}
+                            disabled = any(isinstance(metadata.get(field), dict) and metadata[field].get('kustomize.toolkit.fluxcd.io/substitute') == 'disabled' for field in ('labels', 'annotations'))
+                            text = yaml.safe_dump(item)
+                            if not disabled:
+                                # Only simple variable expansion is supported. Unknown/default/operator
+                                # expressions fail closed instead of emulating a shell imperfectly.
+                                def replace(match):
+                                    name = match.group(1)
+                                    if name not in substitutions:
+                                        raise ValueError()
+                                    return substitutions[name]
+                                text = re.sub(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}', replace, text)
+                                if '$' in text:
+                                    raise ValueError()
+                            rendered.append(text)
+                        return '\n---\n'.join(rendered)
+                    render('kustomize', ['build', str(local)], rid, path, output_transform=substitute_output)
+                    queue.extend(rendered_documents)
+                    rendered_documents.clear()
+                except (ValueError, TypeError, AttributeError, OSError, compose.ComposeInputError):
+                    issue('flux_kustomization_source_or_substitution_unresolved', rid, path)
+                continue
+            if doc.get('kind') == 'HelmRepository' and artifact_resolver is not None:
+                meta = doc.get('metadata', {})
+                helm_source_declarations.append(((doc.get('kind'), meta.get('namespace', 'default'), meta.get('name')), rid, path))
+                continue
+            if doc.get('kind') in ('GitRepository', 'OCIRepository', 'Bucket'):
+                meta = doc.get('metadata', {})
+                mapping_key = '/'.join(str(v) for v in (doc.get('kind'), meta.get('namespace', 'default'), meta.get('name')))
+                if mapping_key in source_map:
+                    continue
+                try:
+                    local_source((doc.get('kind'), meta.get('namespace', 'default'), meta.get('name')))
+                    continue
+                except (ValueError, TypeError, AttributeError, OSError, compose.ComposeInputError):
+                    pass
             if doc.get('kind') != 'HelmRelease' or not isinstance(spec, dict):
                 issue('flux_controller_semantics_not_evaluated', rid, path)
                 continue
@@ -616,7 +797,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 continue
             rendered_releases.add(release_key)
             values = {}
-            targets = {}
+            targets = []
             namespace = doc.get('metadata', {}).get('namespace', 'default')
             refs = spec.get('valuesFrom', []) or []
             if not isinstance(refs, list):
@@ -643,14 +824,17 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                     issue('secret_values_not_rendered', rid, path)
                     continue
                 try:
-                    value = _documents(resource.get('data', {}).get(ref.get('valuesKey', 'values.yaml')))[0]
+                    raw_value = resource.get('data', {}).get(ref.get('valuesKey', 'values.yaml'))
                     target = ref.get('targetPath')
-                    if target:
-                        if not isinstance(target, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*', target):
+                    if target is not None and target != '':
+                        # Delegate Helm strvals syntax, escaping, lists and scalar typing to Helm.
+                        if not isinstance(target, str) or len(target) > 500 or not isinstance(raw_value, str) or len(raw_value) > compose.MAX_FILE:
                             raise ValueError()
-                        for part in reversed(target.split('.')):
-                            value = {part: value}
-                        targets = _merge(targets, value)
+                        if any(ord(c) < 32 for c in target):
+                            raise ValueError()
+                        targets += ['--set', target + '=' + raw_value]
+                        continue
+                    value = _documents(raw_value)[0]
                     if not isinstance(value, dict):
                         raise ValueError()
                     values = _merge(values, value)
@@ -660,7 +844,6 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 values = _merge(values, spec.get('values', {}))
             else:
                 issue('invalid_flux_inline_values', rid, path)
-            values = _merge(values, targets)
             if spec.get('dependsOn'):
                 issue('flux_dependency_readiness_not_verified', rid, path)
             try:
@@ -668,7 +851,31 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 chart = options.get('chart_map', {}).get(chart, chart)
                 local = compose._inside(base, str(chart))
                 if not (local / 'Chart.yaml').is_file():
-                    raise ValueError()
+                    source_key = (source_ref.get('kind', 'HelmRepository'), source_ref.get('namespace', release_ns), source_ref.get('name'))
+                    source_document = resources.get(source_key)
+                    if source_key in ambiguous_resources or not isinstance(source_document, dict):
+                        raise ValueError()
+                    if source_key[0] in ('GitRepository', 'OCIRepository'):
+                        local = compose._inside(local_source(source_key), str(chart))
+                    elif source_key[0] == 'HelmRepository' and artifact_resolver is not None:
+                        source_spec = source_document.get('spec', {})
+                        repository = source_spec.get('url')
+                        if not isinstance(repository, str) or not isinstance(chart, str):
+                            raise ValueError()
+                        chart_reference = repository.rstrip('/') + '/' + chart
+                        artifact = artifact_resolver.resolve('helm', chart_reference, chart_spec.get('version', ''))
+                        package = stage_artifact(artifact, ('helm', chart_reference, chart_spec.get('version', '')))
+                        candidates = list(package.rglob('Chart.yaml'))
+                        if not candidates:
+                            raise ValueError()
+                        depth = min(len(p.relative_to(package).parts) for p in candidates)
+                        candidates = [p for p in candidates if len(p.relative_to(package).parts) == depth]
+                        if len(candidates) != 1:
+                            raise ValueError()
+                        local = candidates[0].parent
+                        resolved_helm_sources.add(source_key)
+                    if not (local / 'Chart.yaml').is_file():
+                        raise ValueError()
                 child_rid = root(local.relative_to(base).as_posix(), 'helm')
                 if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics']):
                     issue('flux_render_blocked_by_values', rid, path)
@@ -681,15 +888,18 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 release_namespace = spec.get('targetNamespace', namespace)
                 if not all(isinstance(value, str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', value) for value in (release_name, release_namespace)):
                     raise ValueError()
-                render('helm', ['template', release_name, str(local), '--namespace', release_namespace, '--include-crds', '-f', str(values_path)], rid, path, spec.get('postRenderers'))
+                render('helm', ['template', release_name, str(local), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *targets], rid, path, spec.get('postRenderers'))
                 values_path.unlink()
                 result['edges'].append(dict(source=rid, target=child_rid, kind='renders'))
-            except (ValueError, OSError, AttributeError, compose.ComposeInputError):
+            except (ValueError, TypeError, OSError, AttributeError, compose.ComposeInputError):
                 issue('flux_chart_source_unavailable', rid, path)
             if any(key in spec for key in ('dependsOn', 'chartRef', 'kubeConfig')):
                 issue('flux_controller_semantics_not_evaluated', rid, path)
             queue.extend(rendered_documents)
             rendered_documents.clear()
+        for source_key, source_rid, source_path in helm_source_declarations:
+            if source_key not in resolved_helm_sources:
+                issue('flux_controller_semantics_not_evaluated', source_rid, source_path)
         for adapter in ADAPTERS:
             if adapter.handler is None:
                 continue
@@ -766,6 +976,18 @@ def run_discovery(source_path, options=None, runner=None, progress=None):
                 source_file = base / provenance['path']
                 if source_file.is_file():
                     provenance['sha256'] = hashlib.sha256(source_file.read_bytes()).hexdigest()
+        candidates = {}
+        for source_file in files:
+            parts = Path(source_file).parts
+            for index, part in enumerate(parts[:-1]):
+                if part in ('environments', 'envs', 'overlays') and index + 1 < len(parts) - 1:
+                    label = parts[index + 1]
+                    boundary = Path(*parts[:index + 2]).as_posix()
+                    candidate = candidates.setdefault(boundary, dict(name=clean(label), path=boundary, evidence=[], root_ids=[], selected=False, confidence='candidate'))
+                    candidate['evidence'].append(source_file)
+        for boundary, candidate in candidates.items():
+            candidate['root_ids'] = [item['id'] for item in result['roots'] if item['path'] == boundary or item['path'].startswith(boundary + '/')]
+        result['candidate_environments'] = list(candidates.values())
         result['metrics'] = dict(files=len(files), roots=len(result['roots']), nodes=len(result['nodes']), images=len(result['images']))
         if progress:
             progress(dict(stage='complete', **result['metrics']))

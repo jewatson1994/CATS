@@ -58,19 +58,34 @@ async def body(request, auth):
 def options(value):
     if not isinstance(value, dict) or len(json.dumps(value)) > 32768:
         raise HTTPException(422, 'Invalid discovery configuration')
-    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'reference_kind'}
+    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'source_map', 'reference_kind', 'reference_version'}
     if set(value) - allowed: raise HTTPException(422, 'Unsupported discovery option')
     for key in ('values_files', 'profiles', 'compose_files'):
         if key in value and (not isinstance(value[key], list) or len(value[key]) > 100 or any(not isinstance(v, str) or len(v)>512 for v in value[key])):
             raise HTTPException(422, 'Invalid configuration selection')
     if 'environment' in value and (not isinstance(value['environment'], str) or len(value['environment']) > 128):
         raise HTTPException(422, 'Invalid environment selection')
+    if 'source_map' in value and (not isinstance(value['source_map'], dict) or len(value['source_map']) > 100 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 512 or len(v) > 512 for k,v in value['source_map'].items())):
+        raise HTTPException(422, 'Invalid local source mapping')
     if 'chart_map' in value and (not isinstance(value['chart_map'], dict) or len(value['chart_map']) > 100 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 512 or len(v) > 512 for k,v in value['chart_map'].items())):
         raise HTTPException(422, 'Invalid local chart mapping')
+    if 'reference_version' in value and (not isinstance(value['reference_version'], str) or not value['reference_version'] or len(value['reference_version']) > 512):
+        raise HTTPException(422, 'Provide an exact artifact version')
     if 'reference_kind' in value and value['reference_kind'] not in ('image', 'chart', 'helm'):
         raise HTTPException(422, 'Invalid artifact kind')
     # Only local non-secret files can be selected; credentials are never accepted here.
     return value
+
+def can_stage(db, auth, group_id):
+    # Match Accounts' existing staging authority; discovery permission alone is insufficient.
+    from .access_requests import can_manage_accounts, authorized_claim_groups
+    if not can_manage_accounts(auth) and not auth.has('role.manage'):
+        return False
+    allowed = auth.has('user.manage') or group_id in {g.id for g in authorized_claim_groups(db, auth)}
+    scan = any(a.service_id is None and a.group_id in (None, group_id)
+        and a.role.name != 'Administrator' and 'scan.ingest' in (a.role.permissions or [])
+        for a in auth.effective_assignments)
+    return allowed and scan
 
 @router.get('')
 def listing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -78,7 +93,7 @@ def listing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     ids = {g.id for g in groups}
     jobs = db.scalars(select(DurableJob).where(DurableJob.kind == 'discovery', DurableJob.payload['group_id'].as_integer().in_(ids)).order_by(DurableJob.created_at.desc()).limit(100))
     services = [{'id': s.id, 'service_key': s.service_key, 'name': s.name, 'group_id': g} for s,g in db.execute(select(Service, ServiceGroup.group_id).join(ServiceGroup)) if g in ids and auth.has('scan.ingest', s.id)]
-    return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids][:100], 'groups': [{'id':g.id,'name':g.name} for g in groups], 'services': services}
+    return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids][:100], 'groups': [{'id':g.id,'name':g.name,'can_stage':can_stage(db,auth,g.id)} for g in groups], 'services': services}
 
 @router.post('')
 async def create(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -93,63 +108,66 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
         return message
     request._receive = bounded_receive
     form = await request.form(max_files=1, max_fields=8, max_part_size=65536)
-    csrf(auth, form.get('csrf_token', request.headers.get('X-CSRF-Token', '')))
-    try: group_id = int(form.get('group_id', ''))
-    except (ValueError, TypeError): raise HTTPException(422, 'Choose an owning group') from None
-    group_scope(db, auth, group_id)
-    try: selected = options(json.loads(str(form.get('options', '{}'))))
-    except (ValueError, TypeError): raise HTTPException(422, 'Invalid discovery options') from None
-    upload, reference = form.get('upload'), str(form.get('reference', '')).strip()
-    if bool(upload) == bool(reference): raise HTTPException(422, 'Provide one upload or one artifact reference')
-    if upload and not isinstance(upload, UploadFile):
-        raise HTTPException(422, 'Upload must be a file')
     try:
-        storage_key()
-    except SourceStorageError:
-        raise HTTPException(503, 'Discovery source encryption is not configured') from None
-    source_id = uuid.uuid4().hex
-    folder = upload_root() / source_id
-    folder.mkdir(parents=True, mode=0o750)
-    if os.name == 'posix':
-        os.chown(folder, -1, int(os.getenv('CATS_DISCOVERY_GID', '10003')))
-    filename = 'images.txt'
-    if upload:
-        filename = Path(str(upload.filename or 'source.zip').replace('\\','/')).name
-        if not re.fullmatch(r'[A-Za-z0-9_.-]{1,180}', filename): filename = 'source.zip'
-    target = folder / filename
-    digest, size = hashlib.sha256(), 0
-    try:
-        with encrypted_writer(target, source_id) as stream:
-            if reference:
-                if len(reference)>1024 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+-]*', reference) or '@' in reference.split('/')[0]:
-                    raise HTTPException(422, 'Provide an image reference without credentials')
-                data = (reference+'\n').encode()
-                if reference.startswith('oci://'):
-                    filename = 'chart-reference.txt'
-                    selected = {**selected, 'reference_kind': 'helm'}
-                stream.write(data); digest.update(data)
-            else:
-                while chunk := await upload.read(1024*1024):
-                    size += len(chunk)
-                    if size > int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024))):
-                        raise HTTPException(413, 'Discovery upload exceeds size limit')
-                    stream.write(chunk); digest.update(chunk)
+        csrf(auth, form.get('csrf_token', request.headers.get('X-CSRF-Token', '')))
+        try: group_id = int(form.get('group_id', ''))
+        except (ValueError, TypeError): raise HTTPException(422, 'Choose an owning group') from None
+        group_scope(db, auth, group_id)
+        try: selected = options(json.loads(str(form.get('options', '{}'))))
+        except (ValueError, TypeError): raise HTTPException(422, 'Invalid discovery options') from None
+        upload, reference = form.get('upload'), str(form.get('reference', '')).strip()
+        if bool(upload) == bool(reference): raise HTTPException(422, 'Provide one upload or one artifact reference')
+        if upload and not isinstance(upload, UploadFile):
+            raise HTTPException(422, 'Upload must be a file')
+        try:
+            storage_key()
+        except SourceStorageError:
+            raise HTTPException(503, 'Discovery source encryption is not configured') from None
+        source_id = uuid.uuid4().hex
+        folder = upload_root() / source_id
+        folder.mkdir(parents=True, mode=0o750)
         if os.name == 'posix':
-            os.chown(target, -1, int(os.getenv('CATS_DISCOVERY_GID', '10003')))
-            target.chmod(0o640)
-        if target.name != filename:
-            target.rename(folder / filename)
-            target = folder / filename
-        job = submit(db, kind='discovery', payload={'source_id': source_id, 'filename': filename, 'source_hash': digest.hexdigest(), 'group_id': group_id, 'options': selected}, requested_by_id=auth.user.id, commit=False)
-        record_audit(db, auth, 'discovery.submitted', 'discovery', job.id, group_id=group_id)
-        db.commit()
-        return {'job_id': job.id}
-    except BaseException:
-        target.unlink(missing_ok=True)
-        folder.rmdir()
-        raise
+            os.chown(folder, -1, int(os.getenv('CATS_DISCOVERY_GID', '10003')))
+        filename = 'images.txt'
+        if upload:
+            filename = Path(str(upload.filename or 'source.zip').replace('\\','/')).name
+            if not re.fullmatch(r'[A-Za-z0-9_.-]{1,180}', filename): filename = 'source.zip'
+        target = folder / filename
+        digest, size = hashlib.sha256(), 0
+        try:
+            with encrypted_writer(target, source_id) as stream:
+                if reference:
+                    if len(reference)>1024 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+-]*', reference) or '@' in reference.split('/')[0]:
+                        raise HTTPException(422, 'Provide an image reference without credentials')
+                    data = (reference+'\n').encode()
+                    if reference.startswith('oci://'):
+                        filename = 'chart-reference.txt'
+                        selected = {**selected, 'reference_kind': 'helm'}
+                    stream.write(data); digest.update(data)
+                else:
+                    while chunk := await upload.read(1024*1024):
+                        size += len(chunk)
+                        if size > int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024))):
+                            raise HTTPException(413, 'Discovery upload exceeds size limit')
+                        stream.write(chunk); digest.update(chunk)
+            if os.name == 'posix':
+                os.chown(target, -1, int(os.getenv('CATS_DISCOVERY_GID', '10003')))
+                target.chmod(0o640)
+            if target.name != filename:
+                target.rename(folder / filename)
+                target = folder / filename
+            job = submit(db, kind='discovery', payload={'source_id': source_id, 'filename': filename, 'source_hash': digest.hexdigest(), 'group_id': group_id, 'options': selected}, requested_by_id=auth.user.id, commit=False)
+            record_audit(db, auth, 'discovery.submitted', 'discovery', job.id, group_id=group_id)
+            db.commit()
+            return {'job_id': job.id}
+        except BaseException:
+            target.unlink(missing_ok=True)
+            folder.rmdir()
+            raise
+        finally:
+            if upload: await upload.close()
     finally:
-        if upload: await upload.close()
+        await form.close()
 
 @router.get('/{job_id}')
 def detail(job_id: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -187,7 +205,16 @@ async def confirm(job_id: str, request: Request, auth: AuthContext = Depends(req
     if not item or job.status != 'completed': raise HTTPException(409, 'Discovery must finish before confirmation')
     service = db.get(Service, data.get('service_id')) if isinstance(data.get('service_id'), int) else None
     owner = db.scalar(select(ServiceGroup.group_id).where(ServiceGroup.service_id == service.id)) if service else None
-    if not service or owner != item.group_id or not auth.has('scan.ingest', service.id):
+    new_key = data.get('new_service_key')
+    if new_key is not None:
+        if data.get('service_id') is not None or not isinstance(new_key, str) or not new_key.strip() or len(new_key.strip()) > 120:
+            raise HTTPException(422, 'Provide one new service key or select an existing service')
+        new_key = new_key.strip()
+        if not can_stage(db, auth, item.group_id):
+            raise HTTPException(403, 'Service staging and scan permission required in this owning group')
+        if db.scalar(select(Service.id).where(Service.service_key == new_key)):
+            raise HTTPException(409, 'Service key already exists')
+    elif not service or owner != item.group_id or not auth.has('scan.ingest', service.id):
         raise HTTPException(403, 'Choose a service in this owning group with scan permission')
     roots = data.get('root_ids')
     known = {r['id'] for r in item.inventory.get('roots', [])}
@@ -197,6 +224,13 @@ async def confirm(job_id: str, request: Request, auth: AuthContext = Depends(req
     if completeness in ('blocked','invalid'): raise HTTPException(409, 'Blocked or invalid inventories cannot be confirmed')
     partial = completeness != 'complete'
     if partial and data.get('acknowledge_partial') is not True: raise HTTPException(422, 'Explicitly acknowledge the incomplete inventory')
+    if new_key is not None:
+        service = Service(service_key=new_key, name=f'Staged — {new_key}', lifecycle_status='staged',
+            staging_original_name=new_key, staging_name_generated=True)
+        service.groups.append(db.get(Group, item.group_id))
+        db.add(service)
+        db.flush()
+        record_audit(db, auth, 'service.staged', 'service', service.id, discovery_inventory_id=item.id)
     confirmation = DiscoveryConfirmation(id=uuid.uuid4().hex, inventory_id=item.id, service_id=service.id,
         confirmed_by=auth.user.id, root_ids=sorted(set(roots)), acknowledge_partial=partial)
     db.add(confirmation)

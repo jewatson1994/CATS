@@ -2,15 +2,15 @@
 
 Open **Discovery** next to Scan. Discovery inspects deployment configuration and preserves evidence; starting discovery does not start a vulnerability scan.
 
-1. Select an owning group and upload a deployment file or repository archive. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists. Direct Git repository fetching is not enabled. An OCI image reference can also be inspected; remote chart references may require an uploaded local chart and will report unresolved input explicitly.
+1. Select an owning group and upload a deployment file or repository archive. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists. Direct Git repository fetching is not enabled. An OCI image reference can also be inspected; chart references require an exact chart version and an administrator-configured offline mirror, or an uploaded local chart and will report unresolved input explicitly.
 2. Optionally name the environment and enter relative values-file paths, one per line in override order. Use non-secret configuration. Later files override earlier files.
 3. Review each deployment root, its components, image references, completeness and diagnostics. Expand **Source evidence** to inspect provenance or **Complete inventory and relationships** for the full graph. Discovery treats inputs as untrusted and does not execute application scripts, build images or deploy workloads.
-4. Select the roots belonging to one existing service. Only services in the owning group for which you have scan permission appear. Explicitly acknowledge a partial inventory after reviewing its gaps. Blocked or invalid inventories cannot be confirmed.
+4. Select the roots belonging to one service. Choose an existing service, or **Stage a new service** if your group staging authority permits it. New services receive exactly the selected owning group. Only services in the owning group for which you have scan permission appear. Explicitly acknowledge a partial inventory after reviewing its gaps. Blocked or invalid inventories cannot be confirmed.
 5. Choose **Confirm inventory**. This records the reviewed service association without scanning. Choose **Start scan** separately when ready, then follow **View scan progress**.
 
 Running work can be cancelled. Retry or **Rediscover as new version** preserves prior evidence. Under **Compare immutable versions**, select an earlier completed discovery from the same group to inspect added, removed and changed component IDs. Comparison reports inventory changes, not vulnerability changes.
 
-If discovery is incomplete, review diagnostics, correct or include missing local dependencies/configuration, and submit the corrected input. The page never silently treats an unknown or partial result as a complete deployment.
+If discovery is incomplete, review diagnostics and candidate environment paths. In **Resolution assistance**, adjust non-secret options (including ordered files or a `source_map` from Flux source identity to an uploaded directory), then retry as a new version. This reruns discovery and preserves earlier evidence. To add missing source files, submit a corrected archive. Administrators can also supply exact-version, SHA-256-verified archives through the optional [offline mirror](universal-deployment-discovery.md#follow-up-implementation-2026-10-20). The page never silently treats an unknown or partial result as a complete deployment.
 
 ## Native rendering isolation
 

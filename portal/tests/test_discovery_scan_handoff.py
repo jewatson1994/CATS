@@ -1,18 +1,24 @@
 """Discovery hands reviewed evidence to the real durable scanner admission path."""
+import pytest
 from sqlalchemy.orm import sessionmaker
 from test_discovery_routes import api, job, post, stub_packaged_intelligence_startup
 from app import main, scan_coordination
-from app.discovery_models import DiscoveryScan
+from app.discovery_models import DiscoveryScan, DiscoveryConfirmation
 
 
-def test_confirmed_discovery_creates_real_durable_scan(api, monkeypatch, tmp_path):
-    client, db, _ = api
+@pytest.mark.parametrize('stage_new', [False, True])
+def test_confirmed_discovery_creates_real_durable_scan(api, monkeypatch, tmp_path, stage_new):
+    client, db, current = api
+    if stage_new:
+        current['auth'].user.role_assignments[0].role.name = 'Cybersecurity'
+        current['auth'].user.role_assignments[0].role.system = True
     sessions = sessionmaker(bind=db.get_bind(), expire_on_commit=False)
     monkeypatch.setattr(main, 'SessionLocal', sessions)
     monkeypatch.setattr(scan_coordination, 'SessionLocal', sessions)
     monkeypatch.setattr(main, 'PUBLIC_JOB_ROOT', tmp_path / 'scan-jobs')
     _, inventory = job(db)
-    response = post(client, '/own/confirm', {'service_id': 1, 'root_ids': ['root']})
+    selection = {'new_service_key': 'discovered-scan-service'} if stage_new else {'service_id': 1}
+    response = post(client, '/own/confirm', {**selection, 'root_ids': ['root']})
     assert response.status_code == 200, response.text
     confirmation_id = response.json()['confirmed_inventory_id']
     response = post(client, '/own/scan', {'confirmation_id': confirmation_id})
@@ -21,7 +27,7 @@ def test_confirmed_discovery_creates_real_durable_scan(api, monkeypatch, tmp_pat
     queued = main.PUBLIC_JOBS[scan_id]
     assert queued['status'] == 'queued'
     assert queued['image_list'] == 'nginx:1.2'
-    assert queued['ingest_service_db_id'] == 1
+    assert queued['ingest_service_db_id'] == db.get(DiscoveryConfirmation, confirmation_id).service_id
     assert queued['ingest_scope'] == 'service'
     assert queued['owner_user_id'] == 7
     assert queued['definition_context']['discovery_inventory_id'] == inventory.id

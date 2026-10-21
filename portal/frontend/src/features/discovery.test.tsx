@@ -23,7 +23,7 @@ it('requires selected roots and partial acknowledgement, confirms without scanni
   expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({csrf_token: 'token', service_id: 2, root_ids: ['root'], acknowledge_partial: true});
 });
 it('submits ordered non-secret configuration and the selected group', async () => {
-  const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {job_id: 'new'} : url.endsWith('/new') ? {job: {id: 'new', status: 'queued'}, inventory: null} : catalog), {headers: {'Content-Type': 'application/json'}}));
+  const fetch = vi.fn(async (url: string, _init?: RequestInit) => new Response(JSON.stringify(_init?.method === 'POST' ? {job_id: 'new'} : url.endsWith('/new') ? {job: {id: 'new', status: 'queued'}, inventory: null} : catalog), {headers: {'Content-Type': 'application/json'}}));
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
   await screen.findByRole('option', {name: 'Platform'});
   fireEvent.change(screen.getByLabelText('Owning group'), {target: {value: '1'}});
@@ -40,4 +40,20 @@ it('submits ordered non-secret configuration and the selected group', async () =
 it('treats unknown completeness conservatively', () => {
   expect(isPartial('complete')).toBe(false); expect(isPartial({status: 'complete'})).toBe(false);
   expect(isPartial(undefined)).toBe(true); expect(isPartial('partial')).toBe(true);
+});
+
+it('offers service staging only with group authority and sends one owner through confirmation', async () => {
+  const scoped = {...catalog, groups: [{id: 1, name: 'Platform', can_stage: true}]};
+  const fetch = vi.fn(async (url: string, _init?: RequestInit) => new Response(JSON.stringify(url.endsWith('/confirm') ? {inventory_id: 'confirmed'} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory} : scoped), {headers: {'Content-Type': 'application/json'}}));
+  vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
+  fireEvent.click(await screen.findByRole('button', {name: 'job-1 completed'}));
+  await screen.findByText('nginx:1');
+  fireEvent.change(screen.getByLabelText('Service'), {target: {value: 'new'}});
+  fireEvent.change(screen.getByLabelText(/New service key/), {target: {value: 'new-service'}});
+  fireEvent.click(screen.getByRole('checkbox', {name: 'deploy/chart helm'}));
+  fireEvent.click(screen.getByRole('checkbox', {name: /I acknowledge/}));
+  fireEvent.click(screen.getByRole('button', {name: 'Confirm inventory'}));
+  await screen.findByRole('button', {name: 'Start scan'});
+  const mutation = fetch.mock.calls.find(([,init]) => init?.method === 'POST');
+  expect(JSON.parse(String(mutation?.[1]?.body))).toEqual({csrf_token:'token',new_service_key:'new-service',root_ids:['root'],acknowledge_partial:true});
 });

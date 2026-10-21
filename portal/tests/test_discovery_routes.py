@@ -29,7 +29,7 @@ def stub_packaged_intelligence_startup(monkeypatch):
 
 
 def scoped_auth(group, permissions=('service.edit', 'scan.ingest')):
-    assignment = SimpleNamespace(role=SimpleNamespace(name='Test manager', permissions=list(permissions)),
+    assignment = SimpleNamespace(role=SimpleNamespace(name='Test manager', system=False, permissions=list(permissions)),
         service_id=None, group_id=group.id, group=group)
     return AuthContext(user=SimpleNamespace(id=7, username='reviewer', display_name='Reviewer',
         role_assignments=[assignment]), session=SimpleNamespace(csrf_token='csrf'))
@@ -248,7 +248,7 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
              'group_id':1,'options':{}}
     stages=[]
     checkpoints=[]
-    def discover(source,options,runner,progress):
+    def discover(source,options,runner,progress,artifact_resolver=None):
         assert runner is discovery_renderer.isolated_runner
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})
@@ -300,3 +300,30 @@ def test_source_storage_missing_key_and_plaintext_fail_closed(tmp_path,monkeypat
         with encrypted_writer(tmp_path/'new.zip','a'*32):
             pytest.fail('missing key accepted')
     assert not (tmp_path/'new.zip').exists()
+
+
+def test_confirm_stages_one_group_service_with_existing_authority(api):
+    client, db, current = api
+    job(db)
+    current['auth'] = scoped_auth(db.get(Group, 1))
+    current['auth'].user.role_assignments[0].role.name = 'Cybersecurity'
+    current['auth'].user.role_assignments[0].role.system = True
+    response = post(client, '/own/confirm', {'new_service_key':'discovered-service','root_ids':['root']})
+    assert response.status_code == 200, response.text
+    service = db.scalar(select(Service).where(Service.service_key == 'discovered-service'))
+    assert service.lifecycle_status == 'staged'
+    assert [g.id for g in service.groups] == [1]
+    assert db.get(DiscoveryConfirmation, response.json()['inventory_id']).service_id == service.id
+
+
+def test_confirm_cannot_stage_without_accounts_authority_or_valid_inventory(api):
+    client, db, current = api
+    job(db)
+    data = {'new_service_key':'unauthorized','root_ids':['root']}
+    assert post(client, '/own/confirm', data).status_code == 403
+    current['auth'] = scoped_auth(db.get(Group, 1))
+    current['auth'].user.role_assignments[0].role.name = 'Cybersecurity'
+    current['auth'].user.role_assignments[0].role.system = True
+    assert post(client, '/own/confirm', {**data,'root_ids':['unknown']}).status_code == 422
+    assert db.scalar(select(Service).where(Service.service_key == 'unauthorized')) is None
+    assert post(client, '/own/confirm', {**data,'new_service_key':'one'}).status_code == 409

@@ -88,10 +88,10 @@ spec:
     captured = []
     def runner(tool, args, cwd):
         if '-f' in args:
-            captured.append(yaml.safe_load(Path(args[args.index('-f') + 1]).read_text()))
+            captured.append((yaml.safe_load(Path(args[args.index('-f') + 1]).read_text()), args[args.index('--set') + 1:]))
         return 'apiVersion: v1\nkind: Pod\nmetadata: {name: test}\nspec: {containers: [{name: a, image: nginx:1}]}'
     result = run_discovery(tmp_path, runner=runner)
-    assert captured == [{'image': {'repository': 'nginx', 'tag': 'forced'}}]
+    assert captured == [({'image': {'repository': 'nginx', 'tag': 'inline'}}, ['image.tag=forced'])]
     assert result['edges']
 
 def test_remote_chart_unresolved():
@@ -305,3 +305,141 @@ def test_duplicate_resource_identity_does_not_resolve_reference(tmp_path):
     assert len(refs) == 1 and refs[0]['state'] == 'unresolved'
     assert any(e['target'] == refs[0]['id'] and e['kind'] == 'uses_configuration' for e in result['edges'])
     assert result['completeness'] == 'partial'
+
+
+@pytest.mark.parametrize('target,value', [(r'annotations.example\.com/key', 'yes'), ('containers[0].image', 'nginx:1'), ('ports', '{80,443}')])
+def test_flux_targetpath_uses_native_helm_strvals(tmp_path, target, value):
+    write(tmp_path, 'chart/Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0')
+    write(tmp_path, 'flux.yaml', yaml.safe_dump_all([
+        {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'values'}, 'data': {'value': value}},
+        {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'app'}, 'spec': {'chart': {'spec': {'chart': 'chart'}}, 'valuesFrom': [{'kind': 'ConfigMap', 'name': 'values', 'valuesKey': 'value', 'targetPath': target}]}}
+    ]))
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append(args)
+        return ''
+    run_discovery(tmp_path, runner=runner)
+    assert len(calls) == 1
+    assert calls[0][-2:] == ['--set', target + '=' + value]
+
+
+def flux_kustomization_fixture(tmp_path, post=None, path='./overlays/prod'):
+    write(tmp_path, 'artifact/overlays/prod/kustomization.yaml', 'resources: [pod.yaml]')
+    write(tmp_path, 'artifact/overlays/prod/pod.yaml', 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: "nginx:${TAG}"}]}')
+    spec = {'sourceRef': {'kind': 'GitRepository', 'name': 'repo'}, 'path': path}
+    if post is not None:
+        spec['postBuild'] = post
+    write(tmp_path, 'flux.yaml', yaml.safe_dump_all([
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'GitRepository', 'metadata': {'name': 'repo'}, 'spec': {'url': 'https://example.test/repo'}},
+        {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': {'name': 'vars'}, 'data': {'TAG': 'old'}},
+        {'apiVersion': 'kustomize.toolkit.fluxcd.io/v1', 'kind': 'Kustomization', 'metadata': {'name': 'app'}, 'spec': spec}
+    ]))
+    return {'source_map': {'GitRepository/default/repo': 'artifact'}}
+
+
+def test_flux_kustomization_local_source_and_substitution(tmp_path):
+    options = flux_kustomization_fixture(tmp_path, {'substituteFrom': [{'kind': 'ConfigMap', 'name': 'vars'}], 'substitute': {'TAG': 'final'}})
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append((tool, args))
+        return (Path(args[1]) / 'pod.yaml').read_text()
+    result = run_discovery(tmp_path, options, runner=runner)
+    assert len(calls) == 1
+    assert [i['reference'] for i in result['images']] == ['nginx:final']
+    assert result['completeness'] == 'complete'
+    assert 'uses_source' in {edge['kind'] for edge in result['edges']}
+    assert result['candidate_environments'][0]['name'] == 'prod'
+    assert result['candidate_environments'][0]['selected'] is False
+
+
+@pytest.mark.parametrize('post', [{'substituteFrom': [{'kind': 'Secret', 'name': 'vars'}]}, {'substitute': {'OTHER': 'x'}}, {'substitute': {'TAG': 'unsafe\nvalue'}}])
+def test_flux_kustomization_fails_closed_on_unresolved_substitution(tmp_path, post):
+    options = flux_kustomization_fixture(tmp_path, post)
+    result = run_discovery(tmp_path, options, runner=lambda tool, args, cwd: (Path(args[1]) / 'pod.yaml').read_text())
+    assert not result['images']
+    assert result['completeness'] != 'complete'
+
+
+def test_flux_kustomization_source_path_cannot_escape_artifact(tmp_path):
+    options = flux_kustomization_fixture(tmp_path, {'substitute': {'TAG': 'final'}}, '../other')
+    result = run_discovery(tmp_path, options, runner=lambda *args: '')
+    assert 'flux_kustomization_source_or_substitution_unresolved' in {d['code'] for d in result['diagnostics']}
+    assert result['completeness'] != 'complete'
+
+
+
+def mirror_resolver(tmp_path, files, kind, reference, version):
+    from app.discovery_artifacts import LocalArtifactResolver
+    import hashlib
+    archive = tmp_path / 'mirror.zip'
+    with zipfile.ZipFile(archive, 'w') as out:
+        for name, text in files.items():
+            out.writestr(name, text)
+    manifest = tmp_path / 'mirror.json'
+    manifest.write_text(json.dumps({'version': 1, 'artifacts': [{'kind': kind, 'reference': reference, 'version': version, 'path': archive.name, 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+    return LocalArtifactResolver(manifest)
+
+
+def test_direct_chart_reference_uses_approved_mirror(tmp_path):
+    resolver = mirror_resolver(tmp_path, {'chart/Chart.yaml': 'apiVersion: v2\nname: test\nversion: 1.0.0'}, 'helm', 'oci://example.test/chart', '1.0.0')
+    result = run_discovery(None, {'reference_kind': 'chart', 'reference': 'oci://example.test/chart', 'reference_version': '1.0.0'}, runner=lambda *args: 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: nginx:1}]}', artifact_resolver=resolver)
+    assert result['completeness'] == 'complete'
+    assert result['images'][0]['reference'] == 'nginx:1'
+    assert result['artifact_provenance'][0]['integrity'] == 'verified'
+
+
+def test_flux_git_snapshot_from_approved_mirror(tmp_path):
+    resolver = mirror_resolver(tmp_path, {'app/kustomization.yaml': 'resources: [pod.yaml]', 'app/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: nginx:1}]}'}, 'git', 'https://example.test/repo', 'abc123')
+    source = tmp_path / 'upload'
+    write(source, 'kustomization.yaml', yaml.safe_dump_all([
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'GitRepository', 'metadata': {'name': 'repo'}, 'spec': {'url': 'https://example.test/repo', 'ref': {'commit': 'abc123'}}},
+        {'apiVersion': 'kustomize.toolkit.fluxcd.io/v1', 'kind': 'Kustomization', 'metadata': {'name': 'app'}, 'spec': {'sourceRef': {'kind': 'GitRepository', 'name': 'repo'}, 'path': './app'}}
+    ]))
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append(tool)
+        return (Path(args[1]) / 'pod.yaml').read_text()
+    result = run_discovery(source, runner=runner, artifact_resolver=resolver)
+    assert result['completeness'] == 'complete'
+    assert result['images'][0]['reference'] == 'nginx:1'
+    assert calls == ['kustomize']
+    assert len(result['artifact_provenance']) == 1
+
+
+def test_flux_helm_repository_exact_mirror_version(tmp_path):
+    resolver = mirror_resolver(tmp_path, {'chart/Chart.yaml': 'apiVersion: v2\nname: test\nversion: 1.0.0'}, 'helm', 'https://example.test/charts/test', '1.0.0')
+    source = tmp_path / 'upload'
+    documents = [
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'HelmRepository', 'metadata': {'name': 'repo'}, 'spec': {'url': 'https://example.test/charts'}},
+        {'apiVersion': 'helm.toolkit.fluxcd.io/v2', 'kind': 'HelmRelease', 'metadata': {'name': 'app'}, 'spec': {'chart': {'spec': {'chart': 'test', 'version': '1.0.0', 'sourceRef': {'kind': 'HelmRepository', 'name': 'repo'}}}}}
+    ]
+    write(source, 'flux.yaml', yaml.safe_dump_all(documents))
+    result = run_discovery(source, runner=lambda *args: 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: nginx:1}]}', artifact_resolver=resolver)
+    assert result['completeness'] == 'complete'
+    assert len(result['artifact_provenance']) == 1
+    documents[1]['spec']['chart']['spec']['version'] = '2.0.0'
+    write(source, 'flux.yaml', yaml.safe_dump_all(documents))
+    missing = run_discovery(source, runner=lambda *args: '', artifact_resolver=resolver)
+    assert missing['completeness'] != 'complete'
+    assert not missing['images']
+
+
+
+def test_mirror_source_secret_taint_applies_before_rendering(tmp_path):
+    resolver = mirror_resolver(tmp_path, {'app/kustomization.yaml': 'resources: [pod.yaml]', 'secret.yaml': 'apiVersion: v1\nkind: Secret\nmetadata: {name: credentials}\nstringData: {password: PRIVATE_VALUE}'}, 'git', 'https://example.test/repo', 'abc123')
+    source = tmp_path / 'upload'
+    write(source, 'flux.yaml', yaml.safe_dump_all([
+        {'apiVersion': 'source.toolkit.fluxcd.io/v1', 'kind': 'GitRepository', 'metadata': {'name': 'repo'}, 'spec': {'url': 'https://example.test/repo', 'ref': {'commit': 'abc123'}}},
+        {'apiVersion': 'kustomize.toolkit.fluxcd.io/v1', 'kind': 'Kustomization', 'metadata': {'name': 'app'}, 'spec': {'sourceRef': {'kind': 'GitRepository', 'name': 'repo'}, 'path': './app'}}
+    ]))
+    result = run_discovery(source, artifact_resolver=resolver, runner=lambda *args: 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: "registry/PRIVATE_VALUE:1"}]}')
+    assert not result['images']
+    assert 'PRIVATE_VALUE' not in json.dumps(result)
+
+
+def test_flux_kustomization_rejects_sensitive_substitution_keys(tmp_path):
+    options = flux_kustomization_fixture(tmp_path, {'substitute': {'PASSWORD': 'PRIVATE_VALUE', 'TAG': 'final'}})
+    result = run_discovery(tmp_path, options, runner=lambda *args: pytest.fail('Sensitive substitutions must not render'))
+    assert not result['images']
+    assert result['completeness'] != 'complete'
+    assert 'PRIVATE_VALUE' not in json.dumps(result)

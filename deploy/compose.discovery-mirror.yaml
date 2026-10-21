@@ -1,0 +1,13 @@
+# Opt-in administrator-managed, read-only offline artifact mirror.
+# docker compose -f compose.yaml -f deploy/compose.discovery-mirror.yaml up -d
+services:
+  discovery-worker:
+    environment:
+      CATS_DISCOVERY_ARTIFACT_MANIFEST: /opt/discovery-mirror/manifest.json
+    volumes:
+      - type: bind
+        source: ${CATS_DISCOVERY_MIRROR_DIR:?Set an absolute administrator-managed mirror directory}
+        target: /opt/discovery-mirror
+        read_only: true
+        bind:
+          create_host_path: false
