@@ -119,8 +119,8 @@ from .runtime_version import deployed_version
 from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
 from .remediation_summary import build_summary as build_remediation_summary, artifacts as remediation_summary_artifacts
 from . import cyber_approvals
-from . import risk_routes
-from . import vex_models, risk_models, intelligence_models, native_vex_models
+from . import risk_routes, discovery_routes
+from . import vex_models, risk_models, intelligence_models, native_vex_models, discovery_models
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -456,6 +456,7 @@ app.include_router(exchange_router)
 app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
+app.include_router(discovery_routes.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -12077,3 +12078,7 @@ def risk_policy_page(request: Request, group_id: int | None = None, auth: AuthCo
 @app.get("/risk-intelligence")
 def risk_intelligence_page(request: Request, auth: AuthContext = Depends(require_user)):
     return RedirectResponse("/admin/risk-policy", status_code=307)
+
+@app.get('/discovery', response_class=HTMLResponse)
+def discovery_page(request: Request, auth: AuthContext = Depends(require_user)):
+    return templates.TemplateResponse(request, 'discovery.html', page_context(auth))

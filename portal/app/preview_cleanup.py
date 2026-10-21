@@ -43,6 +43,8 @@ async def preview_cleanup_lifespan(session_factory):
         while not stopped.wait(interval):
             try:
                 cleanup_expired_previews(session_factory, batch)
+                from .discovery_retention import cleanup_sources
+                cleanup_sources(session_factory, batch)
             except Exception:
                 logging.getLogger(__name__).exception("Expired preview cleanup failed")
 

@@ -14,6 +14,7 @@ The React interface provides service workspaces, scan results, remediation views
 | --- | --- |
 | Services | Filter the Service Security Matrix; switch Active, Staged, or Archived, choose page size, and inspect versioned service evidence. |
 | Jobs | Inspect durable scans, remediation plans/executions, exports, and administrator provisioning operations. |
+| Discovery | Upload deployment archives, review a group-owned versioned architecture/image inventory, confirm service boundaries, and explicitly send it to Scan. See the [Discovery guide](docs/universal-deployment-discovery.md) for supported local inputs and native-renderer deployment requirements. |
 | Scan | Assess images, Docker image archives, Docker Compose applications, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |
@@ -46,7 +47,7 @@ Assignments can be global, group-scoped, or service-scoped, and permissions comb
 
 ## Install and start
 
-The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, **remediation-worker**, **risk-worker**, **export-worker**, **provisioning-worker**, and **PostgreSQL**. Portal, its private control listener, and all workers use the same CATS image. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
+The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, **remediation-worker**, **risk-worker**, **export-worker**, **provisioning-worker**, **discovery-worker**, and **PostgreSQL**. Portal, its private control listener, and existing workers use the same CATS image. Discovery uses a separate restricted renderer image; its native sandbox policy requires operator approval and host qualification before use. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
 
 You need Docker Engine or Docker Desktop running Linux containers, Docker Compose v2, and a built CATS image. Run the following from the repository root.
 
@@ -76,7 +77,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Setting | Meaning |
 | --- | --- |
-| `CATS_IMAGE` | Image used by portal, portal-control, and all workers, for example `cats:1.3`. |
+| `CATS_IMAGE` | Image used by portal, portal-control, and existing workers, for example `cats:1.3`. |
+| `CATS_DISCOVERY_IMAGE` | Separate Discovery image built with `Dockerfile.discovery`; defaults to `cats-discovery:local`. See the [build and security requirements](docs/universal-deployment-discovery.md#offline-build-and-operation). |
 | `CATS_SCAN_WORKER_TOKEN` | Unique random token of at least 32 characters shared with the private control listener; replace the example placeholder. |
 | `CATS_SCAN_REGISTRY_AUTH_SOURCE` | Existing registry-auth directory; defaults to `./scan-registry-auth`. |
 | `CATS_PORT` | Browser-facing port; defaults to `8080`. |

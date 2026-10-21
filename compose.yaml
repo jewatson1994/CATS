@@ -235,6 +235,7 @@ services:
       CATS_JOB_QUEUE_CAPACITY: ${CATS_JOB_QUEUE_CAPACITY:-200}
       CATS_JOB_LEASE_SECONDS: ${CATS_JOB_LEASE_SECONDS:-120}
       CATS_EXPORT_JOB_ROOT: /data/export-jobs
+      CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
       CATS_EXPORT_MAX_BYTES: ${CATS_EXPORT_MAX_BYTES:-268435456}
       CATS_EXPORT_DISK_BYTES: ${CATS_EXPORT_DISK_BYTES:-4294967296}
       CATS_EXPORT_RETENTION_HOURS: ${CATS_EXPORT_RETENTION_HOURS:-24}
@@ -493,11 +494,16 @@ services:
     # Volumes
     # ---------------------------------------------------------
 
+    # Multipart request spooling remains in memory, including sensitive discovery inputs.
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${CATS_PORTAL_TMP_BYTES:-2147483648},mode=1777
+
     volumes: &portal_volumes
       # Legacy staged releases are optional; the default volume starts empty.
       - ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-validator_staged_release}:/opt/cats/managed-validator-release:ro
       - validator_data:/app/data
       - export_jobs:/data/export-jobs
+      - discovery_uploads:/data/discovery-uploads
 
       - patch_jobs:/tmp/cats-patch-jobs
 
@@ -582,6 +588,38 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+
+  # Broker has DB access; native subprocesses enter an offline, empty namespace.
+  discovery-worker:
+    image: ${CATS_DISCOVERY_IMAGE:-cats-discovery:local}
+    build:
+      context: .
+      dockerfile: Dockerfile.discovery
+      args:
+        CATS_TOOL_IMAGE: ${CATS_IMAGE:-cats:local}
+    command: ["python", "-m", "app.discovery_worker"]
+    user: "10003:10003"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    cpus: ${CATS_DISCOVERY_CPUS:-1}
+    mem_limit: ${CATS_DISCOVERY_MEMORY:-1g}
+    pids_limit: 128
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
+      CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - discovery_uploads:/data/discovery-uploads:ro
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=536870912,mode=1777
+    depends_on:
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
 
   remediation-worker: &background_worker
     image: ${CATS_IMAGE:-cats:local}
@@ -674,6 +712,8 @@ volumes:
   validator_staged_release:
 
   export_jobs:
+
+  discovery_uploads:
 
 networks:
   default:

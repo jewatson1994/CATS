@@ -179,7 +179,9 @@ def _status(artifact_id, run_id, index, status, reason=None, **detail):
 
 def complete_scan(job_id, job):
     context = job.get("definition_context") or {}
-    if not context:
+    if not context or context.get("discovery_inventory_id"):
+        # Discovery evidence is immutable; completion belongs to the scan job,
+        # not to a legacy Service Definition component run.
         return
     status = ("render_failed" if job.get("skipped_charts") else
               "complete" if job.get("status") == "complete" and not job.get("ingest_error") else

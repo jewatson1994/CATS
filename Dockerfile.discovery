@@ -1,0 +1,20 @@
+# Reuse Helm/kubectl from the existing checksum-verified CATS toolchain.
+ARG CATS_TOOL_IMAGE=cats:local
+FROM ${CATS_TOOL_IMAGE} AS tools
+FROM docker/compose-bin:v2.39.4 AS compose
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 10003 --create-home discovery \
+    && mkdir -p /data/discovery-uploads && chown 10003:10003 /data/discovery-uploads
+COPY --from=tools /usr/local/bin/helm /usr/local/bin/helm
+COPY --from=tools /usr/local/bin/kubectl /usr/local/bin/kubectl
+COPY --from=compose /docker-compose /usr/local/bin/docker-compose
+RUN mkdir -p /opt/discovery && python -c "import json, subprocess; commands={'helm':['helm','version','--short'], 'kustomize':['kubectl','version','--client','-o','json'], 'compose':['docker-compose','version','--short']}; versions={key:subprocess.check_output(args,text=True).strip() for key,args in commands.items()}; versions['kustomize']=json.loads(versions['kustomize'])['kustomizeVersion']; open('/opt/discovery/tool-versions.json','w').write(json.dumps(versions))"
+WORKDIR /app
+COPY portal/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+COPY portal/app ./app
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HOME=/tmp
+USER 10003:10003
+CMD ["python", "-m", "app.discovery_worker"]

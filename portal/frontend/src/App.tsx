@@ -32,6 +32,7 @@ const loaders: Record<string, () => Promise<any>> = {
   './features/evidence_policy': () => import('./features/evidence_policy'),
   './features/exchange': () => import('./features/exchange'),
   './features/general_policy': () => import('./features/general_policy'),
+  './features/discovery': () => import('./features/discovery'),
   './features/patch': () => import('./features/patch'),
   './features/patch_results': () => import('./features/patch_results'),
   './features/poam': () => import('./features/poam'),
@@ -68,6 +69,7 @@ export function lazyComponent<P extends object>(module: string, name: string,
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
 const RiskIntelligence = lazyPage('./features/risk_intelligence', 'Page');
+const Discovery = lazyPage('./features/discovery', 'Page');
 const Patch = lazyPage('./features/patch', 'Page');
 const CyberApprovals = lazyPage('./features/cyber_approvals', 'Page');
 const ApprovedReleases = lazyPage('./features/cyber_approvals', 'Releases');
@@ -111,7 +113,7 @@ export function preloadPages() {
   return Promise.all(Object.keys(loaders).map(module => load(module).catch(() => undefined)));
 }
 
-const routes = new Set(['/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/sbom', '/patch', '/cybersecurity',
+const routes = new Set(['/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
   '/cyber-approvals', '/approved-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
@@ -127,7 +129,7 @@ export const isPageRoute = (path: string) => routes.has(path) || [
 const pages: Record<string, ComponentType<{data: PageData}>> = {
   cyber_approvals: CyberApprovals, approved_releases: ApprovedReleases, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
-  self_service: SelfService, patch: Patch, cybersecurity: Cybersecurity,
+  self_service: SelfService, discovery: Discovery, patch: Patch, cybersecurity: Cybersecurity,
   service: Service, service_simplified: Service,
   public_results: PublicResults, patch_results: PatchResults, finding: Finding, watchlist_match: Watchlist,
   poam: Poam, poam_service: ServicePoam, poam_entry: PoamEntry,

@@ -1,0 +1,772 @@
+"""Bounded offline inventory. Native rendering is delegated to an isolated runner."""
+from __future__ import annotations
+from dataclasses import dataclass
+import base64
+import hashlib
+import json
+import re
+import tempfile
+from pathlib import Path
+import yaml
+from . import compose_ingestion as compose
+from . import service_definitions as legacy
+
+SCHEMA_VERSION = '1.0'
+@dataclass(frozen=True)
+class DiscoveryAdapter:
+    """Trusted format adapter. Custom handlers receive bounded staged inputs.
+
+    detector(path, documents) identifies roots; handler(root_path, options, runner)
+    returns a canonical fragment: nodes(kind/name/state), images(reference/name),
+    and diagnostics(code). Payload fields outside this allowlist are discarded.
+    """
+    technology: str
+    filenames: tuple[str, ...] = ()
+    tool: str | None = None
+    prefix: tuple[str, ...] = ()
+    detector: object = None
+    handler: object = None
+
+    def matches(self, path, documents=()):
+        return Path(path).name in self.filenames or bool(self.detector and self.detector(path, documents))
+
+NativeAdapter = DiscoveryAdapter
+
+def _has_resource(documents, flux):
+    return any(isinstance(doc, dict) and doc.get('apiVersion') and doc.get('kind')
+               and ('toolkit.fluxcd.io/' in str(doc['apiVersion'])) == flux for doc in documents)
+
+def _legacy_match(path, documents):
+    return any(legacy._matches(doc, adapter) for doc in documents for adapter in legacy.ADAPTERS.values())
+
+ADAPTERS = [
+    DiscoveryAdapter('helm', ('Chart.yaml',), 'helm', ('template', 'discovery')),
+    DiscoveryAdapter('kustomize', ('kustomization.yaml', 'kustomization.yml', 'Kustomization'), 'kustomize', ('build',)),
+    DiscoveryAdapter('compose', ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml')),
+    DiscoveryAdapter('kubernetes', detector=lambda path, docs: _has_resource(docs, False)),
+    DiscoveryAdapter('flux', detector=lambda path, docs: _has_resource(docs, True)),
+    DiscoveryAdapter('legacy', detector=_legacy_match),
+    DiscoveryAdapter('images', ('images.txt', 'image-list.txt')),
+]
+
+def register_adapter(adapter):
+    """Register trusted server code; uploaded data cannot register handlers."""
+    if not isinstance(adapter, DiscoveryAdapter) or any(a.technology == adapter.technology for a in ADAPTERS):
+        raise ValueError('Invalid or duplicate discovery adapter.')
+    if adapter.handler is None or not callable(adapter.handler):
+        raise ValueError('Custom adapter requires a handler.')
+    ADAPTERS.append(adapter)
+
+class DiscoveryError(ValueError):
+    pass
+
+def _id(*parts):
+    return hashlib.sha256(json.dumps(parts, separators=(',', ':')).encode()).hexdigest()[:24]
+
+def _documents(text):
+    if not isinstance(text, str) or len(text.encode()) > compose.MAX_FILE:
+        raise DiscoveryError('Document exceeds limits.')
+    class BoundedLoader(yaml.SafeLoader):
+        structural_nodes = 0
+        structural_depth = 0
+        def compose_node(self, parent, index):
+            self.structural_nodes += 1
+            self.structural_depth += 1
+            try:
+                if self.structural_nodes > 30000 or self.structural_depth > 50:
+                    raise DiscoveryError('Document structure exceeds limits.')
+                return super().compose_node(parent, index)
+            finally:
+                self.structural_depth -= 1
+    loader = BoundedLoader(text)
+    result, count = [], 0
+    try:
+        while loader.check_data():
+            node = loader.get_node()
+            def check(n, parents=frozenset(), depth=0):
+                nonlocal count
+                count += 1
+                if count > 30000 or depth > 50 or id(n) in parents:
+                    raise DiscoveryError('Document structure exceeds limits.')
+                if isinstance(n, yaml.MappingNode):
+                    keys = [k.value for k, _ in n.value if isinstance(k, yaml.ScalarNode)]
+                    if len(keys) != len(set(keys)):
+                        raise DiscoveryError('Duplicate document keys.')
+                children = ([c for pair in n.value for c in pair] if isinstance(n, yaml.MappingNode)
+                            else n.value if isinstance(n, yaml.SequenceNode) else [])
+                for child in children:
+                    check(child, parents | {id(n)}, depth + 1)
+            check(node)
+            document = loader.construct_document(node)
+            try:
+                json.dumps(document, allow_nan=False)
+            except (TypeError, ValueError):
+                raise DiscoveryError('Unsupported document scalar type.') from None
+            result.append(document)
+        return result
+    finally:
+        loader.dispose()
+
+def _merge(a, b):
+    out = dict(a)
+    for k, v in b.items():
+        out[k] = _merge(out[k], v) if isinstance(out.get(k), dict) and isinstance(v, dict) else v
+    return out
+
+def _text(v):
+    return v if isinstance(v, str) and len(v) <= 512 and not any(ord(c) < 32 for c in v) else '[invalid]'
+
+def _image(v):
+    return isinstance(v, str) and len(v) <= 512 and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@+-]*', v))
+
+def run_discovery(source_path, options=None, runner=None, progress=None):
+    options = options or {}
+    if not isinstance(options, dict):
+        raise DiscoveryError('Options must be a mapping.')
+    for key in ('profiles', 'values_files'):
+        selected = options.get(key, [])
+        if not isinstance(selected, list) or len(selected) > 50 or any(not isinstance(value, str) or len(value) > 500 for value in selected):
+            raise DiscoveryError('Invalid discovery option list.')
+    mapping = options.get('chart_map', {})
+    if not isinstance(mapping, dict) or len(mapping) > 200 or any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapping.items()):
+        raise DiscoveryError('Invalid local chart mapping.')
+    if progress:
+        progress({'stage': 'reading'})
+    result = dict(schema_version=SCHEMA_VERSION, source_hash='', roots=[], nodes=[], edges=[], images=[],
+                  diagnostics=[], completeness='complete', metrics={}, tool_versions={})
+    secret_values = set()
+    root_ids, node_ids, image_ids = set(), set(), set()
+    pending_refs, definitions, workloads, services, edge_ids = [], {}, [], [], set()
+    definition_origins, ambiguous_definitions = {}, set()
+    def collect_secrets(documents):
+        for document in documents:
+            if isinstance(document, dict) and document.get('kind') == 'List' and isinstance(document.get('items'), list):
+                collect_secrets(document['items'])
+            if not isinstance(document, dict) or document.get('kind') != 'Secret':
+                continue
+            for field in ('data', 'stringData'):
+                values = document.get(field, {})
+                if not isinstance(values, dict):
+                    continue
+                for value in values.values():
+                    if not isinstance(value, str):
+                        continue
+                    if field == 'data':
+                        try:
+                            value = base64.b64decode(value, validate=True).decode()
+                        except (ValueError, UnicodeError):
+                            continue
+                    if len(value) >= 4:
+                        secret_values.add(value)
+    def clean(value):
+        text = _text(value)
+        return '[redacted]' if any(secret in text for secret in secret_values) else text
+    def issue(code, rid=None, path=None):
+        if len(result['diagnostics']) >= 30000:
+            raise DiscoveryError('Diagnostic limit exceeded.')
+        result['diagnostics'].append(dict(code=code, severity='warning', root_id=rid, path=path,
+                                          message=code.replace('_', ' ') + '.', blocking=True))
+        result['completeness'] = 'partial'
+        for item in result['roots']:
+            if item['id'] == rid:
+                item['completeness'] = 'partial'
+    def root(path, technology):
+        item = dict(id=_id('root', path, technology), path=path, technology=technology, completeness='complete')
+        if item['id'] not in root_ids:
+            if len(root_ids) >= 5000:
+                raise DiscoveryError('Root limit exceeded.')
+            root_ids.add(item['id'])
+            result['roots'].append(item)
+        return item['id']
+    def node(rid, kind, name, path, state='declared', namespace=''):
+        item = dict(id=_id(rid, kind, namespace, name, path), root_id=rid, kind=clean(kind), name=clean(name),
+                    namespace=clean(namespace), completeness='partial' if state == 'unresolved' else 'complete', state=state if state in ('declared', 'selected', 'rendered', 'unresolved') else 'unresolved', provenance=[dict(path=path)])
+        if item['id'] not in node_ids:
+            if len(node_ids) >= 30000:
+                raise DiscoveryError('Node limit exceeded.')
+            node_ids.add(item['id'])
+            result['nodes'].append(item)
+        return item['id']
+    def image(ref, rid, nid, path):
+        if isinstance(ref, str) and any(secret in ref for secret in secret_values):
+            issue('secret_derived_image_not_retained', rid, path)
+            return
+        if _image(ref):
+            item = dict(reference=ref, root_id=rid, component_id=nid, completeness='complete', provenance=[dict(path=path)])
+            identity = (ref, rid, nid, path)
+            if identity not in image_ids:
+                if len(image_ids) >= 30000:
+                    raise DiscoveryError('Image limit exceeded.')
+                image_ids.add(identity)
+                result['images'].append(item)
+        elif ref:
+            issue('unresolved_image_reference', rid, path)
+    def edge(source, target, kind):
+        identity = (source, target, kind)
+        if identity not in edge_ids:
+            if len(edge_ids) >= 30000:
+                raise DiscoveryError('Edge limit exceeded.')
+            edge_ids.add(identity)
+            result['edges'].append(dict(source=source, target=target, kind=kind))
+    def reference(source, kind, name, namespace, rid, path, relation='references'):
+        if not isinstance(name, str) or not name:
+            return
+        if len(pending_refs) >= 30000:
+            raise DiscoveryError('Reference limit exceeded.')
+        pending_refs.append((source, kind, name, namespace or 'default', rid, path, relation))
+    def manifests(docs, rid, path, state='declared'):
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            if doc.get('kind') == 'List':
+                manifests(doc.get('items', []), rid, path, state)
+                continue
+            kind, meta = doc.get('kind'), doc.get('metadata', {})
+            if not isinstance(kind, str) or not isinstance(meta, dict):
+                continue
+            nid = node(rid, kind, meta.get('name', '[unnamed]'), path, state, namespace=meta.get('namespace', ''))
+            namespace = meta.get('namespace') or 'default'
+            definition_key = (kind, namespace, str(meta.get('name', '')))
+            origin = _id(path, doc)
+            if definition_key in definition_origins and definition_origins[definition_key] != origin:
+                ambiguous_definitions.add(definition_key)
+                issue('ambiguous_resource_identity', rid, path)
+            else:
+                definition_origins[definition_key] = origin
+                definitions[definition_key] = nid
+            if kind == 'Secret':
+                continue
+            pod = None
+            api_group = str(doc.get('apiVersion', '')).split('/')[0]
+            standard_kind = (kind in ('Pod', 'ReplicationController') and api_group == 'v1'
+                             or kind in ('Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet') and api_group == 'apps'
+                             or kind in ('Job', 'CronJob') and api_group == 'batch')
+            spec = doc.get('spec', {})
+            if standard_kind and kind == 'Pod':
+                pod = spec
+            elif standard_kind and kind in ('Deployment', 'StatefulSet', 'DaemonSet', 'ReplicaSet', 'ReplicationController', 'Job'):
+                if isinstance(spec, dict) and isinstance(spec.get('template'), dict):
+                    pod = spec['template'].get('spec')
+            elif standard_kind and kind == 'CronJob':
+                try:
+                    pod = spec['jobTemplate']['spec']['template']['spec']
+                except (KeyError, TypeError):
+                    pass
+            if isinstance(spec, dict) and kind == 'Service' and isinstance(spec.get('selector'), dict) and spec['selector']:
+                services.append((nid, namespace, spec['selector'], rid, path))
+            if isinstance(spec, dict) and kind == 'PersistentVolumeClaim':
+                reference(nid, 'PersistentVolume', spec.get('volumeName'), 'default', rid, path, 'binds')
+                reference(nid, 'StorageClass', spec.get('storageClassName'), 'default', rid, path, 'uses_storage_class')
+            if isinstance(pod, dict):
+                template = spec if kind == 'Pod' else spec.get('template', {})
+                if kind == 'CronJob':
+                    template = spec.get('jobTemplate', {}).get('spec', {}).get('template', {})
+                labels = meta.get('labels', {}) if kind == 'Pod' else template.get('metadata', {}).get('labels', {})
+                if isinstance(labels, dict):
+                    workloads.append((nid, namespace, labels))
+                def config_refs(value, source=nid):
+                    if not isinstance(value, dict):
+                        return
+                    for key, target_kind in (('configMapKeyRef', 'ConfigMap'), ('configMapRef', 'ConfigMap'), ('secretKeyRef', 'Secret'), ('secretRef', 'Secret')):
+                        target = value.get(key)
+                        if isinstance(target, dict):
+                            reference(source, target_kind, target.get('name'), namespace, rid, path, 'uses_configuration')
+                for volume in pod.get('volumes', []) if isinstance(pod.get('volumes', []), list) else []:
+                    if not isinstance(volume, dict):
+                        continue
+                    vid = node(rid, 'PodVolume', str(meta.get('name', '')) + '/' + str(volume.get('name', '')), path, state, namespace)
+                    edge(nid, vid, 'uses_volume')
+                    for key, target_kind, name_key in (('configMap', 'ConfigMap', 'name'), ('secret', 'Secret', 'secretName'), ('persistentVolumeClaim', 'PersistentVolumeClaim', 'claimName')):
+                        value = volume.get(key)
+                        if isinstance(value, dict):
+                            reference(vid, target_kind, value.get(name_key), namespace, rid, path, 'backed_by')
+                    projected = volume.get('projected', {})
+                    for value in projected.get('sources', []) if isinstance(projected, dict) and isinstance(projected.get('sources', []), list) else []:
+                        if isinstance(value, dict):
+                            for key, target_kind in (('configMap', 'ConfigMap'), ('secret', 'Secret')):
+                                if isinstance(value.get(key), dict):
+                                    reference(vid, target_kind, value[key].get('name'), namespace, rid, path, 'backed_by')
+                for field in ('containers', 'initContainers', 'ephemeralContainers'):
+                    containers = pod.get(field, [])
+                    if not isinstance(containers, list):
+                        issue('invalid_workload_container_list', rid, path)
+                        continue
+                    for container in containers:
+                        if isinstance(container, dict):
+                            image(container.get('image'), rid, nid, path)
+                            for value in container.get('envFrom', []) if isinstance(container.get('envFrom', []), list) else []:
+                                config_refs(value)
+                            for value in container.get('env', []) if isinstance(container.get('env', []), list) else []:
+                                if isinstance(value, dict):
+                                    config_refs(value.get('valueFrom'))
+            elif kind not in {'Secret', 'ConfigMap', 'Service', 'Namespace', 'ServiceAccount', 'Role', 'RoleBinding',
+                              'ClusterRole', 'ClusterRoleBinding', 'PersistentVolume', 'PersistentVolumeClaim',
+                              'StorageClass', 'Ingress', 'IngressClass', 'NetworkPolicy', 'PodDisruptionBudget',
+                              'HorizontalPodAutoscaler', 'CustomResourceDefinition', 'ResourceQuota', 'LimitRange'}:
+                if 'toolkit.fluxcd.io/' not in str(doc.get('apiVersion', '')):
+                    issue('custom_resource_workloads_not_evaluated', rid, path)
+    if options.get('reference') and source_path is None:
+        reference = options['reference']
+        result['source_hash'] = 'sha256:' + hashlib.sha256(str(reference).encode()).hexdigest()
+        rid = root('reference', 'helm' if options.get('reference_kind') == 'chart' else 'images')
+        if options.get('reference_kind') == 'chart':
+            issue('remote_chart_requires_local_artifact', rid, 'reference')
+            result['completeness'] = 'blocked'
+        else:
+            nid = node(rid, 'Image', reference if _image(reference) else '[unresolved]', 'reference')
+            image(reference, rid, nid, 'reference')
+        result['metrics'] = dict(files=0, roots=1, nodes=len(result['nodes']), images=len(result['images']))
+        return result
+    with tempfile.TemporaryDirectory(prefix='cats-discovery-') as temporary:
+        staging, source = Path(temporary), Path(source_path)
+        uploads = []
+        if source.is_symlink():
+            raise DiscoveryError('Source links are not allowed.')
+        if source.is_dir():
+            total = 0
+            for p in sorted(source.rglob('*')):
+                if p.is_symlink():
+                    raise DiscoveryError('Source links are not allowed.')
+                if not p.is_file() or '.git' in p.relative_to(source).parts:
+                    continue
+                total += p.stat().st_size
+                if len(uploads) >= compose.MAX_FILES or p.stat().st_size > compose.MAX_FILE or total > compose.MAX_TOTAL:
+                    raise DiscoveryError('Source exceeds discovery limits.')
+                uploads.append((p.read_bytes(), p.relative_to(source).as_posix()))
+        elif source.is_file() and source.stat().st_size <= compose.MAX_TOTAL:
+            uploads = [(source.read_bytes(), source.name)]
+        else:
+            raise DiscoveryError('Source is unavailable or oversized.')
+        try:
+            if source.is_dir():
+                destination = staging / '.cats-compose'
+                destination.mkdir()
+                seen = set()
+                for data, name in uploads:
+                    name = compose._relative(name)
+                    if name.casefold() in seen:
+                        raise DiscoveryError('Duplicate source paths.')
+                    seen.add(name.casefold())
+                    target = compose._inside(destination, name)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(data)
+                staged = {'root': destination}
+            else:
+                staged = compose.stage_uploads(staging, uploads)
+        except (compose.ComposeInputError, OSError, ValueError):
+            raise DiscoveryError('Source archive is invalid or unsafe.') from None
+        base = Path(staged['root'])
+        files = sorted(p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file())
+        digest = hashlib.sha256()
+        for path in files:
+            data = (base / path).read_bytes()
+            digest.update(len(path.encode()).to_bytes(8, 'big') + path.encode() + len(data).to_bytes(8, 'big') + data)
+        result['source_hash'] = 'sha256:' + digest.hexdigest()
+        parsed = {}
+        charts = [p for p in files if Path(p).name == 'Chart.yaml']
+        kustomizations = [p for p in files if Path(p).name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')]
+        compose_files = [p for p in files if Path(p).name in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml')]
+        for path in files:
+            if Path(path).suffix.lower() not in ('.yaml', '.yml', '.json') or '/templates/' in '/' + path:
+                continue
+            try:
+                parsed[path] = _documents((base / path).read_text(encoding='utf-8-sig'))
+            except (ValueError, yaml.YAMLError, UnicodeError, RecursionError):
+                issue('invalid_or_unsupported_document', path=path)
+        collect_secrets([doc for docs in parsed.values() for doc in docs])
+        managed_paths = {p for p in parsed if any(Path(k).parent == Path('.') or Path(k).parent in Path(p).parents for k in kustomizations)}
+        rendered_documents = []
+        resources = {}
+        resource_origins, ambiguous_resources = {}, set()
+        def index_resource(document, path):
+            metadata = document.get('metadata', {})
+            key = (document.get('kind'), metadata.get('namespace', 'default'), metadata.get('name'))
+            origin = _id(path, document)
+            if key in resource_origins and resource_origins[key] != origin:
+                ambiguous_resources.add(key)
+                resources.pop(key, None)
+            elif key not in ambiguous_resources:
+                resource_origins[key] = origin
+                resources[key] = document
+        rendered_releases = set()
+        def render(tool, args, rid, path, postrenderers=None):
+            if runner is None:
+                issue('native_renderer_unavailable', rid, path)
+                return
+            try:
+                output = runner(tool, args, str(base))
+                if isinstance(output, dict):
+                    result['tool_versions'][tool] = _text(output.get('version', 'unknown'))
+                    output = output['stdout']
+                else:
+                    result['tool_versions'].setdefault(tool, 'unknown')
+                documents = _documents(output)
+                for index, postrenderer in enumerate(postrenderers or []):
+                    if index >= 10 or not isinstance(postrenderer, dict) or set(postrenderer) != {'kustomize'}:
+                        raise DiscoveryError('Unsupported post-renderer.')
+                    transform = postrenderer['kustomize']
+                    if not isinstance(transform, dict) or set(transform) - {'patches', 'images'}:
+                        raise DiscoveryError('Unsupported post-renderer fields.')
+                    patches = transform.get('patches', [])
+                    if not isinstance(patches, list) or any(not isinstance(patch, dict) or set(patch) - {'patch', 'target'} or not isinstance(patch.get('patch'), str) for patch in patches):
+                        raise DiscoveryError('Only inline patches are allowed.')
+                    with tempfile.TemporaryDirectory(prefix='.discovery-post-', dir=base) as postdir:
+                        postbase = Path(postdir)
+                        (postbase / 'resources.yaml').write_text(yaml.safe_dump_all(documents), encoding='utf-8')
+                        configuration = {'apiVersion': 'kustomize.config.k8s.io/v1beta1', 'kind': 'Kustomization', 'resources': ['resources.yaml'], **transform}
+                        (postbase / 'kustomization.yaml').write_text(yaml.safe_dump(configuration), encoding='utf-8')
+                        output = runner('kustomize', ['build', str(postbase)], str(base))
+                        if isinstance(output, dict):
+                            result['tool_versions']['kustomize'] = _text(output.get('version', 'unknown'))
+                            output = output['stdout']
+                        else:
+                            result['tool_versions'].setdefault('kustomize', 'unknown')
+                        documents = _documents(output)
+                collect_secrets(documents)
+                evidence_hash = hashlib.sha256(yaml.safe_dump_all(documents).encode()).hexdigest()
+                before_nodes, before_images = len(result['nodes']), len(result['images'])
+                manifests(documents, rid, path, 'rendered')
+                for item in result['nodes'][before_nodes:] + result['images'][before_images:]:
+                    item['provenance'][0].update(rendered_sha256=evidence_hash, tool=tool)
+                for document in documents:
+                    if not isinstance(document, dict):
+                        continue
+                    metadata = document.get('metadata', {})
+                    if isinstance(metadata, dict) and all(isinstance(v, str) for v in (document.get('kind'), metadata.get('namespace', 'default'), metadata.get('name'))):
+                        index_resource(document, path)
+                    if 'toolkit.fluxcd.io/' in str(document.get('apiVersion', '')):
+                        rendered_documents.append((path, document, True))
+            except Exception:
+                issue('native_render_failed', rid, path)
+        referenced_charts = set(options.get('chart_map', {}).values())
+        for documents in parsed.values():
+            for document in documents:
+                if isinstance(document, dict) and document.get('kind') == 'HelmRelease':
+                    try:
+                        chart = document['spec']['chart']['spec']['chart']
+                        if isinstance(chart, str):
+                            referenced_charts.add(chart)
+                    except (KeyError, TypeError):
+                        pass
+        def vendored_chart(path):
+            directory = Path(path).parent
+            for parent_chart in charts:
+                parent = Path(parent_chart).parent
+                if parent == directory or not directory.is_relative_to(parent):
+                    continue
+                relative = directory.relative_to(parent)
+                if relative.parts and relative.parts[0] == 'charts':
+                    return True
+            return directory.as_posix() in referenced_charts
+        for adapter in ADAPTERS:
+            if not adapter.tool:
+                continue
+            for path in (p for p in files if adapter.matches(p, parsed.get(p, [])) and not (adapter.tool == 'helm' and vendored_chart(p))):
+                rid = root(Path(path).parent.as_posix(), adapter.technology)
+                args = [*adapter.prefix, str(base / Path(path).parent)]
+                if adapter.tool == 'helm':
+                    for value_file in options.get('values_files', []):
+                        try:
+                            value_path = compose._inside(base, value_file)
+                            if not value_path.is_file():
+                                raise ValueError()
+                            args += ['-f', str(value_path)]
+                        except (ValueError, TypeError):
+                            issue('values_file_unavailable', rid, path)
+                render(adapter.tool, args, rid, path)
+        for path in compose_files:
+            rid = root(path, 'compose')
+            selection = [path]
+            for suffix in ('compose.override.yaml', 'compose.override.yml', 'docker-compose.override.yaml', 'docker-compose.override.yml'):
+                candidate = (Path(path).parent / suffix).as_posix()
+                if candidate in files:
+                    selection.append(candidate)
+            model = compose.discover(base, selection, profiles=options.get('profiles'))
+            native_services = None
+            if runner is not None:
+                args = ['--project-name', 'discovery']
+                for selected in selection:
+                    args += ['-f', str(base / selected)]
+                dotenv = base / Path(path).parent / '.env'
+                if dotenv.is_file():
+                    args += ['--env-file', str(dotenv)]
+                for profile in options.get('profiles', []):
+                    args += ['--profile', str(profile)]
+                args += ['config', '--format', 'json']
+                try:
+                    output = runner('compose', args, str(base))
+                    if isinstance(output, dict):
+                        result['tool_versions']['compose'] = _text(output.get('version', 'unknown'))
+                        output = output['stdout']
+                    else:
+                        result['tool_versions'].setdefault('compose', 'unknown')
+                    documents = _documents(output)
+                    native_services = documents[0]['services']
+                    if not isinstance(native_services, dict):
+                        raise ValueError()
+                except Exception:
+                    issue('compose_native_render_failed', rid, path)
+            else:
+                issue('compose_native_renderer_unavailable', rid, path)
+            if native_services is not None:
+                for configuration in native_services.values():
+                    if not isinstance(configuration, dict):
+                        continue
+                    environment = configuration.get('environment', {})
+                    if isinstance(environment, dict):
+                        secret_values.update(str(value) for key, value in environment.items() if compose._SECRET_NAME.search(str(key)) and value is not None and len(str(value)) >= 4)
+                for name, service in native_services.items():
+                    if not isinstance(service, dict):
+                        issue('invalid_compose_native_output', rid, path)
+                        continue
+                    nid = node(rid, 'ComposeService', name, path, 'rendered')
+                    safe_service = next((item for item in model['services'] if item['name'] == name), None)
+                    if safe_service is not None and safe_service.get('image') is None:
+                        issue('compose_image_requires_safe_resolution', rid, path)
+                    else:
+                        image(service.get('image'), rid, nid, path)
+                    if service.get('build'):
+                        issue('compose_build_not_executed', rid, path)
+            else:
+                for service in model['services']:
+                    nid = node(rid, 'ComposeService', service['name'], path, 'selected')
+                    image(service.get('image'), rid, nid, path)
+            if native_services is not None:
+                service_nodes = {n['name']: n['id'] for n in result['nodes'] if n['root_id'] == rid and n['kind'] == 'ComposeService'}
+                for name, configuration in native_services.items():
+                    if not isinstance(configuration, dict) or name not in service_nodes:
+                        continue
+                    source_id = service_nodes[name]
+                    dependencies = configuration.get('depends_on', {})
+                    for dependency in dependencies if isinstance(dependencies, (dict, list)) else []:
+                        target = service_nodes.get(dependency)
+                        if target is None:
+                            target = node(rid, 'ComposeServiceReference', dependency, path, 'unresolved')
+                            issue('compose_dependency_unresolved', rid, path)
+                        edge(source_id, target, 'depends_on')
+                    networks = configuration.get('networks', {})
+                    for name in networks if isinstance(networks, (dict, list)) else []:
+                        edge(source_id, node(rid, 'ComposeNetwork', name, path, 'rendered'), 'uses_network')
+                    volumes = configuration.get('volumes', [])
+                    for volume in volumes if isinstance(volumes, list) else []:
+                        if isinstance(volume, dict):
+                            name = volume.get('source') if volume.get('type') == 'volume' else volume.get('target')
+                            if name:
+                                edge(source_id, node(rid, 'ComposeVolume', name, path, 'rendered'), 'uses_volume')
+            for diagnostic in model['issues']:
+                issue(diagnostic.get('code', 'compose_input_incomplete'), rid, path)
+        for path, documents in parsed.items():
+            if not next(a for a in ADAPTERS if a.technology == 'legacy').matches(path, documents):
+                continue
+            rid = root(path, 'legacy')
+            try:
+                definition = legacy.parse_definition((base / path).read_text(encoding='utf-8-sig'))
+                for component in definition['components']:
+                    nid = node(rid, 'ChartReference', component['logical_name'], path, 'unresolved')
+                    mapped = options.get('chart_map', {}).get(component.get('reference'))
+                    if mapped:
+                        local = compose._inside(base, mapped)
+                        if not (local / 'Chart.yaml').is_file():
+                            raise ValueError()
+                        render('helm', ['template', 'discovery', str(local)], rid, path)
+                    else:
+                        issue('legacy_chart_requires_local_artifact', rid, path)
+            except (ValueError, OSError):
+                issue('legacy_definition_unresolved', rid, path)
+        for path, docs in parsed.items():
+            if path in managed_paths:
+                continue
+            for doc in docs:
+                if isinstance(doc, dict) and isinstance(doc.get('metadata'), dict):
+                    meta = doc['metadata']
+                    if all(isinstance(v, str) for v in (doc.get('kind'), meta.get('namespace', 'default'), meta.get('name'))):
+                        index_resource(doc, path)
+        queue = [(path, doc, False) for path, docs in parsed.items() for doc in docs if path not in managed_paths] + rendered_documents
+        rendered_documents.clear()
+        cursor = 0
+        while cursor < len(queue):
+            if cursor > 2000:
+                issue('render_graph_limit_exceeded')
+                break
+            path, doc, generated = queue[cursor]
+            cursor += 1
+            if not isinstance(doc, dict) or not doc.get('apiVersion') or not doc.get('kind'):
+                continue
+            flux = 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', ''))
+            rid = root(path, 'flux' if flux else 'kubernetes')
+            manifests([doc], rid, path, 'rendered' if generated else 'declared')
+            if not flux:
+                continue
+            spec = doc.get('spec', {})
+            if doc.get('kind') != 'HelmRelease' or not isinstance(spec, dict):
+                issue('flux_controller_semantics_not_evaluated', rid, path)
+                continue
+            release_meta = doc.get('metadata', {})
+            release_ns = release_meta.get('namespace') or 'default'
+            release_id = definitions.get(('HelmRelease', release_ns, str(release_meta.get('name', ''))))
+            for dependency in spec.get('dependsOn', []) if isinstance(spec.get('dependsOn', []), list) else []:
+                if isinstance(dependency, dict):
+                    reference(release_id, 'HelmRelease', dependency.get('name'), dependency.get('namespace', release_ns), rid, path, 'depends_on')
+            chart_spec = spec.get('chart', {}).get('spec', {}) if isinstance(spec.get('chart'), dict) else {}
+            source_ref = chart_spec.get('sourceRef', {}) if isinstance(chart_spec, dict) else {}
+            if isinstance(source_ref, dict):
+                reference(release_id, source_ref.get('kind', 'HelmRepository'), source_ref.get('name'), source_ref.get('namespace', release_ns), rid, path, 'uses_source')
+            release_key = _id(path, doc)
+            if release_key in rendered_releases:
+                continue
+            rendered_releases.add(release_key)
+            values = {}
+            targets = {}
+            namespace = doc.get('metadata', {}).get('namespace', 'default')
+            refs = spec.get('valuesFrom', []) or []
+            if not isinstance(refs, list):
+                issue('invalid_flux_values_reference', rid, path)
+                refs = []
+            for ref in refs:
+                if not isinstance(ref, dict):
+                    issue('invalid_flux_values_reference', rid, path)
+                    continue
+                if not all(isinstance(v, str) for v in (ref.get('kind', 'Secret'), namespace, ref.get('name'))):
+                    issue('invalid_flux_values_reference', rid, path)
+                    continue
+                reference(release_id, ref.get('kind', 'Secret'), ref.get('name'), namespace, rid, path, 'uses_values')
+                resource_key = (ref.get('kind', 'Secret'), namespace, ref.get('name'))
+                if resource_key in ambiguous_resources:
+                    issue('ambiguous_flux_values_reference', rid, path)
+                    continue
+                resource = resources.get(resource_key)
+                if resource is None:
+                    if not ref.get('optional'):
+                        issue('missing_flux_values_reference', rid, path)
+                    continue
+                if ref.get('kind', 'Secret') == 'Secret':
+                    issue('secret_values_not_rendered', rid, path)
+                    continue
+                try:
+                    value = _documents(resource.get('data', {}).get(ref.get('valuesKey', 'values.yaml')))[0]
+                    target = ref.get('targetPath')
+                    if target:
+                        if not isinstance(target, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*', target):
+                            raise ValueError()
+                        for part in reversed(target.split('.')):
+                            value = {part: value}
+                        targets = _merge(targets, value)
+                    if not isinstance(value, dict):
+                        raise ValueError()
+                    values = _merge(values, value)
+                except Exception:
+                    issue('unsupported_flux_values_input', rid, path)
+            if isinstance(spec.get('values', {}), dict):
+                values = _merge(values, spec.get('values', {}))
+            else:
+                issue('invalid_flux_inline_values', rid, path)
+            values = _merge(values, targets)
+            if spec.get('dependsOn'):
+                issue('flux_dependency_readiness_not_verified', rid, path)
+            try:
+                chart = spec.get('chart', {}).get('spec', {}).get('chart')
+                chart = options.get('chart_map', {}).get(chart, chart)
+                local = compose._inside(base, str(chart))
+                if not (local / 'Chart.yaml').is_file():
+                    raise ValueError()
+                child_rid = root(local.relative_to(base).as_posix(), 'helm')
+                if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics']):
+                    issue('flux_render_blocked_by_values', rid, path)
+                    continue
+                values_path = base / ('.discovery-values-' + rid + '.yaml')
+                if values_path.exists():
+                    raise ValueError()
+                values_path.write_text(yaml.safe_dump(values), encoding='utf-8')
+                release_name = spec.get('releaseName', doc.get('metadata', {}).get('name', 'discovery'))
+                release_namespace = spec.get('targetNamespace', namespace)
+                if not all(isinstance(value, str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', value) for value in (release_name, release_namespace)):
+                    raise ValueError()
+                render('helm', ['template', release_name, str(local), '--namespace', release_namespace, '--include-crds', '-f', str(values_path)], rid, path, spec.get('postRenderers'))
+                values_path.unlink()
+                result['edges'].append(dict(source=rid, target=child_rid, kind='renders'))
+            except (ValueError, OSError, AttributeError, compose.ComposeInputError):
+                issue('flux_chart_source_unavailable', rid, path)
+            if any(key in spec for key in ('dependsOn', 'chartRef', 'kubeConfig')):
+                issue('flux_controller_semantics_not_evaluated', rid, path)
+            queue.extend(rendered_documents)
+            rendered_documents.clear()
+        for adapter in ADAPTERS:
+            if adapter.handler is None:
+                continue
+            for path in files:
+                if not adapter.matches(path, parsed.get(path, [])):
+                    continue
+                rid = root(path, adapter.technology)
+                try:
+                    fragment = adapter.handler(base / path, dict(options), runner)
+                    if not isinstance(fragment, dict) or sum(len(fragment.get(k, [])) for k in ('nodes', 'images', 'diagnostics')) > 2000:
+                        raise ValueError()
+                    components = {}
+                    for item in fragment.get('nodes', []):
+                        components[item.get('name')] = node(rid, item.get('kind', 'Component'), item.get('name'), path, item.get('state', 'unresolved'))
+                    for item in fragment.get('images', []):
+                        nid = components.get(item.get('name')) or node(rid, 'Image', '[image]', path)
+                        image(item.get('reference'), rid, nid, path)
+                    for item in fragment.get('diagnostics', []):
+                        issue('adapter_input_unresolved', rid, path)
+                except Exception:
+                    issue('adapter_failed', rid, path)
+        for path in files:
+            if Path(path).name.lower() in ('images.txt', 'image-list.txt'):
+                rid = root(path, 'images')
+                for line in (base / path).read_text(encoding='utf-8-sig').splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        nid = node(rid, 'Image', line if _image(line) else '[unresolved]', path)
+                        image(line, rid, nid, path)
+        for source_id, kind, name, namespace, rid, path, relation in pending_refs:
+            key = (kind, namespace, name)
+            target = definitions.get(key) if kind != 'Secret' and key not in ambiguous_definitions else None
+            if key in ambiguous_definitions:
+                issue('ambiguous_resource_reference', rid, path)
+            if target is None:
+                target = node(rid, kind + 'Reference', name, path, 'unresolved', namespace)
+                issue('secret_reference_not_evaluated' if kind == 'Secret' else 'resource_reference_unresolved', rid, path)
+            edge(source_id, target, relation)
+        for service_id, namespace, selector, rid, path in services:
+            matches = [wid for wid, ns, labels in workloads if ns == namespace and all(labels.get(k) == v for k, v in selector.items())]
+            for wid in matches:
+                edge(service_id, wid, 'selects_workload')
+            if not matches:
+                issue('service_selector_no_local_workload', rid, path)
+        for path in files:
+            if (base / path).read_bytes().startswith(b'version https://git-lfs.github.com/spec/v1'):
+                issue('missing_lfs_object', path=path)
+            if Path(path).name == '.gitmodules':
+                for subpath in re.findall(r'^\s*path\s*=\s*(.+)$', (base / path).read_text(errors='replace'), re.MULTILINE):
+                    try:
+                        target = compose._inside(base, subpath.strip())
+                        if not target.is_dir() or not any(target.iterdir()):
+                            issue('missing_submodule_content', path=path)
+                    except (ValueError, compose.ComposeInputError):
+                        issue('missing_submodule_content', path=path)
+        if not result['roots']:
+            issue('no_supported_deployment_roots')
+        if result['completeness'] == 'partial' and not result['images'] and not result['nodes']:
+            result['completeness'] = 'invalid' if any(d['code'] == 'invalid_or_unsupported_document' for d in result['diagnostics']) else 'blocked'
+        for item in result['nodes']:
+            for field in ('name', 'namespace', 'kind'):
+                item[field] = clean(item[field])
+        retained_images = []
+        for item in result['images']:
+            if any(secret in item['reference'] for secret in secret_values):
+                issue('secret_derived_image_not_retained', item['root_id'], item['provenance'][0]['path'])
+            else:
+                retained_images.append(item)
+        result['images'] = retained_images
+        partial_roots = {item['id'] for item in result['roots'] if item['completeness'] != 'complete'}
+        for item in result['nodes'] + result['images']:
+            item['completeness'] = 'partial' if item['root_id'] in partial_roots or item.get('state') == 'unresolved' else 'complete'
+            for provenance in item['provenance']:
+                source_file = base / provenance['path']
+                if source_file.is_file():
+                    provenance['sha256'] = hashlib.sha256(source_file.read_bytes()).hexdigest()
+        result['metrics'] = dict(files=len(files), roots=len(result['roots']), nodes=len(result['nodes']), images=len(result['images']))
+        if progress:
+            progress(dict(stage='complete', **result['metrics']))
+    return result

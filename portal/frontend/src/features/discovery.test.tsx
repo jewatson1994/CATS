@@ -1,0 +1,43 @@
+import {afterEach, expect, it, vi} from 'vitest';
+import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {Page, isPartial} from './discovery';
+const catalog = {groups: [{id: 1, name: 'Platform'}], services: [{id: 2, name: 'Payments', service_key: 'payments', group_id: 1}, {id: 3, name: 'Other', service_key: 'other', group_id: 9}], jobs: [{id: 'job-1', status: 'completed', group_id: 1}]};
+const inventory = {roots: [{id: 'root', path: 'deploy/chart', technology: 'helm', completeness: 'partial'}], nodes: [{id: 'node', root_id: 'root', name: 'api', kind: 'deployment', state: 'resolved', provenance: {path: 'templates/api.yaml'}}], images: [{reference: 'nginx:1', root_id: 'root'}], diagnostics: [{message: 'Missing values'}], completeness: 'partial'};
+afterEach(() => vi.unstubAllGlobals());
+it('requires selected roots and partial acknowledgement, confirms without scanning, and scopes services', async () => {
+  const fetch = vi.fn(async (url: string, _init?: RequestInit) => new Response(JSON.stringify(url.endsWith('/confirm') ? {inventory_id: 'confirmed'} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory} : catalog), {headers: {'Content-Type': 'application/json'}}));
+  vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
+  fireEvent.click(await screen.findByRole('button', {name: 'job-1 completed'}));
+  await screen.findByText('nginx:1');
+  expect(screen.queryByRole('option', {name: 'Other (other)'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Start scan'})).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Service'), {target: {value: '2'}});
+  fireEvent.click(screen.getByRole('checkbox', {name: 'deploy/chart helm'}));
+  expect(screen.getByRole('button', {name: 'Confirm inventory'})).toBeDisabled();
+  fireEvent.click(screen.getByRole('checkbox', {name: /I acknowledge/}));
+  fireEvent.click(screen.getByRole('button', {name: 'Confirm inventory'}));
+  await screen.findByRole('button', {name: 'Start scan'});
+  const mutations = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+  expect(mutations).toHaveLength(1);
+  expect(mutations[0][0]).toContain('/confirm');
+  expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({csrf_token: 'token', service_id: 2, root_ids: ['root'], acknowledge_partial: true});
+});
+it('submits ordered non-secret configuration and the selected group', async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {job_id: 'new'} : url.endsWith('/new') ? {job: {id: 'new', status: 'queued'}, inventory: null} : catalog), {headers: {'Content-Type': 'application/json'}}));
+  vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
+  await screen.findByRole('option', {name: 'Platform'});
+  fireEvent.change(screen.getByLabelText('Owning group'), {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Source type'), {target: {value: 'reference'}});
+  fireEvent.change(screen.getByLabelText('OCI image or chart reference'), {target: {value: 'docker.io/library/nginx:1.27'}});
+  fireEvent.change(screen.getByLabelText('Environment'), {target: {value: 'staging'}});
+  fireEvent.change(screen.getByLabelText('Values files, in override order'), {target: {value: 'values.yaml\n values-staging.yaml'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Start discovery'}));
+  await waitFor(() => expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const body = fetch.mock.calls.find(([, init]) => init?.method === 'POST')?.[1]?.body as FormData;
+  expect(body.get('csrf_token')).toBe('token'); expect(body.get('group_id')).toBe('1');
+  expect(JSON.parse(String(body.get('options')))).toEqual({environment: 'staging', values_files: ['values.yaml', 'values-staging.yaml']});
+});
+it('treats unknown completeness conservatively', () => {
+  expect(isPartial('complete')).toBe(false); expect(isPartial({status: 'complete'})).toBe(false);
+  expect(isPartial(undefined)).toBe(true); expect(isPartial('partial')).toBe(true);
+});
