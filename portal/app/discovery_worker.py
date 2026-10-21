@@ -15,7 +15,7 @@ from .discovery_sources import decrypted_source, SourceStorageError
 def upload_root():
     return Path(os.environ.get('CATS_DISCOVERY_UPLOAD_ROOT', '/data/discovery-uploads'))
 
-def configured_artifact_resolver():
+def configured_artifact_resolver(settings=None):
     # Only process configuration can select manifests; job payloads cannot.
     from .discovery_artifacts import (LocalArtifactResolver, ApprovedHTTPSArtifactResolver,
                                      ArtifactResolverChain, ArtifactResolutionError)
@@ -33,8 +33,33 @@ def configured_artifact_resolver():
     try:
         local = LocalArtifactResolver(local_path) if local_path else None
         remote = ApprovedHTTPSArtifactResolver(remote_path, ca_file=ca_file, cache_directory=(Path(tempfile.gettempdir()) / 'cats-discovery-artifact-cache') if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true' else None) if remote_path else None
-        return ArtifactResolverChain(local, remote) if local and remote else local or remote
-    except ArtifactResolutionError:
+        resolver = ArtifactResolverChain(local, remote) if local and remote else local or remote
+        if os.getenv('HELM_ALLOW_NETWORK', '').strip().lower() in {'1', 'true', 'yes', 'on'}:
+            from .discovery_helm_network import HelmNetworkResolver
+            settings = settings or {}
+            def rows(value):
+                parsed = json.loads(value) if isinstance(value, str) else value
+                if not isinstance(parsed, list):
+                    raise ArtifactResolutionError('Expected a configuration list.')
+                return parsed
+            network = HelmNetworkResolver(
+                allowed_sources=rows(os.getenv('CATS_DISCOVERY_HELM_SOURCES', '[]')),
+                oci_registries=rows(settings.get('oci_registries', [])),
+                trusted_ca_certificates=rows(settings.get('trusted_ca_certificates', [])),
+                allowed_redirect_origins=rows(os.getenv('CATS_DISCOVERY_HELM_ORIGINS', '[]')),
+                allowed_token_origins=rows(os.getenv('CATS_DISCOVERY_HELM_TOKEN_ORIGINS', '[]')),
+                ca_file=ca_file)
+            # An exact mirror entry remains authoritative, including hash failures.
+            class PreferMirrors:
+                def resolve(self, kind, reference, version):
+                    key = (kind, reference, version)
+                    for mirror in (local, remote):
+                        if mirror is not None and key in mirror._entries:
+                            return mirror.resolve(*key)
+                    return network.resolve(*key)
+            return PreferMirrors()
+        return resolver
+    except (ArtifactResolutionError, ValueError, TypeError):
         raise JobError('Discovery artifact mirror configuration is invalid.') from None
 
 
@@ -60,7 +85,12 @@ def handle(ctx, payload):
         if args and isinstance(args[0], str):
             ctx.stage(args[0], kwargs.get('progress'))
     selected = dict(payload.get('options', {}))
-    artifact_resolver = configured_artifact_resolver()
+    # Read current global configuration at execution time, never from uploaded input.
+    with ctx.session_factory() as db:
+        settings = {row.key: row.value for row in db.scalars(select(models.PortalSetting).where(
+            models.PortalSetting.group_id.is_(None),
+            models.PortalSetting.key.in_(['oci_registries', 'trusted_ca_certificates'])))}
+    artifact_resolver = configured_artifact_resolver(settings)
     runner = isolated_runner
     if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true':
         runner = RenderCache(isolated_runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
@@ -88,9 +118,9 @@ def handle(ctx, payload):
             inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver, supplemental_inputs=supplements)
     except SourceStorageError as exc:
         raise JobError(str(exc)) from None
-    except DiscoveryError:
+    except DiscoveryError as exc:
         inventory = {'schema_version':'1.0', 'roots':[], 'nodes':[], 'edges':[], 'images':[],
-            'completeness':'invalid', 'diagnostics':[{'code':'invalid_source','message':'Source is malformed, unsafe, or exceeds discovery limits.'}],
+            'completeness':'invalid', 'diagnostics':[{'code':'invalid_source','message':str(exc)}],
             'metrics':{}, 'tool_versions':{}}
     if isinstance(runner, RenderCache):
         inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses, dependency_scoped_renders=runner.scoped_renders)

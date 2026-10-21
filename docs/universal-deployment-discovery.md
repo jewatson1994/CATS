@@ -44,7 +44,7 @@ IDs derive from source-relative identities; content hashes permit version compar
 | Input | Implemented behavior | Limits |
 | --- | --- | --- |
 | Repository ZIP/TAR, chart TGZ, directories | Safe staging, mixed-format detection, source hashes, multiple candidate roots, LFS/submodule diagnostics | A GitLab project export containing only a Git bundle is not a source checkout. Direct Git fetching is unavailable. |
-| Helm | Native root/umbrella/vendored chart rendering, default values, ordered override files, native helper/conditional/hook semantics, generated-resource inspection | External/unvendored dependencies require local artifacts. Values files alone cannot identify a missing chart. No dependency-update network fallback. |
+| Helm | Native root/umbrella/vendored chart rendering, default values, ordered override files, native helper/conditional/hook semantics, generated-resource inspection | External dependencies use approved mirrors or explicitly enabled Helm network retrieval. Values files alone cannot identify a missing chart. |
 | Flux HelmRelease | Parent-generated resources, local chart mapping, ordered ConfigMap valuesFrom, inline values, supported targetPath, release/namespace, dependencies; child rendering and declarative Kustomize postrendering | Secret values are unresolved. targetPath uses native Helm --set semantics; only inline patch/image postrenderers are supported. Source declarations do not imply artifacts are fetched. |
 | Other Flux resources | Source and dependency evidence with explicit unresolved/controller diagnostics | Local/mirrored Git and OCI sources and local Flux Kustomization builds are supported. Bucket and full controller reconciliation remain unavailable. |
 | Kustomize | Native build for local bases/overlays/components/patches/images/generators | Remote bases and executable plugins/extensions unavailable. Raw pre-transform images are not passed off as final output. |
@@ -61,7 +61,7 @@ The portal streams an upload into AES-GCM encrypted storage using a domain-separ
 
 The dedicated worker runs UID/GID 10003, read-only root, no capabilities, no-new-privileges, CPU/memory/PID limits, a private temporary filesystem and a read-only upload mount. It has database access to lease/persist jobs; the renderer does not. Bubblewrap clears environment and exposes only the selected static tool, read-only job source, private tmp/proc/dev, and separate network/PID/user/mount namespaces. Child BPF blocks further namespace/mount operations and validates syscall architecture. No Docker socket, application directory, database credentials or other uploads enter the renderer. Shell commands, Helm executable postrenderers, Kustomize plugins and arbitrary executables are rejected.
 
-Native invocation limits: 60 seconds and 16 MiB combined output. Archive limits: 500 files, 32 MiB expanded total and 4 MiB per file; traversal, links, duplicates, malformed archives and excessive YAML structure are rejected. YAML is capped at depth 50 and 30,000 structural nodes. Downstream resource processing is bounded at 2,000 queue entries. These conservative limits intentionally reject some large projects; they are not a claim of support for unlimited repositories.
+Native invocation limits: 60 seconds and 16 MiB combined output. Repository archive limits: 10,000 entries (including directories), 128 MiB expanded total and 4 MiB per file. The HTTP upload limit remains 32 MiB by default (`CATS_DISCOVERY_MAX_UPLOAD_BYTES`, capped at 128 MiB). Direct Compose uploads retain their 500-entry / 32 MiB limits. Discovery reports the specific extraction rejection without exposing file contents. Archive safety; traversal, links, duplicates, malformed archives and excessive YAML structure are rejected. YAML is capped at depth 50 and 30,000 structural nodes. Downstream resource processing is bounded at 2,000 queue entries. These conservative limits intentionally reject some large projects; they are not a claim of support for unlimited repositories.
 
 **Container sandbox policy:** Following explicit operator approval, Compose applies `deploy/discovery-seccomp.json` only to the Discovery worker. This default-derived policy permits Bubblewrap setup, which Docker's default profile blocked on the tested host. Do not use privileged mode, seccomp-unconfined or writable host `/proc` as a workaround. Hosts must also permit unprivileged user namespaces. The container policy permits sandbox setup; the stricter child filter applies after setup.
 
@@ -108,7 +108,7 @@ An administrator may enable `deploy/compose.discovery-mirror.yaml` alongside the
 {"version":1,"artifacts":[{"kind":"helm","reference":"oci://registry.internal/charts/example","version":"1.2.3","path":"example-1.2.3.tgz","sha256":"REPLACE_WITH_64_HEX_SHA256"}]}
 ```
 
-Entries match exact kind (`helm`, `git`, `oci`), reference and version. Flux HelmRepository references use repository URL plus `/` plus chart name; Git/OCI snapshots use their declared URL and explicit commit/tag/branch or digest/tag. Hashes are verified before extraction; symlinks, traversal and duplicate identities are rejected. There is no floating-version selection or network fallback. Mirror provenance records artifact hash and identity hash without local paths or credentials.
+Entries match exact kind (`helm`, `git`, `oci`), reference and version. Flux HelmRepository references use repository URL plus `/` plus chart name; Git/OCI snapshots use their declared URL and explicit commit/tag/branch or digest/tag. Hashes are verified before extraction; symlinks, traversal and duplicate identities are rejected. There is no floating-version selection. Explicitly enabled Helm retrieval can resolve identities absent from the mirrors; see the network configuration below. Mirror provenance records artifact hash and identity hash without local paths or credentials.
 
 The resolution panel supports retry with revised non-secret configuration. `source_map` maps `Kind/namespace/name` to a source directory within the upload. Flux Kustomizations use native Kustomize for that local source and support simple `${NAME}` postBuild substitution from inline values and ConfigMaps. Secret substitutions and unsupported expressions remain unresolved. Candidate environment paths are review hints, never automatic environment selection. Retry currently reruns discovery as a new immutable version; it does not claim incremental dependency caching.
 
@@ -159,3 +159,120 @@ Approved HTTPS artifacts also have bounded encrypted scratch reuse when caching 
 Native Compose configuration now owns include/extends, interpolation and selected profile resolution. A successful native result clears obsolete fallback-parser limitations. Security-related interpolation restrictions remain enforced. Only the preferred default override is selected automatically; explicit ordered files remain available. Native custom tags in canonical Compose filenames work; custom tags in noncanonical included files can still cause conservative incomplete diagnostics.
 
 See [local acceptance report](discovery-local-acceptance-2026-10-20.md) for exact verification and disconnected-environment limitations.
+
+
+### Repository archive worker verification (2026-10-20)
+
+The local `gitlab-master.zip` (SHA-256 `876e6c807959b7d5b585459ca10f172196798a5f53e8a20b79ed11dcee49dbc4`) was submitted as encrypted input to an actual isolated Discovery worker backed by PostgreSQL. It processed 1,220 files and identified nine candidate roots, including the GitLab root Helm chart. This is archive ingestion acceptance, **not successful GitLab image inventory acceptance**: zero images were rendered.
+
+Native Helm independently confirmed nine absent chart dependencies. Worker preflight now reports each missing dependency instead of a generic render error:
+
+| Chart | Required version |
+| --- | --- |
+| cert-manager | v1.21.2 |
+| prometheus | 29.31.1 |
+| gitlab-runner | 0.94.0 |
+| gitlab-zoekt | 4.1.0 |
+| openbao | 0.20.0 |
+| traefik | 10.19.4 |
+| kubernetes-ingress | 1.39.4 |
+| gateway-helm | 1.9.2 |
+| ai-gateway | 0.15.3 |
+
+Supply these charts under the parent chart's `charts/` directory, or configure the existing administrator artifact manifest with exact `helm`, repository URL plus chart name, and requested version identities. Root and Flux chart rendering now resolve missing unpacked chart dependencies through that resolver, bounded by depth and repository resource budgets. There is no implicit public retrieval. Helm still validates packaged dependencies and version constraints; generic renderer failures remain sanitized because native stderr can contain secrets. Successful dependency acquisition does not guarantee the GitLab chart has all required deployment values; that remains to be tested after the chart packages are available.
+
+Reproduce with `scripts/test-discovery-deployed.ps1 -Image <updated-discovery-image> -Archive <path-to-gitlab-master.zip>`. The archive mode records the resulting inventory and checks that roots were found; it does not assert complete rendering. Without `-Archive`, the separate synthetic acceptance workflow verified native Helm v4.2.3, Kustomize v5.8.1, Compose 2.39.4, supplemental partial-to-complete rerendering, historical evidence preservation, PostgreSQL persistence, confirmation, idempotent Scan handoff, and five image references. Synthetic success is not GitLab or Singularity acceptance.
+
+### Helm network retrieval and live archive acceptance (2026-10-21)
+
+Discovery now honors `HELM_ALLOW_NETWORK=true` in the worker. Both Compose definitions forward the setting; it defaults to false. The worker reads current global `oci_registries` and `trusted_ca_certificates` portal settings when each job executes. Configured registry namespaces authorize OCI chart sources, and saved encrypted credentials are decrypted only for scoped registry authentication. TLS uses system roots plus portal-managed CAs and, optionally, `CATS_DISCOVERY_ARTIFACT_CA_FILE`. Certificate and hostname verification remain enabled.
+
+Additional administrator settings are JSON arrays:
+
+- `CATS_DISCOVERY_HELM_SOURCES`: approved HTTPS Helm repository or OCI namespace prefixes.
+- `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`: explicitly approved OCI bearer-token service origins.
+- `CATS_DISCOVERY_HELM_ORIGINS`: explicitly approved chart download/CDN redirect origins.
+
+For example, a public repository may require both its repository source and a separate CDN origin. A configured registry does not automatically authorize arbitrary token servers or redirects. Cross-origin redirects strip authorization. Uploads cannot authorize sources or change these settings. Exact local/HTTPS manifest entries take precedence; integrity failures do not trigger a network fallback. HTTPS chart indexes must supply SHA-256 checksums; OCI layers are verified against their manifest digests. Retrieval has byte, timeout and redirect bounds. Extracted charts retain traversal, link, duplicate-path, expansion and recursion checks. Renderers remain network-isolated with no registry or database credentials.
+
+Rebuild/recreate the Discovery worker to deploy these code and Compose changes. `HELM_ALLOW_NETWORK` enables the controlled retriever, not unrestricted Helm subprocess networking. Private authenticated HTTPS chart repositories are not implemented by this OCI credential integration; use a configured artifact mirror where needed.
+
+The public `gitlab-master.zip` identified above passed an actual durable-worker/PostgreSQL/native Helm run with 1,220 source files, nine candidate roots, 283 nodes and **45 image occurrences / 22 distinct image references**. All nine external chart dependencies resolved: seven through approved network retrieval and two through explicit local mirrors. Traefik's configured endpoint returned HTTP 403, so its exact 10.19.4 chart was obtained from the official alternate repository and checked against its published checksum. The AI Gateway index omitted a checksum, so the exact 0.15.3 artifact was explicitly pinned locally after HTTPS retrieval; that pin is not a publisher-provided checksum. Production checksum enforcement was retained.
+
+The archive's default values do not render: this GitLab chart requires external database, Redis, object storage and issuer settings. The successful test explicitly selected these existing repository examples, in order:
+
+1. `gitlab-master/examples/values-certificates.yaml`
+2. `gitlab-master/examples/values-external-database.yaml`
+3. `gitlab-master/examples/redis/sentinels.yaml`
+4. `gitlab-master/examples/values-external-objectstorage.yaml`
+
+These are example configurations, not evidence of an actual deployed GitLab environment. No database, Redis, storage or Secret was created or contacted to render them. The inventory correctly remains partial: unresolved Secret/resource references, custom resources, ambiguous example identities, and unsupported CI/schema documents remain reported. This is successful native image discovery, not full deployment or Singularity acceptance.
+
+Reproduce using `scripts/test-discovery-deployed.ps1` with `-Archive`, `-AllowHelmNetwork`, JSON `-HelmSources`, `-HelmOrigins`, `-HelmTokenOrigins`, the checksum-pinned `-ArtifactMirror`, and `-DiscoveryOptions` containing the ordered `values_files` above. Network-enabled archive acceptance asserts a nonempty rendered image inventory. The local run log is `.test-temp/gitlab-network-worker7.log`; its inventory records resolved artifact hashes and selected values.
+
+Verification: 122 focused tests passed, including real local TLS with custom CAs, untrusted/hostname-mismatch rejection, credential scopes, token/redirect restrictions and archive protections. The updated image also passed the separate deployed synthetic workflow: Helm 4.2.3, Kustomize 5.8.1, Compose 2.39.4, five images, supplemental rerendering, immutable PostgreSQL evidence, confirmation and idempotent Scan handoff. The public archive test did not run a vulnerability scan. Private registry credentials and the disconnected environment still require deployment testing.
+
+
+### Normal deployment: public GitLab archive profile
+
+The normal Compose worker now mounts `CATS_DISCOVERY_MIRROR_DIR` read-only at
+`/opt/discovery-mirror`. The default `deploy/discovery-mirror/manifest.json` is
+empty. Include this directory when transferring deployment files.
+Network access still requires both `HELM_ALLOW_NETWORK=true` and explicit source,
+token, and redirect allowlists. Existing portal registry credentials and managed
+CA trust are used by the worker; renderers remain isolated from credentials.
+
+For the public GitLab chart example, review `deploy/discovery-gitlab-public.json`,
+then run `python scripts/configure-discovery-gitlab.py --apply`. This updates the
+normal `.env`, preserves unrelated settings, and installs two checksum-pinned
+chart mirrors under `deploy/discovery-mirror-local`. Use `--artifact-cache PATH`
+with previously downloaded chart files when preparing offline. Other remote
+charts still require approved reachable sources or additional internal mirrors.
+Recreate with `docker compose up -d --no-deps discovery-worker`; no test override
+is required. Transfer the configured mirror directory and approved settings to
+another deployment explicitly; local `.env` is not committed or replaced by builds.
+
+Select the four `discovery_options.values_files` from the profile in Discovery's
+configuration context, in the recorded order. These are example external database,
+storage, Redis, and certificate settings, not inferred production configuration.
+For real deployments supply their actual non-secret values instead.
+
+Normal `cats` deployment verification (2026-10-21): job
+`563694c9b7be44fbbdb77fc3b2a0cd7f`, inventory
+`1bef8176a5d9411aa1855a174a1fb371`, processed the existing `gitlab-master.zip`
+through PostgreSQL and the deployed native-rendering Discovery worker using only
+normal Compose/.env settings. It produced 45 image references, with no unavailable
+Helm dependencies or native rendering failures. Inventory remains partial:
+72 Secret-reference diagnostics, 26 custom-resource diagnostics, 6 unresolved
+resource references, 3 ambiguous identities, and 5 unsupported documents.
+No scan was submitted and the previous inventory was preserved.
+
+### Authenticated upload and values-selection acceptance (2026-10-21)
+
+Tested the normal browser upload workflow at `http://localhost:8080` with
+`gitlab-master.zip` (SHA256
+`876e6c807959b7d5b585459ca10f172196798a5f53e8a20b79ed11dcee49dbc4`),
+PostgreSQL, and the deployed native-rendering Discovery worker.
+
+- Initial UI upload `accb197cb98f467081f64004e277d769` produced zero images
+  and correctly displayed **Needs attention**, rather than a green completion bar.
+- Selected the four example values files listed above through the UI, in order,
+  and clicked **Render with selected values**. New immutable run
+  `6d47d0e6c4db4eca849ab8057ca84b96` produced **45 image references and 283
+  components across 9 deployment roots**. Reopening the original run confirmed
+  its inventory was preserved.
+- No-values rerun `dbef56668ab5482abdbed98845058cb5` verified the UI identifies
+  GitLab's missing `certmanager-issuer.email` setting. Chart validation can report
+  required settings one at a time; rerender after correcting each reported key.
+
+Discovery lists candidate values files and lets operators add, remove, and order
+them without editing JSON. Candidate files are not automatically approved for a
+deployment. Diagnostics retain validated value paths, not raw renderer output or
+secret values. Existing renderer isolation and retrieval safety controls remain.
+
+Verification: 77 renderer/engine tests and 6 frontend tests passed; TypeScript and
+release image builds passed. This is real browser-to-worker image discovery, not
+a vulnerability scan or full deployment acceptance. The inventory remains partial
+because external Secrets and other unresolved resources require operator review.
+Example values are not production configuration. Singularity and the disconnected
+deployment remain unverified. No push or merge was performed for this change.

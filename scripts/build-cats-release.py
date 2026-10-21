@@ -60,12 +60,14 @@ def export_discovery(output, reference):
     (output / 'deploy').mkdir()
     shutil.copyfile(policy, output / 'deploy/discovery-seccomp.json')
     shutil.copyfile(ROOT / 'deploy/compose.discovery-mirror.yaml', output / 'deploy/compose.discovery-mirror.yaml')
+    (output / 'deploy/discovery-mirror').mkdir()
+    shutil.copyfile(ROOT / 'deploy/discovery-mirror/manifest.json', output / 'deploy/discovery-mirror/manifest.json')
     # Save the inspected identity under a content-specific tag, avoiding a mutable-tag race.
     saved_reference = 'cats-discovery:' + row['Id'].split(':', 1)[1]
     subprocess.run(['docker', 'tag', row['Id'], saved_reference], check=True)
     subprocess.run(['docker', 'save', '--output', str(output / 'discovery-image.tar'), saved_reference], check=True)
     files = {}
-    for name in ('discovery-image.tar', 'deploy/discovery-seccomp.json', 'deploy/compose.discovery-mirror.yaml'):
+    for name in ('discovery-image.tar', 'deploy/discovery-seccomp.json', 'deploy/compose.discovery-mirror.yaml', 'deploy/discovery-mirror/manifest.json'):
         with (output / name).open('rb') as handle:
             files[name] = hashlib.file_digest(handle, 'sha256').hexdigest()
     manifest = {'schema_version': 1, 'kind': 'cats-discovery-companion',
@@ -75,7 +77,7 @@ def export_discovery(output, reference):
         'Verify manifest.json file SHA-256 digests before import.\n'
         'docker load --input discovery-image.tar\n'
         'Set CATS_DISCOVERY_IMAGE=' + saved_reference + ' in the CATS deployment environment.\n'
-        'Copy deploy/discovery-seccomp.json into the CATS deployment deploy directory.\n'
+        'Copy deploy/discovery-seccomp.json and deploy/discovery-mirror/manifest.json into the matching CATS deployment paths.\n'
         'Optionally copy deploy/compose.discovery-mirror.yaml and set CATS_DISCOVERY_MIRROR_DIR to your verified local mirror.\n'
         'Add -f deploy/compose.discovery-mirror.yaml after -f compose.yaml to enable that read-only mirror.\n'
         'Start the matching CATS Compose release with --no-build --pull never.\n', encoding='utf-8')

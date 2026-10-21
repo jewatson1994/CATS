@@ -29,6 +29,9 @@ def test_offline_companion_includes_exact_policy_and_image(tmp_path, monkeypatch
     (root / 'deploy/discovery-seccomp.json').write_bytes(policy)
     mirror = b'services: {}\n'
     (root / 'deploy/compose.discovery-mirror.yaml').write_bytes(mirror)
+    (root / 'deploy/discovery-mirror').mkdir()
+    default_manifest = b'{"version":1,"artifacts":[]}'
+    (root / 'deploy/discovery-mirror/manifest.json').write_bytes(default_manifest)
     monkeypatch.setattr(release, 'ROOT', root)
     calls = []
     identity = 'sha256:' + 'a' * 64
@@ -47,6 +50,7 @@ def test_offline_companion_includes_exact_policy_and_image(tmp_path, monkeypatch
     assert manifest['files']['discovery-image.tar'] == hashlib.sha256(b'image archive').hexdigest()
     assert manifest['files']['deploy/compose.discovery-mirror.yaml'] == hashlib.sha256(mirror).hexdigest()
     assert (output / 'deploy/compose.discovery-mirror.yaml').read_bytes() == mirror
+    assert (output / 'deploy/discovery-mirror/manifest.json').read_bytes() == default_manifest
     assert manifest['image_id'] == identity
     assert calls[-1][-1] == 'cats-discovery:' + 'a' * 64
     assert all('pull' not in call for call in calls)

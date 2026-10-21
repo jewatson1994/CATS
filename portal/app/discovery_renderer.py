@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import struct
 from pathlib import Path
 import selectors
@@ -14,7 +15,20 @@ import time
 
 
 class RendererError(RuntimeError):
-    pass
+    def __init__(self, message, *, value_paths=()):
+        super().__init__(message)
+        self.value_paths = list(value_paths)
+
+
+def missing_value_paths(stderr):
+    # Retain identifiers only, never arbitrary template messages or supplied values.
+    identifier = r"[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*"
+    paths = re.findall(r"\.Values\.(" + identifier + r")", stderr)
+    # Chart validation often names keys in backticks rather than Go expressions.
+    paths += re.findall(r"`(" + identifier + r")`", stderr)
+    # Helm required() messages also use unquoted dotted configuration keys.
+    paths += re.findall(r"(?i)please set (" + identifier + r")", stderr)
+    return sorted({path for path in paths if len(path) <= 160})[:50]
 
 
 TOOLS = {
@@ -103,7 +117,7 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
             process.wait(timeout=max(0.001, deadline - time.monotonic()))
         if process.returncode:
             # Native stderr can contain user secrets; keep it out of persisted errors.
-            raise RendererError("Discovery rendering failed (including unavailable sandbox support)")
+            raise RendererError("Discovery rendering failed (including unavailable sandbox support)", value_paths=missing_value_paths(outputs["stderr"].decode("utf-8", errors="replace")))
         return {"stdout": outputs["stdout"].decode("utf-8", errors="strict"),
                 "version": tool_version(tool)}
     except subprocess.TimeoutExpired as exc:

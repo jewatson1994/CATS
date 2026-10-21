@@ -61,7 +61,7 @@ def supplemental_request():
 
 
 def wait_for_worker(job_id):
-    deadline = time.monotonic() + 150
+    deadline = time.monotonic() + (600 if os.getenv("DISCOVERY_ACCEPTANCE_ARCHIVE") else 150)
     while time.monotonic() < deadline:
         with SessionLocal() as db:
             row = db.get(DurableJob, job_id)
@@ -70,7 +70,7 @@ def wait_for_worker(job_id):
                 break
         time.sleep(1)
     else:
-        raise AssertionError('Separate deployed worker did not complete job in 150 seconds')
+        raise AssertionError('Separate deployed worker did not complete job within the acceptance deadline')
 
 
 def main():
@@ -85,6 +85,28 @@ def main():
         db.add(ServiceGroup(service_id=service.id, group_id=group.id))
         db.commit()
         group_id, service_id, user_id = group.id, service.id, user.id
+    archive = os.getenv('DISCOVERY_ACCEPTANCE_ARCHIVE')
+    if archive:
+        content = Path(archive).read_bytes()
+        token = uuid.uuid4().hex
+        folder = Path(os.environ['CATS_DISCOVERY_UPLOAD_ROOT']) / token
+        folder.mkdir()
+        with encrypted_writer(folder / 'repository.zip', token) as stream:
+            stream.write(content)
+        with SessionLocal() as db:
+            row = submit(db, kind='discovery', payload={'group_id': group_id,
+                'source_id': token, 'filename': 'repository.zip',
+                'source_hash': hashlib.sha256(content).hexdigest(), 'options': json.loads(os.getenv('DISCOVERY_ACCEPTANCE_OPTIONS', '{}'))}, dedupe_key=token)
+            job_id = row.id
+        wait_for_worker(job_id)
+        with SessionLocal() as db:
+            row = db.get(DurableJob, job_id)
+            inventory = db.get(DiscoveryInventory, row.result['inventory_id']).inventory
+            print(json.dumps(inventory), flush=True)
+            assert inventory['roots'], inventory['diagnostics']
+            if os.getenv('HELM_ALLOW_NETWORK') == 'true':
+                assert inventory['images'], inventory['diagnostics']
+        return
     files = {
         'chart/Chart.yaml': 'apiVersion: v2\nname: acceptance\nversion: 1.0.0\n',
         'chart/templates/pod.yaml': 'apiVersion: v1\nkind: Pod\nmetadata:\n  name: helm\nspec:\n  containers:\n  - name: app\n    image: nginx:1.27\n',

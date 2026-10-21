@@ -101,3 +101,13 @@ def test_unknown_filter_architecture_fails_closed(monkeypatch):
     monkeypatch.setattr(renderer.platform, 'machine', lambda: 'unknown')
     with pytest.raises(renderer.RendererError, match='architecture'):
         renderer.child_seccomp()
+
+
+def test_missing_value_paths_excludes_error_values():
+    message = "Please set `global.psql.host` and `global.psql.password.secret`. nil pointer at .Values.redis.host; password=DO_NOT_PERSIST https://private.invalid/token"
+    assert renderer.missing_value_paths(message) == ['global.psql.host', 'global.psql.password.secret', 'redis.host']
+
+
+def test_gitlab_required_email_message_exposes_key_only():
+    message = 'You must provide an email to associate with your TLS certificates. Please set certmanager-issuer.email'
+    assert renderer.missing_value_paths(message) == ['certmanager-issuer.email']

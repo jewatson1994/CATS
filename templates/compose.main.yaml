@@ -606,9 +606,20 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
       CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
+      HELM_ALLOW_NETWORK: ${HELM_ALLOW_NETWORK:-false}
+      CATS_DISCOVERY_HELM_SOURCES: ${CATS_DISCOVERY_HELM_SOURCES:-[]}
+      CATS_DISCOVERY_HELM_ORIGINS: ${CATS_DISCOVERY_HELM_ORIGINS:-[]}
+      CATS_DISCOVERY_HELM_TOKEN_ORIGINS: ${CATS_DISCOVERY_HELM_TOKEN_ORIGINS:-[]}
+      CATS_DISCOVERY_ARTIFACT_MANIFEST: /opt/discovery-mirror/manifest.json
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - discovery_uploads:/data/discovery-uploads:ro
+      - type: bind
+        source: ${CATS_DISCOVERY_MIRROR_DIR:-./deploy/discovery-mirror}
+        target: /opt/discovery-mirror
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=536870912,mode=1777
     depends_on:

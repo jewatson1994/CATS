@@ -1,0 +1,54 @@
+{
+  "description": "Explicit public GitLab chart demonstration profile; not production deployment values.",
+  "sources": [
+    "oci://quay.io/jetstack/charts",
+    "oci://ghcr.io/prometheus-community/charts",
+    "oci://registry.gitlab.com/charts/charts.gitlab.io/release",
+    "https://charts.gitlab.io",
+    "https://helm.traefik.io/traefik",
+    "https://haproxytech.github.io/helm-charts",
+    "oci://registry-1.docker.io/envoyproxy",
+    "https://gitlab.com/api/v4/projects/gitlab-org%2fcharts%2fai-gateway-helm-chart/packages/helm/devel"
+  ],
+  "token_origins": [
+    "https://quay.io",
+    "https://ghcr.io",
+    "https://gitlab.com",
+    "https://auth.docker.io"
+  ],
+  "redirect_origins": [
+    "https://cdn01.quay.io",
+    "https://pkg-containers.githubusercontent.com",
+    "https://cdn.registry.gitlab-static.net",
+    "https://gitlab-charts.s3.amazonaws.com",
+    "https://github.com",
+    "https://release-assets.githubusercontent.com",
+    "https://production.cloudfront.docker.com"
+  ],
+  "discovery_options": {
+    "values_files": [
+      "gitlab-master/examples/values-certificates.yaml",
+      "gitlab-master/examples/values-external-database.yaml",
+      "gitlab-master/examples/redis/sentinels.yaml",
+      "gitlab-master/examples/values-external-objectstorage.yaml"
+    ]
+  },
+  "artifacts": [
+    {
+      "kind": "helm",
+      "reference": "https://helm.traefik.io/traefik/traefik",
+      "version": "10.19.4",
+      "path": "traefik-10.19.4.tgz",
+      "sha256": "ef2435980f516d6cef57c98ea578d59f54a7fa663b842a4370eb3ae480dbd00d",
+      "download_url": "https://traefik.github.io/charts/traefik/traefik-10.19.4.tgz"
+    },
+    {
+      "kind": "helm",
+      "reference": "https://gitlab.com/api/v4/projects/gitlab-org%2fcharts%2fai-gateway-helm-chart/packages/helm/devel/ai-gateway",
+      "version": "0.15.3",
+      "path": "ai-gateway-0.15.3.tgz",
+      "sha256": "c977a05ae91fcdf0fe0f81b48b5b0863913775546bc8ddb73a7ed7e16385191f",
+      "download_url": "https://gitlab.com/api/v4/projects/gitlab-org%2fcharts%2fai-gateway-helm-chart/packages/helm/devel/charts/ai-gateway-0.15.3.tgz"
+    }
+  ]
+}

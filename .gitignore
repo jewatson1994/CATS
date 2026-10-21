@@ -63,3 +63,6 @@ portal/app/static/frontend/
 
 # Connected managed-validator release cache (large, verified build inputs)
 .release-cache/
+
+# Operator-installed, hash-pinned Discovery chart mirror
+deploy/discovery-mirror-local/

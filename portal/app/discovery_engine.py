@@ -13,6 +13,9 @@ from . import compose_ingestion as compose
 from . import service_definitions as legacy
 
 SCHEMA_VERSION = '1.0'
+# Repository extraction budgets; direct Compose uploads keep their smaller defaults.
+MAX_REPOSITORY_ENTRIES = 10000
+MAX_REPOSITORY_BYTES = 128 * 1024 * 1024
 @dataclass(frozen=True)
 class DiscoveryAdapter:
     """Trusted format adapter. Custom handlers receive bounded staged inputs.
@@ -346,10 +349,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if not p.is_file() or '.git' in p.relative_to(source).parts:
                     continue
                 total += p.stat().st_size
-                if len(uploads) >= compose.MAX_FILES or p.stat().st_size > compose.MAX_FILE or total > compose.MAX_TOTAL:
+                if len(uploads) >= MAX_REPOSITORY_ENTRIES or p.stat().st_size > compose.MAX_FILE or total > MAX_REPOSITORY_BYTES:
                     raise DiscoveryError('Source exceeds discovery limits.')
                 uploads.append((p.read_bytes(), p.relative_to(source).as_posix()))
-        elif source.is_file() and source.stat().st_size <= compose.MAX_TOTAL:
+        elif source.is_file() and source.stat().st_size <= MAX_REPOSITORY_BYTES:
             uploads = [(source.read_bytes(), source.name)]
         else:
             raise DiscoveryError('Source is unavailable or oversized.')
@@ -368,8 +371,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     target.write_bytes(data)
                 staged = {'root': destination}
             else:
-                staged = compose.stage_uploads(staging, uploads)
-        except (compose.ComposeInputError, OSError, ValueError):
+                staged = compose.stage_uploads(staging, uploads, max_files=MAX_REPOSITORY_ENTRIES, max_total=MAX_REPOSITORY_BYTES)
+        except compose.ComposeInputError as exc:
+            raise DiscoveryError(str(exc)) from None
+        except (OSError, ValueError):
             raise DiscoveryError('Source archive is invalid or unsafe.') from None
         base = Path(staged['root'])
         if supplemental_inputs:
@@ -445,7 +450,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 artifact_files = list(Path(staged_artifact['root']).rglob('*'))
                 artifact_files = [p for p in artifact_files if p.is_file()]
                 new_size = sum(p.stat().st_size for p in artifact_files)
-                if artifact_file_count + len(artifact_files) > compose.MAX_FILES or artifact_bytes + new_size > compose.MAX_TOTAL:
+                if artifact_file_count + len(artifact_files) > MAX_REPOSITORY_ENTRIES or artifact_bytes + new_size > MAX_REPOSITORY_BYTES:
                     raise ValueError()
                 destination = base / ('.discovery-source-' + _id(*identity))
                 if destination.exists():
@@ -483,11 +488,77 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             acquired_sources[source_key] = destination
             return destination
         rendered_releases = set()
+        def prepare_chart(directory, rid, path, ancestry=()):
+            """Acquire only explicitly configured dependencies; Helm owns render semantics."""
+            nonlocal artifact_file_count, artifact_bytes
+            if len(ancestry) >= 20:
+                issue('helm_dependency_depth_exceeded', rid, path)
+                return False
+            metadata = yaml.safe_load((directory / 'Chart.yaml').read_text(encoding='utf-8-sig')) or {}
+            dependencies = metadata.get('dependencies', [])
+            if not isinstance(dependencies, list) or len(dependencies) > 500:
+                issue('invalid_helm_dependencies', rid, path)
+                return False
+            ready = True
+            for dependency in dependencies:
+                if not isinstance(dependency, dict):
+                    issue('invalid_helm_dependency', rid, path)
+                    ready = False
+                    continue
+                name, version = dependency.get('name'), str(dependency.get('version', ''))
+                repository = dependency.get('repository', '')
+                if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name) or not isinstance(repository, str):
+                    issue('invalid_helm_dependency', rid, path)
+                    ready = False
+                    continue
+                identity = ('helm', repository.rstrip('/') + '/' + name, version)
+                local = directory / 'charts' / name
+                # Packaged dependencies remain for Helm to validate and unpack natively.
+                if not (local / 'Chart.yaml').is_file() and list((directory / 'charts').glob(name + '-*.tgz')):
+                    continue
+                try:
+                    if identity in ancestry:
+                        raise ValueError('cycle')
+                    if not (local / 'Chart.yaml').is_file():
+                        if artifact_resolver is None or not repository:
+                            raise ValueError('missing')
+                        artifact = artifact_resolver.resolve(*identity)
+                        package = stage_artifact(artifact, identity)
+                        candidates = list(package.rglob('Chart.yaml'))
+                        depth = min(len(p.relative_to(package).parts) for p in candidates)
+                        candidates = [p for p in candidates if len(p.relative_to(package).parts) == depth]
+                        if len(candidates) != 1 or local.exists():
+                            raise ValueError('ambiguous')
+                        chart_metadata = yaml.safe_load(candidates[0].read_text(encoding='utf-8-sig'))
+                        if chart_metadata.get('name') != name:
+                            raise ValueError('identity')
+                        copied_files = [p for p in candidates[0].parent.rglob('*') if p.is_file()]
+                        copied_bytes = sum(p.stat().st_size for p in copied_files)
+                        if artifact_file_count + len(copied_files) > MAX_REPOSITORY_ENTRIES or artifact_bytes + copied_bytes > MAX_REPOSITORY_BYTES:
+                            raise ValueError('budget')
+                        artifact_file_count += len(copied_files)
+                        artifact_bytes += copied_bytes
+                        local.parent.mkdir(exist_ok=True)
+                        shutil.copytree(candidates[0].parent, local)
+                    if not prepare_chart(local, rid, path, (*ancestry, identity)):
+                        ready = False
+                except (ValueError, OSError, TypeError, yaml.YAMLError) as exc:
+                    from .discovery_artifacts import ArtifactResolutionError
+                    reason = str(exc) if isinstance(exc, ArtifactResolutionError) else 'Supply the chart under charts/ or configure an approved artifact source.'
+                    issue('helm_dependency_unavailable', rid, path)
+                    result['diagnostics'][-1].update(
+                        dependency=clean(name), version=clean(version),
+                        message=f"Required Helm chart {clean(name)} ({clean(version)}) is unavailable. {clean(reason)}")
+                    ready = False
+            return ready
+
         def render(tool, args, rid, path, postrenderers=None, output_transform=None):
             if runner is None:
                 issue('native_renderer_unavailable', rid, path)
                 return
             try:
+                if tool == 'helm' and not prepare_chart(Path(args[2]), rid, path):
+                    return
                 output = runner(tool, args, str(base))
                 if isinstance(output, dict):
                     result['tool_versions'][tool] = _text(output.get('version', 'unknown'))
@@ -532,8 +603,14 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         index_resource(document, path)
                     if 'toolkit.fluxcd.io/' in str(document.get('apiVersion', '')):
                         rendered_documents.append((path, document, True))
-            except Exception:
+            except Exception as exc:
                 issue('native_render_failed', rid, path)
+                diagnostic = result['diagnostics'][-1]
+                diagnostic['message'] = 'Rendering could not produce workloads. Review the chart configuration and select appropriate values files below. Required values may be reported one at a time; rerun after each correction.'
+                from .discovery_renderer import RendererError
+                if isinstance(exc, RendererError):
+                    diagnostic['value_paths'] = [clean(value) for value in exc.value_paths]
+
         referenced_charts = set(options.get('chart_map', {}).values())
         for documents in parsed.values():
             for document in documents:
@@ -1109,6 +1186,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         for boundary, candidate in candidates.items():
             candidate['root_ids'] = [item['id'] for item in result['roots'] if item['path'] == boundary or item['path'].startswith(boundary + '/')]
         result['candidate_environments'] = list(candidates.values())
+        result['candidate_values_files'] = [source_file for source_file in files
+            if Path(source_file).suffix.lower() in ('.yaml', '.yml')
+            and ('values' in Path(source_file).stem.lower() or
+                 (source_file in parsed and any(isinstance(doc, dict) and not any(key in doc for key in ('apiVersion', 'kind', 'services')) for doc in parsed[source_file])))
+            and '/templates/' not in '/' + source_file]
+
         result['metrics'] = dict(files=len(files), roots=len(result['roots']), nodes=len(result['nodes']), images=len(result['images']))
         if progress:
             progress(dict(stage='complete', **result['metrics']))

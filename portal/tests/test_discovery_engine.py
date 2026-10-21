@@ -581,3 +581,88 @@ def test_flux_chart_values_files_use_git_source_root(tmp_path):
     result = run_discovery(tmp_path, {'source_map': {'GitRepository/default/repo': 'snapshot'}}, runner=runner)
     assert captured == [{'image': {'tag': 'from-source'}}]
     assert 'unsupported_flux_chart_values_files' not in {d['code'] for d in result['diagnostics']}
+
+
+def test_repository_archive_exceeds_legacy_compose_budget(tmp_path):
+    from app import compose_ingestion
+    archive = tmp_path / 'repo.zip'
+    with zipfile.ZipFile(archive, 'w') as z:
+        for i in range(600):
+            z.writestr(f'repo/docs/{i}.txt', 'documentation')
+        z.writestr('repo/pod.yaml', 'apiVersion: v1\nkind: Pod\nmetadata: {name: web}\nspec:\n  containers: [{name: web, image: nginx:1.27}]\n')
+    inventory = run_discovery(archive)
+    assert inventory['completeness'] == 'complete'
+    assert inventory['images'][0]['reference'] == 'nginx:1.27'
+    with pytest.raises(compose_ingestion.ComposeInputError, match='500 entries'):
+        compose_ingestion.stage_uploads(tmp_path / 'legacy', [(archive.read_bytes(), archive.name)])
+
+
+def test_repository_entry_limit_reports_budget(tmp_path, monkeypatch):
+    import app.discovery_engine as engine
+    monkeypatch.setattr(engine, 'MAX_REPOSITORY_ENTRIES', 2)
+    archive = tmp_path / 'repo.zip'
+    with zipfile.ZipFile(archive, 'w') as z:
+        for i in range(3):
+            z.writestr(f'{i}.txt', 'x')
+    with pytest.raises(DiscoveryError, match='2 entries'):
+        run_discovery(archive)
+
+
+def test_repository_expansion_limit_reports_budget(tmp_path, monkeypatch):
+    import app.discovery_engine as engine
+    monkeypatch.setattr(engine, 'MAX_REPOSITORY_BYTES', 1000)
+    archive = tmp_path / 'repo.zip'
+    with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr('large.txt', 'x' * 1001)
+    with pytest.raises(DiscoveryError, match='Expanded archive exceeds 1000 bytes'):
+        run_discovery(archive)
+
+
+def test_missing_root_chart_dependencies_are_actionable(tmp_path):
+    write(tmp_path, 'Chart.yaml', 'apiVersion: v2\nname: root\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 2.0.0\n  repository: https://charts.example\n')
+    calls = []
+    result = run_discovery(tmp_path, runner=lambda *args: calls.append(args) or '')
+    assert not calls
+    diagnostic = next(d for d in result['diagnostics'] if d['code'] == 'helm_dependency_unavailable')
+    assert diagnostic['dependency'] == 'child'
+    assert diagnostic['version'] == '2.0.0'
+    assert 'approved artifact source' in diagnostic['message']
+    assert result['completeness'] == 'blocked'
+
+
+def test_root_chart_dependencies_use_approved_mirror(tmp_path):
+    import hashlib
+    from app.discovery_artifacts import LocalArtifactResolver
+    source = tmp_path / 'source'
+    source.mkdir()
+    write(source, 'Chart.yaml', 'apiVersion: v2\nname: root\nversion: 1.0.0\ndependencies:\n- name: child\n  version: 2.0.0\n  repository: https://charts.example\n')
+    archive = tmp_path / 'child.zip'
+    with zipfile.ZipFile(archive, 'w') as z:
+        z.writestr('child/Chart.yaml', 'apiVersion: v2\nname: child\nversion: 2.0.0\n')
+    manifest = tmp_path / 'mirror.json'
+    manifest.write_text(json.dumps({'version': 1, 'artifacts': [{'kind': 'helm', 'reference': 'https://charts.example/child', 'version': '2.0.0', 'path': 'child.zip', 'sha256': hashlib.sha256(archive.read_bytes()).hexdigest()}]}))
+    calls = []
+    def runner(tool, args, cwd):
+        assert (Path(args[2]) / 'charts/child/Chart.yaml').is_file()
+        calls.append(tool)
+        return 'apiVersion: v1\nkind: Pod\nmetadata: {name: test}\nspec:\n  containers: [{name: test, image: example:test}]'
+    result = run_discovery(source, runner=runner, artifact_resolver=LocalArtifactResolver(manifest))
+    assert calls == ['helm']
+    assert result['images'][0]['reference'] == 'example:test'
+    assert result['artifact_provenance']
+    assert not (source / 'charts').exists()
+
+
+def test_failed_chart_offers_values_without_claiming_complete(tmp_path):
+    from app.discovery_renderer import RendererError
+    write(tmp_path, 'Chart.yaml', 'apiVersion: v2\nname: test\nversion: 1.0.0\n')
+    write(tmp_path, 'examples/values-prod.yaml', 'global: {host: example.invalid}\n')
+    def failing(*args, **kwargs):
+        raise RendererError('SECRET_ERROR_BODY', value_paths=['global.host'])
+    result = run_discovery(tmp_path, runner=failing)
+    diagnostic = next(item for item in result['diagnostics'] if item['code'] == 'native_render_failed')
+    assert diagnostic['value_paths'] == ['global.host']
+    assert 'examples/values-prod.yaml' in result['candidate_values_files']
+    assert result['completeness'] != 'complete'
+    assert result['images'] == []
+    assert 'SECRET_ERROR_BODY' not in json.dumps(result)

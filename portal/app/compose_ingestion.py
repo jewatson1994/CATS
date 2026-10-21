@@ -73,7 +73,7 @@ def _read(root: Path, name: str) -> str:
         raise ComposeInputError("Bundle input must be readable UTF-8 text.") from None
 
 
-def stage_uploads(root: Path, uploads: list[tuple[Any, str]]) -> dict:
+def stage_uploads(root: Path, uploads: list[tuple[Any, str]], *, max_files: int = MAX_FILES, max_total: int = MAX_TOTAL) -> dict:
     """Stage uploaded bytes/streams in root/.cats-compose; return root/files.
 
     Extraction is bounded and rejects links, devices, traversal, collisions and
@@ -84,30 +84,36 @@ def stage_uploads(root: Path, uploads: list[tuple[Any, str]]) -> dict:
     destination = _inside(root, ".cats-compose")
     entries: dict[str, bytes] = {}
     total = 0
+    seen = set()
 
     def add(name: str, data: bytes):
         nonlocal total
         name = _relative(name)
-        if name.casefold() in {key.casefold() for key in entries}:
+        if name.casefold() in seen:
             raise ComposeInputError("Duplicate bundle paths are not allowed.")
         total += len(data)
-        if len(data) > MAX_FILE or total > MAX_TOTAL or len(entries) >= MAX_FILES:
-            raise ComposeInputError("Compose bundle exceeds upload limits.")
+        if len(data) > MAX_FILE:
+            raise ComposeInputError(f"Archive file exceeds {MAX_FILE} bytes.")
+        if total > max_total:
+            raise ComposeInputError(f"Expanded archive exceeds {max_total} bytes.")
+        if len(entries) >= max_files:
+            raise ComposeInputError(f"Archive exceeds {max_files} entries.")
+        seen.add(name.casefold())
         entries[name] = data
 
     try:
-        if len(uploads) > MAX_FILES:
-            raise ComposeInputError("Compose bundle exceeds upload limits.")
+        if len(uploads) > max_files:
+            raise ComposeInputError(f"Archive exceeds {max_files} entries.")
         for stream, filename in uploads:
             filename = _relative(filename)
-            data = stream if isinstance(stream, bytes) else stream.read(MAX_TOTAL + 1)
-            if len(data) > MAX_TOTAL:
-                raise ComposeInputError("Compose bundle exceeds upload limits.")
+            data = stream if isinstance(stream, bytes) else stream.read(max_total + 1)
+            if len(data) > max_total:
+                raise ComposeInputError(f"Uploaded archive exceeds {max_total} bytes.")
             suffix = filename.lower()
             if suffix.endswith(".zip"):
                 with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                    if len(archive.infolist()) > MAX_FILES:
-                        raise ComposeInputError("Compose bundle exceeds upload limits.")
+                    if len(archive.infolist()) > max_files:
+                        raise ComposeInputError(f"Archive exceeds {max_files} entries.")
                     for member in archive.infolist():
                         _relative(member.filename)
                         mode = member.external_attr >> 16
@@ -122,8 +128,8 @@ def stage_uploads(root: Path, uploads: list[tuple[Any, str]]) -> dict:
             elif suffix.endswith((".tar", ".tgz", ".tar.gz")):
                 with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
                     for number, member in enumerate(archive):
-                        if number >= MAX_FILES:
-                            raise ComposeInputError("Compose bundle exceeds upload limits.")
+                        if number >= max_files:
+                            raise ComposeInputError(f"Archive exceeds {max_files} entries.")
                         _relative(member.name)
                         if member.isdir():
                             continue

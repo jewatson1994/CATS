@@ -287,3 +287,5 @@ See the [expanded release acceptance report](docs/embedded-intelligence-expanded
 Discovery supports additional Flux chart references, native Kustomization transformations, opt-in checksum-pinned HTTPS artifact mirrors, and optional encrypted render reuse during retries. Configuration and remaining limitations are documented in [Universal deployment discovery](docs/universal-deployment-discovery.md#follow-up-flux-sources-approved-retrieval-and-render-reuse).
 
 Discovery can accept missing non-secret files after initial review and create a new inventory with parent/file provenance. Optional encrypted caching reuses unchanged native renders and approved dependency artifacts. See the [local acceptance report](docs/discovery-local-acceptance-2026-10-20.md) for deployed-worker verification and remaining limits.
+
+For the public GitLab archive example, Discovery now has an explicit [normal-deployment setup profile](docs/universal-deployment-discovery.md#normal-deployment-public-gitlab-archive-profile). It configures approved Helm sources and pinned mirrors through the ordinary `.env` and Compose deployment; example values must be selected explicitly.
