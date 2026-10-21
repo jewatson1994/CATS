@@ -40,6 +40,32 @@ def runtime_commit_command(container: str, destination: str, configuration: dict
     return [*command, container, destination]
 
 
+def retained_manifest_metadata(run, reference: str) -> dict:
+    """Read exact registry descriptors; missing/index metadata stays ineligible."""
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", reference):
+        return {}
+    try:
+        result = run(["docker", "manifest", "inspect", "--verbose", reference])
+        manifest = json.loads(result.stdout)
+        descriptor = manifest.get("Descriptor", {}) if isinstance(manifest, dict) else {}
+        platform = descriptor.get("platform") or {}
+        media = descriptor.get("mediaType")
+        if descriptor.get("digest") != reference.rsplit("@", 1)[1] or media not in {
+            "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"}:
+            return {}
+        parts = [platform.get("os"), platform.get("architecture")]
+        if not all(isinstance(value, str) and re.fullmatch(r"[a-z0-9_.-]+", value) for value in parts):
+            return {}
+        variant = platform.get("variant")
+        if variant:
+            if not isinstance(variant, str) or not re.fullmatch(r"[a-z0-9_.-]+", variant):
+                return {}
+            parts.append(variant)
+        return {"media_type": media, "platform": "/".join(parts)}
+    except (Exception,):
+        return {}
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         raise SystemExit("usage: python -m app.patch_worker CONFIG OUTPUT")
@@ -116,6 +142,8 @@ def main() -> int:
     env["GRYPE_REGISTRY_CA_CERT"] = str(trusted_bundle)
     env["GRYPE_DB_CA_CERT"] = str(trusted_bundle)
     timeout = int(os.getenv("CATS_PATCH_COMMAND_TIMEOUT", "1800"))
+    source_metadata = {}
+    output_metadata = {}
     source_ref = ""
     patched_ref = ""
     created_images: list[str] = []
@@ -165,7 +193,14 @@ def main() -> int:
         if source_mode == "oci":
             source_ref = str(config["source_image"])
             login_for(source_ref, os.getenv("CATS_PATCH_SOURCE_USERNAME", ""), os.getenv("CATS_PATCH_SOURCE_PASSWORD", ""))
-            run(["docker", "pull", source_ref])
+            pulled = run(["docker", "pull", source_ref])
+            digest = re.search(r"\bDigest:\s*(sha256:[0-9a-f]{64})\b", pulled.stdout or "", re.IGNORECASE)
+            if digest:
+                repository = source_ref.split("@", 1)[0]
+                if repository.rfind(":") > repository.rfind("/"):
+                    repository = repository.rsplit(":", 1)[0]
+                source_ref = repository + "@" + digest.group(1).lower()
+            source_metadata = retained_manifest_metadata(run, source_ref)
         elif source_mode == "upload":
             archive = Path(config["archive_path"])
             validate_image_archive(archive)
@@ -479,6 +514,7 @@ def main() -> int:
                     immutable_destination = f"{destination_repository}@{digest_match.group(1).lower()}"
                 elif not config.get("signing_enabled") and isinstance(repo_digests, list):
                     immutable_destination = next((value for value in repo_digests if isinstance(value, str) and value.split("@", 1)[0] == destination_repository), None)
+                output_metadata = retained_manifest_metadata(run, immutable_destination or "")
                 if config.get("signing_enabled") is True:
                     state("running", "signing_image", immutable_destination=immutable_destination)
                     signature_status = "failed"
@@ -517,6 +553,8 @@ def main() -> int:
             "immutable_destination": immutable_destination, "signature_status": signature_status,
             "signature": signature_metadata,
             "remediation_evidence": remediation_evidence,
+            **output_metadata,
+            **{"source_" + key: value for key, value in source_metadata.items()},
         }
         (output / "patch-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         state("complete", "completed", summary={k: v for k, v in comparison.items() if not isinstance(v, list)}, patched_image=patched_ref, destination_image=result["destination_image"])

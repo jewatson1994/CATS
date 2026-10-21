@@ -153,3 +153,59 @@ def test_revocation_during_upstream_manifest_fetch(setup, monkeypatch):
     transport.fetch_manifest = revoke
     monkeypatch.setattr(proxy, 'client', lambda mapping: transport)
     assert s.client.get('/v2/project/image/manifests/latest').status_code == 403
+
+
+@pytest.fixture
+def signed_tag(setup, monkeypatch):
+    from app import release_revisions as revisions
+    s = setup
+    replacement = json.dumps({'schemaVersion': 2, 'config': {'digest': s.blob, 'size': 10},
+        'layers': [], 'annotations': {'revision': 'patched'}}).encode()
+    target = digest(replacement)
+    s.documents[target] = replacement
+    s.allowed.add(target)
+    with s.sessions() as db:
+        mapping = db.get(OCIRepository, s.mapping_id)
+        binding = dict(repository_id=mapping.id, public_repository=mapping.public_repository,
+            tag='latest', artifact_id=7, digest=target, upstream_id=mapping.upstream_id,
+            endpoint=mapping.upstream.endpoint, upstream_repository=mapping.upstream_repository)
+        db.add(revisions.ServiceActiveRelease(service_id=mapping.service_id, revision_id=None))
+        db.commit()
+    active = SimpleNamespace(id=71, manifest=dict(distribution_bindings=[binding],
+        artifacts=[dict(id=7, digest=target)]))
+    monkeypatch.setattr(revisions, 'active_revision', lambda *a: active)
+    return s, active, binding, target
+
+
+def test_signed_tag_uses_active_digest_and_never_substitutes_digest_pull(signed_tag):
+    s, active, binding, target = signed_tag
+    response = s.client.get('/v2/project/image/manifests/latest')
+    assert response.status_code == 200
+    assert response.headers['Docker-Content-Digest'] == target
+    # The mutable upstream tag still points at the original image.
+    assert digest(s.documents['latest']) == s.image
+    direct = s.client.get('/v2/project/image/manifests/' + s.image)
+    assert direct.status_code == 200
+    assert direct.headers['Docker-Content-Digest'] == s.image
+
+
+def test_unbound_tag_and_changed_location_fail_closed(signed_tag):
+    s, active, binding, target = signed_tag
+    assert s.client.get('/v2/project/image/manifests/other').status_code == 403
+    with s.sessions() as db:
+        db.get(OCIRepository, s.mapping_id).upstream_repository = 'other/image'
+        db.commit()
+    assert s.client.get('/v2/project/image/manifests/latest').status_code == 403
+
+
+def test_revision_switch_during_fetch_denies_response(signed_tag, monkeypatch):
+    from app import release_revisions as revisions
+    s, active, binding, target = signed_tag
+    changed = SimpleNamespace(id=active.id + 1, manifest=active.manifest)
+    calls = []
+    def current(*args):
+        calls.append(1)
+        return active if len(calls) == 1 else changed
+    monkeypatch.setattr(revisions, 'active_revision', current)
+    assert s.client.get('/v2/project/image/manifests/latest').status_code == 403
+    assert len(calls) == 2

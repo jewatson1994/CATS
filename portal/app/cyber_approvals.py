@@ -184,10 +184,30 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     _permission(auth, 'service.export', service.id)
     if service.lifecycle_status != 'active':
         raise HTTPException(409, 'Only active services can request approval')
+    if data.get('amendment_proposal_id') is not None:
+        if data.get('renews_approval_id') is not None:
+            raise HTTPException(422, 'An amendment is a separate approval, not an unchanged-inventory renewal')
+        from .release_revisions import amendment_specification
+        try:
+            specification = amendment_specification(db, auth, data['amendment_proposal_id'], service.id)
+        except (ValueError, PermissionError) as exc:
+            raise HTTPException(409, str(exc)) from None
+        if 'release_revision' in data and data['release_revision'] != specification:
+            raise HTTPException(422, 'Revision inventory differs from amendment proposal')
+        data['release_revision'] = specification
     variant = data.get('variant', 'current_service')
     if variant not in ('current_service', 'cats_remediated'):
         raise HTTPException(422, 'Select Current Service or CATS Remediated')
-    result = _readiness(db, service, variant, data.get('remediation_id'))
+    if data.get('amendment_proposal_id') is not None:
+        if variant != 'current_service' or data.get('remediation_id') is not None:
+            raise HTTPException(422, 'Amendment review uses its retained proposed assessment')
+        from .proposal_assessments import assess
+        try:
+            result = assess(db, service, data['amendment_proposal_id'])
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+    else:
+        result = _readiness(db, service, variant, data.get('remediation_id'))
     if not result['ready']:
         raise HTTPException(409, {'message': 'Resolve all missing evidence before requesting approval', 'blockers': result['blockers']})
     eligible = [row for row in db.scalars(select(ApprovedReleaseDestination).order_by(
@@ -238,6 +258,17 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     except ValueError:
         fingerprint = None
     snapshot.update(variant=variant, destination=frozen_destination, signing_fingerprint=fingerprint)
+    if 'release_revision' in data:
+        from . import release_revisions
+        snapshot['release_revision'] = data['release_revision']
+        candidate = CyberApproval(id=0, release_key=release_key, service_id=service.id,
+            snapshot=snapshot, snapshot_digest=digest(snapshot))
+        try:
+            release_revisions._manifest(db, candidate)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise HTTPException(422, 'Invalid revision inventory: ' + str(exc)) from None
+    if data.get('amendment_proposal_id') is not None:
+        snapshot['amendment_proposal_id'] = data['amendment_proposal_id']
     if renewal:
         snapshot['renews_approval_id'] = renewal.id
         snapshot['reassessment_event_id'] = event.id if event else None
@@ -325,6 +356,14 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(409, 'This request already has a decision')
     db.refresh(row)
+    if row.snapshot.get('release_revision') is not None:
+        from . import release_revisions
+        try:
+            revision = release_revisions.propose(db, auth, row.id, decision_context=True)
+            release_revisions.decide(db, auth, revision.id, 0)
+        except (ValueError, PermissionError) as exc:
+            db.rollback()
+            raise HTTPException(409, str(exc)) from None
     if decision == 'approved':
         _enqueue(db, row, auth.user.id)
     record_audit(db, auth, 'cyber_approval.' + decision, 'cyber_approval', row.id, snapshot_digest=row.snapshot_digest)
@@ -524,3 +563,50 @@ def reconcile_jobs(db):
             row.publish_status = 'failed'
             row.publication = {**(row.publication or {}), 'status': 'failed', 'error': 'Publication worker stopped. Review the retained receipts and retry this exact release.'}
     db.commit()
+
+
+@router.get('/api/approved-releases/{identity}/revision')
+def release_revision(identity: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from .release_revisions import ReleaseRevision, ReleaseRevisionState, ServiceActiveRelease
+    approval = _record(db, auth, identity)
+    revision = db.scalar(select(ReleaseRevision).where(ReleaseRevision.approval_id == approval.id))
+    if revision is None:
+        raise HTTPException(404, 'Release revision not found')
+    state = db.get(ReleaseRevisionState, revision.id)
+    pointer = db.get(ServiceActiveRelease, revision.service_id)
+    return dict(id=revision.id, approval_id=approval.id, manifest=revision.manifest,
+        manifest_digest=revision.manifest_digest, decision=state.decision,
+        suspended=state.suspended, revoked=state.revoked, version=state.version,
+        active_revision_id=pointer.revision_id if pointer else None,
+        pointer_version=pointer.version if pointer else None,
+        validity=release_validity.summary(approval))
+
+
+@router.post('/api/approved-releases/{identity}/revision/{action}')
+async def release_revision_action(identity: int, action: str, request: Request,
+        db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    from . import release_revisions
+    _csrf(request, auth)
+    approval = _record(db, auth, identity)
+    _permission(auth, 'approval.decide', approval.service_id)
+    data = await request.json()
+    version = data.get('expected_version')
+    if type(version) is not int or version < 0:
+        raise HTTPException(422, 'An expected version is required')
+    revision = db.scalar(select(release_revisions.ReleaseRevision).where(
+        release_revisions.ReleaseRevision.approval_id == approval.id))
+    if revision is None:
+        raise HTTPException(404, 'Release revision not found')
+    try:
+        if action == 'activate':
+            release_revisions.activate(db, auth, revision.id, version)
+        elif action in {'suspend', 'revoke'}:
+            release_revisions.restrict(db, auth, revision.id, version, action, data.get('reason', ''))
+        else:
+            raise HTTPException(422, 'Unknown revision action')
+    except (ValueError, PermissionError) as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
+    record_audit(db, auth, 'release_revision.' + action, 'release_revision', revision.id)
+    db.commit()
+    return release_revision(identity, db, auth)

@@ -20,6 +20,7 @@ from .oci_models import OCIManifest, OCIObjectLink, OCIPrincipal, OCIRepository
 from .oci_authorization import authorize
 from .oci_transport import ContentCache, DIGEST, REPOSITORY, RegistryClient, RegistryError
 from .release_validity import utc
+from .release_revisions import resolve_distribution_tag
 from .secrets import decrypt_secret
 from .oci_signatures import legacy_subject, discover_legacy_signature, verify_legacy_signature
 
@@ -235,6 +236,14 @@ def get_manifest(repository: str, reference: str, request: Request):
         machine = principal(db, request, mapping.id)
         try:
             signature_root = legacy_subject(reference)
+            binding = None
+            if not signature_root and not DIGEST.fullmatch(reference):
+                try:
+                    binding = resolve_distribution_tag(db, mapping, reference)
+                except ValueError as exc:
+                    raise Denied(str(exc)) from None
+                if binding:
+                    require(db, mapping, binding['digest'])
             transport = client(mapping)
             if DIGEST.fullmatch(reference):
                 try:
@@ -247,11 +256,20 @@ def get_manifest(repository: str, reference: str, request: Request):
                 signature = verify_legacy_signature(raw, media, digest, transport, mapping.upstream_repository, signature_root, content_cache())
                 save_signature(db, mapping, signature_root, signature)
             else:
-                raw, media, digest = graph(db, mapping, transport, reference)
+                raw, media, digest = graph(db, mapping, transport, binding['digest'] if binding else reference)
+                if binding and digest != binding['digest']:
+                    raise Denied('Resolved artifact differs from signed tag binding')
             db.commit()
             db.expire_all()
             mapping = mapping_for(db, repository)
             principal(db, request, mapping.id)
+            if not signature_root and not DIGEST.fullmatch(reference):
+                try:
+                    current_binding = resolve_distribution_tag(db, mapping, reference)
+                except ValueError as exc:
+                    raise Denied(str(exc)) from None
+                if current_binding != binding:
+                    raise Denied('Active release changed during retrieval; retry')
             authorize_object(db, mapping, digest, 'signature' if signature_root else 'manifest')
             audit(db, machine, mapping, digest, 'allowed')
         except Denied as exc:

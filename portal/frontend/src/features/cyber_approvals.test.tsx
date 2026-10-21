@@ -190,3 +190,14 @@ it('requires scoped scan ingestion permission for schedule controls', async () =
   expect(screen.queryByRole('button',{name:'Save reassessment schedule'})).not.toBeInTheDocument();
   expect(screen.getByText(/A scoped Service Manager/)).toBeInTheDocument();
 });
+
+it('passes the amendment identity through the existing approval request', async () => {
+  vi.mocked(requestJson).mockResolvedValueOnce({...ready, can_request:true}).mockResolvedValueOnce({id:88});
+  render(<RequestApproval data={data} serviceKey="payments" amendmentProposalId={19}/>);
+  expect(screen.getByRole('note')).toHaveTextContent('actual fresh service assessment');
+  await screen.findByText('Ready for Cyber review');
+  fireEvent.click(screen.getByRole('button', {name:'Request Cyber Approval'}));
+  await screen.findByText('Review request #88');
+  const call = vi.mocked(requestJson).mock.calls.find(([url]) => url === '/api/cyber-approvals');
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({amendment_proposal_id:19, service_key:'payments'});
+});

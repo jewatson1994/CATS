@@ -516,6 +516,11 @@ def publish(db, approval, destination, checkpoint):
                                manifest=manifest, bundle_path=str(target), bundle_digest=bundle_digest,
                                bundle_bytes=target.stat().st_size, signing_fingerprint=config["signing_fingerprint"])
                 save()
+        if snapshot.get('release_revision') is not None:
+            from .release_revisions import publish_manifest
+            stage = "Signing immutable release revision"
+            receipt['revision_signature'] = publish_manifest(db, approval, (config, credentials))
+            save()
         return receipt
     except Exception as exc:
         diagnostic = failure_diagnostic(exc, stage)

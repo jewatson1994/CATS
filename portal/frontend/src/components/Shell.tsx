@@ -2,18 +2,33 @@ import {useEffect, useRef, type ReactNode} from 'react';
 import {can, type PageData} from '../api';
 import {Icon} from './ui';
 
-const primaryNav: [string, string, (path: string) => boolean][] = [
+type NavItem = [string, string, (path: string) => boolean];
+const primaryNav: NavItem[] = [
   ['/', 'Services', path => path === '/' || path.startsWith('/services/')],
-  ['/cybersecurity', 'Cybersecurity', path => path.startsWith('/cybersecurity')],
-  ['/cyber-approvals', 'Approvals', path => path.startsWith('/cyber-approvals')],
-  ['/approved-releases', 'Approved Releases', path => path.startsWith('/approved-releases')],
   ['/discovery', 'Discovery', path => path === '/discovery'],
   ['/scan', 'Scan', path => path === '/scan' || path.startsWith('/api/public/jobs/')],
+  ['/patch', 'Patch', path => path === '/patch' || path === '/patch-campaigns' || path.startsWith('/api/public/patch-jobs/')],
+];
+const cyberNav: NavItem[] = [
+  ['/cybersecurity', 'Cybersecurity overview', path => path.startsWith('/cybersecurity')],
+  ['/cyber-approvals', 'Approvals', path => path.startsWith('/cyber-approvals')],
+  ['/approved-releases', 'Approved Releases', path => path.startsWith('/approved-releases')],
+];
+const moreNav: NavItem[] = [
+  ['/artifact-catalog', 'Artifact catalog', path => path === '/artifact-catalog'],
+  ['/remediations', 'Remediate', path => path === '/remediations' || path.startsWith('/poam')],
   ['/sbom', 'SBOM', path => path === '/sbom'],
   ['/jobs', 'Jobs', path => path === '/jobs'],
-  ['/patch', 'Patch', path => path === '/patch' || path.startsWith('/api/public/patch-jobs/')],
-  ['/remediations', 'Remediations', path => path === '/remediations' || path === '/requests' || path.startsWith('/poam')],
+  ['/requests', 'Requests', path => path === '/requests'],
 ];
+
+function NavigationGroup({label, items, path}: {label: string; items: NavItem[]; path: string}) {
+  return <details className="navigation-menu" data-active={items.some(([, , matches]) => matches(path)) || undefined}>
+    <summary>{label}<Icon name="chevron"/></summary>
+    <div className="menu-popover navigation-popover">{items.map(([href, name, matches]) =>
+      <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{name}</a>)}</div>
+  </details>;
+}
 const publicNav: [string, string][] = [['/home', 'Overview'], ['/scan', 'Scan'], ['/sbom', 'SBOM'], ['/patch', 'Patch'], ['/login', 'Login']];
 
 export function Shell({data, children}: {data: PageData; children: ReactNode}) {
@@ -24,7 +39,11 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
   useEffect(() => {
     const close = (event: Event) => {
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
-      if (event.type === 'click' && header.current?.contains(event.target as Node)) return;
+      if (event.type === 'click' && header.current?.contains(event.target as Node) && !(event.target as Element).closest('a')) return;
+      if (event instanceof KeyboardEvent) {
+        const menu = (document.activeElement as Element | null)?.closest('details[open]');
+        (menu?.querySelector(':scope > summary') as HTMLElement | null)?.focus();
+      }
       header.current?.querySelectorAll('details[open]').forEach(menu => menu.removeAttribute('open'));
     };
     document.addEventListener('click', close); document.addEventListener('keydown', close);
@@ -38,6 +57,8 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
       <span>Continuous Assessment &amp; Tracking System</span></a>
     {user ? <nav className="account-nav" aria-label="Primary navigation">
       {primaryNav.map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
+      <NavigationGroup label="Cybersecurity" items={cyberNav} path={path}/>
+      <NavigationGroup label="More" items={moreNav} path={path}/>
       <details className="notification-menu"><summary aria-label={data.pending_request_count ? `Notifications (${data.pending_request_count} pending)` : 'Notifications'}><Icon name="bell"/>
         {!!data.pending_request_count && <span className="notification-badge">{data.pending_request_count}</span>}
       </summary><div className="notification-popover"><strong>Notifications</strong>

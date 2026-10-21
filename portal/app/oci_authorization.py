@@ -11,6 +11,7 @@ from .execution_summaries import payload_digest
 from .models import Service
 from .release_validity import require_current, utc
 from .service_evidence import current_execution
+from . import release_revisions
 
 
 @dataclass(frozen=True)
@@ -121,12 +122,25 @@ def authorize(db, mapping, digest, now=None):
     if not view['compliant']:
         return deny('service_noncompliant')
     repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
+    # Once a service enters revision distribution, historical approvals cannot
+    # bypass a missing, suspended, revoked, expired or unverifiable pointer.
+    # A proposed amendment does not replace the previously active revision.
+    revision_managed = (db.get(release_revisions.ServiceActiveRelease, service.id, populate_existing=True) is not None
+        or db.scalar(select(release_revisions.ReleaseRevision.id).where(release_revisions.ReleaseRevision.service_id == service.id).limit(1)) is not None)
+    active = release_revisions.active_revision(db, service.id, now) if revision_managed else None
+    if revision_managed and active is None:
+        return deny('active_revision_unavailable')
     approvals = db.scalars(select(CyberApproval).where(
         CyberApproval.service_id == service.id,
         CyberApproval.source_execution_id == execution.id,
     ).order_by(CyberApproval.id.desc()).execution_options(populate_existing=True))
     for approval in approvals:
+        if revision_managed and approval.id != active.approval_id:
+            continue
         snapshot = approval.snapshot
+        if isinstance(snapshot, dict) and 'release_revision' in snapshot and not revision_managed:
+            # Missing revision records are not a reason to fall back to legacy.
+            return deny('active_revision_unavailable', approval)
         if not isinstance(snapshot, dict) or not (_artifact_matches(snapshot, repository, digest)
                 or _published_artifact_matches(approval, repository, digest)):
             continue

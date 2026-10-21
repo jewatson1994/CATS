@@ -20,7 +20,7 @@ from app.vex_models import VexDocument
 
 
 def auth(permissions=('service.view',), service_id=1, group=None):
-    assignment = SimpleNamespace(role=SimpleNamespace(name='Test role', permissions=list(permissions)),
+    assignment = SimpleNamespace(role=SimpleNamespace(name='Test role', system=False, permissions=list(permissions)),
                                  service_id=service_id, group_id=group.id if group else None, group=group)
     return AuthContext(user=SimpleNamespace(id=None, username='real-reviewer', display_name='Reviewer',
                                             role_assignments=[assignment]),

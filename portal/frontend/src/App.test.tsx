@@ -39,7 +39,8 @@ it('keeps navigation usable when a route fails and can retry', async () => {
   vi.stubGlobal('fetch', fetch); vi.stubGlobal('scrollTo', vi.fn());
   render(<App initial={{schemaVersion:1,page:'home',data:{current_user:{display_name:'Tester',theme:'cats'}}}}/>);
   const nav = screen.getByRole('navigation', {name:'Primary navigation'});
-  fireEvent.click(screen.getByRole('link', {name:'Cybersecurity'}));
+  fireEvent.click(screen.getByText('Cybersecurity', {selector:'summary'}));
+  fireEvent.click(screen.getByRole('link', {name:'Cybersecurity overview'}));
   await screen.findByText('Route unavailable');
   expect(screen.getByRole('navigation', {name:'Primary navigation'})).toBe(nav);
   fireEvent.click(screen.getByRole('button', {name:'Retry'}));

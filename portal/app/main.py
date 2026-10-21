@@ -122,6 +122,7 @@ from . import cyber_approvals
 from . import risk_routes, discovery_routes
 from . import vex_models, risk_models, intelligence_models, native_vex_models, discovery_models
 from . import oci_models, oci_lifecycle, oci_admin
+from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -460,6 +461,8 @@ app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
 app.include_router(oci_admin.router)
 app.include_router(oci_lifecycle.router)
+app.include_router(artifact_catalog_routes.router)
+app.include_router(patch_campaigns.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -1066,6 +1069,9 @@ def _execute_deployment_validation(run_id: int) -> None:
         ):
             setattr(run, field, result.get(key, default))
         run.completed_at = utcnow(); run.updated_at = utcnow(); run.phase = "COMPLETE"
+        # Persist reconciliation with validation so a worker restart cannot lose it.
+        if run.status == ValidationStatus.VERIFIED.value:
+            artifact_catalog.enqueue_recommendation_reconciliation(db, validation_run_id=run.id)
         terminal_action = {
             ValidationStatus.VERIFIED.value: "deployment_validation.verified",
             ValidationStatus.PARTIALLY_VERIFIED.value: "deployment_validation.partially_verified",
@@ -1350,7 +1356,7 @@ def page_context(auth: AuthContext, **values):
             access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
                                      "href": "/admin#access-requests"}
                                     for item in access_requests.list_pending_requests(nav_db, auth)]
-            actionable_notifications = access_notifications + actionable_notifications
+            actionable_notifications = access_notifications + artifact_catalog_routes.replacement_notifications(nav_db, auth) + actionable_notifications
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
             # as the navigation count, so counting them in memory avoids a
@@ -3070,6 +3076,18 @@ def backfill_incomplete_scan_findings() -> None:
         if changed:
             db.commit()
 
+
+
+@app.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201, dependencies=[Depends(require_pipeline)])
+def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db)):
+    try:
+        row = proposal_assessments.retain(db, proposal_id, payload)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
+    return {"accepted": True, "proposal_id": proposal_id, "assessment_id": row.id,
+            "active_release_changed": False}
 
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
@@ -4894,15 +4912,43 @@ def _patch_job_update(job_id: str, **values):
                         "could_not_be_patched", "patched_image", "destination_image",
                         "patch_status", "reason", "image_changed", "delivery_status", "delivery_error",
                         "immutable_destination", "signature_status", "signature", "artifact_sha256",
-                        "stages", "failed_stage",
+                        "stages", "failed_stage", "artifact_receipt", "artifact_validation", "validated_source",
                     }
                 }
+                if summary:
+                    # Only this authenticated worker result path creates durable evidence.
+                    receipt_keys = {"status", "source_image", "immutable_destination", "patch_status",
+                        "delivery_status", "signature_status", "signature", "artifact_validation",
+                        "validated_source", "vulnerabilities_before", "vulnerabilities_after",
+                        "media_type", "platform", "source_media_type", "source_platform"}
+                    record.summary["artifact_receipt"] = {key: value for key, value in summary.items() if key in receipt_keys}
+                if record.status == "complete" and summary:
+                    from .artifact_catalog import register_patch_artifacts
+                    receipt = record.summary.get("artifact_receipt") or {}
+                    diagnostic = None
+                    metadata = {key: receipt.get(key) for key in ("media_type", "platform", "source_media_type", "source_platform")}
+                    if not all(isinstance(value, str) and value.strip() and value != "unknown" for value in metadata.values()):
+                        diagnostic = "Exact source and output OCI metadata unavailable"
+                    else:
+                        try:
+                            # Flush the successful execution before the savepoint. A bad
+                            # catalog import must never roll back its retained result.
+                            with db.begin_nested():
+                                register_patch_artifacts(db, patch_execution_id=record.id, **metadata)
+                        except Exception:
+                            diagnostic = "Worker artifact identity could not be catalogued"
+                    if diagnostic and not db.scalar(select(AuditEvent.id).where(
+                        AuditEvent.action == "artifact.catalog.import_skipped", AuditEvent.target_type == "patch_execution",
+                        AuditEvent.target_id == str(record.id))):
+                        db.add(AuditEvent(actor_user_id=record.requested_by_id, action="artifact.catalog.import_skipped",
+                            target_type="patch_execution", target_id=str(record.id),
+                            detail={"service_id": record.service_id, "reason": diagnostic}))
                 if snapshot.get("stages"):
                     record.summary["stages"] = snapshot["stages"]
                 if snapshot.get("failed_stage"):
                     record.summary["failed_stage"] = snapshot["failed_stage"]
                 if result and record.status == "complete" and str(result.get("patch_status") or "") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}:
-                    associated_ref = str(result.get("destination_image") or result.get("patched_image") or "").strip()
+                    associated_ref = str(result.get("immutable_destination") or result.get("destination_image") or result.get("patched_image") or "").strip()
                     service = db.get(Service, record.service_id)
                     if service and associated_ref:
                         _ensure_service_image(db, service, associated_ref)
@@ -5077,6 +5123,9 @@ def _patch_page_context(
 
 
 def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
+    from .remediation_jobs import check_worker
+    from .durable_jobs import JobCancelled, LeaseLost
+    check_worker()
     job_root = PATCH_JOB_ROOT / job_id
     output_dir = job_root / "output"
     state_path = output_dir / "patch-state.json"
@@ -5095,6 +5144,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
             )
             credential_env.clear()
             while True:
+                check_worker()
                 with PATCH_JOB_LOCK:
                     cancelled = PATCH_JOBS.get(job_id, {}).get("status") == "cancelled"
                 if cancelled:
@@ -5104,6 +5154,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                     _patch_worker_request(f"/internal/patch-jobs/{job_id}/cancel", method="POST")
                     raise TimeoutError("Patch job exceeded its configured time limit")
                 state = _patch_worker_request(f"/internal/patch-jobs/{job_id}")
+                check_worker()
                 state, result = _patch_worker_values(state)
                 _patch_job_update(job_id, **state, **({"result": result} if isinstance(result, dict) else {}))
                 if state.get("status") == "complete":
@@ -5123,6 +5174,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
             PATCH_PROCESSES[job_id] = process
         last_state = None
         while process.poll() is None:
+            check_worker()
             with PATCH_JOB_LOCK:
                 cancelled = PATCH_JOBS.get(job_id, {}).get("status") == "cancelled"
             if cancelled:
@@ -5144,6 +5196,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                 except (OSError, ValueError):
                     pass
             time.sleep(0.5)
+        check_worker()
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
             _patch_job_update(job_id, **state)
@@ -5162,6 +5215,16 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                 _patch_job_update(job_id, **state)
                 return
             raise RuntimeError(state.get("error") or "Patch worker failed")
+    except (JobCancelled, LeaseLost):
+        # Stop execution when durable ownership is lost; never publish a stale result.
+        if process is not None and process.poll() is None:
+            process.kill()
+        if PATCH_WORKER_URL:
+            try:
+                _patch_worker_request(f"/internal/patch-jobs/{job_id}/cancel", method="POST")
+            except Exception:
+                pass
+        raise
     except Exception as exc:
         with PATCH_JOB_LOCK:
             existing = dict(PATCH_JOBS.get(job_id, {}))

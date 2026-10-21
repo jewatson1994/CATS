@@ -45,6 +45,7 @@ export function Page({data}: {data: PageData}) {
     String(registry.namespace || '').replace(/^\/+|\/+$/g,''), image.trim().replace(/^\/+/,'')].filter(Boolean).join('/') : '';
   return <><a className="back" href="/home">← CATS overview</a><section className="heading"><div><p className="eyebrow">SELF-SERVICE WORKSPACE</p>
     <h1>Patch</h1><p>Patch a public, private, or uploaded container image and verify the result with before-and-after vulnerability scans.</p></div></section>
+    {data.current_user && <p><a className="secondary-button" href="/patch-campaigns">Patch multiple service images</a></p>}
     <section className="panel patch-panel"><h2>Container patch inputs</h2><p className="muted patch-helper">Patch a registry image or upload an image archive.<br/>Registry credentials are managed centrally by CATS.</p>
       {data.error && <div className="notice notice-error" role="alert">{data.error}</div>}
       <form method="post" action="/patch" encType="multipart/form-data" onSubmit={() => setSubmitting(true)}>

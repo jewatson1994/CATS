@@ -98,11 +98,11 @@ def _charts(files):
     return result
 
 
-def readiness(db, service, variant='current_service', remediation_id=None):
+def readiness(db, service, variant='current_service', remediation_id=None, *, _proposal_execution=None):
     db.refresh(service)
     blockers = []
     review_notes = []
-    execution = current_execution(db, service) if service.current_version_id is not None else None
+    execution = _proposal_execution or (current_execution(db, service) if service.current_version_id is not None else None)
     result = {'ready': False, 'blockers': blockers, 'execution': execution, 'remediation': None,
               'artifacts': [], 'overview': {}, 'variant': variant, 'review_notes': review_notes,
               'version': service.current_version.version if service.current_version else None,
@@ -364,8 +364,13 @@ def freeze(db, service, auth, readiness, folder: Path):
     if not readiness['ready'] or readiness['blockers']:
         raise ValueError('Approval evidence is not ready')
     # Recheck mutable source state at the moment the snapshot is made.
-    fresh = globals()['readiness'](db, service, readiness['variant'],
-        readiness['remediation'].id if readiness['remediation'] else None)
+    def refresh_evidence():
+        if readiness.get('proposal_id') is not None:
+            from .proposal_assessments import assess
+            return assess(db, service, readiness['proposal_id'])
+        return globals()['readiness'](db, service, readiness['variant'],
+            readiness['remediation'].id if readiness['remediation'] else None)
+    fresh = refresh_evidence()
     if not fresh['ready'] or fresh['execution'].id != readiness['execution'].id:
         raise ValueError('Approval evidence changed; refresh readiness')
     readiness = fresh
@@ -375,7 +380,7 @@ def freeze(db, service, auth, readiness, folder: Path):
     exceptions = [_row(row) for row in db.scalars(select(ExceptionRecord).join(Finding).where(Finding.service_id == service.id))]
     exceptions += [_row(row) for row in db.scalars(select(PolicyExceptionRecord).join(PolicyFinding).where(PolicyFinding.service_id == service.id))]
     snapshot = {'schema_version': 'cats.cyber-approval/v1', 'variant': readiness['variant'],
-        'service_id': service.id, 'service_key': service.service_key, 'version': service.current_version.version,
+        'service_id': service.id, 'service_key': service.service_key, 'version': readiness['version'],
         'source_execution_id': execution.id, 'source_version_id': execution.service_version_id,
         'scan_date': execution.scanned_at.isoformat(), 'overview': readiness['overview'],
         'evidence_scope': 'remediation-candidate' if record else f'current-{execution.scan_scope}-scan',
@@ -385,6 +390,11 @@ def freeze(db, service, auth, readiness, folder: Path):
                      'vulnerability_scans': readiness['candidate_vulnerability_scans']} if record else {'vulnerabilities': readiness['payload'].get('findings', []), 'configuration': readiness['payload'].get('policy_findings', [])},
         'mitigations': [_row(row) for row in db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id))],
         'exceptions': exceptions, 'remediation': _row(record) if record else None, 'artifacts': []}
+    if readiness.get('proposal_id') is not None:
+        snapshot.update(amendment_proposal_id=readiness['proposal_id'],
+            proposal_assessment_id=readiness['proposal_assessment_id'],
+            proposal_assessment_digest=readiness['proposal_assessment_digest'],
+            evidence_scope='proposed-service-scan')
     snapshot['risk_intelligence'] = review_intelligence_snapshot(
         _finding_identifiers(snapshot['findings']), datetime.now(timezone.utc).isoformat())
     snapshot = json.loads(_json(snapshot))
@@ -406,8 +416,14 @@ def freeze(db, service, auth, readiness, folder: Path):
     from .service_exports import write_all
     evidence = folder / 'all.zip'
     baseline = folder / 'current-service-all.zip' if record else evidence
-    with baseline.open('wb') as output:
-        exported = write_all(output, service, db, auth)
+    if readiness.get('proposal_id') is not None:
+        with ZipFile(evidence, 'w', ZIP_DEFLATED) as archive:
+            archive.writestr('proposed-scan.json', _json(readiness['payload']))
+            archive.writestr('proposed-sbom.json', _json(readiness['payload'].get('sbom_components', [])))
+        exported = {'entries': []}
+    else:
+        with baseline.open('wb') as output:
+            exported = write_all(output, service, db, auth)
     unavailable = [item['name'] for item in exported.get('entries', []) if item.get('status') != 'included']
     if unavailable:
         raise ValueError('Export All evidence unavailable: ' + ', '.join(unavailable))
@@ -443,7 +459,7 @@ def freeze(db, service, auth, readiness, folder: Path):
         for item in snapshot['artifacts']:
             if item['kind'] == 'chart':
                 archive.write(item['path'], 'charts/' + Path(item['path']).name)
-    final = globals()['readiness'](db, service, readiness['variant'], record.id if record else None)
+    final = refresh_evidence()
     if (not final['ready'] or final['execution'].id != execution.id
             or payload_digest(final['payload']) != payload_digest(readiness['payload'])
             or (record and file_digest(readiness['candidate_path']) != record.artifact_digest)):

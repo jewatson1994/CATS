@@ -169,3 +169,75 @@ def test_published_chart_requires_verified_source_binding(context):
     approval.publication = receipt
     db.commit()
     assert not auth.authorize(db, mapping, DIGEST, NOW).allowed
+
+
+@pytest.fixture
+def revision_context(context, monkeypatch):
+    from app import release_revisions as revisions
+    db, mapping, legacy, execution = context
+    snapshot = dict(legacy.snapshot, release_revision=dict(artifact_ids=[1], base_revision_id=None))
+    approval = CyberApproval(service_id=mapping.service_id, source_execution_id=execution.id,
+        variant='current', status='approved', snapshot=snapshot,
+        snapshot_digest=snapshot_digest(snapshot), decided_at=NOW)
+    db.add(approval)
+    db.flush()
+    revision = revisions.ReleaseRevision(approval_id=approval.id, service_id=mapping.service_id,
+        manifest={}, manifest_digest=snapshot_digest({}))
+    db.add(revision)
+    db.flush()
+    state = revisions.ReleaseRevisionState(revision_id=revision.id, decision='approved')
+    pointer = revisions.ServiceActiveRelease(service_id=mapping.service_id, revision_id=revision.id)
+    db.add_all([state, pointer])
+    db.commit()
+    # Gateway tests isolate pointer enforcement; signature/artifact/expiry checks
+    # have dedicated release_revision coverage and are invoked through this hook.
+    monkeypatch.setattr(revisions, 'validate_activation', lambda *a: None)
+    return db, mapping, legacy, approval, revision, state, pointer
+
+
+def test_gateway_uses_only_active_revision(revision_context):
+    db, mapping, legacy, approval, revision, state, pointer = revision_context
+    decision = auth.authorize(db, mapping, DIGEST, NOW)
+    assert decision.allowed
+    assert decision.approval_id == approval.id
+
+
+@pytest.mark.parametrize('restriction', ['suspended', 'revoked', 'missing_pointer', 'missing_state', 'unverified'])
+def test_gateway_never_falls_back_to_legacy_approval(revision_context, monkeypatch, restriction):
+    from app import release_revisions as revisions
+    db, mapping, legacy, approval, revision, state, pointer = revision_context
+    if restriction in {'suspended', 'revoked'}:
+        setattr(state, restriction, True)
+    elif restriction == 'missing_pointer':
+        db.delete(pointer)
+    elif restriction == 'missing_state':
+        db.delete(state)
+    else:
+        def invalid(*args):
+            raise ValueError('Signature or current artifact eligibility failed')
+        monkeypatch.setattr(revisions, 'validate_activation', invalid)
+    db.commit()
+    result = auth.authorize(db, mapping, DIGEST, NOW)
+    assert not result.allowed
+    assert result.reason == 'active_revision_unavailable'
+    assert legacy.status == 'approved'
+
+
+def test_old_digest_cannot_use_legacy_approval_after_revision_switch(revision_context):
+    db, mapping, legacy, approval, revision, state, pointer = revision_context
+    new_digest = 'sha256:' + 'd' * 64
+    snapshot = dict(approval.snapshot, artifacts=[dict(kind='image',
+        reference='registry.example/team/image@' + new_digest, digest=new_digest)])
+    approval.snapshot = snapshot
+    approval.snapshot_digest = snapshot_digest(snapshot)
+    db.commit()
+    assert not auth.authorize(db, mapping, DIGEST, NOW).allowed
+    assert auth.authorize(db, mapping, new_digest, NOW).approval_id == approval.id
+
+
+def test_missing_revision_record_cannot_authorize_as_legacy(context):
+    db, mapping, approval, _ = context
+    approval.snapshot = dict(approval.snapshot, release_revision=dict(artifact_ids=[1], base_revision_id=None))
+    approval.snapshot_digest = snapshot_digest(approval.snapshot)
+    db.commit()
+    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'active_revision_unavailable'
