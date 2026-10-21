@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Request, Query, Path as PathParameter
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
-from sqlalchemy import select, func, or_, cast, Text, LargeBinary, text
+from sqlalchemy import select, func, or_, cast, Text, LargeBinary, text, inspect
 from sqlalchemy.orm import load_only
 from .auth import AuthContext, require_user, record_audit
 from .database import get_db
@@ -198,7 +198,7 @@ SOURCE_STATEMENT_COUNT_LIMIT = 10_000
 def _source_statement_count(db, source_id):
     # Preserve document-first indexed access. A flat join with LIMIT can still
     # scan millions of another source's rows before finding this source.
-    if db.get_bind().dialect.name == 'postgresql':
+    if db.get_bind(mapper=inspect(VexStatement)).dialect.name == 'postgresql':
         probe = """SELECT statement.id FROM vex_documents AS document
             CROSS JOIN LATERAL (SELECT id FROM vex_statements
                 WHERE document_id = document.id LIMIT :bound) AS statement
@@ -209,7 +209,8 @@ def _source_statement_count(db, source_id):
             WHERE document.source_id = :source_id AND statement.document_id = document.id
             LIMIT :bound"""
     count = db.scalar(text('SELECT count(*) FROM (' + probe + ') AS bounded_statements'),
-        {'source_id': source_id, 'bound': SOURCE_STATEMENT_COUNT_LIMIT + 1})
+        {'source_id': source_id, 'bound': SOURCE_STATEMENT_COUNT_LIMIT + 1},
+        bind_arguments={'mapper': inspect(VexStatement)})
     exact = count <= SOURCE_STATEMENT_COUNT_LIMIT
     return {'statements': count if exact else None,
             'statement_count_state': 'exact' if exact else 'lower_bound',
@@ -314,7 +315,7 @@ def record(identity: int = PathParameter(..., ge=1, le=9223372036854775807), aut
         raise HTTPException(404, 'Record not found')
     stored_json = cast(IntelligenceRecord.data, Text)
     # Check storage bytes in the database before materializing publisher JSON.
-    if db.get_bind().dialect.name == 'postgresql':
+    if db.get_bind(mapper=inspect(IntelligenceRecord)).dialect.name == 'postgresql':
         size = func.octet_length(stored_json)
     else:
         size = func.length(cast(stored_json, LargeBinary))
@@ -364,7 +365,7 @@ def assessment_document(identity: int, document_id: int, auth: AuthContext = Dep
     if not referenced:
         raise HTTPException(404, 'Document not referenced by assessment')
     # Original documents are loaded only on explicit drilldown, with a storage-byte cap.
-    size = func.octet_length(VexDocument.raw_text) if db.get_bind().dialect.name == 'postgresql' else func.length(cast(VexDocument.raw_text, LargeBinary))
+    size = func.octet_length(VexDocument.raw_text) if db.get_bind(mapper=inspect(VexDocument)).dialect.name == 'postgresql' else func.length(cast(VexDocument.raw_text, LargeBinary))
     item = db.scalar(select(VexDocument).where(VexDocument.id == document_id, size <= vex.MAX_BYTES))
     if item is None:
         raise HTTPException(404, 'Document unavailable or exceeds evidence limit')

@@ -66,3 +66,6 @@ portal/app/static/frontend/
 
 # Operator-installed, hash-pinned Discovery chart mirror
 deploy/discovery-mirror-local/
+
+# Local database backup archives contain production data.
+backups/

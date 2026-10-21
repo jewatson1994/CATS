@@ -81,6 +81,30 @@ def test_signature_and_payload_tamper(env):
         assert db.scalar(select(func.count(IntelligenceRecord.id))) == 0
         assert package_status(db)['status'] == 'failed'
 
+
+def test_supplemental_duplicates_across_batches_and_upgrades_without_hash_scan(env):
+    from sqlalchemy import event
+
+    engine = env[1].kw['bind']
+    statements = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement.lower())
+
+    event.listen(engine, 'before_cursor_execute', capture)
+    try:
+        assert install(env, package(env, entries=[record()] * 501)) == 'installed'
+        assert install(env, package(env, 2, [record(), record(2), record(2)])) == 'installed'
+        with env[1]() as db:
+            rows = db.scalars(select(IntelligenceRecord).order_by(IntelligenceRecord.record_id)).all()
+            assert len(rows) == 2
+            assert rows[0].package_version != rows[1].package_version
+        assert not any('select intelligence_records.source_id, intelligence_records.sha256' in sql
+                       for sql in statements)
+        assert any('on conflict (source_id, sha256) do nothing' in sql for sql in statements)
+    finally:
+        event.remove(engine, 'before_cursor_execute', capture)
+
 def test_atomic_rollback_and_last_good_status(env):
     assert install(env, package(env)) == 'installed'
     bad = record(99)
@@ -181,6 +205,7 @@ def test_verified_retry_clears_previous_failure(env):
 
 
 def test_main_lifespan_automatically_calls_installer(monkeypatch):
+    monkeypatch.delenv('INTELLIGENCE_DATABASE_URL', raising=False)
     import asyncio
     from app import main, embedded_intelligence
     calls = []
@@ -196,6 +221,25 @@ def test_main_lifespan_automatically_calls_installer(monkeypatch):
     with pytest.raises(StartupObserved):
         asyncio.run(enter())
     assert calls == [main.SessionLocal]
+
+
+def test_split_database_startup_does_not_run_importer(monkeypatch):
+    import asyncio
+    from app import main, embedded_intelligence
+    monkeypatch.setenv('INTELLIGENCE_DATABASE_URL', 'postgresql://separate/intelligence')
+    def forbidden(*args):
+        raise AssertionError('Portal startup must not import intelligence')
+    class RecoveryReached(Exception):
+        pass
+    def recovery():
+        raise RecoveryReached()
+    monkeypatch.setattr(embedded_intelligence, 'install_package', forbidden)
+    monkeypatch.setattr(main.validator_management, 'recover_operations', recovery)
+    async def enter():
+        async with main.app_lifespan(main.app):
+            pass
+    with pytest.raises(RecoveryReached):
+        asyncio.run(enter())
 
 def test_supplemental_trust_does_not_require_product_authority(env):
     directory = package(env, entries=[record()])

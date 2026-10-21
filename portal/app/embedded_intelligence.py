@@ -4,6 +4,7 @@ import gzip
 import hashlib
 import json
 import logging
+import time
 import re
 from collections import Counter, defaultdict
 from contextlib import contextmanager
@@ -210,12 +211,18 @@ def _materialize_advisory_catalogs(db, install_id, directory, manifest, expected
         pending.clear()
 
     total = 0
+    last_progress = time.monotonic()
     with _authenticated_payload(directory, manifest) as payload:
         while True:
             line = payload.readline(MAX_LINE + 1)
             if not line:
                 break
             total += len(line)
+            if time.monotonic() - last_progress >= 60:
+                logging.getLogger(__name__).info(
+                    'Intelligence catalog pass read %d of %d payload bytes; transaction not yet committed',
+                    total, manifest['uncompressed_bytes'])
+                last_progress = time.monotonic()
             if len(line) > MAX_LINE or total > manifest['uncompressed_bytes']:
                 raise ValueError('Uncompressed payload exceeds bound')
             entry = _decode(line)
@@ -278,6 +285,19 @@ def _import(db, directory, manifest):
     def flush():
         if not pending:
             return
+        dialect = db.get_bind().dialect.name
+        if dialect in ('postgresql', 'sqlite'):
+            if dialect == 'postgresql':
+                from sqlalchemy.dialects.postgresql import insert
+            else:
+                from sqlalchemy.dialects.sqlite import insert
+            # Use the unique index directly. A hash-only preflight lookup can
+            # repeatedly scan the growing table before import statistics exist.
+            statement = insert(IntelligenceRecord.__table__).on_conflict_do_nothing(
+                index_elements=['source_id', 'sha256'])
+            db.execute(statement, pending)
+            pending.clear()
+            return
         # Bounded bulk deduplication and insertion: no SQL per supplemental record.
         hashes = {row['sha256'] for row in pending}
         existing = set(db.execute(select(IntelligenceRecord.source_id, IntelligenceRecord.sha256).where(IntelligenceRecord.sha256.in_(hashes))).all())
@@ -290,12 +310,18 @@ def _import(db, directory, manifest):
             db.execute(IntelligenceRecord.__table__.insert(), list(unique.values()))
         pending.clear()
     total = 0
+    last_progress = time.monotonic()
     with _authenticated_payload(directory, manifest) as payload:
         while True:
             line = payload.readline(MAX_LINE + 1)
             if not line:
                 break
             total += len(line)
+            if time.monotonic() - last_progress >= 60:
+                logging.getLogger(__name__).info(
+                    'Intelligence import read %d of %d payload bytes; transaction not yet committed',
+                    total, manifest['uncompressed_bytes'])
+                last_progress = time.monotonic()
             if len(line) > MAX_LINE or total > manifest['uncompressed_bytes']:
                 raise ValueError('Uncompressed payload exceeds bound')
             entry = _decode(line)
@@ -362,9 +388,9 @@ def _import(db, directory, manifest):
     _state(db, 'installed')
 
 def install_package(session_factory, package_dir=None, *, key_path=None):
-    """Install atomically during startup; failures are recorded without preventing it.
+    """Install atomically; the dedicated importer checks the returned failure status.
 
-    This synchronous import delays readiness until verification/import completes.
+    Legacy single-database deployments still invoke this during startup.
     """
     directory = Path(package_dir) if package_dir is not None else PACKAGE_DIR
     try:
@@ -429,7 +455,7 @@ def package_status(db):
         IntelligencePackageInstall.installed_at, IntelligencePackageInstall.counts,
         IntelligencePackageInstall.manifest['built_at'].as_string().label('built_at'),
         IntelligencePackageInstall.manifest['exclusions'].label('exclusions'),
-        _status_sources_projection(db.get_bind().dialect.name))
+        _status_sources_projection(db.get_bind(clause=select(IntelligencePackageInstall)).dialect.name))
         .order_by(IntelligencePackageInstall.sequence.desc()).limit(1)).first()
     state = db.get(IntelligencePackageState, 1)
     result = dict(status=state.status if state else 'not_installed', version=None, sequence=None, built_at=None, installed_at=None,
