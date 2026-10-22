@@ -55,6 +55,12 @@ jobs:
           docker run --rm --entrypoint catscan-version "$IMAGE:${{ github.sha }}"
           docker run --rm --entrypoint sh "$IMAGE:${{ github.sha }}" -c 'command -v cats && command -v cats-scan && command -v cats-patch'
 
+      - name: Verify bundled backups without network access
+        timeout-minutes: 5
+        run: |
+          docker run --rm --network none -e BACKUP_MODULE=/opt/backup/backup.py --entrypoint python3 \
+            -v "$PWD/deploy/backup:/tests:ro" "$IMAGE:${{ github.sha }}" /tests/test_backup.py
+
       - name: Push image
         run: |
           docker push "$IMAGE:${{ github.sha }}"

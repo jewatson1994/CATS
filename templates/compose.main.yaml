@@ -50,6 +50,73 @@ services:
     restart: unless-stopped
 
 
+  # Intelligence has independent storage and an independent import process.
+  intelligence-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
+      POSTGRES_USER: ${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}
+      POSTGRES_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
+    volumes:
+      - intelligence_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  intelligence-init:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.intelligence_importer", "--schema-only"]
+    environment: &intelligence_environment
+      INTELLIGENCE_DATABASE_URL: postgresql+psycopg://${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}@intelligence-db:5432/${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
+      INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
+    depends_on:
+      intelligence-db:
+        condition: service_healthy
+    restart: on-failure:3
+
+  intelligence-importer:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.intelligence_importer"]
+    environment: *intelligence_environment
+    depends_on:
+      intelligence-init:
+        condition: service_completed_successfully
+    cpus: ${CATS_INTELLIGENCE_IMPORT_CPUS:-1.0}
+    mem_limit: ${CATS_INTELLIGENCE_IMPORT_MEMORY:-2g}
+    restart: on-failure:3
+
+  db-backup:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: ["python3", "/opt/backup/backup.py"]
+    command: ["schedule"]
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-cats}
+      PGUSER: ${POSTGRES_USER:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BACKUP_UTC_TIME: ${BACKUP_UTC_TIME:-03:00}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-7}
+    volumes:
+      - ${CATS_DB_BACKUP_DIR:-./backups/postgres}:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      portal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "/opt/backup/backup.py", "health"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+      start_period: 10m
+    restart: unless-stopped
+
   # =========================================================
   # Patch Worker
   # =========================================================
@@ -189,6 +256,7 @@ services:
     networks: [default, scan_control]
 
     environment: &portal_environment
+      <<: *intelligence_environment
 
       # -------------------------------------------------------
       # Database
@@ -538,6 +606,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      intelligence-init:
+        condition: service_completed_successfully
 
       patch-worker:
         condition: service_healthy
@@ -558,10 +628,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-      # Initial embedded intelligence import precedes readiness. Successful checks
-      # still mark the portal healthy immediately on ordinary restarts.
-      # Expanded embedded intelligence took 43 minutes on the measured cold import.
-      start_period: ${CATS_INTELLIGENCE_START_PERIOD:-60m}
+      # Imports run independently; readiness only waits for schema initialization.
+      start_period: ${CATS_PORTAL_START_PERIOD:-60s}
 
 
     restart: unless-stopped
@@ -696,6 +764,8 @@ services:
 volumes:
 
   postgres_data:
+
+  intelligence_postgres_data:
 
   patch_jobs:
 

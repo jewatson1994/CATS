@@ -48,7 +48,7 @@ from pydantic import ValidationError
 from openpyxl import Workbook
 import yaml
 
-from .database import Base, background_engine, engine, get_db, SessionLocal
+from .database import Base, background_engine, engine, get_db, SessionLocal, portal_tables
 from . import scan_coordination
 from .durable_jobs import DurableJob
 from . import scan_protocol
@@ -140,7 +140,7 @@ from .preview_cleanup import preview_cleanup_lifespan
 # metadata existed. This keeps the existing create_all-based deployment model
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
-    Base.metadata.create_all(bind=connection)
+    Base.metadata.create_all(bind=connection, tables=portal_tables())
     scan_coordination.upgrade_connection(connection)
     upgrade_connection(connection)
     upgrade_validators(connection)
@@ -419,8 +419,11 @@ def _start_read_model_maintenance():
 
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
-    from .embedded_intelligence import install_package
-    await asyncio.to_thread(install_package, SessionLocal)
+    # Compose runs imports in a dedicated process. Legacy single-database
+    # installations retain their startup behavior until configured to split.
+    if not os.getenv('INTELLIGENCE_DATABASE_URL'):
+        from .embedded_intelligence import install_package
+        await asyncio.to_thread(install_package, SessionLocal)
     # Recovery is a safety obligation even when administrators disable new runs.
     validator_management.recover_operations()
     DEPLOYMENT_VALIDATION_WORKERS.submit(recover_stale_validation_runs)
