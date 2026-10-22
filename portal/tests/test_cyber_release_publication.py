@@ -465,3 +465,24 @@ def test_worker_publication_passes_current_admin_trust_to_destination(environmen
     certificates[1]['pem'] = 'rotated-intermediate'
     assert publish(environment, [])['status'] == 'published'
     assert seen == [[{'pem': 'portal-root'}, {'pem': 'portal-intermediate'}], certificates]
+
+
+def test_offline_signed_group_validity_matches_exactly(environment, tmp_path):
+    from copy import deepcopy
+    receipt = publish(environment, [])
+    with ZipFile(receipt['bundle_path']) as archive:
+        manifest = json.loads(archive.read('release-manifest.json'))
+    namespace = {'__name__': 'test_group_validity', '__file__': str(tmp_path / 'verify-import.py')}
+    exec(compile(publication.OFFLINE_SCRIPT, namespace['__file__'], 'exec'), namespace)
+    manifest['approval']['owning_group_id'] = 7
+    manifest['snapshot']['approval_validity']['owning_group_id'] = 7
+    start = datetime.fromisoformat(manifest['approval']['approved_at'])
+    namespace['approval_window'](manifest, start)
+    for value in (8, True, 0, '7', None):
+        changed = deepcopy(manifest)
+        changed['approval']['owning_group_id'] = value
+        with pytest.raises(ValueError, match='signed approval expiry'):
+            namespace['approval_window'](changed, start)
+    del manifest['approval']['owning_group_id']
+    with pytest.raises(ValueError, match='signed approval expiry'):
+        namespace['approval_window'](manifest, start)

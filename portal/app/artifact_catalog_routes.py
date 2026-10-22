@@ -1,5 +1,5 @@
 """Scoped catalog views and explicitly proposed recommendation selections."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Form, File, UploadFile
 from sqlalchemy import func, or_, select
 from .auth import require_user, record_audit
 from .database import get_db
@@ -191,3 +191,17 @@ def request_proposal_assessment(service_key: str, proposal_id: int, request: Req
     except ValueError as exc:
         db.rollback()
         raise HTTPException(409, str(exc)) from None
+
+
+@router.post('/api/services/{service_key}/artifacts/{artifact_id}/image-validation')
+def image_validation(service_key: str, artifact_id: int, request: Request,
+                     version_id: int = Form(),
+                     reference: str = Form(),
+                     bundle: UploadFile = File(),
+                     db=Depends(get_db), auth=Depends(require_user)):
+    _csrf(request, auth)
+    service = _service(db, auth, service_key)
+    if service.lifecycle_status != 'active' or not auth.has('remediation.execute', service.id):
+        raise HTTPException(403, 'Active service remediation permission required')
+    from .artifact_image_validation import validate_image
+    return validate_image(db, auth, service, artifact_id, version_id, reference, bundle)

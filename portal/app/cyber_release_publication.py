@@ -601,6 +601,11 @@ def approval_window(manifest, now=None):
         end = datetime.fromisoformat(approval['expires_at'])
         days = approval['validity_days']
         validity = {key: approval[key] for key in ('approved_at', 'expires_at', 'validity_days')}
+        if 'owning_group_id' in approval:
+            group_id = approval['owning_group_id']
+            if type(group_id) is not int or group_id <= 0:
+                raise ValueError()
+            validity['owning_group_id'] = group_id
         decision = datetime.fromisoformat(approval['decided_at'])
         # Retained database dates may be naive UTC; signed validity dates must carry a zone.
         if decision.tzinfo is None:

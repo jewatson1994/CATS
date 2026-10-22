@@ -230,112 +230,128 @@ def handle(ctx, payload):
     """Durable worker entry point. One attempt prevents replay of registry writes."""
     from . import main
     ctx.check()
-    with main.SessionLocal() as db:
-        campaign = db.get(PatchCampaign, payload.get("campaign_id"))
-        item = db.scalar(select(PatchCampaignItem).where(PatchCampaignItem.job_id == ctx.job.id).with_for_update())
-        actor = db.get(User, ctx.job.requested_by_id)
-        service = db.get(Service, ctx.job.service_id)
-        auth = AuthContext(actor, None) if actor and actor.enabled else None
-        if not campaign or not item or item.campaign_id != campaign.id or item.image_id != payload.get("image_id") or campaign.service_id != ctx.job.service_id or campaign.requested_by_id != ctx.job.requested_by_id:
-            raise durable_jobs.JobError("Campaign ownership is inconsistent")
-        if not auth or not service or not can_patch(auth, service):
-            raise durable_jobs.JobError("Service patch authorization is no longer available")
-        image = db.get(ServiceImage, item.image_id)
-        if not image or image.service_id != service.id or image.lifecycle_status != "active":
-            raise durable_jobs.JobError("Selected image is no longer active in this service")
-        if item.patch_execution_id:
-            raise durable_jobs.JobError("Patch already dispatched; inspect retained results before submitting a new campaign")
-        registries = _registries(db)
-        destination_registry = registries.get(campaign.destination_registry_id)
-        if not destination_registry:
-            raise durable_jobs.JobError("Configured destination registry is no longer available")
-        source = item.image_reference
-        main._validate_image_reference(source)
-        endpoint = str(destination_registry.get("endpoint") or "").rstrip("/")
-        host = urlparse(endpoint if "://" in endpoint else "https://" + endpoint).netloc
-        namespace = str(destination_registry.get("namespace") or "").strip("/")
-        key = uuid.uuid4().hex
-        destination = "/".join(part for part in (host, namespace, campaign.destination_prefix, f"image-{item.image_id}") if part) + ":cats-" + key
-        main._validate_image_reference(destination)
-        signing_config, signing_credentials = main._portal_signing_material(db, auth, "push", service)
-        policy = main.configuration_for_service(db, service)
-        config = {"job_id": key, "source_mode": "oci", "source_image": source, "output_mode": "push",
-            "destination_image": destination, "reuse_source_credentials": False, "remediation_evidence": True,
-            **signing_config, **{name: main.parse_json(policy.get(name), [] if name == "trusted_ca_certificates" else {})
-                for name in ("trusted_ca_certificates", "repository_policies", "os_definitions")}}
-        # The worker may expose a complete immutable-input manifest. Older
-        # engines continue normally, with reuse disabled rather than guessing.
-        identity_provider = getattr(main, "patch_recipe_identity", None)
-        identity = identity_provider(config) if callable(identity_provider) else None
-        candidates = list(db.scalars(select(GlobalArtifact).where(
-            GlobalArtifact.digest == source.rsplit("@", 1)[-1])))
-        source_artifact = candidates[0] if len(candidates) == 1 else None
-        fingerprint = recipe_fingerprint(source=source_artifact, config=config,
-            identity=identity, destination_scope={"registry": campaign.destination_registry_id,
-                "host": host, "namespace": namespace, "prefix": campaign.destination_prefix})
-        recipe_claim = None
-        if fingerprint:
-            recipe_claim = claim_recipe(db, fingerprint, ctx.job.id)
-            if recipe_claim.owner_job_id != ctx.job.id:
-                previous = reusable_patch(db, recipe_claim, source_artifact,
-                    signing_fingerprint=signing_config.get("signing_fingerprint"),
-                    destination_scope={"host": host, "namespace": namespace,
-                                       "prefix": campaign.destination_prefix})
-                if previous is None:
-                    pending = db.get(PatchExecution, recipe_claim.patch_execution_id) if recipe_claim.patch_execution_id else None
-                    if pending is not None and pending.status == "complete":
-                        raise durable_jobs.JobError("Equivalent patch lacks verified retained output; inspect its original campaign")
-                    # Release the item lock and snapshot before waiting. Re-enter
-                    # to revalidate authorization, policy and receipts afterwards.
-                    db.rollback()
-                    wait_for_recipe(main.SessionLocal, fingerprint, ctx)
-                    return handle(ctx, payload)
-                item.patch_execution_id = previous.id
-                lineage = db.scalar(select(ArtifactPatchLineage).where(
-                    ArtifactPatchLineage.patch_execution_id == previous.id,
-                    ArtifactPatchLineage.source_artifact_id == source_artifact.id))
-                assign_artifact(db, service_id=service.id, artifact_id=source_artifact.id)
-                assign_artifact(db, service_id=service.id, artifact_id=lineage.output_artifact_id, role="patched")
-                record_audit(db, auth, "patch.campaign.reused", "patch_campaign", campaign.id,
-                    service_id=service.id, patch_execution_id=previous.id)
-                receipt = previous.summary["artifact_receipt"]
-                reused = {"patch_job_id": previous.job_key, "reused": True,
-                    **{name: receipt.get(name) for name in ("patch_status", "signature_status", "immutable_destination")}}
-                ctx.check()
-                db.commit()
-                return reused
-        def credentials(registry):
-            return (str(registry.get("username") or ""), main.decrypt_secret(str(registry["password"])) if registry.get("password") else "") if registry else ("", "")
-        source_user, source_password = credentials(main._configured_registry_for_image(source, list(registries.values())))
-        destination_user, destination_password = credentials(destination_registry)
-        root = main.PATCH_JOB_ROOT / key
-        (root / "input").mkdir(parents=True, exist_ok=False)
-        (root / "job-config.json").write_text(json.dumps(main.safe_job_config(config), indent=2), encoding="utf-8")
-        patch = PatchExecution(job_key=key, service_id=service.id, requested_by_id=actor.id,
-            source_mode="oci", source_image=source, output_mode="push", destination_image=destination)
-        db.add(patch); db.flush()
-        item.patch_execution_id = patch.id
-        if recipe_claim is not None:
-            recipe_claim.patch_execution_id = patch.id
-        public = {"job_id": key, "patch_execution_id": patch.id, "status": "queued", "phase": "queued",
-            "source_mode": "oci", "source_image": source, "output_mode": "push", "destination_image": destination,
-            "signing_enabled": bool(signing_config), "signing_fingerprint": signing_config.get("signing_fingerprint"),
-            "stages": main.initial_patch_stages("push"), "created_at": main.utcnow().isoformat()}
-        with main.PATCH_JOB_LOCK:
-            main.PATCH_JOBS[key] = public
-        db.commit()
-        main._audit_signing_request(db, key, actor.id, config)
-    ctx.stage("Patching retained image", 10)
-    ctx.check()
-    credentials_env = {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
-        "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password}
+    config = {}
     try:
-        main._run_patch_job(key, credentials_env)
+        with main.SessionLocal() as db:
+            campaign = db.get(PatchCampaign, payload.get("campaign_id"))
+            item = db.scalar(select(PatchCampaignItem).where(PatchCampaignItem.job_id == ctx.job.id).with_for_update())
+            actor = db.get(User, ctx.job.requested_by_id)
+            service = db.get(Service, ctx.job.service_id)
+            auth = AuthContext(actor, None) if actor and actor.enabled else None
+            if not campaign or not item or item.campaign_id != campaign.id or item.image_id != payload.get("image_id") or campaign.service_id != ctx.job.service_id or campaign.requested_by_id != ctx.job.requested_by_id:
+                raise durable_jobs.JobError("Campaign ownership is inconsistent")
+            if not auth or not service or not can_patch(auth, service):
+                raise durable_jobs.JobError("Service patch authorization is no longer available")
+            image = db.get(ServiceImage, item.image_id)
+            if not image or image.service_id != service.id or image.lifecycle_status != "active":
+                raise durable_jobs.JobError("Selected image is no longer active in this service")
+            if item.patch_execution_id:
+                raise durable_jobs.JobError("Patch already dispatched; inspect retained results before submitting a new campaign")
+            registries = _registries(db)
+            destination_registry = registries.get(campaign.destination_registry_id)
+            if not destination_registry:
+                raise durable_jobs.JobError("Configured destination registry is no longer available")
+            source = item.image_reference
+            main._validate_image_reference(source)
+            endpoint = str(destination_registry.get("endpoint") or "").rstrip("/")
+            host = urlparse(endpoint if "://" in endpoint else "https://" + endpoint).netloc
+            namespace = str(destination_registry.get("namespace") or "").strip("/")
+            key = uuid.uuid4().hex
+            destination = "/".join(part for part in (host, namespace, campaign.destination_prefix, f"image-{item.image_id}") if part) + ":cats-" + key
+            main._validate_image_reference(destination)
+            signing_config, signing_credentials = main._portal_signing_material(db, auth, "push", service)
+            policy = main.configuration_for_service(db, service)
+            config = {"job_id": key, "source_mode": "oci", "source_image": source, "output_mode": "push",
+                "destination_image": destination, "reuse_source_credentials": False, "remediation_evidence": True,
+                "destination_scope": {"registry": campaign.destination_registry_id, "host": host,
+                                      "namespace": namespace, "prefix": campaign.destination_prefix},
+                **signing_config, **{name: main.parse_json(policy.get(name), [] if name == "trusted_ca_certificates" else {})
+                    for name in ("trusted_ca_certificates", "repository_policies", "os_definitions")}}
+            # The worker may expose a complete immutable-input manifest. Older
+            # engines continue normally, with reuse disabled rather than guessing.
+            identity_provider = getattr(main, "patch_recipe_identity", None)
+            identity = identity_provider(config) if callable(identity_provider) else None
+            candidates = list(db.scalars(select(GlobalArtifact).where(
+                GlobalArtifact.digest == source.rsplit("@", 1)[-1])))
+            source_artifact = candidates[0] if len(candidates) == 1 else None
+            fingerprint = recipe_fingerprint(source=source_artifact, config=config,
+                identity=identity, destination_scope={"registry": campaign.destination_registry_id,
+                    "host": host, "namespace": namespace, "prefix": campaign.destination_prefix})
+            recipe_claim = None
+            if fingerprint:
+                recipe_claim = claim_recipe(db, fingerprint, ctx.job.id)
+                if recipe_claim.owner_job_id != ctx.job.id:
+                    if config.get("execution_binding"):
+                        main.release_patch_recipe_binding(config)
+                    previous = reusable_patch(db, recipe_claim, source_artifact,
+                        signing_fingerprint=signing_config.get("signing_fingerprint"),
+                        destination_scope={"host": host, "namespace": namespace,
+                                           "prefix": campaign.destination_prefix})
+                    if previous is None:
+                        pending = db.get(PatchExecution, recipe_claim.patch_execution_id) if recipe_claim.patch_execution_id else None
+                        if pending is not None and pending.status == "complete":
+                            raise durable_jobs.JobError("Equivalent patch lacks verified retained output; inspect its original campaign")
+                        # Release the item lock and snapshot before waiting. Re-enter
+                        # to revalidate authorization, policy and receipts afterwards.
+                        db.rollback()
+                        wait_for_recipe(main.SessionLocal, fingerprint, ctx)
+                        return handle(ctx, payload)
+                    item.patch_execution_id = previous.id
+                    lineage = db.scalar(select(ArtifactPatchLineage).where(
+                        ArtifactPatchLineage.patch_execution_id == previous.id,
+                        ArtifactPatchLineage.source_artifact_id == source_artifact.id))
+                    assign_artifact(db, service_id=service.id, artifact_id=source_artifact.id)
+                    assign_artifact(db, service_id=service.id, artifact_id=lineage.output_artifact_id, role="patched")
+                    record_audit(db, auth, "patch.campaign.reused", "patch_campaign", campaign.id,
+                        service_id=service.id, patch_execution_id=previous.id)
+                    receipt = previous.summary["artifact_receipt"]
+                    reused = {"patch_job_id": previous.job_key, "reused": True,
+                        **{name: receipt.get(name) for name in ("patch_status", "signature_status", "immutable_destination")}}
+                    ctx.check()
+                    db.commit()
+                    return reused
+            if not fingerprint and config.get("execution_binding"):
+                main.release_patch_recipe_binding(config)
+            def credentials(registry):
+                return (str(registry.get("username") or ""), main.decrypt_secret(str(registry["password"])) if registry.get("password") else "") if registry else ("", "")
+            source_user, source_password = credentials(main._configured_registry_for_image(source, list(registries.values())))
+            destination_user, destination_password = credentials(destination_registry)
+            root = main.PATCH_JOB_ROOT / key
+            (root / "input").mkdir(parents=True, exist_ok=False)
+            (root / "job-config.json").write_text(json.dumps(main.safe_job_config(config), indent=2), encoding="utf-8")
+            patch = PatchExecution(job_key=key, service_id=service.id, requested_by_id=actor.id,
+                source_mode="oci", source_image=source, output_mode="push", destination_image=destination)
+            db.add(patch); db.flush()
+            item.patch_execution_id = patch.id
+            if recipe_claim is not None:
+                recipe_claim.patch_execution_id = patch.id
+            public = {"job_id": key, "patch_execution_id": patch.id, "status": "queued", "phase": "queued",
+                "source_mode": "oci", "source_image": source, "output_mode": "push", "destination_image": destination,
+                "signing_enabled": bool(signing_config), "signing_fingerprint": signing_config.get("signing_fingerprint"),
+                "stages": main.initial_patch_stages("push"), "created_at": main.utcnow().isoformat()}
+            with main.PATCH_JOB_LOCK:
+                main.PATCH_JOBS[key] = public
+            db.commit()
+            main._audit_signing_request(db, key, actor.id, config)
+        ctx.stage("Patching retained image", 10)
+        ctx.check()
+        credentials_env = {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
+            "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password}
+        try:
+            main._run_patch_job(key, credentials_env)
+        finally:
+            credentials_env.clear()
+        ctx.check()
+        result = main._load_patch_job(key)
+        receipt = result.get("result") or {}
+        if result.get("status") != "complete" or receipt.get("delivery_status") != "delivered":
+            raise durable_jobs.JobError("Image patch or delivery did not complete; inspect the retained patch result")
+        return {"patch_job_id": key, **{name: receipt.get(name) for name in ("patch_status", "signature_status", "immutable_destination")}}
     finally:
-        credentials_env.clear()
-    ctx.check()
-    result = main._load_patch_job(key)
-    receipt = result.get("result") or {}
-    if result.get("status") != "complete" or receipt.get("delivery_status") != "delivered":
-        raise durable_jobs.JobError("Image patch or delivery did not complete; inspect the retained patch result")
-    return {"patch_job_id": key, **{name: receipt.get(name) for name in ("patch_status", "signature_status", "immutable_destination")}}
+        if config.get("execution_binding"):
+            try:
+                main.release_patch_recipe_binding(config)
+            except Exception:
+                # Admission rejects release of an already consumed binding.
+                # Preserve the original outcome if the worker is unreachable.
+                pass

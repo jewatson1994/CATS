@@ -90,11 +90,19 @@ def _config(transport, repository, item, layers, bounded):
         if value:
             if item['mediaType'] == 'application/vnd.oci.empty.v1+json':
                 raise ValueError()
-            if set(value) - {'architecture', 'os', 'config', 'rootfs'}:
+            if set(value) - {'architecture', 'os', 'config', 'rootfs', 'created', 'history'}:
                 raise ValueError()
             if value.get('architecture', '') not in ('', 'unknown') or value.get('os', '') not in ('', 'unknown'):
                 raise ValueError()
             if value.get('config', {}) != {}:
+                raise ValueError()
+            # go-containerregistry/Cosign emits zero-valued timestamps and one
+            # inert history entry per signature layer. Do not admit command,
+            # author, comment, or other arbitrary history content.
+            zero_time = '0001-01-01T00:00:00Z'
+            if 'created' in value and value['created'] != zero_time:
+                raise ValueError()
+            if 'history' in value and value['history'] != [{'created': zero_time} for _ in layers]:
                 raise ValueError()
             rootfs = value.get('rootfs')
             if rootfs != {'type': 'layers', 'diff_ids': [layer['digest'] for layer in layers]}:

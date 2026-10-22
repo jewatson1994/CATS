@@ -216,10 +216,14 @@ def handle(ctx, payload):
         if existing:
             return {'scan_id': existing.id, 'proposal_id': row.id}
         inputs = inventory(db, row)
+        from .service_posture import resolve_configurations
+        configuration = resolve_configurations(db, [service.id], main.get_global_configuration(db))[service.id]
+        trusted_cas = main.parse_json(configuration.get('trusted_ca_certificates'), [])
         ctx.check()
         scan_id = main._start_public_scan('\n'.join(sorted({r['scan_reference'] for r in inputs})),
             ingest_service_id=service.service_key, owner_user_id=user.id, ingest_scope='service',
             ingest_service_version=f'amendment-{row.id}',
+            trusted_ca_certificates=trusted_cas if isinstance(trusted_cas, list) else [],
             proposal_context={'proposal_id':row.id, 'dispatch_id':ctx.job.id, 'inputs':inputs})
         return {'scan_id':scan_id, 'proposal_id':row.id}
 
@@ -251,16 +255,14 @@ def ingest(db, job_id, job, output):
         evidence = actual[item['scan_reference']]
         if any(evidence.get(key) != item[key] for key in ('digest','platform','media_type')):
             raise ValueError('Scanner digest, platform or media type differs from proposed inventory')
-        mapped.append({**evidence, 'image':item['reference']})
+        mapped.append({**evidence, 'image':item['scan_reference'],
+                       'requested_reference':item['reference']})
     overview['images'] = mapped
     data.update(service_overview=overview, execution_id=f'proposal:{job_id}',
         service={'id':service.service_key,'name':service.name,'version':job['ingest_service_version']}, fixable_only=True)
     data['findings'] = [i for i in data.get('findings',[]) if str(i.get('fixed_version') or '').strip() not in {'','—','-'}]
     if any(finding.get('image') not in actual for finding in data['findings']):
         raise ValueError('Finding references an image outside the proposed inventory')
-    data['findings'] = [{**finding, 'image':item['reference']}
-        for finding in data['findings'] for item in inputs
-        if finding.get('image') == item['scan_reference']]
     # Scope/completeness, timestamps and skipped inputs remain scanner assertions.
     retained = assessments.retain(db, row.id, ExecutionPayload.model_validate(data))
     return retained

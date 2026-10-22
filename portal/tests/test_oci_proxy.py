@@ -209,3 +209,33 @@ def test_revision_switch_during_fetch_denies_response(signed_tag, monkeypatch):
     monkeypatch.setattr(revisions, 'active_revision', current)
     assert s.client.get('/v2/project/image/manifests/latest').status_code == 403
     assert len(calls) == 2
+
+
+def test_signed_cross_repository_routes_manifest_blob_and_referrers(signed_tag, monkeypatch):
+    s, active, binding, target = signed_tag
+    original = binding['upstream_repository']
+    binding['mapping_upstream_repository'] = original
+    binding['upstream_repository'] = 'patched/replacement'
+    transport = proxy.client(None)
+    calls = []
+    for method in ('fetch_manifest', 'fetch_blob', 'referrers'):
+        operation = getattr(transport, method)
+        def traced(repository, *args, operation=operation, method=method):
+            calls.append((method, repository))
+            assert repository == 'patched/replacement'
+            return operation(repository, *args)
+        setattr(transport, method, traced)
+    monkeypatch.setattr(proxy, 'client', lambda mapping: transport)
+    assert s.client.get('/v2/project/image/manifests/latest').status_code == 200
+    assert s.client.get('/v2/project/image/manifests/' + target).status_code == 200
+    assert s.client.get('/v2/project/image/blobs/' + s.blob).status_code == 200
+    assert s.client.get('/v2/project/image/referrers/' + target).status_code == 200
+    assert ('fetch_blob', 'patched/replacement') in calls
+    assert ('referrers', 'patched/replacement') in calls
+    with s.sessions() as db:
+        assert db.get(OCIRepository, s.mapping_id).upstream_repository == original
+        db.get(OCIRepository, s.mapping_id).upstream_repository = 'mutated/path'
+        db.commit()
+    assert s.client.get('/v2/project/image/manifests/latest').status_code == 403
+    assert s.client.get('/v2/project/image/manifests/' + target).status_code == 403
+    assert s.client.get('/v2/project/image/blobs/' + s.blob).status_code == 403

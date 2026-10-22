@@ -120,3 +120,17 @@ Full disconnected acceptance requires local package mirrors and pinned package p
 ## Integration and acceptance checkpoint, 2026-10-22
 
 The lifecycle branch now incorporates verified integration `e937f62322d55c9155076dd5593bb25e99deae2d`, including separate operational/intelligence databases, native VEX generation invalidation and Discovery hotfix `321cf1f`. See [the current acceptance report](lifecycle-acceptance-2026-10-22.md) for results, reproducibility and outstanding production work. This checkpoint is suitable for further isolated testing, not a declaration of full operational or disconnected acceptance.
+
+
+## Execution-bound patch continuation
+
+The earlier October 21 provider limitation is superseded by `patch_inputs.py`: production patch preparation now binds actual execution inputs and emits a consumed receipt checked by canonical recipe reuse. Configure the worker-owned `CATS_PATCH_BINDING_SPEC` and private `CATS_PATCH_BINDING_ROOT`; do not accept caller-provided snapshot assertions. The internal network, package and scanner snapshots, tool/runtime identity, platform, policy, signing identity and destination scope participate in equivalence. A real second-service campaign reused a successfully patched and signed output. See the [acceptance report](lifecycle-acceptance-2026-10-22.md) for exact evidence and operational limits.
+
+Persistent execution fencing prevents automatic replay when ownership or publication is uncertain. Operators must reconcile orphan execution infrastructure and retained private snapshots after hard host failures. Do not delete ownership records or approve an uncertain output merely to unblock a retry. Full sequential lifecycle acceptance is separate from successful patch reuse and from the historical synthetic gateway harness.
+
+
+## Final local operational acceptance, 2026-10-22
+
+The preceding historical limitations concerning unavailable local mirrors and an unexecuted sequential lifecycle are superseded for the configured two-service container scenario. Actual Copa patching, rescan, Kubernetes validation, TLS publication, Cosign signing, shared recommendation, automatic proposed assessment, real Cyber API decisions, signed activation and gateway delivery passed. A second service reused one successful patch execution. Both services received the same patched digest; revoking the receiver denied its artifact routes while the producer remained authorized. No successful scan, validation or Cyber records were seeded for this path.
+
+The current [acceptance report](lifecycle-acceptance-2026-10-22.md) records exact digests, evidence identities, regression counts, final image build and remaining limitations. This is readiness for controlled disconnected deployment testing, not blanket production certification. General attestation orchestration, multi-platform/key rotation, realistic concurrent load, full-corpus recovery and hard-host-failure cleanup remain outstanding. Historical synthetic Docker/Helm gateway tests above must not be presented as real upstream lifecycle evidence.

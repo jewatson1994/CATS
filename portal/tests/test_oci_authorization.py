@@ -241,3 +241,96 @@ def test_missing_revision_record_cannot_authorize_as_legacy(context):
     approval.snapshot_digest = snapshot_digest(approval.snapshot)
     db.commit()
     assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'active_revision_unavailable'
+
+
+def test_cross_repository_location_requires_active_signed_binding(context, monkeypatch):
+    db, mapping, approval, execution = context
+    revisions = auth.release_revisions
+    mapping.id, mapping.upstream_id, mapping.public_repository = 1, 2, 'public/stable'
+    retained = dict(kind='image', reference='registry.example/patched/image@' + DIGEST, digest=DIGEST)
+    approval.snapshot = dict(approval.snapshot, artifacts=[retained])
+    approval.snapshot_digest = snapshot_digest(approval.snapshot)
+    db.add(revisions.ServiceActiveRelease(service_id=mapping.service_id, revision_id=None))
+    db.commit()
+    binding = dict(repository_id=1, upstream_id=2, public_repository='public/stable',
+        endpoint=mapping.upstream.endpoint, mapping_upstream_repository='team/image',
+        upstream_repository='patched/image', tag='stable', artifact_id=7, digest=DIGEST)
+    active = SimpleNamespace(approval_id=approval.id, manifest=dict(
+        artifacts=[dict(id=7, digest=DIGEST)], distribution_bindings=[binding]))
+    monkeypatch.setattr(revisions, 'active_revision', lambda *a: active)
+    assert auth.authorize(db, mapping, DIGEST, NOW).allowed
+    binding['upstream_repository'] = 'unapproved/image'
+    assert not auth.authorize(db, mapping, DIGEST, NOW).allowed
+    binding['upstream_repository'] = 'patched/image'
+    mapping.upstream_repository = 'mutated/image'
+    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'signed_distribution_location_changed'
+    mapping.upstream_repository = 'team/image'
+    monkeypatch.setattr(revisions, 'active_revision', lambda *a: None)
+    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'active_revision_unavailable'
+
+
+@pytest.mark.parametrize('change', [None, 'assessment_bytes', 'assessment_hash', 'proposal', 'source_bytes', 'platform', 'reference', 'expired', 'inputs', 'snapshot_inventory', 'chain', 'chain_source_bytes', 'chain_cycle', 'chain_manifest', 'chain_assessment'])
+def test_amendment_payload_remains_separate_and_integrity_bound(monkeypatch, change):
+    import copy
+    from app import proposal_scans
+    from app.proposal_assessments import ProposalAssessment
+    from app.artifact_catalog import GlobalArtifact
+    service = SimpleNamespace(id=1, service_key='test', current_version_id=2)
+    execution = SimpleNamespace(id=3, raw_payload={'original': True})
+    raw = dict(service={'id': 'test'}, complete=True, fixable_only=True, scan_scope='service',
+        scanned_at=NOW.isoformat(), service_overview={'images': [dict(image='registry.example/patched@'+DIGEST,
+        digest=DIGEST, platform='linux/amd64', media_type='manifest')]})
+    assessment = SimpleNamespace(id=4, proposal_id=5, execution_key='proposal:scan', raw_payload=raw, digest=payload_digest(raw))
+    proposal = SimpleNamespace(id=5, service_id=1, base_revision_id=6, intent={'release_revision': {'artifact_ids': [8]}})
+    base_snapshot = dict(source_version_id=2, source_payload_digest=payload_digest(execution.raw_payload))
+    base_approval = SimpleNamespace(id=7, source_execution_id=3, snapshot=base_snapshot, snapshot_digest=snapshot_digest(base_snapshot))
+    base = SimpleNamespace(id=6, service_id=1, approval_id=7)
+    artifact = SimpleNamespace(digest=DIGEST, platform='linux/amd64', media_type='manifest')
+    snapshot = dict(amendment_proposal_id=5, proposal_assessment_id=4, proposal_assessment_digest=assessment.digest,
+        source_payload_digest=assessment.digest, artifacts=[dict(kind='image', reference='registry.example/patched@'+DIGEST,
+        digest=DIGEST, platform='linux/amd64', media_type='manifest')])
+    approval = SimpleNamespace(id=9, snapshot=snapshot)
+    active = SimpleNamespace(approval_id=9, manifest={'base_revision_id': 6, 'artifacts':[dict(digest=DIGEST,platform='linux/amd64',media_type='manifest')]})
+    rows = {(ProposalAssessment,4):assessment,(auth.release_revisions.ReleaseAmendmentProposal,5):proposal,
+        (auth.release_revisions.ReleaseRevision,6):base,(CyberApproval,7):base_approval,(GlobalArtifact,8):artifact}
+    db=SimpleNamespace(get=lambda cls, identity, **kwargs: rows.get((cls,identity)))
+    monkeypatch.setattr(proposal_scans,'require_assessment_dispatch',lambda *args: None)
+    monkeypatch.setattr(proposal_scans,'latest_dispatch',lambda *args: SimpleNamespace(payload={'evidence_inputs_token':'ok','proposal_inputs_token':'ok'}))
+    monkeypatch.setattr(proposal_scans,'evidence_inputs_token',lambda *args: 'bad' if change=='inputs' else 'ok')
+    monkeypatch.setattr(proposal_scans,'proposal_inputs_token',lambda *args: 'ok')
+    if change=='assessment_bytes': raw['tampered']=True
+    if change=='assessment_hash': snapshot['proposal_assessment_digest']='changed'
+    if change=='proposal': assessment.proposal_id=99
+    if change=='source_bytes': execution.raw_payload={'changed':True}
+    if change=='platform': artifact.platform='linux/arm64'
+    if change=='reference': snapshot['artifacts'][0]['reference']='registry.example/other@'+DIGEST
+    if change=='snapshot_inventory': snapshot['artifacts'][0]['digest']='sha256:'+'b'*64
+    if change and change.startswith('chain'):
+        # A second amendment retains the first revision and assessment, while
+        # the oldest revision still binds the unchanged original scan bytes.
+        oldest = SimpleNamespace(id=16, service_id=1, approval_id=17)
+        oldest_approval = copy.deepcopy(base_approval)
+        oldest_approval.id = 17
+        prior_proposal = copy.deepcopy(proposal)
+        prior_proposal.id, prior_proposal.base_revision_id = 15, 16
+        prior_assessment = copy.deepcopy(assessment)
+        prior_assessment.id, prior_assessment.proposal_id = 14, 15
+        prior_snapshot = copy.deepcopy(snapshot)
+        prior_snapshot.update(amendment_proposal_id=15, proposal_assessment_id=14, source_version_id=2)
+        base_approval.snapshot = prior_snapshot
+        base_approval.snapshot_digest = snapshot_digest(prior_snapshot)
+        base.manifest = dict(base_revision_id=16, artifacts=copy.deepcopy(active.manifest['artifacts']))
+        base.manifest_digest = snapshot_digest(base.manifest)
+        rows.update({(auth.release_revisions.ReleaseRevision,16):oldest,
+            (CyberApproval,17):oldest_approval,
+            (auth.release_revisions.ReleaseAmendmentProposal,15):prior_proposal,
+            (ProposalAssessment,14):prior_assessment})
+        if change=='chain_source_bytes': execution.raw_payload={'changed':True}
+        if change=='chain_manifest': base.manifest['tampered']=True
+        if change=='chain_assessment': prior_assessment.raw_payload['tampered']=True
+        if change=='chain_cycle':
+            prior_proposal.base_revision_id=6
+            base.manifest['base_revision_id']=6
+            base.manifest_digest=snapshot_digest(base.manifest)
+    now=NOW+timedelta(days=2) if change=='expired' else NOW
+    assert auth._payload_evidence_matches(db,approval,execution,service,active,now) is (change in (None, 'chain'))

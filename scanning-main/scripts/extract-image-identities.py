@@ -43,8 +43,8 @@ def image_identity(image, document, provenance=None):
                     or descriptor.get('digest') != _digest(config_raw)
                     or descriptor.get('size') != len(config_raw)
                     or metadata.get('imageID') != _digest(config_raw)
-                    or metadata.get('os') != config.get('os')
-                    or metadata.get('architecture') != config.get('architecture')):
+                    or (metadata.get('os') and metadata['os'] != config.get('os'))
+                    or (metadata.get('architecture') and metadata['architecture'] != config.get('architecture'))):
                 raise ValueError('Contradictory native OCI evidence')
             platform = _platform(config)
         else:

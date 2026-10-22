@@ -76,3 +76,16 @@ def test_duplicate_mappings_do_not_pass(tmp_path):
         (tmp_path/(name+'.image')).write_text('example/image@'+digest)
         (tmp_path/(name+'.json')).write_text(json.dumps(document))
     assert identity.merge_overview(tmp_path, {})['images'] == []
+
+
+def test_native_config_supplies_platform_when_syft_summary_is_empty(tmp_path):
+    document, digest = native()
+    document['source']['metadata'].update(os='', architecture='')
+    (tmp_path/'image.image').write_text('example/image@'+digest)
+    (tmp_path/'image.json').write_text(json.dumps(document))
+    # No findings are required: the authenticated config bytes identify the scan.
+    merged = identity.merge_overview(tmp_path, {'images': []})
+    assert merged['images'] == [{'image': 'example/image@'+digest, 'digest': digest,
+        'platform': 'linux/arm64/v8', 'media_type': 'application/vnd.oci.image.manifest.v1+json'}]
+    document['source']['metadata']['architecture'] = 'amd64'
+    assert identity.image_identity('example/image@'+digest, document) is None

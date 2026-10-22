@@ -281,15 +281,17 @@ def run_worker(
     monkeypatch, tmp_path: Path, config: dict, before: dict, after: dict,
     fail_on: str = "", source_credentials: tuple[str, str] = ("source-user", "super-secret"),
     destination_credentials: tuple[str, str] = ("destination-user", "destination-secret"),
-    corrupt_archive: bool = False, push_digest: str = "",
+    corrupt_archive: bool = False, push_digest: str = "", cancel_after: str = "",
 ):
     output = tmp_path / "output"
     config_path = tmp_path / "job-config.json"
     config_path.write_text(json.dumps(config), encoding="utf-8")
     calls: list[tuple[list[str], str | None]] = []
 
-    def fake_run(command, *, env, log, timeout, stdin=None, stdout_path=None):
+    def fake_run(command, *, env, log, timeout, stdin=None, stdout_path=None, checkpoint=None, cwd=None):
         calls.append((list(command), stdin))
+        if cancel_after and command[0] == cancel_after:
+            (output / "cancel.requested").touch()
         if fail_on and (command[0] == fail_on or fail_on in " ".join(command)):
             raise RuntimeError(f"{fail_on} failed with password=super-secret")
         stdout = ""
@@ -402,6 +404,9 @@ def test_remediation_worker_creates_fresh_full_grype_report(monkeypatch, tmp_pat
     assert result["remediation_evidence"]["grype_full"] == "complete"
     assert all(result["remediation_evidence"][name] == "complete" for name in ("sbom", "trivy", "dockle"))
     assert (output / "grype-full-after.json").is_file()
+    trivy = next(command for command, _ in calls if command[0] == "trivy")
+    assert trivy[1] == "rootfs"
+    assert trivy[-1].endswith("patched-rootfs")
     assert any(command[0] == "grype" and "--only-fixed" not in command for command, _ in calls)
 
 
@@ -593,3 +598,69 @@ def test_worker_refuses_publication_when_bound_database_changes(monkeypatch, tmp
     assert code == 1
     assert "database changed" in state["error"]
     assert not any(command[:2] == ["docker", "push"] for command, _ in calls)
+
+
+@pytest.mark.parametrize("cancel_after", ["grype", "copa", "syft"])
+def test_durable_cancel_request_prevents_publication(monkeypatch, tmp_path, cancel_after):
+    monkeypatch.setattr(patch_worker.shutil, "which", lambda name: f"/usr/bin/{name}")
+    config = {"job_id": "cancelled", "source_mode": "oci", "remediation_evidence": True,
+              "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
+    code, output, state, calls = run_worker(
+        monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2.0"])]), grype_report([]),
+        cancel_after=cancel_after, source_credentials=("", ""))
+    assert code == 2
+    assert state["status"] == "cancelled"
+    assert not (output / "patch-result.json").exists()
+    assert not any(command[:2] == ["docker", "push"] for command, _ in calls)
+
+
+@pytest.mark.parametrize("mode", ["cancel", "timeout", "success"])
+def test_cancellable_command_real_process(tmp_path, mode):
+    import os
+    import subprocess
+    import sys
+    import time
+    from app.patching import _cancellable_command
+
+    marker = tmp_path / "started"
+    script = "import pathlib,sys,time; pathlib.Path(sys.argv[1]).write_text('started'); time.sleep(float(sys.argv[2])); print('finished')"
+    started = time.monotonic()
+    def checkpoint():
+        if mode == "cancel" and marker.exists():
+            raise RuntimeError("operator cancelled")
+    kwargs = dict(env=dict(os.environ), stdin=None, stdout=subprocess.PIPE,
+                  timeout=0.3 if mode == "timeout" else 10, checkpoint=checkpoint)
+    command = [sys.executable, "-c", script, str(marker), "0" if mode == "success" else "30"]
+    if mode == "success":
+        result = _cancellable_command(command, **kwargs)
+        assert result.returncode == 0
+        assert result.stdout.strip() == "finished"
+    else:
+        error = RuntimeError if mode == "cancel" else subprocess.TimeoutExpired
+        with pytest.raises(error):
+            _cancellable_command(command, **kwargs)
+        assert time.monotonic() - started < 8
+    assert marker.exists()
+
+
+def test_bound_trust_preparation_uses_retained_repository_before_install(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    binding = SimpleNamespace(manifest={"spec": {"network": "isolated-inputs"}},
+        scanner_root=tmp_path, identity={"scanner_database_digest": "sha256:" + "a" * 64},
+        close=lambda: None)
+    monkeypatch.setattr(patch_worker, "consume_binding", lambda *_: binding)
+    monkeypatch.setattr(patch_worker, "bind_scanner_snapshot", lambda *_: None)
+    config = {"job_id": "bound-trust", "source_mode": "oci", "source_image": "alpine:3.20",
+        "output_mode": "download", "repository_policies": {"alpine": {
+            "mode": "custom", "url": "https://retained.invalid/alpine"}}}
+    code, _, _, calls = run_worker(monkeypatch, tmp_path, config, grype_report([]),
+        grype_report([]), fail_on="update-ca-certificates")
+    assert code == 1
+    commands = [command for command, _ in calls]
+    container = next(c for c in commands if c[:3] == ["docker", "run", "-d"])
+    assert container[container.index("--network") + 1] == "isolated-inputs"
+    rendered = [" ".join(c) for c in commands]
+    overlay = next(i for i, c in enumerate(rendered) if "docker exec" in c and "original-apk" in c)
+    install = next(i for i, c in enumerate(rendered) if "apk add" in c)
+    assert overlay < install

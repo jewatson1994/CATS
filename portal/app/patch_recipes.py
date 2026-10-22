@@ -3,20 +3,11 @@
 Identity must come from the trusted worker's immutable-input manifest. Merely
 naming a repository or tool version is insufficient to enable reuse.
 
-The current patch worker accepts mutable mirror URLs and defaults to a live
-Grype database. Optional trusted scanner snapshot binding alone does not bind
-repository and engine inputs, and no production identity provider is installed. Campaigns must
-therefore keep reuse disabled. A future provider must bind the same immutable
-inputs to actual execution (including a remote worker), not hash portal settings
-or accept operator/request assertions. Production reuse requires a worker-side
-prepare/execute protocol: prepare must materialize the exact scanner database,
-package repository bytes and execution engine, return an authenticated opaque
-binding token, and execute must consume only those retained inputs. Repository
-URLs, even URLs containing snapshot names, do not prove immutable content;
-network fallback must be prevented and remote workers must enforce the binding.
-The portal must obtain this binding before claiming a recipe and retain the
-worker's consumed-input receipt before permitting reuse. Until that protocol
-exists, scanner snapshot evidence must never enable production recipe reuse.
+Production identity is issued only by the authenticated worker prepare protocol.
+That protocol binds retained scanner/repository bytes and isolated execution,
+then consumes the opaque handle once and returns a consumed-input receipt.
+Workers without an isolated input specification return no identity and never
+claim reuse from mirror URLs or operator-provided digest assertions.
 Interrupted publication claims never
 expire automatically because registry side effects may already have happened.
 """
@@ -69,7 +60,7 @@ def recipe_fingerprint(*, source, config, identity, destination_scope):
     if not source.media_type or source.platform in (None, "", "unknown") or not destination_scope:
         return None
     policy = {key: value for key, value in config.items()
-              if key not in {"job_id", "source_image", "destination_image"}}
+              if key not in {"job_id", "source_image", "destination_image", "execution_binding"}}
     value = {"schema": 1, "source": [digest, source.media_type, source.platform],
              "inputs": immutable, "policy": policy, "destination": destination_scope}
     try:
@@ -83,6 +74,35 @@ def claim_recipe(db, fingerprint, job_id):
     """Unique-key winner owns publication; no takeover after uncertain effects."""
     return _get_or_add(db, PatchRecipeClaim, fingerprint=fingerprint,
                        defaults={"owner_job_id": job_id})
+
+
+def _consumed_inputs_match(patch, claim, source, receipt):
+    """Validate retained trusted-worker evidence, never a request assertion.
+
+    This gate does not authenticate a worker or establish hermetic execution.
+    A production provider must do both before retaining this receipt. Legacy
+    artifact receipts and scanner-only evidence deliberately cannot pass.
+    """
+    consumed = receipt.get("consumed_inputs")
+    if not isinstance(consumed, dict) or set(consumed) != {
+        "schema", "job_id", "source_image", "immutable_destination",
+        "identity", "config", "destination_scope",
+    }:
+        return False
+    if (consumed.get("schema") != "cats-patch-consumed-inputs-v1" or
+            consumed.get("job_id") != patch.job_key or
+            consumed.get("source_image") != patch.source_image or
+            consumed.get("source_image") != receipt.get("source_image") or
+            consumed.get("immutable_destination") != receipt.get("immutable_destination")):
+        return False
+    config = consumed.get("config")
+    if (not isinstance(config, dict) or config.get("job_id") != patch.job_key or
+            config.get("source_image") != consumed["source_image"] or
+            config.get("signing_fingerprint") != receipt["signature"].get("key_fingerprint")):
+        return False
+    fingerprint = recipe_fingerprint(source=source, config=config,
+        identity=consumed.get("identity"), destination_scope=consumed.get("destination_scope"))
+    return fingerprint is not None and fingerprint == claim.fingerprint
 
 
 def reusable_patch(db, claim, source, *, signing_fingerprint=None, destination_scope=None):
@@ -100,6 +120,8 @@ def reusable_patch(db, claim, source, *, signing_fingerprint=None, destination_s
     if output is None or output.platform != source.platform or not _verified_receipt(patch, output):
         return None
     receipt = patch.summary["artifact_receipt"]
+    if not _consumed_inputs_match(patch, claim, source, receipt):
+        return None
     if signing_fingerprint is not None and receipt["signature"].get("key_fingerprint") != signing_fingerprint:
         return None
     if destination_scope is not None:

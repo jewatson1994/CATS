@@ -20,7 +20,7 @@ from .oci_models import OCIManifest, OCIObjectLink, OCIPrincipal, OCIRepository
 from .oci_authorization import authorize
 from .oci_transport import ContentCache, DIGEST, REPOSITORY, RegistryClient, RegistryError
 from .release_validity import utc
-from .release_revisions import resolve_distribution_tag
+from .release_revisions import resolve_distribution_tag, resolve_distribution_location
 from .secrets import decrypt_secret
 from .oci_signatures import legacy_subject, discover_legacy_signature, verify_legacy_signature
 
@@ -92,6 +92,23 @@ def mapping_for(db, repository):
     return mapping
 
 
+class EffectiveMapping:
+    """Request-local view; never mutate the configured or signed mapping."""
+    def __init__(self, mapping, repository):
+        self._mapping = mapping
+        self.upstream_repository = repository
+    def __getattr__(self, name):
+        return getattr(self._mapping, name)
+
+
+def effective_mapping(db, mapping, digest, binding=None):
+    try:
+        repository = binding['upstream_repository'] if binding else resolve_distribution_location(db, mapping, digest)
+    except ValueError as exc:
+        raise Denied(str(exc)) from None
+    return EffectiveMapping(mapping, repository)
+
+
 def client(mapping):
     upstream = mapping.upstream
     return RegistryClient(dict(endpoint=upstream.endpoint, username=decrypt_secret(upstream.username),
@@ -116,7 +133,7 @@ def save_signature(db, mapping, subject, signature):
 
 
 def require(db, mapping, digest):
-    decision = authorize(db, mapping, digest)
+    decision = authorize(db, getattr(mapping, '_mapping', mapping), digest)
     if not decision.allowed:
         raise Denied(decision.reason)
     return decision
@@ -195,6 +212,7 @@ def graph(db, mapping, transport, reference, root=None, seen=None, depth=0):
 
 
 def authorize_object(db, mapping, digest, kind):
+    mapping = getattr(mapping, '_mapping', mapping)
     roots = db.scalars(select(OCIObjectLink.root_digest).where(OCIObjectLink.repository_id == mapping.id,
         OCIObjectLink.object_digest == digest, OCIObjectLink.kind == kind)).all()
     for root in roots:
@@ -250,6 +268,7 @@ def get_manifest(repository: str, reference: str, request: Request):
                     signature_root = authorize_object(db, mapping, reference, 'signature')
                 except Denied:
                     pass
+            mapping = effective_mapping(db, mapping, signature_root or (binding['digest'] if binding else reference), binding)
             if signature_root:
                 require(db, mapping, signature_root)
                 raw, media, digest, _ = manifest(db, mapping, transport, reference)
@@ -286,6 +305,7 @@ def referrers(repository: str, digest: str, request: Request):
         mapping = mapping_for(db, repository)
         machine = principal(db, request, mapping.id)
         require(db, mapping, digest)
+        mapping = effective_mapping(db, mapping, digest)
         transport = client(mapping)
         try:
             document = transport.referrers(mapping.upstream_repository, digest)
@@ -362,7 +382,8 @@ def get_blob(repository: str, digest: str, request: Request):
         with SessionLocal() as db:
             mapping = mapping_for(db, repository)
             machine = principal(db, request, mapping.id)
-            authorize_object(db, mapping, digest, 'blob')
+            root = authorize_object(db, mapping, digest, 'blob')
+            mapping = effective_mapping(db, mapping, root)
             cache = content_cache()
             path = client(mapping).fetch_blob(mapping.upstream_repository, digest, cache)
             try:

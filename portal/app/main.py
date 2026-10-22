@@ -4926,7 +4926,7 @@ def _patch_job_update(job_id: str, **values):
                     receipt_keys = {"status", "source_image", "immutable_destination", "patch_status",
                         "delivery_status", "signature_status", "signature", "artifact_validation",
                         "validated_source", "vulnerabilities_before", "vulnerabilities_after",
-                        "media_type", "platform", "source_media_type", "source_platform"}
+                        "media_type", "platform", "source_media_type", "source_platform", "consumed_inputs"}
                     record.summary["artifact_receipt"] = {key: value for key, value in summary.items() if key in receipt_keys}
                 if record.status == "complete" and summary:
                     from .artifact_catalog import register_patch_artifacts
@@ -5083,7 +5083,7 @@ def _patch_worker_values(state: dict) -> tuple[dict, object | None]:
     return values, result
 
 
-def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | None = None, timeout: int = 15) -> dict:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -5092,10 +5092,46 @@ def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | Non
         headers["X-CATS-Worker-Token"] = PATCH_WORKER_TOKEN
     request = urllib.request.Request(f"{PATCH_WORKER_URL}{path}", data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         raise RuntimeError("Internal patch worker is unavailable") from exc
+
+
+def patch_recipe_identity(config: dict) -> dict | None:
+    """Prepare actual worker inputs before a campaign claims a canonical recipe."""
+    if "execution_binding" in config:
+        raise ValueError("Patch input binding must be issued by the trusted worker")
+    if PATCH_WORKER_URL:
+        if not PATCH_WORKER_TOKEN:
+            return None
+        result = _patch_worker_request("/internal/patch-bindings/prepare", method="POST",
+                                       payload={"config": safe_job_config(config)}, timeout=900)
+        prepared = result.get("prepared")
+    else:
+        from .patch_inputs import prepare_binding, default_binding_root
+        prepared = prepare_binding(safe_job_config(config), default_binding_root())
+    if prepared is None:
+        return None
+    if (not isinstance(prepared, dict) or set(prepared) != {"binding_id", "identity"} or
+            not isinstance(prepared["binding_id"], str) or
+            not re.fullmatch(r"[0-9a-f]{32}", prepared["binding_id"]) or
+            not isinstance(prepared["identity"], dict)):
+        raise RuntimeError("Trusted worker returned an invalid input binding")
+    config["execution_binding"] = prepared["binding_id"]
+    return prepared["identity"]
+
+
+def release_patch_recipe_binding(config: dict) -> None:
+    handle = config.get("execution_binding")
+    if handle is None:
+        return
+    if PATCH_WORKER_URL:
+        _patch_worker_request("/internal/patch-bindings/" + handle, method="DELETE")
+    else:
+        from .patch_inputs import release_binding, default_binding_root
+        release_binding(handle, default_binding_root())
+    config.pop("execution_binding", None)
 
 
 def _patch_page_context(
@@ -5126,6 +5162,30 @@ def _patch_page_context(
         "configured_registries": configured_registries(configuration),
         "signing": signing.public_metadata(configuration),
     })
+
+
+def _stop_local_patch_job(process: subprocess.Popen, output_dir: Path) -> None:
+    """Let the worker reap its active tool before releasing execution ownership.
+
+    Tool commands own separate process groups, so killing only the Python worker
+    (or its group) can leave an in-flight registry publication running.
+    """
+    (output_dir / "cancel.requested").touch(exist_ok=True)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            # Windows terminate() bypasses Python signal handlers. Kill the
+            # still-owned tree, including the virtualenv launcher and tools.
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=10)
+            process.wait(timeout=10)
+        else:
+            # SIGTERM invokes the worker's cancellation handler, which reaps
+            # independently grouped tools. Never SIGKILL it before that cleanup.
+            process.terminate()
+            process.wait(timeout=10)
 
 
 def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
@@ -5184,14 +5244,10 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
             with PATCH_JOB_LOCK:
                 cancelled = PATCH_JOBS.get(job_id, {}).get("status") == "cancelled"
             if cancelled:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                _stop_local_patch_job(process, output_dir)
                 return
             if time.monotonic() - started > timeout:
-                process.kill()
+                _stop_local_patch_job(process, output_dir)
                 raise TimeoutError("Patch job exceeded its configured time limit")
             if state_path.exists():
                 try:
@@ -5224,7 +5280,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
     except (JobCancelled, LeaseLost):
         # Stop execution when durable ownership is lost; never publish a stale result.
         if process is not None and process.poll() is None:
-            process.kill()
+            _stop_local_patch_job(process, output_dir)
         if PATCH_WORKER_URL:
             try:
                 _patch_worker_request(f"/internal/patch-jobs/{job_id}/cancel", method="POST")

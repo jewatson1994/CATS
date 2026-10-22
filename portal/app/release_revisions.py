@@ -290,16 +290,20 @@ def _distribution_bindings(db, approval, artifacts, requested):
                 or not mapping.enabled or mapping.suspended or not mapping.upstream.enabled):
             raise ValueError('Binding repository or artifact unavailable in this service')
         repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
-        matched = False
+        locations = set()
         for retained in approval.snapshot.get('artifacts', []):
             try:
                 reference, retained_digest = _identity(retained.get('reference'), retained.get('digest'))
                 if (retained_digest == artifact['digest'] and not retained.get('resolve_at_publication')
-                        and not retained.get('path') and _repository_identity(reference) == _repository_identity(repository)):
-                    matched = True
+                        and not retained.get('path') and retained.get('format') != 'docker-archive'
+                        and _repository_identity(reference)[0] == _repository_identity(repository)[0]):
+                    location = reference.split('@', 1)[0].split('/', 1)[1]
+                    from .oci_transport import REPOSITORY
+                    if REPOSITORY.fullmatch(location):
+                        locations.add(location)
             except (ValueError, TypeError):
                 continue
-        if not matched:
+        if len(locations) != 1:
             raise ValueError('Distribution location is not bound to retained artifact evidence')
         key = (mapping.public_repository, item['tag'])
         if key in seen:
@@ -308,7 +312,8 @@ def _distribution_bindings(db, approval, artifacts, requested):
         result.append(dict(repository_id=mapping.id, public_repository=mapping.public_repository,
             tag=item['tag'], artifact_id=artifact['id'], digest=artifact['digest'],
             upstream_id=mapping.upstream_id, endpoint=mapping.upstream.endpoint,
-            upstream_repository=mapping.upstream_repository))
+            upstream_repository=next(iter(locations)),
+            mapping_upstream_repository=mapping.upstream_repository))
     return sorted(result, key=lambda value: (value['public_repository'], value['tag']))
 
 
@@ -324,15 +329,40 @@ def resolve_distribution_tag(db, mapping, tag, now=None):
     for binding in revision.manifest.get('distribution_bindings', []):
         if binding.get('public_repository') != mapping.public_repository or binding.get('tag') != tag:
             continue
-        expected = dict(repository_id=mapping.id, upstream_id=mapping.upstream_id,
-            endpoint=mapping.upstream.endpoint, upstream_repository=mapping.upstream_repository)
-        if (not mapping.enabled or mapping.suspended or not mapping.upstream.enabled
-                or any(binding.get(key) != value for key, value in expected.items())
-                or not any(a['id'] == binding.get('artifact_id') and a['digest'] == binding.get('digest')
-                           for a in revision.manifest['artifacts'])):
-            raise ValueError('Signed distribution location changed')
+        validate_distribution_binding(mapping, revision, binding)
         return dict(binding, revision_id=revision.id)
     raise ValueError('Tag is not bound in the active release revision')
+
+
+def validate_distribution_binding(mapping, revision, binding):
+    """Pin transport location while detecting edits to the public mapping."""
+    expected = dict(repository_id=mapping.id, upstream_id=mapping.upstream_id,
+        endpoint=mapping.upstream.endpoint, public_repository=mapping.public_repository)
+    configured = binding.get('mapping_upstream_repository', binding.get('upstream_repository'))
+    from .oci_transport import REPOSITORY
+    if (not mapping.enabled or mapping.suspended or not mapping.upstream.enabled
+            or configured != mapping.upstream_repository
+            or any(binding.get(key) != value for key, value in expected.items())
+            or not REPOSITORY.fullmatch(str(binding.get('upstream_repository', '')))
+            or not any(a['id'] == binding.get('artifact_id') and a['digest'] == binding.get('digest')
+                       for a in revision.manifest['artifacts'])):
+        raise ValueError('Signed distribution location changed')
+
+
+def distribution_location(mapping, revision, digest):
+    locations = set()
+    for binding in revision.manifest.get('distribution_bindings', []):
+        if binding.get('repository_id') == mapping.id and binding.get('digest') == digest:
+            validate_distribution_binding(mapping, revision, binding)
+            locations.add(binding['upstream_repository'])
+    if len(locations) > 1:
+        raise ValueError('Ambiguous signed distribution location')
+    return next(iter(locations), mapping.upstream_repository)
+
+
+def resolve_distribution_location(db, mapping, digest):
+    revision = active_revision(db, mapping.service_id)
+    return distribution_location(mapping, revision, digest) if revision else mapping.upstream_repository
 
 
 class ReleaseAmendmentProposal(Base):

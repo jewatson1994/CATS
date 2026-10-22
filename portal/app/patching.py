@@ -6,6 +6,8 @@ import io
 import os
 import re
 import shutil
+import signal
+import time
 import subprocess
 import tarfile
 from pathlib import Path
@@ -541,9 +543,50 @@ def repository_cleanup_script(manager: str, verify_tls: bool = True, verify_pack
     raise ValueError(f"Unsupported package manager: {manager or 'unknown'}")
 
 
+
+def _cancellable_command(command, *, env, stdin, stdout, timeout, checkpoint, cwd=None):
+    """Reap a command before propagating cancellation; do not leave local children running."""
+    checkpoint()
+    process = subprocess.Popen(command, env=env, cwd=cwd, stdin=subprocess.PIPE if stdin is not None else None,
+                               stdout=stdout, stderr=subprocess.PIPE, text=True,
+                               start_new_session=os.name != "nt")
+    deadline = time.monotonic() + timeout
+    pending_input = stdin
+    try:
+        while True:
+            checkpoint()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                output, error = process.communicate(input=pending_input, timeout=min(0.5, remaining))
+                return subprocess.CompletedProcess(command, process.returncode, output, error)
+            except subprocess.TimeoutExpired:
+                pending_input = None
+    except BaseException:
+        # TERM is bounded; KILL is necessary when a tool ignores cancellation.
+        try:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGTERM)
+            elif process.poll() is None:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            if os.name != "nt":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+            process.communicate()
+        raise
+
+
 def run_command(
     command: list[str], *, env: dict[str, str], log: Callable[[str], None],
     timeout: int, stdin: str | None = None, stdout_path: Path | None = None,
+    checkpoint: Callable[[], None] | None = None, cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     executable = shutil.which(command[0], path=env.get("PATH"))
     if not executable:
@@ -552,10 +595,17 @@ def run_command(
     log(f"$ {' '.join(safe_command)}")
     if stdout_path:
         with stdout_path.open("w", encoding="utf-8") as stream:
-            completed = subprocess.run(command, env=env, input=stdin, text=True, stdout=stream,
-                                       stderr=subprocess.PIPE, timeout=timeout, check=False)
+            if checkpoint is not None:
+                completed = _cancellable_command(command, env=env, stdin=stdin, stdout=stream,
+                                                 timeout=timeout, checkpoint=checkpoint, cwd=cwd)
+            else:
+                completed = subprocess.run(command, env=env, cwd=cwd, input=stdin, text=True, stdout=stream,
+                                           stderr=subprocess.PIPE, timeout=timeout, check=False)
+    elif checkpoint is not None:
+        completed = _cancellable_command(command, env=env, stdin=stdin, stdout=subprocess.PIPE,
+                                         timeout=timeout, checkpoint=checkpoint, cwd=cwd)
     else:
-        completed = subprocess.run(command, env=env, input=stdin, text=True, capture_output=True,
+        completed = subprocess.run(command, env=env, cwd=cwd, input=stdin, text=True, capture_output=True,
                                    timeout=timeout, check=False)
     output = (completed.stderr or "") if stdout_path else "\n".join(filter(None, (completed.stdout, completed.stderr)))
     if output.strip():

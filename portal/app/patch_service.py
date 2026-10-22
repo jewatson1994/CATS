@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
 
+from .patch_ownership import ExecutionAlreadyOwned, execution_lock
 from .patching import advance_patch_stages, initial_patch_stages, redact, safe_job_config
 
 
@@ -64,13 +65,44 @@ def _record_interrupted(state_path: Path) -> None:
         state = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         state = {}
-    if state.get("status") in {"complete", "failed", "cancelled"}:
+    if state.get("status") in {"complete", "completed", "failed", "cancelled"}:
         return
     state.update(status="failed", error="Patch worker stopped before producing a result; retry with a new job")
     state_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = state_path.with_suffix(".recovery.tmp")
     temporary.write_text(json.dumps(state), encoding="utf-8")
     temporary.replace(state_path)
+
+
+@app.post("/internal/patch-bindings/prepare")
+def prepare_patch_binding(payload: dict, x_cats_worker_token: str | None = Header(None)):
+    # Identity must cross an authenticated worker boundary, even on deployments
+    # which intentionally permit legacy job endpoints without a shared token.
+    if not TOKEN:
+        raise HTTPException(status_code=503, detail="Worker binding authentication is not configured")
+    _authorize(x_cats_worker_token)
+    from .patch_inputs import prepare_binding, default_binding_root
+    config = safe_job_config(dict(payload.get("config") or {}))
+    if "execution_binding" in config:
+        raise HTTPException(status_code=400, detail="Preparation cannot accept an execution binding")
+    try:
+        prepared = prepare_binding(config, default_binding_root())
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=409, detail="Immutable execution preparation failed") from exc
+    return {"prepared": prepared}
+
+
+@app.delete("/internal/patch-bindings/{binding_id}")
+def release_patch_binding(binding_id: str, x_cats_worker_token: str | None = Header(None)):
+    if not TOKEN:
+        raise HTTPException(status_code=503, detail="Worker binding authentication is not configured")
+    _authorize(x_cats_worker_token)
+    from .patch_inputs import release_binding, default_binding_root
+    try:
+        release_binding(binding_id, default_binding_root())
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(status_code=409, detail="Execution binding cannot be released") from exc
+    return {"released": True}
 
 
 @app.post("/internal/patch-jobs/{job_id}")
@@ -99,6 +131,16 @@ def start_patch_job(job_id: str, payload: dict, x_cats_worker_token: str | None 
         # Reusing an execution directory can pair a stale result with new inputs.
         if state_path.exists():
             raise HTTPException(status_code=409, detail="Patch job already exists; retry with a new job identifier")
+        # Exclusive creation coordinates independent API processes and survives
+        # restarts. Retain the claim even if initialization or spawning fails:
+        # an uncertain execution must never be overwritten by a duplicate POST.
+        try:
+            with (root / "execution.claim").open("x", encoding="utf-8") as claim:
+                claim.write(job_id)
+                claim.flush()
+                os.fsync(claim.fileno())
+        except FileExistsError:
+            raise HTTPException(status_code=409, detail="Patch execution is already reserved; inspect the existing job before retrying") from None
         config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
         state_path.write_text(json.dumps(initial_state, indent=2), encoding="utf-8")
         env = dict(os.environ)
@@ -127,10 +169,31 @@ def start_patch_job(job_id: str, payload: dict, x_cats_worker_token: str | None 
     return {"job_id": job_id, **initial_state, "state_available": state_path.exists()}
 
 
+def _recover_orphan(job_id: str, root: Path, state_path: Path) -> None:
+    # Absence from this supervisor's map is not proof of death. Only the
+    # worker's process-lifetime lock can fence a restarted supervisor against
+    # a surviving worker. No lock file means admission may still be spawning.
+    lock_path = state_path.parent / "execution.lock"
+    if not lock_path.exists():
+        return
+    with LOCK:
+        if job_id in PROCESSES:
+            return
+        try:
+            with execution_lock(lock_path):
+                # Re-read under ownership; completion may have raced this GET.
+                _record_interrupted(state_path)
+                shutil.rmtree(root / "input", ignore_errors=True)
+                (root / "job-config.json").unlink(missing_ok=True)
+        except ExecutionAlreadyOwned:
+            return
+
+
 @app.get("/internal/patch-jobs/{job_id}")
 def patch_job_status(job_id: str, x_cats_worker_token: str | None = Header(None)):
     _authorize(x_cats_worker_token)
-    _, state_path, result_path = _job_paths(job_id)
+    root, state_path, result_path = _job_paths(job_id)
+    _recover_orphan(job_id, root, state_path)
     config = {}
     config_path = JOB_ROOT / job_id / "job-config.json"
     if config_path.exists():
@@ -151,7 +214,7 @@ def patch_job_status(job_id: str, x_cats_worker_token: str | None = Header(None)
             pass
     with LOCK:
         process = PROCESSES.get(job_id)
-        if process and process.poll() is not None and state.get("status") not in {"complete", "failed", "cancelled"}:
+        if process and process.poll() is not None and state.get("status") not in {"complete", "completed", "failed", "cancelled"}:
             failed_phase = state.get("phase") if state.get("phase") in state.get("stages", {}) else "queued"
             state.update(
                 status="failed", phase=failed_phase, failed_stage=failed_phase,
@@ -176,7 +239,7 @@ def cancel_patch_job(job_id: str, x_cats_worker_token: str | None = Header(None)
                 raise HTTPException(status_code=503, detail="Patch state is unavailable") from None
 
         existing = read_state()
-        if existing.get("status") in {"complete", "failed", "cancelled"}:
+        if existing.get("status") in {"complete", "completed", "failed", "cancelled"}:
             return {"job_id": job_id, **existing}
         process = PROCESSES.get(job_id)
         if process and process.poll() is None:
@@ -197,12 +260,14 @@ def cancel_patch_job(job_id: str, x_cats_worker_token: str | None = Header(None)
                 # Do not report cancellation while the worker can still publish.
                 raise HTTPException(status_code=409, detail="Patch is still stopping; check its status before retrying") from None
             existing = read_state()
-            if existing.get("status") in {"complete", "failed", "cancelled"}:
+            if existing.get("status") in {"complete", "completed", "failed", "cancelled"}:
                 return {"job_id": job_id, **existing}
         elif process is None:
             # After a supervisor restart, absence from this process map does not
             # prove an old execution stopped. Never claim cancellation here.
-            raise HTTPException(status_code=409, detail="Patch execution is not owned by this worker; verify recovery before retrying")
+            (state_path.parent / "cancel.requested").touch(exist_ok=True)
+            return {"job_id": job_id, **existing, "cancellation_requested": True,
+                    "message": "Cancellation requested; waiting for the patch worker to acknowledge."}
         else:
             # A process which already exited was not cancelled by this request.
             # Preserve a completed result or record the interrupted execution.

@@ -473,3 +473,38 @@ def test_cached_scan_state_cannot_bypass_concurrent_cancellation(case, target):
         message = 'latest persisted scan'
     with pytest.raises(ValueError, match=message):
         assessments.assess(db, service, proposal.id)
+
+def test_replacement_scan_preserves_effective_digest_and_requested_reference(case, tmp_path):
+    import json
+    from app import proposal_scans
+    from app.cyber_approval_evidence import freeze
+    db, service, original, payload = case
+    source_id = original.intent['release_revision']['artifact_ids'][0]
+    target = register_artifact(db, digest='sha256:'+'b'*64,
+        media_type='application/vnd.oci.image.manifest.v1+json', platform='linux/amd64',
+        reference='registry.example/patched@sha256:'+'b'*64)
+    rec = ArtifactRecommendation(service_id=service.id, source_artifact_id=source_id, target_artifact_id=target.id)
+    db.add(rec); db.flush()
+    proposal = revisions.ReleaseAmendmentProposal(service_id=service.id, recommendation_id=rec.id,
+        base_revision_id=original.base_revision_id, intent={
+            'source_artifact_id':source_id, 'target_artifact_id':target.id,
+            'release_revision':{'artifact_ids':[target.id]},
+            'previous_artifacts':original.intent['previous_artifacts']})
+    db.add(proposal); db.flush()
+    dispatch = proposal_scans.enqueue(db, proposal, None)
+    inputs = proposal_scans.inventory(db, proposal)
+    persist_scan(db, service, proposal, dispatch, inputs)
+    payload['service_overview']['images'][0].update(image=inputs[0]['scan_reference'], digest=target.digest)
+    (tmp_path/'portal-result.json').write_text(json.dumps(payload))
+    retained = proposal_scans.ingest(db, 'isolated-job', {
+        'proposal_context':{'proposal_id':proposal.id, 'dispatch_id':dispatch.id, 'inputs':inputs},
+        'ingest_service_id':service.service_key, 'ingest_service_version':'proposed', 'returncode':0}, tmp_path)
+    image = retained.raw_payload['service_overview']['images'][0]
+    assert image['image'] == inputs[0]['scan_reference']
+    assert image['requested_reference'] == inputs[0]['reference']
+    ready = assessments.assess(db, service, proposal.id)
+    assert ready['ready'], ready['blockers']
+    frozen = freeze(db, service, SimpleNamespace(), ready, tmp_path)
+    assert frozen['proposal_assessment_id'] == retained.id
+    assert len(list(db.scalars(select(Execution)))) == 1
+    assert db.get(revisions.ServiceActiveRelease, service.id).revision_id == original.base_revision_id

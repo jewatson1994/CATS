@@ -71,3 +71,24 @@ def test_duplicate_config_keys_cannot_hide_arbitrary_data(tmp_path):
     blobs[digest(raw)] = raw
     with pytest.raises(RegistryError):
         verify()
+
+
+@pytest.mark.parametrize('mutation', [None, 'command', 'timestamp', 'count'])
+def test_cosign_zero_timestamp_history_is_inert(tmp_path, mutation):
+    document, blobs, verify = fixture(tmp_path, 'image')
+    config = json.loads(blobs[document['config']['digest']])
+    config.update(created='0001-01-01T00:00:00Z', history=[{'created': '0001-01-01T00:00:00Z'}])
+    if mutation == 'command':
+        config['history'][0]['created_by'] = 'arbitrary command'
+    elif mutation == 'timestamp':
+        config['created'] = 'arbitrary content'
+    elif mutation == 'count':
+        config['history'].append({'created': '0001-01-01T00:00:00Z'})
+    raw = json.dumps(config).encode()
+    blobs[digest(raw)] = raw
+    document['config'].update(digest=digest(raw), size=len(raw))
+    if mutation:
+        with pytest.raises(RegistryError, match='inert metadata'):
+            verify()
+    else:
+        assert digest(raw) in verify().blob_digests

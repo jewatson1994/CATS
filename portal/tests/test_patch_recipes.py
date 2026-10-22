@@ -116,7 +116,17 @@ def test_reuse_requires_exact_lineage_and_verified_retained_receipt():
         db.add(patch); db.flush()
         record_patch_lineage(db, patch_execution_id=patch.id, source_artifact_id=source.id,
                              output_artifact_id=output.id)
-        claim = claim_recipe(db, 'a'*64, 'owner')
+        args = inputs()
+        args['source'] = source
+        args['config'].update(job_id=patch.job_key, source_image=patch.source_image,
+                              signing_fingerprint='key')
+        receipt['consumed_inputs'] = {
+            'schema': 'cats-patch-consumed-inputs-v1', 'job_id': patch.job_key,
+            'source_image': patch.source_image, 'immutable_destination': reference,
+            'identity': args['identity'], 'config': args['config'],
+            'destination_scope': args['destination_scope']}
+        patch.summary = {'artifact_receipt': dict(receipt)}
+        claim = claim_recipe(db, recipe_fingerprint(**args), 'owner')
         claim.patch_execution_id = patch.id
         assert reusable_patch(db, claim, source, signing_fingerprint="key") is patch
         assert reusable_patch(db, claim, source, destination_scope={"host": "registry"}) is patch
@@ -124,6 +134,28 @@ def test_reuse_requires_exact_lineage_and_verified_retained_receipt():
         assert reusable_patch(db, claim, source, destination_scope={"host": "reg"}) is None
         assert reusable_patch(db, claim, source, destination_scope={"host": "registry", "prefix": "another"}) is None
         assert reusable_patch(db, claim, source, signing_fingerprint="different") is None
+        from copy import deepcopy
+        valid_consumed = deepcopy(receipt['consumed_inputs'])
+        invalid = [None, {}, {**valid_consumed, 'job_id': 'another-attempt'},
+            {**valid_consumed, 'schema': 'unknown'},
+            {**valid_consumed, 'source_image': 'wrong@' + source.digest},
+            {**valid_consumed, 'immutable_destination': 'wrong@' + output.digest},
+            {**valid_consumed, 'identity': None},
+            {**valid_consumed, 'extra_input': 'unbound'},
+            {**valid_consumed, 'config': {**valid_consumed['config'], 'job_id': 'wrong'}},
+            {**valid_consumed, 'config': {**valid_consumed['config'], 'signing_fingerprint': 'wrong'}},
+            {**valid_consumed, 'destination_scope': {'host': 'wrong'}}]
+        for field in ('engine_digest', 'repository_snapshot_digest', 'scanner_database_digest'):
+            invalid.append({**valid_consumed, 'identity': {
+                **valid_consumed['identity'], field: 'sha256:' + 'f' * 64}})
+        for consumed in invalid:
+            patch.summary = {'artifact_receipt': {**receipt, 'consumed_inputs': consumed}}
+            assert reusable_patch(db, claim, source) is None
+        patch.summary = {'artifact_receipt': {key: value for key, value in receipt.items()
+                                             if key != 'consumed_inputs'}}
+        assert reusable_patch(db, claim, source) is None
+        patch.summary = {'artifact_receipt': dict(receipt)}
+        assert reusable_patch(db, claim, source) is patch
         receipt['signature_status'] = 'failed'
         patch.summary = {'artifact_receipt': dict(receipt)}
         assert reusable_patch(db, claim, source) is None
@@ -252,3 +284,12 @@ def test_unknown_manifest_inputs_disable_reuse(field):
     args = inputs()
     args["identity"][field] = "sha256:" + "f" * 64
     assert recipe_fingerprint(**args) is None
+
+
+def test_opaque_execution_handles_do_not_change_canonical_recipe():
+    args = inputs()
+    expected = recipe_fingerprint(**args)
+    args['config']['execution_binding'] = 'a' * 32
+    assert recipe_fingerprint(**args) == expected
+    args['config']['execution_binding'] = 'b' * 32
+    assert recipe_fingerprint(**args) == expected

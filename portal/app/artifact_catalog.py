@@ -187,6 +187,86 @@ def _verified_receipt(patch, artifact):
         and all(type(value) is int and value >= 0 for value in counters))
 
 
+def _original_artifact_eligibility(db, artifact, service_id):
+    """Accept original bytes only from the trusted publication worker's receipt.
+
+    Scanner identity alone is insufficient. Authorization and validation remain
+    service-specific, even when another service publishes identical bytes.
+    """
+    from .cyber_approvals import CyberApproval, digest
+    from .execution_summaries import payload_digest
+    from .models import Execution
+    from .release_validity import require_current
+
+    if service_id is None:
+        return None
+    approvals = db.scalars(select(CyberApproval).where(
+        CyberApproval.service_id == service_id, CyberApproval.variant == "current_service")
+        .order_by(CyberApproval.id.desc()))
+    for approval in approvals:
+        snapshot = approval.snapshot or {}
+        originals = [item for item in snapshot.get("artifacts", [])
+            if item.get("kind") == "image" and item.get("digest") == artifact.digest
+            and str(item.get("reference", "")).endswith("@" + artifact.digest)]
+        if not originals:
+            continue
+        # A newer decision for these exact original bytes supersedes older ones.
+        denied = {"eligible": False, "reasons": ["Original artifact requires current published authorization and exact service validation"]}
+        if (approval.status != "approved" or approval.revoked_at
+                or not approval.decided_by_id or not approval.decision_rationale
+                or approval.publish_status != "published"
+                or digest(snapshot) != approval.snapshot_digest):
+            return denied
+        try:
+            require_current(approval)
+        except ValueError:
+            return denied
+        execution = db.get(Execution, approval.source_execution_id)
+        if (not execution or not execution.complete or execution.service_id != service_id
+                or snapshot.get("service_id") != service_id
+                or snapshot.get("source_execution_id") != execution.id
+                or snapshot.get("source_payload_digest") != payload_digest(execution.raw_payload)):
+            return denied
+        publication = approval.publication or {}
+        manifest = publication.get("manifest") or {}
+        fingerprint = snapshot.get("signing_fingerprint")
+        if (publication.get("status") != "published"
+                or publication.get("verification_status") != "verified"
+                or publication.get("signature_status") != "verified"
+                or publication.get("approval_id") != approval.id
+                or publication.get("release_key") != approval.release_key
+                or not fingerprint or publication.get("signing_fingerprint") != fingerprint
+                or manifest.get("approval_id") != approval.id
+                or manifest.get("snapshot_digest") != approval.snapshot_digest
+                or manifest.get("artifacts") != publication.get("artifacts")):
+            return denied
+        for item in publication.get("artifacts", []):
+            reference = str(item.get("reference", ""))
+            signed = item.get("signature") or {}
+            signature = signed.get("signature") or {}
+            if (item.get("kind") != "image" or item.get("digest") != artifact.digest
+                    or item.get("source_digest") != artifact.digest
+                    or item.get("source_reference") not in {row["reference"] for row in originals}
+                    or item.get("scan_identity_retained") is not True
+                    or item.get("verification_status") != "verified"
+                    or not reference.endswith("@" + artifact.digest)
+                    or signed.get("signature_status") != "verified"
+                    or signature.get("image") != reference
+                    or signature.get("generator") != "cosign"
+                    or signature.get("key_fingerprint") != fingerprint
+                    or not signature.get("verified_at")):
+                continue
+            validation = db.scalar(select(DeploymentValidationRun).where(
+                DeploymentValidationRun.service_id == service_id,
+                DeploymentValidationRun.artifact_reference == reference)
+                .order_by(DeploymentValidationRun.id.desc()))
+            if validation is not None and validation.status == "VERIFIED":
+                return {"eligible": True, "reasons": [], "approval_id": approval.id,
+                        "validation_run_id": validation.id}
+        return denied
+    return None
+
+
 def artifact_eligibility(db, artifact_id, service_id=None):
     artifact = _require(db, GlobalArtifact, artifact_id)
     lineages = list(db.scalars(select(ArtifactPatchLineage).where(ArtifactPatchLineage.output_artifact_id == artifact_id)))
@@ -203,6 +283,9 @@ def artifact_eligibility(db, artifact_id, service_id=None):
                     return {"eligible": True, "reasons": [], "patch_execution_id": patch.id,
                             "validation_run_id": validation.id}
                 return {"eligible": False, "reasons": ["Patched artifact signature and scan verified; exact artifact service validation required"]}
+    original = _original_artifact_eligibility(db, artifact, service_id)
+    if original is not None:
+        return original
     reasons = [] if lineages else ["No digest-bound completed patch lineage"]
     reasons.append("No durable digest-bound patch scan and verified signature receipt")
     return {"eligible": False, "reasons": reasons}

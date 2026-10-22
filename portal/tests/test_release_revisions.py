@@ -219,3 +219,36 @@ def test_recommendation_amendment_retains_inventory_and_requires_current_base(db
         revisions.amendment_specification(db, auth, proposal.id, base.service_id)
     with pytest.raises(ValueError, match='unavailable'):
         revisions.amendment_specification(db, auth, proposal.id, base.service_id + 1)
+
+
+def test_signed_binding_retains_public_mapping_but_pins_cross_repository(db, approved_revision):
+    from app.oci_models import OCIRepository, OCIUpstream
+    from app.cyber_approvals import CyberApproval
+    from types import SimpleNamespace
+    revision, _ = approved_revision
+    approval = db.get(CyberApproval, revision.approval_id)
+    upstream = OCIUpstream(name='replacement', endpoint='https://registry.example')
+    db.add(upstream); db.flush()
+    mapping = OCIRepository(public_repository='service/stable', service_id=revision.service_id,
+        upstream_id=upstream.id, upstream_repository='original/image')
+    db.add(mapping); db.flush()
+    artifact = revision.manifest['artifacts'][0]
+    retained = dict(kind='image', digest=artifact['digest'], reference='registry.example/patched/image@' + artifact['digest'])
+    approval.snapshot = dict(approval.snapshot, artifacts=[retained])
+    requested = [dict(repository_id=mapping.id, tag='stable', artifact_id=artifact['id'])]
+    binding = revisions._distribution_bindings(db, approval, [artifact], requested)[0]
+    assert binding['public_repository'] == 'service/stable'
+    assert binding['mapping_upstream_repository'] == 'original/image'
+    assert binding['upstream_repository'] == 'patched/image'
+    active = SimpleNamespace(manifest=dict(artifacts=[artifact], distribution_bindings=[binding]))
+    assert revisions.distribution_location(mapping, active, artifact['digest']) == 'patched/image'
+    assert mapping.upstream_repository == 'original/image'
+    approval.snapshot = dict(approval.snapshot, artifacts=[dict(retained, reference='untrusted.example/patched/image@' + artifact['digest'])])
+    with pytest.raises(ValueError, match='retained artifact evidence'):
+        revisions._distribution_bindings(db, approval, [artifact], requested)
+    approval.snapshot = dict(approval.snapshot, artifacts=[retained, dict(retained, reference='registry.example/another/image@' + artifact['digest'])])
+    with pytest.raises(ValueError, match='retained artifact evidence'):
+        revisions._distribution_bindings(db, approval, [artifact], requested)
+    mapping.upstream_repository = 'edited/image'
+    with pytest.raises(ValueError, match='location changed'):
+        revisions.distribution_location(mapping, active, artifact['digest'])

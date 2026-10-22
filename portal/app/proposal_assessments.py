@@ -143,7 +143,7 @@ def assess(db, service, identity, *, assessment=None):
     for item in images:
         if not isinstance(item, dict):
             raise ValueError('Explicit image identity and platform evidence is required')
-        reference = item.get('image') or item.get('reference')
+        reference = item.get('requested_reference') or item.get('image') or item.get('reference')
         digest = item.get('digest') or item.get('image_digest')
         artifact = by_digest.get(digest)
         if (not reference or artifact is None or item.get('platform') != artifact.platform
@@ -153,6 +153,13 @@ def assess(db, service, identity, *, assessment=None):
         actual_refs[reference] = digest
     if not expected_refs or actual_refs != expected_refs:
         result['blockers'].append('Assessment must preserve every original requested reference with its proposed digest')
+    if actual_refs == expected_refs:
+        # Preserve requested aliases separately from the scanned immutable identity.
+        # A replacement must never be paired with the original digest-pinned image.
+        for artifact in result['artifacts']:
+            artifact['source_references'] = sorted(
+                reference for reference, digest in actual_refs.items()
+                if digest == artifact.get('digest'))
     result.update(ready=not result['blockers'], proposal_id=identity,
         proposal_assessment_id=assessment.id, proposal_assessment_digest=assessment.digest,
         version=payload.service.version)

@@ -206,9 +206,19 @@ def test_handler_reuses_verified_recipe_without_second_engine_run(setup, monkeyp
     config = {'job_id': 'ignored', 'source_mode': 'oci', 'source_image': item.image_reference,
         'output_mode': 'push', 'destination_image': 'ignored', 'reuse_source_credentials': False,
         'remediation_evidence': True, 'signing_fingerprint': 'current-key',
+        'destination_scope': {'registry': 'destination', 'host': 'registry.example', 'namespace': '', 'prefix': 'patched'},
         'trusted_ca_certificates': [], 'repository_policies': {}, 'os_definitions': {}}
     identity = {'schema': 'cats-patch-inputs-v1', 'engine_digest': 'sha256:' + 'c'*64,
         'repository_snapshot_digest': 'sha256:' + 'd'*64, 'scanner_database_digest': 'sha256:' + 'e'*64}
+    receipt = dict(receipt)
+    consumed_config = {**config, 'job_id': patch.job_key}
+    receipt['consumed_inputs'] = {
+        'schema': 'cats-patch-consumed-inputs-v1', 'job_id': patch.job_key,
+        'source_image': patch.source_image, 'immutable_destination': reference,
+        'identity': identity, 'config': consumed_config,
+        'destination_scope': {'registry': 'destination', 'host': 'registry.example',
+                              'namespace': '', 'prefix': 'patched'}}
+    patch.summary = {'artifact_receipt': dict(receipt)}
     fingerprint = c.recipe_fingerprint(source=source, config=config, identity=identity,
         destination_scope={'registry': 'destination', 'host': 'registry.example', 'namespace': '', 'prefix': 'patched'})
     db.add(PatchRecipeClaim(fingerprint=fingerprint, owner_job_id=prior_job.id, patch_execution_id=patch.id))

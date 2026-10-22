@@ -67,6 +67,80 @@ def _published_artifact_matches(approval, repository, digest):
     return False
 
 
+def _payload_evidence_matches(db, approval, execution, service, active, now, _seen=None):
+    """Bind amendment evidence to its retained assessment and unchanged base scan."""
+    seen = set(_seen or ())
+    if approval.id in seen or len(seen) >= 32:
+        return False
+    seen.add(approval.id)
+    snapshot = approval.snapshot
+    if snapshot.get('amendment_proposal_id') is None:
+        return snapshot.get('source_payload_digest') == payload_digest(execution.raw_payload)
+    if active is None or active.approval_id != approval.id:
+        return False
+    from .proposal_assessments import ProposalAssessment
+    from .proposal_scans import (require_assessment_dispatch, freshness_deadline,
+        latest_dispatch, evidence_inputs_token, proposal_inputs_token)
+    from .artifact_catalog import GlobalArtifact
+    try:
+        proposal = db.get(release_revisions.ReleaseAmendmentProposal, snapshot['amendment_proposal_id'], populate_existing=True)
+        assessment = db.get(ProposalAssessment, snapshot['proposal_assessment_id'], populate_existing=True)
+        base = db.get(release_revisions.ReleaseRevision, proposal.base_revision_id, populate_existing=True) if proposal else None
+        base_approval = db.get(CyberApproval, base.approval_id, populate_existing=True) if base else None
+        if (proposal is None or proposal.service_id != service.id or assessment is None
+                or assessment.proposal_id != proposal.id or base_approval is None
+                or base.service_id != service.id or active.manifest.get('base_revision_id') != base.id
+                or base_approval.source_execution_id != execution.id
+                or snapshot_digest(base_approval.snapshot) != base_approval.snapshot_digest
+                or base_approval.snapshot.get('source_version_id') != service.current_version_id):
+            return False
+        # The proposal payload is deliberately separate from current posture.
+        # Its base must still bind the original service execution bytes.
+        if base_approval.snapshot.get('amendment_proposal_id') is not None:
+            if (snapshot_digest(base.manifest) != base.manifest_digest
+                    or not _payload_evidence_matches(db, base_approval, execution, service, base, now, seen)):
+                return False
+        elif base_approval.snapshot.get('source_payload_digest') != payload_digest(execution.raw_payload):
+            return False
+        if (assessment.digest != payload_digest(assessment.raw_payload)
+                or snapshot.get('proposal_assessment_digest') != assessment.digest
+                or snapshot.get('source_payload_digest') != assessment.digest
+                or freshness_deadline(assessment.raw_payload) <= now):
+            return False
+        require_assessment_dispatch(db, proposal, assessment.execution_key)
+        dispatch = latest_dispatch(db, proposal.id)
+        if dispatch and (dispatch.payload.get('evidence_inputs_token') != evidence_inputs_token(db, service.id)
+                or dispatch.payload.get('proposal_inputs_token') != proposal_inputs_token(db, proposal)):
+            return False
+        raw = assessment.raw_payload
+        if (raw.get('service', {}).get('id') != service.service_key or not raw.get('complete')
+                or not raw.get('fixable_only') or raw.get('scan_scope') != 'service'
+                or raw.get('skipped_images') or raw.get('skipped_charts')):
+            return False
+        inventory = proposal.intent['release_revision']['artifact_ids']
+        artifacts = [db.get(GlobalArtifact, identity, populate_existing=True) for identity in inventory]
+        if not artifacts or any(item is None for item in artifacts):
+            return False
+        expected = {(item.digest, item.platform, item.media_type) for item in artifacts}
+        images = raw.get('service_overview', {}).get('images', [])
+        actual = {(item.get('digest'), item.get('platform'), item.get('media_type')) for item in images}
+        retained = {item.get('digest') for item in snapshot.get('artifacts', []) if item.get('kind') == 'image'}
+        signed = {(item.get('digest'), item.get('platform'), item.get('media_type'))
+            for item in active.manifest.get('artifacts', [])}
+        if actual != expected or signed != expected or retained != {item[0] for item in expected}:
+            return False
+        for item in images:
+            reference = item.get('image') or item.get('reference')
+            if not isinstance(reference, str) or not reference.endswith('@' + item['digest']):
+                return False
+            if not any(a.get('reference') == reference and a.get('digest') == item['digest']
+                    for a in snapshot.get('artifacts', [])):
+                return False
+        return True
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return False
+
+
 def authorize(db, mapping, digest, now=None):
     """Reevaluate each pull; callers must separately enforce principal mapping grants.
 
@@ -130,6 +204,11 @@ def authorize(db, mapping, digest, now=None):
     active = release_revisions.active_revision(db, service.id, now) if revision_managed else None
     if revision_managed and active is None:
         return deny('active_revision_unavailable')
+    if active is not None:
+        try:
+            repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + release_revisions.distribution_location(mapping, active, digest)
+        except ValueError:
+            return deny('signed_distribution_location_changed')
     approvals = db.scalars(select(CyberApproval).where(
         CyberApproval.service_id == service.id,
         CyberApproval.source_execution_id == execution.id,
@@ -152,7 +231,7 @@ def authorize(db, mapping, digest, now=None):
         if (snapshot.get('service_id') != service.id
                 or snapshot.get('source_execution_id') != execution.id
                 or snapshot.get('source_version_id') != service.current_version_id
-                or snapshot.get('source_payload_digest') != payload_digest(execution.raw_payload)):
+                or not _payload_evidence_matches(db, approval, execution, service, active, now)):
             return deny('approval_evidence_changed', approval)
         try:
             require_current(approval, now)
