@@ -82,3 +82,19 @@ export function ServiceHeader({ data }: { data: PageData }) {
     {editAllowed && <><dialog ref={edit} className="review-dialog" aria-labelledby="edit-title"><form method="post" action={`/admin/services/${encodeURIComponent(service.service_key)}`}>{csrf}<input type="hidden" name="return_to" value={data.next_path || root} /><h3 id="edit-title">Edit service information</h3><label>Service name<input name="name" defaultValue={service.name} required /></label><label>Description<textarea name="description" maxLength={2000} defaultValue={service.description || ''} /></label><label>Owner<input name="owner" defaultValue={service.owner || ''} /></label><label>POC<input name="poc" defaultValue={service.poc || ''} /></label><label>Version override<input name="manual_version" defaultValue={service.manual_version || ''} placeholder="Pipeline version" /></label><label>Owning group<select name="group_ids" required defaultValue={service.groups?.length === 1 ? String(service.groups[0].id) : ''}><option value="" disabled>Select one owning group</option>{(data.groups || []).map((group: any) => <option value={group.id} key={group.id}>{group.name}</option>)}</select></label><div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => edit.current?.close()}>Cancel</button><button>Save service</button></div></form></dialog><span className="sr-only">Edit service information</span></>}
   </>;
 }
+
+/**
+ * Quick links from a service to the existing workflows that concern it. Navigation only:
+ * every destination is an existing route, and each page applies its own authorization.
+ */
+export function RelatedWorkflows({ serviceKey }: { serviceKey: string }) {
+  const key = encodeURIComponent(serviceKey);
+  // Destinations that are not already service tabs (Findings, Remediations, Approvals and
+  // Approved Releases are tabs above).
+  const links: [string, string][] = [
+    [`/scan?service=${key}`, 'Scan this service'], [`/patch-campaigns?service_id=${key}`, 'Patch service images'],
+    [`/poam/services/${key}`, 'POA&M entries'], ['/jobs', 'Jobs and exports'],
+  ];
+  return <nav className="related-workflows" aria-label="Related workflows"><span className="related-workflows-label" aria-hidden="true">Related</span>
+    {links.map(([href, label]) => <a key={label} href={href}>{label}</a>)}</nav>;
+}

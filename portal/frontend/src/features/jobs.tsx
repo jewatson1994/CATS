@@ -1,5 +1,7 @@
-import {useEffect, useState} from 'react';
+import {useEffect, useMemo, useState} from 'react';
 import {requestJson, type PageData} from '../api';
+import {DataGrid, type GridColumn} from '../components/DataGrid';
+import {Callout, EmptyState, KeyValueGrid, PageHeader, StatusBadge} from '../components/ui';
 
 interface Job {
   id: string; kind: string; service?: string; validator?: string; version?: string;
@@ -11,6 +13,7 @@ interface Snapshot {jobs: Job[]; counts: Record<string, number>; limit: number}
 const labels: Record<string, string> = {export: 'Export', scan: 'Scan', 'remediation_plan': 'Remediation plan',
   'remediation_execute': 'Remediation', 'remediation_validate': 'Validation', 'remediation_deliver': 'Delivery'};
 function duration(seconds: number) {return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;}
+const kindLabel = (kind: string) => labels[kind] || kind;
 
 export function Page({data}: {data: PageData}) {
   const [snapshot, setSnapshot] = useState<Snapshot>();
@@ -47,26 +50,40 @@ export function Page({data}: {data: PageData}) {
     } catch (failure) {setError(failure instanceof Error ? failure.message : 'Unable to update job.');}
     finally {setBusy('');}
   }
-  function actions(job: Job) {return <>
+  function actions(job: Job) {return <span className="row-actions">
     {job.download_url && job.status === 'completed' && <a className="secondary-button" href={job.download_url}>Download</a>}
-    {job.result_url && <a href={job.result_url}>Open result</a>}
+    {job.result_url && <a className="secondary-button" href={job.result_url}>Open result</a>}
     {job.can_retry && <button disabled={!!busy} onClick={() => void act(job, 'retry')}>Retry</button>}
     {job.can_cancel && <button className="secondary-button" disabled={!!busy} onClick={() => void act(job, 'cancel')}>Cancel</button>}
-  </>;}
-  return <><div className="page-heading"><h1>Jobs</h1><p>Scans, remediation, exports, and validator provisioning. Updates every five seconds.</p></div>
-    {error && <p role="alert">{error}</p>}
-    {snapshot && <p aria-label="Job counts">{Object.entries(snapshot.counts).map(([state, count]) => `${state}: ${count}`).join(' · ')}</p>}
-    {selected && <section className="panel padded" aria-label="Selected job"><h2>{labels[selected.kind] || selected.kind} — {selected.status}</h2>
-      <p>{selected.stage} · {duration(selected.elapsed_seconds)}</p>{selected.error && <p role="alert">{selected.error}</p>}
-      {actions(selected)}</section>}
-    <section className="panel"><div className="table-wrap"><table><thead><tr>
-      {['Job', 'Service / validator', 'Requested by', 'State', 'Stage / elapsed', 'Actions'].map(label => <th key={label}>{label}</th>)}
-    </tr></thead><tbody>{snapshot?.jobs.map(job => <tr key={job.id}>
-      <td><a href={`/jobs?job=${encodeURIComponent(job.id)}`}>{labels[job.kind] || job.kind}</a><small>{job.correlation_id}</small></td>
-      <td>{job.service || job.validator || 'Portfolio'}{job.version && <small>{job.version}</small>}</td>
-      <td>{job.requested_by}</td><td>{job.status}</td><td>{job.stage} · {duration(job.elapsed_seconds)}
-        {job.status === 'running' && job.progress != null && <progress max={100} value={job.progress} aria-label="Job progress"/>}
-        {job.error && <p>{job.error}</p>}</td><td>{actions(job)}</td>
-    </tr>)}{!snapshot?.jobs.length && <tr><td colSpan={6}>{snapshot ? 'No jobs available.' : 'Loading jobs…'}</td></tr>}</tbody></table></div>
-    {snapshot && <p className="muted">Showing the latest {snapshot.limit} jobs you can access. Counts include older jobs.</p>}</section></>;
+    {!job.download_url && !job.result_url && !job.can_retry && !job.can_cancel && <span className="muted">—</span>}
+  </span>;}
+  const columns = useMemo<GridColumn<Job>[]>(() => [
+    {key: 'job', header: 'Job', identifier: true, hideable: false, value: job => kindLabel(job.kind),
+      render: job => <span className="cell-stack"><a href={`/jobs?job=${encodeURIComponent(job.id)}`}>{kindLabel(job.kind)}</a>{job.correlation_id && <small className="mono">{job.correlation_id}</small>}</span>},
+    {key: 'target', header: 'Service / validator', value: job => job.service || job.validator || 'Portfolio',
+      render: job => <span className="cell-stack"><span>{job.service || job.validator || 'Portfolio'}</span>{job.version && <small>{job.version}</small>}</span>},
+    {key: 'requested_by', header: 'Requested by', value: job => job.requested_by, render: job => job.requested_by},
+    {key: 'status', header: 'State', hideable: false, value: job => job.status, render: job => <StatusBadge value={job.status} size="sm"/>},
+    {key: 'stage', header: 'Stage', wrap: true, minWidth: 160, value: job => job.stage, render: job => <span className="cell-stack"><span>{job.stage}</span>
+      {job.status === 'running' && job.progress != null && <progress max={100} value={job.progress} aria-label="Job progress"/>}
+      {job.error && <span className="text-danger cell-error">{job.error}</span>}</span>},
+    {key: 'elapsed', header: 'Elapsed', type: 'number', value: job => job.elapsed_seconds, render: job => duration(job.elapsed_seconds)},
+    {key: 'actions', header: 'Actions', minWidth: 120, render: job => actions(job)},
+    // actions() reads the latest busy state on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [busy, data.csrf_token]);
+  const counts = Object.entries(snapshot?.counts || {});
+  return <><PageHeader eyebrow="Operations" title="Jobs" description="Scans, remediation, exports, and validator provisioning. Updates every five seconds."/>
+    {error && <Callout tone="danger" title="Jobs could not be refreshed">{error}</Callout>}
+    {snapshot && <p className="status-summary" aria-label="Job counts">{counts.length ? counts.map(([state, count]) =>
+      <StatusBadge key={state} value={state} label={`${state}: ${count}`} size="sm"/>) : <span className="muted">No jobs recorded.</span>}</p>}
+    {selected && <section className="panel padded selected-job" aria-label="Selected job"><div className="selected-job-head"><h2>{kindLabel(selected.kind)} — {selected.status}</h2><StatusBadge value={selected.status}/></div>
+      <KeyValueGrid columns={3} items={[['Stage', selected.stage], ['Elapsed', duration(selected.elapsed_seconds)], ['Requested by', selected.requested_by],
+        ['Service / validator', selected.service || selected.validator || 'Portfolio'], ['Version', selected.version], ['Correlation ID', selected.correlation_id && <code>{selected.correlation_id}</code>]]}/>
+      {selected.error && <p role="alert" className="text-danger">{selected.error}</p>}
+      <div className="selected-job-actions">{actions(selected)}</div></section>}
+    <section className="panel"><DataGrid<Job> id="jobs" label="Jobs" columns={columns} rows={snapshot?.jobs || []} rowKey={job => job.id}
+      loading={!snapshot && !error} sort={{mode: 'client'}} rowClassName={job => job.id === selectedId ? 'dg-row-current' : undefined}
+      empty={<EmptyState title="No jobs available." kind="empty"/>}
+      footer={snapshot && <p className="muted grid-footnote">Showing the latest {snapshot.limit} jobs you can access. Counts include older jobs.</p>}/></section></>;
 }

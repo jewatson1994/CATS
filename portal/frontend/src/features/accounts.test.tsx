@@ -14,7 +14,7 @@ it('separates sign-in methods using real credentials instead of account origin',
   expect(screen.getByRole('button', {name: 'provider-user'})).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', {name: 'Both (local + OIDC) (1)'}));
   expect(screen.getByRole('button', {name: 'linked-user'})).toBeInTheDocument();
-  expect(screen.getByText('Local + OIDC', {selector: 'td'})).toBeInTheDocument();
+  expect(screen.getByText('Local + OIDC', {selector: 'td .dg-cell'})).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Find an account'), {target: {value: 'missing'}});
   expect(screen.getByText('No accounts match this sign-in method and search.')).toBeInTheDocument();
 });

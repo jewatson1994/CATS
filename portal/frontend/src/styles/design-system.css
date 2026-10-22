@@ -185,13 +185,13 @@ main > .panel + .panel, main > .panel + section.panel { margin-top: var(--space-
 }
 .secondary-button:hover, .button-secondary:hover, summary.secondary-button:hover { background: var(--surface-raised) !important; border-color: var(--text-muted) !important; }
 /* Administration actions share the OCI registry outline treatment. */
-:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"]),
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"], .dg-sort, .icon-button),
 :is(.admin-workspace, .accounts-workspace, .validators-workspace) a.button-secondary,
 :is(.admin-workspace, .accounts-workspace, .validators-workspace) a.secondary-button {
   border: 1px solid var(--border) !important; background: var(--surface) !important; color: var(--accent) !important;
   border-radius: var(--radius-md); font-weight: 600 !important; box-shadow: none !important;
 }
-:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"]):hover,
+:is(.admin-workspace, .accounts-workspace, .validators-workspace) button:not(.danger-button, .link-button, [role="tab"], .dg-sort, .icon-button):hover,
 :is(.admin-workspace, .accounts-workspace, .validators-workspace) a.button-secondary:hover,
 :is(.admin-workspace, .accounts-workspace, .validators-workspace) a.secondary-button:hover {
   background: var(--surface-raised) !important; border-color: var(--accent) !important; filter: none;
@@ -530,11 +530,11 @@ dialog > .secondary-button:last-child { margin-top: var(--space-3); }
 .danger-zone h2 { color: var(--danger); font-size: var(--text-lg); }
 /* Findings tables: one clean layout replaces the historical stacked width overrides. */
 .service-findings .table-wrap { overflow-x: auto; }
-.service-findings table { table-layout: auto !important; min-width: 1100px; }
-.service-findings th, .service-findings td { padding: 10px 12px !important; white-space: nowrap; }
+.service-findings table:not(.dg-table) { table-layout: auto !important; min-width: 1100px; }
+.service-findings table:not(.dg-table) th, .service-findings table:not(.dg-table) td { padding: 10px 12px !important; white-space: nowrap; }
 .service-findings td:has(.image-ref) { max-width: 300px; }
 .service-findings .image-ref { display: block; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs) !important; }
-.service-findings td.finding-actions { white-space: normal; min-width: 250px; }
+.service-findings table:not(.dg-table) td.finding-actions { white-space: normal; min-width: 250px; }
 .service-findings td.finding-actions .row-actions { max-width: 320px; }
 .service-findings td:has(> .policy-detail-action) { white-space: normal; min-width: 220px; }
 .service-findings .group-members td { white-space: normal; }

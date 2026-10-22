@@ -265,7 +265,6 @@ dialog.filter-drawer .filter-drawer-form { display: flex; flex-direction: column
 .quick-search input[type="search"] { width: 100%; min-width: 0; min-height: 32px; padding-left: 32px !important; }
 
 /* ---------------------------------------------------- service security matrix */
-.cyber-matrix { overflow: hidden; }
 .cyber-matrix > .data-grid > .dg-toolbar { padding: var(--space-3) var(--space-4) var(--space-3) var(--space-5); }
 .matrix-service { font-weight: 600; }
 .matrix-status { display: inline-flex; align-items: center; gap: 2px; }
@@ -291,3 +290,51 @@ dialog.filter-drawer .filter-drawer-form { display: flex; flex-direction: column
 /* Checkboxes and radios in new components never inherit the legacy 220px input minimum. */
 :is(.popover-panel, .data-grid, .filter-drawer, .app-header) input:is([type="checkbox"], [type="radio"]) { flex: none; width: 16px; min-width: 0; height: 16px; margin: 0; }
 .popover-panel label { color: var(--text); }
+
+/* Workspace tab row with trailing actions (filters) */
+.workspace-tabs-row { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); border-bottom: 1px solid var(--border); }
+.workspace-tabs-row > .service-tabs { margin: 0 !important; border-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.workspace-tabs-actions { display: flex; align-items: center; gap: var(--space-2); padding-bottom: 6px; }
+.workspace-tabs-row + .filter-chips { margin: calc(-1 * var(--space-2)) 0 var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-lg); }
+.pagination.pager { border-top: 0; padding-left: 0; padding-right: 0; }
+
+/* Shared cell and summary patterns */
+.cell-stack { display: inline-grid; gap: 1px; min-width: 0; vertical-align: middle; }
+.cell-stack > small { color: var(--text-muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; }
+.cell-stack progress { width: 140px; height: 6px; }
+.cell-error { font-size: var(--text-xs); white-space: normal; }
+.status-summary { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-4); }
+.grid-footnote { margin: 0; padding: 8px var(--space-4); border-top: 1px solid var(--border); font-size: var(--text-xs); }
+.selected-job { margin-bottom: var(--space-4); display: grid; gap: var(--space-3); }
+.selected-job-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.selected-job-head h2 { margin: 0; font-size: var(--text-lg); }
+.selected-job-actions .row-actions { max-width: none; }
+.data-grid .row-actions { flex-wrap: nowrap; max-width: none; }
+.data-grid .dg-cell-wrap .row-actions { flex-wrap: wrap; }
+
+/* Findings workspace */
+.service-findings > .finding-filters { border-bottom: 1px solid var(--border); }
+.service-findings .data-grid .image-ref { max-width: 100%; }
+.service-findings .data-grid .dg-cell-wrap .image-ref { display: block; }
+.service-findings .group-members { padding: var(--space-3) var(--space-4); }
+.data-grid tr.row-kev > td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+
+/* Inline toolbar fields (small client-side filters that stay inline) */
+.inline-filters { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0; padding: 0; background: none; border: 0; }
+.inline-field { display: inline-flex !important; align-items: center; gap: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); font-weight: 600; white-space: nowrap; }
+.inline-field input, .inline-field select { min-width: 0; width: auto; min-height: 32px; color: var(--text); font-weight: 400; }
+.inline-field input { width: 220px; }
+.data-grid tr.row-revoked > td { color: var(--text-muted); }
+.data-grid tr.row-revoked > td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+.review-track { margin-bottom: var(--space-4); }
+.review-track .stage-progress { max-width: 900px; }
+
+.related-workflows { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); margin: calc(-1 * var(--space-2)) 0 var(--space-4); font-size: var(--text-sm); }
+.related-workflows-label { color: var(--text-muted); font-size: var(--text-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin-right: var(--space-1); }
+.related-workflows a { display: inline-flex; align-items: center; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-pill); color: var(--text); text-decoration: none; }
+.related-workflows a:hover { border-color: var(--accent); color: var(--accent); }
+.data-grid td.finding-actions .row-actions { flex-wrap: nowrap; max-width: none; }
+.data-grid .dg-cell > .row-actions { display: inline-flex; }
+.data-grid .account-you { display: inline-flex; align-items: center; width: auto; height: 18px; margin: 0 0 0 var(--space-2); padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-pill); background: none; color: var(--text-muted); font-size: 10.5px; vertical-align: middle; }
+.data-grid td small { display: inline; }
+.data-grid .cell-stack > small { display: block; }

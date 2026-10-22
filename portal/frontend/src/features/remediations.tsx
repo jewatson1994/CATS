@@ -7,7 +7,9 @@ import {Create} from './poam';
 import {ServiceOCIDestinations} from './service-oci';
 import './remediations.css';
 import {ComparisonCharts} from './remediation-comparison';
-import {StatusBadge} from '../components/ui';
+import {EmptyState, Icon, PageHeader, SeverityBadge, StatusBadge} from '../components/ui';
+import {DataGrid, type GridColumn, type GridSort} from '../components/DataGrid';
+import {FilterChips, FilterDrawer, hrefWithout, type ActiveFilter} from '../components/FilterDrawer';
 
 const title = (value: string) => (value || '').replaceAll('_', ' ');
 const deliveryLabels: Record<string,string> = {'bundle':'Download Artifacts', 'oci':'OCI Push', 'standard-bundle':'Standard Bundle', 'offline-bundle':'Offline Bundle'};
@@ -257,17 +259,93 @@ function ApprovedPlan({job,data}:{job:any;data:PageData}) {
 function Revoke({data, action, kind}: {data: PageData; action: string; kind: string}) {
   return <Dialog button="Revoke" title={`Revoke ${kind}?`}><form method="post" action={action}><Csrf data={data}/><input type="hidden" name="return_to" value={data.return_to}/><p>Are you sure you want to revoke this {kind}?</p><button>Yes, Revoke</button></form></Dialog>;
 }
+type RecordRow = any;
+const serviceCell: GridColumn<RecordRow> = {key: 'service', header: 'Service', identifier: true, hideable: false, value: item => item.service?.name,
+  render: item => item.service?.service_key ? <a href={`/services/${encodeURIComponent(item.service.service_key)}`}>{item.service.name}</a> : item.service?.name};
+/** Header sort links for the POA&M and mitigation views, using the route's existing `sort`/`direction` parameters. */
+function recordSort(data: PageData, scoped: boolean): GridSort {
+  if (scoped || data.tab === 'exceptions' || !data.pagination_base) return {mode: 'none'};
+  const f = data.filters || {};
+  const key = f.sort === 'status' ? 'status' : f.sort === 'due' || f.sort === 'actionable' ? 'due' : undefined;
+  return {mode: 'server', key, direction: f.direction === 'desc' ? 'desc' : 'asc', sortable: ['due', 'status'], href: (column, direction) => {
+    const url = new URL(String(data.pagination_base), window.location.origin);
+    url.searchParams.set('sort', column); url.searchParams.set('direction', direction); url.searchParams.delete('page');
+    return url.pathname + url.search;
+  }};
+}
 function Records({data, scoped = false}: {data: PageData; scoped?: boolean}) {
-  if (data.tab === 'exceptions') return <section className="panel"><h2>Exceptions</h2><div className="table-wrap"><table><thead><tr>{['Service','Type','Finding','Severity','Status','Expires','Days remaining','Approved by','Action'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.exceptions.length ? data.exceptions.map((item: any, index: number) => <tr key={index}><td>{item.service.name}</td><td>{item.kind}</td><td><a href={item.href} title={item.justification}>{item.item}</a></td><td>{item.severity}</td><td><Status value={item.status}/></td><td>{item.expires_at || '—'}</td><td>{item.days_remaining ?? '—'}</td><td>{item.approved_by || '—'}</td><td>{item.revoke_href && item.status === 'Active' && can(data, 'exception.revoke', item.service.id) ? <Revoke data={data} action={item.revoke_href} kind="Exception"/> : '—'}</td></tr>) : <tr><td colSpan={9} className="empty">No exceptions are visible in your scope.</td></tr>}</tbody></table></div></section>;
+  const empty = <EmptyState kind={recordFiltersActive(data) ? 'filtered' : 'empty'} title={data.tab === 'exceptions' ? 'No exceptions are visible in your scope.' : 'No matching records are visible in your scope.'}/>;
+  if (data.tab === 'exceptions') {
+    const columns: GridColumn<RecordRow>[] = [serviceCell,
+      {key: 'type', header: 'Type', value: item => item.kind, render: item => item.kind},
+      {key: 'finding', header: 'Finding', hideable: false, value: item => item.item, render: item => <a href={item.href} title={item.justification}>{item.item}</a>},
+      {key: 'severity', header: 'Severity', type: 'severity', hideable: false, value: item => item.severity, render: item => <SeverityBadge severity={item.severity}/>},
+      {key: 'status', header: 'Status', hideable: false, value: item => item.status, render: item => <Status value={item.status}/>},
+      {key: 'expires', header: 'Expires', render: item => item.expires_at || '—'},
+      {key: 'days', header: 'Days remaining', type: 'number', render: item => item.days_remaining ?? '—'},
+      {key: 'approved', header: 'Approved by', render: item => item.approved_by || '—'},
+      {key: 'action', header: 'Action', render: item => item.revoke_href && item.status === 'Active' && can(data, 'exception.revoke', item.service.id) ? <Revoke data={data} action={item.revoke_href} kind="Exception"/> : '—'},
+    ];
+    return <section className="panel"><DataGrid id="remediation-exceptions" label="Exceptions" title="Exceptions" columns={columns} rows={data.exceptions} rowKey={(item, index) => `${item.kind}:${item.record_id ?? index}:${item.status}`} empty={empty} sort={{mode: 'none'}}/></section>;
+  }
   const mitigation = data.tab === 'mitigations', rows = mitigation ? data.mitigations : data.poams;
-  return <section className="panel"><h2>{mitigation ? 'Mitigations' : 'POA&Ms'}</h2><div className="table-wrap"><table><thead><tr>{['Service','Type / Finding','Title','Remediation','Status','Due date','Owner','Action'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{rows.length ? rows.map((item: any) => <tr key={item.id}><td>{item.service.name}</td><td>{title(item.item_type)}{item.finding && <><br/><a href={`/services/${encodeURIComponent(item.service.service_key)}/findings/${item.finding.id}`}>{item.finding.cve}</a><br/>{item.finding.severity}</>}{item.policy_finding && <><br/><a href={`/services/${encodeURIComponent(item.service.service_key)}?overview=false&finding_type=configuration`}>{item.policy_finding.finding}</a><br/>{item.policy_finding.severity}</>}</td><td className="wrap-text"><a href={`/poam/entries/${item.id}`}>{item.title}</a></td><td className="wrap-text">{item.remediation}</td><td><Status value={item.status}/></td><td>{item.due_date || '—'}</td><td>{item.created_by}</td><td>{item.status === 'active' && can(data,'poam.review',item.service_id) ? <>{scoped && !mitigation && <form method="post" action={`/poam/entries/${item.id}/close`}><Csrf data={data}/><input type="hidden" name="return_to" value={data.return_to}/><button>Close</button></form>}<Revoke data={data} action={`/poam/entries/${item.id}/revoke`} kind={mitigation ? 'Mitigation' : 'POA&M'}/></> : '—'}</td></tr>) : <tr><td colSpan={8} className="empty">No matching records are visible in your scope.</td></tr>}</tbody></table></div></section>;
+  const columns: GridColumn<RecordRow>[] = [serviceCell,
+    {key: 'finding', header: 'Type / Finding', wrap: true, minWidth: 140, render: item => <>{title(item.item_type)}{item.finding && <><br/><a href={`/services/${encodeURIComponent(item.service.service_key)}/findings/${item.finding.id}`}>{item.finding.cve}</a><br/><SeverityBadge severity={item.finding.severity}/></>}{item.policy_finding && <><br/><a href={`/services/${encodeURIComponent(item.service.service_key)}?overview=false&finding_type=configuration`}>{item.policy_finding.finding}</a><br/><SeverityBadge severity={item.policy_finding.severity}/></>}</>},
+    {key: 'title', header: 'Title', hideable: false, wrap: true, minWidth: 180, render: item => <a href={`/poam/entries/${item.id}`}>{item.title}</a>},
+    {key: 'remediation', header: mitigation ? 'Mitigation' : 'Remediation', wrap: true, minWidth: 200, render: item => item.remediation},
+    {key: 'status', header: 'Status', hideable: false, value: item => item.status, render: item => <Status value={item.status}/>},
+    {key: 'due', header: 'Due date', render: item => item.due_date || '—'},
+    {key: 'owner', header: 'Owner', render: item => item.created_by},
+    {key: 'action', header: 'Action', render: item => item.status === 'active' && can(data,'poam.review',item.service_id) ? <span className="row-actions">{scoped && !mitigation && <form method="post" action={`/poam/entries/${item.id}/close`}><Csrf data={data}/><input type="hidden" name="return_to" value={data.return_to}/><button>Close</button></form>}<Revoke data={data} action={`/poam/entries/${item.id}/revoke`} kind={mitigation ? 'Mitigation' : 'POA&M'}/></span> : '—'},
+  ];
+  return <section className="panel"><DataGrid id={mitigation ? 'remediation-mitigations' : 'remediation-poams'} label={mitigation ? 'Mitigations' : 'POA&Ms'} title={mitigation ? 'Mitigations' : 'POA&Ms'}
+    columns={columns} rows={rows} rowKey={item => item.id} empty={empty} sort={recordSort(data, scoped)}/></section>;
 }
 function Pagination({data}: {data: PageData}) {
-  return data.page_count > 1 ? <nav className="pagination" aria-label="Remediation pages"><span>Page {data.page} of {data.page_count} · {data.total_items} records</span>{data.page > 1 && <a href={`${data.pagination_base}&page=${data.page-1}`}>Previous</a>}{data.page < data.page_count && <a href={`${data.pagination_base}&page=${data.page+1}`}>Next</a>}</nav> : null;
+  if (!(data.page_count > 1)) return null;
+  const link = (page: number) => `${data.pagination_base}&page=${page}`;
+  return <nav className="pagination pager" aria-label="Remediation pages"><span className="pager-range">Page {data.page} of {data.page_count} · {data.total_items} records</span>
+    <span className="pagination-controls">{data.page > 1 ? <a className="secondary-button" href={link(data.page - 1)}>Previous</a> : <button type="button" className="secondary-button" disabled>Previous</button>}
+      {data.page < data.page_count ? <a className="secondary-button" href={link(data.page + 1)}>Next</a> : <button type="button" className="secondary-button" disabled>Next</button>}</span></nav>;
 }
+const statusOptions = ['all','active','pending_approval','overdue','completed','rejected','expired','revoked'];
+/** Filters that differ from the route defaults (sort and page size are view settings, not filters). */
+function recordFilters(data: PageData): ActiveFilter[] {
+  const f = data.filters || {};
+  const base = (() => {
+    const url = new URL(String(data.pagination_base || `/remediations?tab=${data.tab}`), 'http://cats.invalid');
+    return {pathname: url.pathname, search: url.search};
+  })();
+  const serviceName = (key: string) => data.services?.find((item: any) => item.service_key === key)?.name || key;
+  const entries: [string, string, string][] = [];
+  if (f.service) entries.push(['service', 'Service', serviceName(f.service)]);
+  for (const [key, label] of [['identifier', 'Identifier'], ['title', 'Title'], ['owner', 'Owner'], ['severity', 'Severity']]) if (f[key]) entries.push([key, label, f[key]]);
+  if (f.status_filter && f.status_filter !== 'all') entries.push(['status_filter', 'Status', title(f.status_filter)]);
+  for (const key of data.tab === 'exceptions' ? ['expiration_from', 'expiration_to'] : ['due_from', 'due_to']) if (f[key]) entries.push([key, title(key).replace(/^./, letter => letter.toUpperCase()), f[key].replace('T', ' ')]);
+  return entries.map(([key, label, value]) => ({key, label, value, removeHref: hrefWithout({[key]: null}, base)}));
+}
+const recordFiltersActive = (data: PageData) => recordFilters(data).length > 0;
 export function Page({data}: {data: PageData}) {
   const f = data.filters;
-  return <><section className="heading"><div><p className="eyebrow">GOVERNANCE WORKSPACE</p><h1>Remediations</h1><p>Review POA&amp;Ms, exceptions, and mitigations across your authorized services.</p></div><div className="heading-actions"><a className="secondary-button" href={`/poam/export.xlsx?${new URLSearchParams({service:f.service || '',status_filter:f.status_filter || 'all',due_overdue:String(f.status_filter === 'overdue')})}`}>Export POA&amp;Ms</a>{data.tab === 'poams' && !!data.poam_services.length && <Create data={data}/>}</div></section><section className="metrics">{[['poams','Active POA&Ms','poams_overdue'],['exceptions','Active Exceptions','exceptions_soon'],['mitigations','Active Mitigations','']].map(([key,label,extra]) => <a className="metric-card" key={key} href={`/remediations?tab=${key}`}><span>{label}</span><strong>{data.summary[key]}</strong>{extra && <small>{data.summary[extra]} {key === 'poams' ? 'overdue' : 'expiring soon'}</small>}</a>)}</section><nav className="service-tabs" aria-label="Remediation views">{[['poams','POA&Ms'],['exceptions','Exceptions'],['mitigations','Mitigations']].map(([key,label]) => <a key={key} className={data.tab === key ? 'active' : ''} href={`/remediations?tab=${key}`}>{label}</a>)}</nav><details className="remediation-filters"><summary>Filter records</summary><form method="get" action="/remediations"><input type="hidden" name="tab" value={data.tab}/><label>Service<select name="service" defaultValue={f.service || ''}><option value="">All authorized services</option>{data.services.map((item: any) => <option key={item.id} value={item.service_key}>{item.name}</option>)}</select></label>{[['identifier','Identifier'],['title','Title'],['owner','Owner'],['severity','Severity']].map(([key,label]) => <label key={key}>{label}<input name={key} defaultValue={f[key] || ''}/></label>)}<label>Status<select name="status_filter" defaultValue={f.status_filter}>{['all','active','pending_approval','overdue','completed','rejected','expired','revoked'].map(value => <option key={value} value={value}>{title(value)}</option>)}</select></label>{(data.tab === 'exceptions' ? ['expiration_from','expiration_to'] : ['due_from','due_to']).map(key => <label key={key}>{title(key)}<input name={key} type="datetime-local" defaultValue={f[key] || ''}/></label>)}<label>Sort<select name="sort" defaultValue={f.sort}>{['actionable','due','status'].map(value => <option key={value}>{value}</option>)}</select></label><label>Page size<select name="page_size" defaultValue={f.page_size}>{[25,50,100].map(value => <option key={value}>{value}</option>)}</select></label><button>Apply filters</button><a href={`/remediations?tab=${data.tab}`}>Clear</a></form></details><Pagination data={data}/><Records data={data}/><Pagination data={data}/></>;
+  const filters = recordFilters(data);
+  const clear = `/remediations?tab=${data.tab}`;
+  return <><PageHeader eyebrow="Governance workspace" title="Remediations" description="Review POA&Ms, exceptions, and mitigations across your authorized services."
+    actions={<><a className="secondary-button" href={`/poam/export.xlsx?${new URLSearchParams({service:f.service || '',status_filter:f.status_filter || 'all',due_overdue:String(f.status_filter === 'overdue')})}`}><Icon name="download"/>Export POA&amp;Ms</a>{data.tab === 'poams' && !!data.poam_services.length && <Create data={data}/>}</>}/>
+    <section className="metrics metric-grid-compact">{[['poams','Active POA&Ms','poams_overdue'],['exceptions','Active Exceptions','exceptions_soon'],['mitigations','Active Mitigations','']].map(([key,label,extra]) => <a className={`metric-card${data.tab === key ? ' selected' : ''}`} key={key} href={`/remediations?tab=${key}`} aria-current={data.tab === key ? 'true' : undefined}><span>{label}</span><strong>{data.summary[key]}</strong>{extra && <small>{data.summary[extra]} {key === 'poams' ? 'overdue' : 'expiring soon'}</small>}</a>)}</section>
+    <div className="workspace-tabs-row"><nav className="service-tabs" aria-label="Remediation views">{[['poams','POA&Ms'],['exceptions','Exceptions'],['mitigations','Mitigations']].map(([key,label]) => <a key={key} className={data.tab === key ? 'active' : ''} aria-current={data.tab === key ? 'page' : undefined} href={`/remediations?tab=${key}`}>{label}</a>)}</nav>
+      <div className="workspace-tabs-actions">
+        <FilterDrawer id="remediation-filters" action="/remediations" title="Filter records" activeCount={filters.length} resetHref={clear}
+          hidden={[['tab', data.tab], ...(f.direction ? [['direction', f.direction] as [string, string]] : [])]}>
+          <label>Service<select name="service" defaultValue={f.service || ''}><option value="">All authorized services</option>{data.services.map((item: any) => <option key={item.id} value={item.service_key}>{item.name}</option>)}</select></label>
+          {[['identifier','Identifier'],['title','Title'],['owner','Owner'],['severity','Severity']].map(([key,label]) => <label key={key}>{label}<input name={key} defaultValue={f[key] || ''}/></label>)}
+          <label>Status<select name="status_filter" defaultValue={f.status_filter}>{statusOptions.map(value => <option key={value} value={value}>{title(value)}</option>)}</select></label>
+          <div className="filter-pair">{(data.tab === 'exceptions' ? ['expiration_from','expiration_to'] : ['due_from','due_to']).map(key => <label className="filter-field" key={key}>{title(key)}<input name={key} type="datetime-local" defaultValue={f[key] || ''}/></label>)}</div>
+          <label>Sort<select name="sort" defaultValue={f.sort}>{['actionable','due','status'].map(value => <option key={value}>{value}</option>)}</select></label>
+          <label>Page size<select name="page_size" defaultValue={f.page_size}>{[25,50,100].map(value => <option key={value}>{value}</option>)}</select></label>
+        </FilterDrawer>
+      </div></div>
+    <FilterChips filters={filters} clearHref={clear}/>
+    <Pagination data={data}/><Records data={data}/><Pagination data={data}/></>;
 }
 export function Service({data}: {data: PageData}) {
   const root = `/services/${encodeURIComponent(data.service.service_key)}`;
@@ -275,7 +353,19 @@ return <div className="service-remediation-workspace"><ServiceHeader data={data}
 }
 const requestTypeLabels: Record<string, string> = {all: 'All', poam: 'POA&M', exception: 'Exception', archive: 'Archive'};
 export function Requests({data}: {data: PageData}) {
-  return <><section className="heading"><div><p className="eyebrow">CONTROLLED WORKFLOW</p><h1>Requests</h1><p>Exception, POA&amp;M, service archival, and container lifecycle approvals.</p></div></section><nav className="request-tabs" aria-label="Request type filters">{['all','poam','exception','archive'].map(key => <a key={key} className={data.request_type_filter === key ? 'selected' : ''} aria-current={data.request_type_filter === key ? 'page' : undefined} href={`/requests${key === 'all' ? '' : `?request_type=${key}`}`}>{requestTypeLabels[key]}</a>)}</nav><section className="panel"><div className="table-wrap"><table><thead><tr>{['Type','Service / item','Requester','Justification','Status','Review'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.workflows.length ? data.workflows.map((item: any) => <tr key={item.id}><td>{title(item.request_type)}</td><td><a href={item.poam_id ? `/poam/entries/${item.poam_id}` : `/services/${encodeURIComponent(item.service.service_key)}`}>{item.service.name}{item.poam_id && ' POA&M'}</a>{item.subject && <><br/><code>{item.subject}</code></>}{item.bulk_group && <small>Group-wide: {item.bulk_group.name}</small>}</td><td>{item.requested_by}</td><td className="workflow-justification"><span style={{whiteSpace:'pre-wrap'}}>{item.justification}</span>{item.ticket && <><br/><code>{item.ticket}</code></>}</td><td>{title(item.status)}</td><td>{item.can_review ? <Dialog button="Review" title="Review request"><form method="post" action={`/requests/${item.id}/review`}><Csrf data={data}/><p>{item.service.name} · {item.subject}</p>{item.bulk_group && <label><input type="checkbox" name="apply_bulk" value="yes"/> Confirm applying this exception to all matching services in {item.bulk_group.name}</label>}<label>Review note<textarea name="review_reason" placeholder="Optional approval note; required when rejecting"/></label><button name="decision" value="rejected" className="danger-button">Reject</button><button name="decision" value="approved">Approve</button></form></Dialog> : item.reviewed_by ? <>{item.reviewed_by}<br/>{item.review_reason}</> : '—'}</td></tr>) : <tr><td colSpan={6} className="empty">No matching requests.</td></tr>}</tbody></table></div></section></>;
+  const columns: GridColumn<any>[] = [
+    {key: 'type', header: 'Type', value: item => title(item.request_type), render: item => title(item.request_type)},
+    {key: 'service', header: 'Service / item', identifier: true, hideable: false, wrap: true, minWidth: 180, value: item => item.service.name,
+      render: item => <span className="cell-stack"><a href={item.poam_id ? `/poam/entries/${item.poam_id}` : `/services/${encodeURIComponent(item.service.service_key)}`}>{item.service.name}{item.poam_id && ' POA&M'}</a>{item.subject && <code>{item.subject}</code>}{item.bulk_group && <small>Group-wide: {item.bulk_group.name}</small>}</span>},
+    {key: 'requester', header: 'Requester', value: item => item.requested_by, render: item => item.requested_by},
+    {key: 'justification', header: 'Justification', wrap: true, minWidth: 240, maxWidth: 640, render: item => <span className="workflow-justification"><span style={{whiteSpace:'pre-wrap'}}>{item.justification}</span>{item.ticket && <><br/><code>{item.ticket}</code></>}</span>},
+    {key: 'status', header: 'Status', hideable: false, value: item => item.status, render: item => <StatusBadge value={item.status} label={title(item.status)} size="sm"/>},
+    {key: 'review', header: 'Review', wrap: true, minWidth: 120, render: item => item.can_review ? <Dialog button="Review" title="Review request"><form method="post" action={`/requests/${item.id}/review`}><Csrf data={data}/><p>{item.service.name} · {item.subject}</p>{item.bulk_group && <label><input type="checkbox" name="apply_bulk" value="yes"/> Confirm applying this exception to all matching services in {item.bulk_group.name}</label>}<label>Review note<textarea name="review_reason" placeholder="Optional approval note; required when rejecting"/></label><button name="decision" value="rejected" className="danger-button">Reject</button><button name="decision" value="approved">Approve</button></form></Dialog> : item.reviewed_by ? <span className="cell-stack"><span>{item.reviewed_by}</span>{item.review_reason && <small>{item.review_reason}</small>}</span> : '—'},
+  ];
+  return <><PageHeader eyebrow="Controlled workflow" title="Requests" description="Exception, POA&M, service archival, and container lifecycle approvals."/>
+    <nav className="request-tabs" aria-label="Request type filters">{['all','poam','exception','archive'].map(key => <a key={key} className={data.request_type_filter === key ? 'selected' : ''} aria-current={data.request_type_filter === key ? 'page' : undefined} href={`/requests${key === 'all' ? '' : `?request_type=${key}`}`}>{requestTypeLabels[key]}</a>)}</nav>
+    <section className="panel"><DataGrid id="requests" label="Requests" columns={columns} rows={data.workflows} rowKey={item => item.id} sort={{mode: 'client'}}
+      empty={<EmptyState title="No matching requests." kind={data.request_type_filter && data.request_type_filter !== 'all' ? 'filtered' : 'empty'}/>}/></section></>;
 }
 
 const ACTIVE = new Set(['queued','running','staged','publishing']);

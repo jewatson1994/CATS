@@ -23,7 +23,7 @@ describe('native service finding pages', () => {
   it('preserves CVE identity, CSRF and existing exception action when opening a request', () => {
     render(<Page data={fixture()} />);
     expect(screen.getByRole('link', { name: 'CVE-2026-42' })).toHaveAttribute('href', '/services/sample/findings/42');
-    expect(screen.getAllByRole('link', { name: 'Next' })[0]).toHaveAttribute('href', '/services/sample?findings_view=raw&severity=HIGH&page=2');
+    expect(screen.getAllByRole('link', { name: 'Next page' })[0]).toHaveAttribute('href', '/services/sample?findings_view=raw&severity=HIGH&page=2');
     expect(screen.getByRole('link', { name: '2.0 beta' })).toHaveAttribute('href', '/services/sample/history?version=2.0%20beta');
     fireEvent.click(screen.getByRole('button', { name: 'Request Exception' }));
     const dialog = screen.getByRole('dialog');

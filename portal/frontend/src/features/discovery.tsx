@@ -1,6 +1,7 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {requestJson, type PageData} from '../api';
 import '../styles/discovery.css';
+import {StageProgress} from '../components/ui';
 type Id = string | number;
 interface Job {id: string; status: string; stage?: string; progress?: number; group_id?: Id; error?: string; result?: {confirmed_inventory_id?: Id}}
 interface Root {id: string; path: string; technology: string; completeness?: unknown}
@@ -91,7 +92,13 @@ export function Page({data}: {data: PageData}) {
   const partial = inventory ? isPartial(inventory.completeness) || inventory.roots.filter(root => roots.includes(root.id)).some(root => isPartial(root.completeness)) : false;
   const jobGroup = job?.group_id == null ? group : String(job.group_id);
   const services = catalog.services.filter(item => String(item.group_id) === jobGroup);
-  return <div className="discovery-workspace"><section className="heading"><div><p className="eyebrow">DEPLOYMENT INTELLIGENCE</p><h1>Discovery</h1><p>Understand a deployment before you choose what to scan.</p></div><span className="badge">Discover → Review → Confirm → Scan</span></section>
+  return <div className="discovery-workspace"><section className="heading"><div><p className="eyebrow">DEPLOYMENT INTELLIGENCE</p><h1>Discovery</h1><p>Understand a deployment before you choose what to scan.</p></div></section>
+    <section className="panel padded discovery-progress" aria-label="Discovery workflow"><StageProgress label="Discovery workflow" stages={[
+      {key: 'discover', label: '1. Discover', state: !job ? 'pending' : job.status === 'failed' ? 'failed' : terminal.has(job.status) ? 'complete' : 'current', detail: job ? job.stage || job.status : 'Upload a source'},
+      {key: 'review', label: '2. Review', state: confirmed ? 'complete' : inventory ? 'current' : 'pending', detail: inventory ? `${inventory.images.length} images found` : 'Inventory appears after discovery'},
+      {key: 'confirm', label: '3. Confirm', state: confirmed ? 'complete' : 'pending', detail: confirmed ? 'Inventory recorded' : 'Associate with a service'},
+      {key: 'scan', label: '4. Scan', state: scanUrl ? 'current' : 'pending', detail: scanUrl ? <a href={scanUrl}>View scan progress</a> : confirmed ? 'Ready to start' : 'Separate action after confirmation'},
+    ]}/></section>
     <p className="discovery-intro">Upload a deployment, review its images, then choose what to scan. Discovery never runs repository scripts or deploys workloads.</p>
     {error && <div role="alert" className="notice notice-error">{error} <button type="button" className="secondary-button" onClick={() => {setError(''); setRefresh(value => value + 1);}}>Refresh</button></div>}
     <div className="discovery-layout"><aside><section className="panel"><h2>1. Discover a source</h2><form onSubmit={submit}>

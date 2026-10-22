@@ -3,7 +3,8 @@ import {OCIDistribution} from './oci_distribution';
 import {useEffect, useState, type FormEvent} from 'react';
 import {ReleaseRevision} from './release_revision';
 import {can, requestJson, type PageData} from '../api';
-import {StatusBadge} from '../components/ui';
+import {EmptyState, humanize, PageHeader, StageProgress, StatusBadge, type Stage} from '../components/ui';
+import {DataGrid, type GridColumn} from '../components/DataGrid';
 import {ServiceTabs} from '../components/ServiceHeader';
 import {AdminTabs, Heading} from './admin_shared';
 import './cyber_approvals.css';
@@ -154,6 +155,24 @@ export function Reassessment({data, row}: {data: PageData; row: Row}) {
   </section>;
 }
 
+/**
+ * Separates the automated technical assessment (the frozen evidence snapshot) from the human Cyber
+ * decision and from publication. Presentation of recorded states only; no state is derived or changed.
+ */
+function ReviewTrack({row, snapshot}: {row: Row; snapshot: Row}) {
+  const scanned = row.scan_date || snapshot.scan_date;
+  const decision = String(row.status || 'pending');
+  const publish = String(row.publish_status || 'not_started');
+  const stages: Stage[] = [
+    {key: 'assessment', label: 'Technical assessment', state: scanned ? 'complete' : 'pending', detail: scanned ? `Automated evidence snapshot · ${dateLabel(scanned)}` : 'Snapshot scan not recorded'},
+    {key: 'decision', label: 'Cyber decision', state: decision === 'approved' ? 'complete' : decision === 'denied' ? 'failed' : 'warning',
+      detail: decision === 'pending' ? 'Awaiting a human Cyber reviewer' : `${humanize(decision)}${row.decided_at ? ` · ${dateLabel(row.decided_at)}` : ''}`},
+    {key: 'publication', label: 'Publication', state: publish === 'published' ? 'complete' : publish === 'failed' ? 'failed' : ['publishing', 'queued', 'running', 'in_progress'].includes(publish) ? 'current' : decision === 'approved' ? 'warning' : 'pending',
+      detail: decision === 'approved' ? humanize(publish) : 'Starts after approval'},
+  ];
+  return <section className="panel padded review-track" aria-label="Review progress"><StageProgress stages={stages} label="Assessment, decision and publication"/></section>;
+}
+
 export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
   const resource = useResource(`/api/cyber-approvals/${encodeURIComponent(id)}`), row = resource.value;
   const snapshot = row?.snapshot || {};
@@ -164,6 +183,7 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <div><p className="eyebrow">CYBER REVIEW · REQUEST #{row.id}</p><h1>{row.service_name || row.service_key}</h1><p>{variantLabel(row.variant)} · Version {row.version || snapshot.version || 'Unknown'}</p><Badges row={row}/>{row.service_key&&<VexEvidence serviceKey={row.service_key}/>}</div>
         <div className="approval-review-context"><span>Snapshot scan</span><strong>{dateLabel(row.scan_date || snapshot.scan_date)}</strong><small>Frozen evidence · later service changes do not update this review.</small>{row.evidence_url && <a href={row.evidence_url}>Download retained evidence ↗</a>}</div>
       </section>
+      <ReviewTrack row={row} snapshot={snapshot}/>
       {!!snapshot.review_notes?.length && <section className="approval-review-notes panel padded"><h2>Cyber review considerations</h2><ul>{snapshot.review_notes.map((note: string, index: number) => <li key={index}>{note}</li>)}</ul></section>}
       <ServiceAtAGlance snapshot={snapshot}/>
       <ApprovalFindings findings={snapshot.findings} intelligence={snapshot.risk_intelligence}/>
@@ -195,7 +215,29 @@ function ApprovalList({data, serviceKey}: {data: PageData; serviceKey: string}) 
   const [status, setStatus] = useState('');
   const query = new URLSearchParams(); if (serviceKey) query.set('service', serviceKey); if (status) query.set('status', status);
   const resource = useResource(`/api/cyber-approvals?${query}`), rows = list(resource.value);
-  return <><section className="heading"><div><p className="eyebrow">CYBER REVIEW</p><h1>Approvals</h1><p>Review immutable service snapshots and track decisions independently of publication.</p></div><a className="secondary-button" href="/approved-releases">Approved Releases</a></section>{serviceKey && <><ServiceTabs serviceKey={serviceKey} active="approvals"/><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey} data={data} serviceKey={serviceKey}/></>}<section className="panel padded"><div className="panel-head"><h2>{serviceKey ? `${serviceKey} requests` : 'Approval queue'}</h2><label>Decision status<select value={status} onChange={event => setStatus(event.target.value)}><option value="">All decisions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label><button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button></div><ResourceState error={resource.error} pending={!resource.value && !resource.error}/>{resource.value && <><p>{resource.value.total ?? rows.length} requests</p><div className="table-wrap"><table><thead><tr>{['Service / snapshot', 'Variant', 'Requested', 'Decision', 'Publication'].map(name => <th key={name}>{name}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.id}><td><a href={`/cyber-approvals?id=${row.id}`}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}</a></td><td>{variantLabel(row.variant)}</td><td>{row.requested_at || '—'}</td><td><StatusBadge value={row.status}/></td><td><StatusBadge value={row.publish_status || 'not_started'}/></td></tr>)}</tbody></table></div>{!rows.length && <p>No requests match this view. Open a service and choose Request Cyber Approval to start a review.</p>}</>}</section></>;
+  const total = resource.value?.total ?? rows.length;
+  const columns: GridColumn<Row>[] = [
+    {key: 'service', header: 'Service / snapshot', identifier: true, hideable: false, value: row => `${row.service_name || row.service_key} ${row.version || ''}`,
+      render: row => <a href={`/cyber-approvals?id=${row.id}`}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}</a>},
+    {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
+    {key: 'requested', header: 'Requested', type: 'date', value: row => row.requested_at, render: row => row.requested_at || '—'},
+    {key: 'decision', header: 'Cyber decision', hideable: false, value: row => row.status, description: 'Human Cyber reviewer decision on the frozen snapshot',
+      render: row => <StatusBadge value={row.status} size="sm"/>},
+    {key: 'publication', header: 'Publication', value: row => row.publish_status || 'not_started', description: 'Delivery of approved artifacts (separate from the decision)',
+      render: row => <StatusBadge value={row.publish_status || 'not_started'} size="sm"/>},
+  ];
+  return <><PageHeader eyebrow="Cyber review" title="Approvals" description="Review immutable service snapshots and track decisions independently of publication."
+    actions={<a className="secondary-button" href="/approved-releases">Approved Releases</a>}/>
+    {serviceKey && <><ServiceTabs serviceKey={serviceKey} active="approvals"/><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey} data={data} serviceKey={serviceKey}/></>}
+    <section className="panel"><DataGrid<Row> id="cyber-approvals" label={serviceKey ? `${serviceKey} requests` : 'Approval queue'} title={serviceKey ? `${serviceKey} requests` : 'Approval queue'}
+      description={resource.value ? `${total} ${total === 1 ? 'request' : 'requests'}` : undefined}
+      toolbar={<label className="inline-field">Decision status<select value={status} onChange={event => setStatus(event.target.value)}><option value="">All decisions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label>}
+      trailingActions={<button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button>}
+      above={resource.error ? <ResourceState error={resource.error} pending={false}/> : null}
+      columns={columns} rows={rows} rowKey={row => row.id} loading={!resource.value && !resource.error}
+      // Sorting covers the dataset only when the API returned every matching request.
+      sort={total <= rows.length ? {mode: 'client'} : {mode: 'none'}}
+      empty={<EmptyState title="No requests match this view.">Open a service and choose Request Cyber Approval to start a review.</EmptyState>}/></section></>;
 }
 
 export function Releases({data}: {data: PageData}) {
@@ -205,8 +247,33 @@ export function Releases({data}: {data: PageData}) {
 function ReleaseList() {
   const serviceKey = new URLSearchParams(window.location.search).get('service') || '';
   const [query, setQuery] = useState(''), [variant, setVariant] = useState('');
-  const resource = useResource(`/api/approved-releases${serviceKey ? `?service=${encodeURIComponent(serviceKey)}` : ''}`), rows = list(resource.value).filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version}`.toLowerCase().includes(query.toLowerCase()));
-  return <><section className="heading"><div><p className="eyebrow">TRUSTED DELIVERY</p><h1>Approved Releases</h1><p>Cyber-approved snapshots, their publication progress, and immutable deployment artifacts.</p></div><a className="secondary-button" href="/cyber-approvals">Approvals</a></section>{serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}<section className="panel padded"><div className="approval-filters"><label>Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service or version"/></label><label>Variant<select value={variant} onChange={event => setVariant(event.target.value)}><option value="">All variants</option><option value="current_service">Current Service</option><option value="cats_remediated">CATS Remediated</option></select></label><button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button></div><ResourceState error={resource.error} pending={!resource.value && !resource.error}/><div className="approval-release-grid">{rows.map(row => <article className="approval-release-card" key={row.id}><h2><a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}</a></h2><p>{row.version || row.label} · {variantLabel(row.variant)}</p><Badges row={{...row, status: 'approved'}}/><p>Scan date: {row.scan_date || 'Not recorded'}</p><p>Destination: {row.destination?.name || 'Recorded in release'}</p></article>)}</div>{resource.value && !rows.length && <p>No approved releases match this view.</p>}</section></>;
+  const resource = useResource(`/api/approved-releases${serviceKey ? `?service=${encodeURIComponent(serviceKey)}` : ''}`), all = list(resource.value);
+  const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version}`.toLowerCase().includes(query.toLowerCase()));
+  const columns: GridColumn<Row>[] = [
+    {key: 'service', header: 'Service', identifier: true, hideable: false, value: row => row.service_name || row.service_key,
+      render: row => <a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}</a>},
+    {key: 'version', header: 'Version', value: row => row.version || row.label, render: row => row.version || row.label || '—'},
+    {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
+    {key: 'authorization', header: 'Authorization', hideable: false, value: row => row.revoked ? 'revoked' : row.validity_status, description: 'Whether the approval currently authorizes deployment',
+      render: row => row.revoked ? <StatusBadge value="revoked" label="Revoked" tone="danger" size="sm"/> : <StatusBadge value={row.validity_status || 'reapproval_required'} label={humanize(row.validity_status || 'reapproval_required')} size="sm"/>},
+    {key: 'publication', header: 'Publication', hideable: false, value: row => row.publish_status || 'not_started', render: row => <StatusBadge value={row.publish_status || 'not_started'} size="sm"/>},
+    {key: 'expires', header: 'Expires', type: 'date', value: row => row.expires_at, render: row => row.expires_at ? new Date(row.expires_at).toLocaleString() : '—'},
+    {key: 'scan', header: 'Scan date', type: 'date', value: row => row.scan_date, render: row => row.scan_date || 'Not recorded'},
+    {key: 'destination', header: 'Destination', value: row => row.destination?.name, render: row => row.destination?.name || 'Recorded in release'},
+  ];
+  const filtered = Boolean(query || variant);
+  return <><PageHeader eyebrow="Trusted delivery" title="Approved Releases" description="Cyber-approved snapshots, their publication progress, and immutable deployment artifacts."
+    actions={<a className="secondary-button" href="/cyber-approvals">Approvals</a>}/>
+    {serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}
+    <section className="panel"><DataGrid<Row> id="approved-releases" label="Approved releases" title="Approved releases"
+      description={resource.value ? `${rows.length} of ${all.length} releases` : undefined}
+      toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service or version"/></label>
+        <label className="inline-field">Variant<select value={variant} onChange={event => setVariant(event.target.value)}><option value="">All variants</option><option value="current_service">Current Service</option><option value="cats_remediated">CATS Remediated</option></select></label></div>}
+      trailingActions={<button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button>}
+      above={resource.error ? <ResourceState error={resource.error} pending={false}/> : null}
+      columns={columns} rows={rows} rowKey={row => row.id} loading={!resource.value && !resource.error} sort={{mode: 'client'}}
+      rowClassName={row => row.revoked ? 'row-revoked' : undefined}
+      empty={<EmptyState kind={filtered ? 'filtered' : 'empty'} title="No approved releases match this view."/>}/></section></>;
 }
 function ArtifactLinks({value}: {value: any}) {
   const rows = Array.isArray(value) ? value : value && typeof value === 'object' ? Object.entries(value).map(([name, url]) => ({name, url})) : [];
