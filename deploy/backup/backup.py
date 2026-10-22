@@ -74,7 +74,7 @@ def restore_verify(dump):
                 if not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*\.[A-Za-z_][A-Za-z_0-9]*', table):
                     raise ValueError('Invalid BACKUP_REQUIRED_TABLES identifier')
                 if run(sql + [f"SELECT to_regclass('{table}') IS NOT NULL"], env).strip() != 't':
-                    raise RuntimeError('Required portal table missing in restored backup')
+                    raise RuntimeError('Required table missing in restored backup')
             tables = run(sql + ["SELECT format('%I.%I', schemaname, tablename) FROM pg_tables "
                                 "WHERE schemaname NOT IN ('pg_catalog','information_schema') ORDER BY 1"], env).splitlines()
             for table in tables:

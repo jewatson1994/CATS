@@ -1,4 +1,5 @@
 """Discovery authorization, immutable evidence and existing scan admission."""
+from contextlib import nullcontext
 import hashlib
 import base64
 import json
@@ -178,14 +179,14 @@ def test_worker_rejects_source_identity_and_traversal(tmp_path,monkeypatch,token
         worker.handle(SimpleNamespace(),{'source_id':token,'filename':filename})
 
 
-def test_worker_checks_source_hash_before_rendering(tmp_path,monkeypatch):
+def test_worker_checks_source_hash_before_rendering(tmp_path,monkeypatch,api):
     monkeypatch.setenv('CATS_DISCOVERY_UPLOAD_ROOT',str(tmp_path))
     folder=tmp_path/('a'*32)
     folder.mkdir()
     with encrypted_writer(folder/'images.txt','a'*32) as stream:
         stream.write(b'nginx:1.2')
     with pytest.raises(JobError,match='integrity'):
-        worker.handle(SimpleNamespace(check=lambda:None,stage=lambda *args:None),{'source_id':'a'*32,'filename':'images.txt','source_hash':'0'*64})
+        worker.handle(SimpleNamespace(check=lambda:None,stage=lambda *args:None,session_factory=lambda: nullcontext(api[1])),{'source_id':'a'*32,'filename':'images.txt','source_hash':'0'*64})
 
 
 def test_upload_and_reference_admission_are_group_scoped(api):

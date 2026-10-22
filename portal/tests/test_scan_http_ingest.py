@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from test_scan_worker_coordination import database
 from app import main, scan_control, scan_protocol, scan_worker
-from app.models import Execution, Finding, Service
+from app.models import Execution, Finding, Group, Service
 
 
 def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, monkeypatch, tmp_path):
@@ -27,7 +27,8 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
     monkeypatch.setattr(scan_worker.shutil, 'which', lambda tool: None)
     scan_worker.STOP.clear()
     with database() as db:
-        service = Service(id=2, service_key='http-worker-service', name='HTTP Worker Service', manual_version='v1')
+        service = Service(id=2, service_key='http-worker-service', name='HTTP Worker Service', manual_version='v1',
+                          groups=[Group(name='HTTP worker owners')])
         db.add(service); db.commit()
         service_id = service.id
     job_id = main._start_public_scan('registry.invalid/app:1', ingest_service_id='http-worker-service', owner_user_id=17)

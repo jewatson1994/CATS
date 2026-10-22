@@ -212,7 +212,7 @@ def remediation_portal(monkeypatch, tmp_path):
     payload = {
         "schema_version": "1.0", "execution_id": "pipeline-1", "scanned_at": main.utcnow().isoformat(), "complete": True,
         "fixable_only": True, "artifact_type": "helm",
-        "service": {"id": "catalog", "name": "Catalog", "version": "1.4.0"},
+        "service": {"id": "catalog", "name": "Catalog", "version": "1.4.0", "groups": ["Remediation test group"]},
         "helm_source_files": {f"upload/{relative}": content for relative, content in CHART.items()},
         "service_overview": {"rendered_resources": resources},
         "findings": [{"cve": "CVE-2026-0001", "severity": "High", "image": image, "package": "openssl", "fixed_version": "3.0.9"}
@@ -330,7 +330,7 @@ def test_non_helm_remediation_retains_images_without_false_render_failures(remed
     payload = {
         "schema_version": "1.0", "execution_id": "non-helm-1", "scanned_at": main.utcnow().isoformat(),
         "complete": True, "fixable_only": True, "artifact_type": "image",
-        "service": {"id": "images", "name": "Images", "version": "1.0"},
+        "service": {"id": "images", "name": "Images", "version": "1.0", "groups": ["Remediation test group"]},
         "findings": [{"cve": "CVE-2026-0001", "severity": "High", "image": "registry.example/api:1",
                       "package": "openssl", "fixed_version": "3.0.9"}], "policy_findings": [],
     }

@@ -283,6 +283,8 @@ SERVICE_OVERVIEW=$(jq --slurpfile helm_warnings_input "$HELM_RENDER_WARNINGS_FIL
 # Architecture evidence can make this payload exceed the OS argument limit.
 SERVICE_OVERVIEW_FILE="$REPORT_TMP_DIR/service-overview.json"
 printf '%s\n' "$SERVICE_OVERVIEW" > "$SERVICE_OVERVIEW_FILE"
+python3 "$(dirname "$0")/extract-image-identities.py" sboms "$SERVICE_OVERVIEW_FILE"
+cp "$SERVICE_OVERVIEW_FILE" service-overview.json
 SBOM_COMPONENTS_FILE="$REPORT_TMP_DIR/sbom-components.json"
 python3 "$(dirname "$0")/extract-sbom-components.py" sboms "$SBOM_COMPONENTS_FILE"
 

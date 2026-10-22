@@ -83,6 +83,13 @@ def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
     # Serialize queue admission on PostgreSQL; the same database stores scans.
     if db.get_bind().dialect.name == "postgresql":
         db.execute(text("SELECT pg_advisory_xact_lock(73488294)"))
+        # Another transaction may have admitted this key while we waited.
+        # Recheck before capacity and insertion, including commit=False callers
+        # whose surrounding approval transaction must not be rolled back.
+        if dedupe_key:
+            existing = db.scalar(select(DurableJob).where(DurableJob.dedupe_key == dedupe_key))
+            if existing:
+                return existing
     count = db.scalar(select(func.count()).select_from(DurableJob).where(
         DurableJob.status.in_(("queued", "running"))))
     if count >= setting("CATS_JOB_QUEUE_CAPACITY", 200):

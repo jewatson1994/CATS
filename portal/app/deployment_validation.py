@@ -269,7 +269,12 @@ def attempt_resource_isolation(config: ValidationConfig, container: str, runner:
     for name, item in controls.items():
         entry = {"status": "UNAVAILABLE", "configured_limit": item["configured_limit"]}
         try:
-            updated = runner([config.docker_binary, "update", item["flag"], str(item["configured_limit"]), container], timeout=timeout, env=env)
+            arguments = [config.docker_binary, "update", item["flag"], str(item["configured_limit"])]
+            if name == "memory":
+                # Update both limits atomically; an inherited swap ceiling can
+                # otherwise reject a larger memory limit. Equal limits disable swap.
+                arguments.extend(["--memory-swap", str(item["configured_limit"])])
+            updated = runner([*arguments, container], timeout=timeout, env=env)
         except Exception as exc:
             entry.update(status="FAILED", reason=f"Docker limit update raised {type(exc).__name__}")
             warnings.append(f"{name}: {entry['reason']}")
@@ -1910,6 +1915,15 @@ class _IsolatedNodeTransport:
     def __init__(self, cfg: ValidationConfig, node: str, root: Path, kubeconfig: Path, run: CommandRunner):
         self.cfg, self.node, self.root, self.kubeconfig, self.run = cfg, node, root, kubeconfig, run
         self.tools: dict[str, str] = {}
+        # Docker archive copies into a mounted tmpfs can be invisible to exec.
+        self.node_root = PurePosixPath("/var/lib/cats-validation") / root.name
+
+    def _node_path(self, value: str) -> str:
+        try:
+            relative = Path(value).relative_to(self.root)
+        except ValueError:
+            return value
+        return str(self.node_root / PurePosixPath(relative.as_posix()))
 
     def prepare(self, *, timeout: float, env: Mapping[str, str]) -> CommandResult:
         for binary in (self.cfg.kubectl_binary, self.cfg.helm_binary):
@@ -1921,19 +1935,19 @@ class _IsolatedNodeTransport:
             if copied.returncode:
                 return copied
             self.tools[binary] = target
-        return self.run([self.cfg.docker_binary, "exec", self.node, "mkdir", "-m", "700", "-p", str(self.root)], timeout=timeout, env=env)
+        return self.run([self.cfg.docker_binary, "exec", self.node, "mkdir", "-m", "700", "-p", str(self.node_root)], timeout=timeout, env=env)
 
     def execute(self, argv: Sequence[str], *, timeout: float, env: Mapping[str, str]) -> CommandResult:
         # Docker copies validator-local files into the owned node. Host bind
         # mounts cannot access the validator container's temporary workspace.
-        copied = self.run([self.cfg.docker_binary, "cp", str(self.root) + "/.", f"{self.node}:{self.root}"], timeout=timeout, env=env)
+        copied = self.run([self.cfg.docker_binary, "cp", str(self.root) + "/.", f"{self.node}:{self.node_root}"], timeout=timeout, env=env)
         if copied.returncode:
             return copied
-        forwarded = [self.cfg.docker_binary, "exec", "--env", "KUBECONFIG=" + str(self.kubeconfig)]
+        forwarded = [self.cfg.docker_binary, "exec", "--env", "KUBECONFIG=" + self._node_path(str(self.kubeconfig))]
         for key in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO", "AWS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
             if key in env:
-                forwarded.extend(["--env", key + "=" + env[key]])
-        forwarded.extend([self.node, self.tools[argv[0]], *argv[1:]])
+                forwarded.extend(["--env", key + "=" + self._node_path(env[key])])
+        forwarded.extend([self.node, self.tools[argv[0]], *(self._node_path(value) for value in argv[1:])])
         return self.run(forwarded, timeout=timeout, env=env)
 
 
@@ -2214,7 +2228,7 @@ def validate_artifact(artifact: ValidationArtifact | Mapping[str, Any], *, confi
                     runtime_image = "docker.io/" + image
                 if "@" not in runtime_image and ":" not in runtime_image.rsplit("/", 1)[-1]:
                     runtime_image += ":latest"
-                inspected = command([cfg.docker_binary, "exec", f"{cluster}-control-plane", "ctr", "--namespace=k8s.io", "images", "check", "--quiet", "--filter", f"name=={runtime_image}"], cfg.collect_timeout_seconds, "kind_archive_verify", env)
+                inspected = command([cfg.docker_binary, "exec", f"{cluster}-control-plane", "ctr", "--namespace=k8s.io", "images", "check", "--quiet", f"name=={runtime_image}"], cfg.collect_timeout_seconds, "kind_archive_verify", env)
                 if inspected.returncode or runtime_image not in inspected.stdout.splitlines():
                     return finish(ValidationStatus.COULD_NOT_VALIDATE, FailureCategory.IMAGE_PULL_FAILURE, "A bundled image was not confirmed complete in the Kind container runtime.")
                 result["offline"]["loaded_images"].append(image)

@@ -382,7 +382,7 @@ def valid_until(db, ids, configurations, now) -> dict[int, datetime | None]:
 
     if ids:
         from .native_vex_models import VexDispositionService as VS, VexDispositionEvaluation as VE
-        for sid, expiry in db.execute(select(VS.service_id, VE.valid_until).join(VE, VE.id == VS.evaluation_id).where(VS.service_id.in_(ids), VE.valid_until > now)):
+        for sid, expiry in db.execute(select(VS.service_id, VE.valid_until).join(VE, VE.id == VS.evaluation_id).where(member_of(VS.service_id, ids, numeric=True), VE.valid_until > now)):
             boundaries[sid].append(_aware(expiry))
         gather(Finding, finding_offsets or {90})
         gather(PolicyFinding, policy_offsets or {90})
@@ -485,7 +485,7 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
         epoch, token = current_epoch(db), _intelligence_token(db)
         from .native_vex_models import VexDispositionService
         vex_generations = dict(db.execute(select(VexDispositionService.service_id,
-            VexDispositionService.generation).where(VexDispositionService.service_id.in_(ids))).all())
+            VexDispositionService.generation).where(member_of(VexDispositionService.service_id, ids, numeric=True))).all())
         now = _aware(now) if now is not None else _aware(m.utcnow())
         columns = (Service.id, Service.name, Service.service_key, Service.owner, Service.poc,
                    Service.manual_version, Service.lifecycle_status)
@@ -550,6 +550,7 @@ def schedule(bind, service_ids, kinds=KINDS):
 # ---------------------------------------------------------------- reading
 
 def _read(db, kind, ids):
+    from .native_vex_models import VexDispositionService
     row_column = _column(kind, "row")
     rows = {}
     for chunk in _chunks(ids):
@@ -558,7 +559,9 @@ def _read(db, kind, ids):
                 _column(kind, "built_generation").label("built"), _column(kind, "algorithm").label("algorithm"),
                 _column(kind, "epoch").label("epoch"), _column(kind, "token").label("token"),
                 _column(kind, "config_digest").label("digest"), _column(kind, "valid_until").label("until"),
-                row_column.label("row")).where(member_of(ServicePosture.service_id, chunk, numeric=True))):
+                row_column.label("row"), VexDispositionService.generation.label("vex_generation"))
+                .outerjoin(VexDispositionService, VexDispositionService.service_id == ServicePosture.service_id)
+                .where(member_of(ServicePosture.service_id, chunk, numeric=True))):
             rows[row.service_id] = row
     return rows
 
@@ -566,11 +569,7 @@ def _read(db, kind, ids):
 def _classify(db, rows, service_ids, configurations, now):
     """(stale, missing) service ids against the current provenance."""
     token, epoch = _intelligence_token(db), current_epoch(db)
-    from .native_vex_models import VexDispositionService
-    vex_generations = {}
-    for chunk in _chunks(service_ids):
-        vex_generations.update(dict(db.execute(select(VexDispositionService.service_id,
-            VexDispositionService.generation).where(VexDispositionService.service_id.in_(chunk))).all()))
+    vex_generations = {sid: row.vex_generation for sid, row in rows.items()}
     stale, missing = [], []
     for sid in service_ids:
         row = rows.get(sid)
@@ -616,8 +615,8 @@ def _load(db, kind, service_ids, configurations, now):
                 schedule(db.get_bind(), raced, kinds=(kind,))
         deferred = deferred + raced
     from .native_vex_models import VexDispositionPolicy
-    native_enabled = bool(db.scalar(select(VexDispositionPolicy.enabled).where(VexDispositionPolicy.id == 1)))
-    current_token = _intelligence_token(db)
+    native_enabled = bool(deferred) and bool(db.scalar(select(VexDispositionPolicy.enabled).where(VexDispositionPolicy.id == 1)))
+    current_token = _intelligence_token(db) if deferred else None
     for sid in deferred:
         # An enabled exclusion or changed policy/intelligence cannot be served
         # from stale counts. Preserve the legacy stale-cache behavior otherwise.

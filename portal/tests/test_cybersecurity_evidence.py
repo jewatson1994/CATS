@@ -111,7 +111,7 @@ def test_every_value_keeps_its_cast_or_uses_services_normalization(pre16, monkey
 def ingest(client, key, evidence):
     body = {"schema_version": "1.0", "execution_id": f"{key}-1", "scanned_at": (datetime.now(timezone.utc) - timedelta(days=200)).isoformat(),
             "complete": True, "skipped_images": [], "fixable_only": True,
-            "service": {"id": key, "name": key.title(), "version": "1", "poc": "poc@example.invalid"},
+            "service": {"id": key, "name": key.title(), "version": "1", "poc": "poc@example.invalid", "groups": ["Test group"]},
             "findings": [{"cve": f"CVE-2024-{index:04d}", "severity": "High", "image": "registry/app:1", "package": "openssl",
                           "fixed_version": "9.9", "evidence": item} for index, item in enumerate(evidence)]}
     assert client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers).status_code == 201

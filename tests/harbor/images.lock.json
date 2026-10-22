@@ -1,0 +1,63 @@
+{
+  "goharbor/harbor-core:v2.15.4": {
+    "id": "sha256:7d2ba5304a729887cdec7cb222a82b500278423de230ae5150c386a6c332b112",
+    "repo_digests": [
+      "goharbor/harbor-core@sha256:7d2ba5304a729887cdec7cb222a82b500278423de230ae5150c386a6c332b112"
+    ]
+  },
+  "goharbor/harbor-db:v2.15.4": {
+    "id": "sha256:a32d51e636d76303e086a7c5251a2c8415c6f165b2f87bafa914efd866c5403f",
+    "repo_digests": [
+      "goharbor/harbor-db@sha256:a32d51e636d76303e086a7c5251a2c8415c6f165b2f87bafa914efd866c5403f"
+    ]
+  },
+  "goharbor/harbor-jobservice:v2.15.4": {
+    "id": "sha256:f143578ef30e2be5c48873298257ed0fca31545025958c534e536a06765d2b82",
+    "repo_digests": [
+      "goharbor/harbor-jobservice@sha256:f143578ef30e2be5c48873298257ed0fca31545025958c534e536a06765d2b82"
+    ]
+  },
+  "goharbor/harbor-log:v2.15.4": {
+    "id": "sha256:bd5879d2c0f9c63c2d0e6650bbf03a9b644d110e4855bc39f798193a1fff8289",
+    "repo_digests": [
+      "goharbor/harbor-log@sha256:bd5879d2c0f9c63c2d0e6650bbf03a9b644d110e4855bc39f798193a1fff8289"
+    ]
+  },
+  "goharbor/harbor-portal:v2.15.4": {
+    "id": "sha256:01edf478505b21dba23a83c095f6ecac0c1e705690093edbab41e9a4d6754a75",
+    "repo_digests": [
+      "goharbor/harbor-portal@sha256:01edf478505b21dba23a83c095f6ecac0c1e705690093edbab41e9a4d6754a75"
+    ]
+  },
+  "goharbor/harbor-registryctl:v2.15.4": {
+    "id": "sha256:30bd1ace4e3bb390d75b84673f98ddb4a69fcc6d116932ea764391df01943fb7",
+    "repo_digests": [
+      "goharbor/harbor-registryctl@sha256:30bd1ace4e3bb390d75b84673f98ddb4a69fcc6d116932ea764391df01943fb7"
+    ]
+  },
+  "goharbor/nginx-photon:v2.15.4": {
+    "id": "sha256:7eff0287d5ad0f35754e162c8481ced04bbde107153ce586cefb15ee74fa1311",
+    "repo_digests": [
+      "goharbor/nginx-photon@sha256:7eff0287d5ad0f35754e162c8481ced04bbde107153ce586cefb15ee74fa1311"
+    ]
+  },
+  "goharbor/registry-photon:v2.15.4": {
+    "id": "sha256:dc0cb388a6445c69c8a0c406679290d2991c9698833d9e6e86a23bdfaf2f83c3",
+    "repo_digests": [
+      "goharbor/registry-photon@sha256:dc0cb388a6445c69c8a0c406679290d2991c9698833d9e6e86a23bdfaf2f83c3"
+    ]
+  },
+  "goharbor/valkey-photon:v2.15.4": {
+    "id": "sha256:bb022e8f236f56f53cee7bb1f609595e497da67d829048e0af2284f97e6eb54f",
+    "repo_digests": [
+      "goharbor/valkey-photon@sha256:bb022e8f236f56f53cee7bb1f609595e497da67d829048e0af2284f97e6eb54f"
+    ]
+  },
+  "cats-harbor-prepare:v2.15.4": {
+    "id": "sha256:79b5614d0d02b5d2c6c9b7b9755f5caaea882797353bfcb6421f77e6d69cc317",
+    "repo_digests": [
+      "goharbor/prepare@sha256:79b5614d0d02b5d2c6c9b7b9755f5caaea882797353bfcb6421f77e6d69cc317",
+      "cats-harbor-prepare@sha256:79b5614d0d02b5d2c6c9b7b9755f5caaea882797353bfcb6421f77e6d69cc317"
+    ]
+  }
+}

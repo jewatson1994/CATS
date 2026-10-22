@@ -153,7 +153,7 @@ while read IMAGE; do
   # separately; labels are evidence, never inferred vendor product identities.
   docker image inspect "$IMAGE" | jq '.[0] | {
     imageID: .Id, repoDigests: .RepoDigests, architecture: .Architecture,
-    os: .Os, labels: (.Config.Labels // {})}
+    os: .Os, variant: .Variant, descriptor: .Descriptor, labels: (.Config.Labels // {})}
     | if (tojson | utf8bytelength) <= 32768 then . else null end' \
     > "sboms/${SAFE_NAME}.provenance"
 

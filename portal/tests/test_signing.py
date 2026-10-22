@@ -209,9 +209,16 @@ def test_worker_signing_is_portal_push_only_and_failure_is_terminal(keys, monkey
             raise RuntimeError("Signature verification failed")
         return {"signature_status": "verified", "signature": {"image": reference, "key_fingerprint": cfg["signing_fingerprint"]}}
     monkeypatch.setattr(patch_worker, "sign_and_verify", sign)
+    attested = []
+    def attest_patch(reference, before, after, archive, signing_material, env):
+        assert reference == REFERENCE and all(path.is_file() for path in (before, after, archive))
+        attested.append(reference)
+        return [{"status": "verified", "purpose": "scan"}, {"status": "verified", "purpose": "patch"}]
+    monkeypatch.setattr(patch_worker, "attest_patch_evidence", attest_patch)
     code, output, state, calls = run_worker(monkeypatch, tmp_path, config, grype_report([]), grype_report([]), push_digest=DIGEST)
     result = json.loads((output / "patch-result.json").read_text())
     assert len(invoked) == int(mode == "push" and enabled)
+    assert len(attested) == int(mode == "push" and enabled and not failure)
     if failure:
         assert code == 1 and state["failed_stage"] == "signing_image"
         assert result["signature_status"] == "failed" and result["immutable_destination"] == REFERENCE
@@ -308,7 +315,7 @@ def test_remote_worker_passes_signing_secrets_only_through_environment(keys, mon
     monkeypatch.setattr(patch_service, "TOKEN", "worker-token")
     captured = {}
     def popen(args, **kw):
-        captured.update(kw)
+        captured.update({**kw, "env": dict(kw["env"])})
         return SimpleNamespace(poll=lambda: None)
     monkeypatch.setattr(patch_service.subprocess, "Popen", popen)
     monkeypatch.setattr(patch_service.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: None))
@@ -418,3 +425,20 @@ def test_group_policy_cannot_be_written_outside_administrators_scope():
                                      csrf_token='csrf', db=db, auth=actor)
         assert exc.value.status_code == 403
         assert db.scalar(select(PortalSetting).where(PortalSetting.group_id == other.id)) is None
+
+
+
+def test_worker_attestation_failure_is_terminal(keys, monkeypatch, tmp_path):
+    config, credentials = material(keys)
+    config.update(job_id="attest-failure", source_mode="oci", source_image="alpine:3.20",
+                  output_mode="push", destination_image="registry.example/team/alpine:patched")
+    for name, value in credentials.items(): monkeypatch.setenv(name, value)
+    monkeypatch.setattr(patch_worker, "sign_and_verify", lambda *args: {
+        "signature_status": "verified", "signature": {"image": REFERENCE}})
+    def failed(*args): raise RuntimeError("Attestation verification failed")
+    monkeypatch.setattr(patch_worker, "attest_patch_evidence", failed)
+    code, output, state, _ = run_worker(monkeypatch, tmp_path, config, grype_report([]),
+                                       grype_report([]), push_digest=DIGEST)
+    result = json.loads((output / "patch-result.json").read_text())
+    assert code == 1 and state["failed_stage"] == "signing_image"
+    assert result["signature_status"] == "failed" and result["delivery_status"] == "failed"

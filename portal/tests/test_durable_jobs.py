@@ -95,11 +95,21 @@ def test_job_scope_counts_details_revocation_and_cancel():
     assert client.post('/api/v1/jobs/' + ids[0] + '/cancel', json={'csrf_token': csrf(client)}).status_code == 200
     with SessionLocal() as db:
         grants = db.scalars(select(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id)).all()
+        unrelated = Service(service_key='unrelated-access', name='Unrelated access')
+        db.add(unrelated); db.flush()
+        role_id = grants[0].role_id
         for grant in grants: db.delete(grant)
+        db.add(UserRoleAssignment(user_id=user.id, role_id=role_id, service_id=unrelated.id))
         db.commit()
     assert client.get('/api/v1/jobs/' + ids[0]).status_code == 404
     assert client.get('/api/v1/jobs/' + ids[3]).status_code == 404
     assert client.get('/api/v1/jobs').json()['counts']['queued'] == 0
+    with SessionLocal() as db:
+        for grant in db.scalars(select(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id)):
+            db.delete(grant)
+        db.commit()
+    assert client.get('/api/v1/jobs').status_code == 403
+    assert client.get('/api/v1/jobs/' + ids[0]).status_code == 403
 
 
 def test_jobs_page_envelope_and_no_unsafe_execute_cancellation():

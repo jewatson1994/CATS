@@ -12,10 +12,14 @@ from pathlib import Path
 
 from .admin_config import OS_DEFINITIONS, resolve_policy, write_repository_config
 from .signing import SECRET_ENV, clean_environment, sign_and_verify
+from .oci_attestations import attest_patch_evidence
 from .remediation import summarize_grype_reports
+from .scanner_inputs import bind_scanner_snapshot, snapshot_digest
+from .patch_inputs import consume_binding, default_binding_root, system_ca_bundle
+from .patch_ownership import execution_lock, ExecutionAlreadyOwned
 from .patching import (
     PATCH_PHASES,
-    archive_sha256, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
+    archive_sha256, image_repository, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
     redact, registry_host, repository_cleanup_script, repository_overlay_script,
     run_command, validate_image_archive, initial_patch_stages, advance_patch_stages,
 )
@@ -40,10 +44,63 @@ def runtime_commit_command(container: str, destination: str, configuration: dict
     return [*command, container, destination]
 
 
+def retained_manifest_metadata(run, reference: str) -> dict:
+    """Read exact registry descriptors; missing/index metadata stays ineligible."""
+    if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", reference):
+        return {}
+    try:
+        result = run(["docker", "manifest", "inspect", "--verbose", reference])
+        manifest = json.loads(result.stdout)
+        descriptor = manifest.get("Descriptor", {}) if isinstance(manifest, dict) else {}
+        platform = descriptor.get("platform") or {}
+        media = descriptor.get("mediaType")
+        if descriptor.get("digest") != reference.rsplit("@", 1)[1] or media not in {
+            "application/vnd.oci.image.manifest.v1+json", "application/vnd.docker.distribution.manifest.v2+json"}:
+            return {}
+        parts = [platform.get("os"), platform.get("architecture")]
+        if not all(isinstance(value, str) and re.fullmatch(r"[a-z0-9_.-]+", value) for value in parts):
+            return {}
+        variant = platform.get("variant")
+        if variant:
+            if not isinstance(variant, str) or not re.fullmatch(r"[a-z0-9_.-]+", variant):
+                return {}
+            parts.append(variant)
+        return {"media_type": media, "platform": "/".join(parts)}
+    except PatchCancelled:
+        raise
+    except Exception:
+        return {}
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         raise SystemExit("usage: python -m app.patch_worker CONFIG OUTPUT")
-    config_path, output = Path(sys.argv[1]), Path(sys.argv[2])
+    output = Path(sys.argv[2])
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        with execution_lock(output / "execution.lock"):
+            # A job ID denotes one attempt. Never replay a terminal attempt,
+            # including one whose caller lost the completion response.
+            state_path = output / "patch-state.json"
+            if state_path.exists():
+                try:
+                    previous = json.loads(state_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    return 75
+                if not isinstance(previous, dict):
+                    return 75
+                if previous.get("status") in {"complete", "completed", "failed", "cancelled"}:
+                    return 0 if previous["status"] in {"complete", "completed"} else 2
+            return execute()
+    except ExecutionAlreadyOwned:
+        # Never overwrite the live owner's state or publish a second result.
+        return 75
+
+
+def execute() -> int:
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: python -m app.patch_worker CONFIG OUTPUT")
+    config_path, output = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
     output.mkdir(parents=True, exist_ok=True)
     config = json.loads(config_path.read_text(encoding="utf-8"))
     signing_credentials = {name: os.environ.pop(name, "") for name in SECRET_ENV}
@@ -90,15 +147,7 @@ def main() -> int:
     custom_bundle = workspace / "custom-ca.pem"
     repository_root = workspace / "repository-config"
     configured_certificates = config.get("trusted_ca_certificates") or []
-    system_candidates = [Path("/etc/ssl/certs/ca-certificates.crt")]
-    try:
-        import certifi
-        system_candidates.append(Path(certifi.where()))
-    except Exception:
-        pass
-    system_ca = next((path.read_text(encoding="utf-8") for path in system_candidates if path.is_file()), "")
-    if not system_ca.strip():
-        raise RuntimeError("Patch worker system CA bundle is unavailable")
+    system_ca = system_ca_bundle()
     custom_ca = "\n".join(
         str(item.get("pem", "")) for item in configured_certificates
         if isinstance(item, dict) and str(item.get("pem", "")).strip()
@@ -116,6 +165,8 @@ def main() -> int:
     env["GRYPE_REGISTRY_CA_CERT"] = str(trusted_bundle)
     env["GRYPE_DB_CA_CERT"] = str(trusted_bundle)
     timeout = int(os.getenv("CATS_PATCH_COMMAND_TIMEOUT", "1800"))
+    source_metadata = {}
+    output_metadata = {}
     source_ref = ""
     patched_ref = ""
     created_images: list[str] = []
@@ -136,8 +187,36 @@ def main() -> int:
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
 
+    def check_cancelled():
+        if (output / "cancel.requested").exists():
+            raise PatchCancelled("Patch cancellation requested")
+
+    scanner_binding = None
+    execution_binding = None
+
     def run(command, **kwargs):
-        return run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), **kwargs)
+        check_cancelled()
+        bound_scan = scanner_binding is not None and command[0] == "grype"
+        if bound_scan:
+            scanner_binding.verify()
+        bound_trivy = execution_binding is not None and command[0] == "trivy"
+        def verify_trivy():
+            for name in ("db", "java-db"):
+                retained = execution_binding.root / "trivy" / name
+                if retained.exists() and snapshot_digest(retained) != snapshot_digest(workspace / "trivy" / name):
+                    raise RuntimeError("Bound Trivy database changed")
+        if bound_trivy:
+            verify_trivy()
+        if execution_binding is not None:
+            kwargs["cwd"] = workspace
+            if command[0] in {"grype", "syft", "trivy"}:
+                command = [command[0], "--config", str(workspace / "scanner-config.yaml"), *command[1:]]
+        result = run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), checkpoint=check_cancelled, **kwargs)
+        if bound_scan:
+            scanner_binding.verify()
+        if bound_trivy:
+            verify_trivy()
+        return result
 
     def extract_scan_root(reference: str, label: str) -> Path:
         """Use identical filesystem coverage on both sides without starting the image."""
@@ -160,12 +239,35 @@ def main() -> int:
         run(["docker", "login", registry, "--username", username, "--password-stdin"], stdin=password + "\n")
 
     try:
+        execution_binding = consume_binding(config, default_binding_root())
+        if execution_binding is not None:
+            for key in list(env):
+                if key.startswith(("GRYPE_", "SYFT_", "TRIVY_", "DOCKLE_")):
+                    env.pop(key)
+            (workspace / "scanner-config.yaml").write_text("{}\n", encoding="utf-8")
+            env.update(HOME=str(workspace), XDG_CONFIG_HOME=str(workspace),
+                       GRYPE_REGISTRY_CA_CERT=str(trusted_bundle), GRYPE_DB_CA_CERT=str(trusted_bundle),
+                       GRYPE_CHECK_FOR_APP_UPDATE="false", SYFT_CHECK_FOR_APP_UPDATE="false",
+                       GRYPE_DB_MAX_ALLOWED_BUILT_AGE=str(execution_binding.manifest["spec"].get("scanner_max_age_hours", 120)) + "h")
+            if "trivy" in execution_binding.manifest.get("auxiliary_scanners", {}):
+                shutil.copytree(execution_binding.root / "trivy", workspace / "trivy")
+                env["TRIVY_CACHE_DIR"] = str(workspace / "trivy")
+            env["CATS_PATCH_GRYPE_DB_SNAPSHOT"] = str(execution_binding.scanner_root)
+            env["CATS_PATCH_GRYPE_DB_DIGEST"] = execution_binding.identity["scanner_database_digest"]
+        scanner_binding = bind_scanner_snapshot(env, workspace)
         state("running", "acquiring_image")
         source_mode = config.get("source_mode")
         if source_mode == "oci":
             source_ref = str(config["source_image"])
             login_for(source_ref, os.getenv("CATS_PATCH_SOURCE_USERNAME", ""), os.getenv("CATS_PATCH_SOURCE_PASSWORD", ""))
-            run(["docker", "pull", source_ref])
+            pulled = run(["docker", "pull", source_ref])
+            digest = re.search(r"\bDigest:\s*(sha256:[0-9a-f]{64})\b", pulled.stdout or "", re.IGNORECASE)
+            if digest:
+                repository = source_ref.split("@", 1)[0]
+                if repository.rfind(":") > repository.rfind("/"):
+                    repository = repository.rsplit(":", 1)[0]
+                source_ref = repository + "@" + digest.group(1).lower()
+            source_metadata = retained_manifest_metadata(run, source_ref)
         elif source_mode == "upload":
             archive = Path(config["archive_path"])
             validate_image_archive(archive)
@@ -225,6 +327,8 @@ def main() -> int:
                 f"package_manager={package_manager or 'unknown'} "
                 f"package_manager_strategy={manager or 'unknown'}"
             )
+        except PatchCancelled:
+            raise
         except Exception as exc:
             package_probe_exit_code = "1"
             capability_reason = f"Package capability detection failed for {os_id or 'unknown'} image: {redact(exc, secrets)}"
@@ -256,19 +360,34 @@ def main() -> int:
                 raise RuntimeError("Source image runtime configuration could not be retained")
             trusted_image_ref = f"cats-trust-{config['job_id']}:base"
             trust_container = f"cats-trust-{config['job_id']}"
-            run(["docker", "run", "-d", "--name", trust_container, "--entrypoint", "sh", source_ref, "-c", "while :; do sleep 60; done"])
+            created_containers.append(trust_container)
+            network_args = ["--network", execution_binding.manifest["spec"]["network"]] if execution_binding else []
+            run(["docker", "run", "-d", *network_args, "--name", trust_container, "--entrypoint", "sh", source_ref, "-c", "while :; do sleep 60; done"])
+            if execution_binding:
+                repository_policy = resolve_policy(os_id, config.get("repository_policies") or {})
+                repo_file = write_repository_config(repository_policy, repository_root, os_id, manager)
+                if not repo_file:
+                    raise RuntimeError("Bound execution requires an explicit repository overlay before trust preparation")
+                repository_manager = manager
+                run(["docker", "cp", str(repo_file), f"{trust_container}:/tmp/cats-repository"])
+                run(["docker", "exec", trust_container, "sh", "-c", repository_overlay_script(
+                    manager, repository_policy["verify_tls"], repository_policy["verify_packages"], repository_marker
+                )])
             run(["docker", "cp", str(trusted_bundle), f"{trust_container}:/tmp/cats-patch-ca-bundle.pem"])
             if custom_ca:
                 run(["docker", "cp", str(custom_bundle), f"{trust_container}:/tmp/cats-custom-ca.pem"])
             run(["docker", "exec", trust_container, "sh", "-c", certificate_trust_script(manager, ca_marker)])
             run(runtime_commit_command(trust_container, trusted_image_ref, runtime_configuration))
             run(["docker", "rm", "--force", trust_container])
+            created_containers.remove(trust_container)
             created_images.append(trusted_image_ref)
             source_for_patch = trusted_image_ref
+            if execution_binding:
+                policy_image_ref = trusted_image_ref
             log(f"Applied public trust and {len(configured_certificates)} centrally configured CA certificate(s) to a temporary {manager} patch image.")
         elif configured_certificates:
             log(f"Skipping target CA injection: {capability_reason}")
-        if os_id and manager:
+        if os_id and manager and not execution_binding:
             repository_policy = resolve_policy(os_id, config.get("repository_policies") or {})
             repo_file = write_repository_config(repository_policy, repository_root, os_id, manager)
             if repo_file:
@@ -332,7 +451,18 @@ def main() -> int:
 
         state("running", "patching_image", source_image=source_ref)
         if native["updates"]:
-            run(copa_command(source_for_patch, native_path, patched_tag, os.getenv("CATS_COPA_TIMEOUT", "30m")))
+            copa_source = execution_binding.stage_source(source_for_patch) if execution_binding is not None else source_for_patch
+            command = copa_command(copa_source, native_path, patched_tag, os.getenv("CATS_COPA_TIMEOUT", "30m"))
+            if execution_binding is not None:
+                execution_binding.verify()
+                command.extend(["--addr", execution_binding.buildkit_addr])
+            run(command)
+            if execution_binding is not None:
+                execution_binding.verify()
+                staged_output = copa_source.split("@", 1)[0] + ":" + patched_tag
+                expected_output = image_repository(source_for_patch) + ":" + patched_tag
+                run(["docker", "tag", staged_output, expected_output])
+                created_images.append(staged_output)
             if policy_image_ref:
                 # Copa tags output in the temporary image repository. Move it
                 # to the user-facing patched reference, then remove the
@@ -406,8 +536,8 @@ def main() -> int:
             remediation_evidence["grype_full_before"] = remediation_full_before
             checks = (
                 ("sbom", "syft", ["syft", f"dir:{verification_root}", "-o", "syft-json"], output / "remediated-sbom.json"),
-                ("trivy", "trivy", ["trivy", "image", "--skip-db-update", "--skip-check-update", "--format", "json",
-                                      "--output", str(output / "trivy-after.json"), canonical_ref], output / "trivy-after.json"),
+                ("trivy", "trivy", ["trivy", "rootfs", "--skip-db-update", "--skip-java-db-update", "--skip-check-update", "--format", "json",
+                                      "--output", str(output / "trivy-after.json"), str(verification_root)], output / "trivy-after.json"),
                 ("dockle", "dockle", ["dockle", "--format", "json", "--output", str(output / "dockle-after.json"),
                                         "--exit-code", "0", canonical_ref], output / "dockle-after.json"),
             )
@@ -423,9 +553,13 @@ def main() -> int:
                     if not evidence_path.is_file() or not evidence_path.stat().st_size:
                         raise RuntimeError("Scanner produced no evidence")
                     remediation_evidence[name] = "complete"
+                except PatchCancelled:
+                    raise
                 except Exception:
                     remediation_evidence[name] = "failed"
                     evidence_path.unlink(missing_ok=True)
+        if scanner_binding is not None:
+            scanner_binding.verify()
         source_id = run(["docker", "image", "inspect", source_ref, "--format", "{{.Id}}"]).stdout.strip()
         patched_id = run(["docker", "image", "inspect", canonical_ref, "--format", "{{.Id}}"]).stdout.strip()
         image_changed = None if not (source_id.startswith("sha256:") and patched_id.startswith("sha256:")) else source_id != patched_id
@@ -444,6 +578,7 @@ def main() -> int:
         immutable_destination = None
         signature_status = "not_configured"
         signature_metadata = {}
+        attestations = []
         if comparison.get("patch_status") == "FAILED":
             delivery_error = "Publishing was not attempted because Copa did not produce a changed image"
         elif output_mode == "download":
@@ -460,6 +595,8 @@ def main() -> int:
                 destination_password = os.getenv("CATS_PATCH_SOURCE_PASSWORD", "")
             try:
                 login_for(destination, destination_user, destination_password)
+                if execution_binding is not None:
+                    execution_binding.verify()
                 run(["docker", "tag", canonical_ref, destination])
                 created_images.append(destination)
                 push_result = run(["docker", "push", destination])
@@ -479,12 +616,19 @@ def main() -> int:
                     immutable_destination = f"{destination_repository}@{digest_match.group(1).lower()}"
                 elif not config.get("signing_enabled") and isinstance(repo_digests, list):
                     immutable_destination = next((value for value in repo_digests if isinstance(value, str) and value.split("@", 1)[0] == destination_repository), None)
+                output_metadata = retained_manifest_metadata(run, immutable_destination or "")
                 if config.get("signing_enabled") is True:
                     state("running", "signing_image", immutable_destination=immutable_destination)
                     signature_status = "failed"
+                    check_cancelled()
                     signed = sign_and_verify(immutable_destination, config, signing_credentials, env)
+                    check_cancelled()
+                    attestations = attest_patch_evidence(immutable_destination, before_path, after_path,
+                                                         patched_archive, (config, signing_credentials), env)
                     signature_status = signed["signature_status"]
                     signature_metadata = signed["signature"]
+            except PatchCancelled:
+                raise
             except Exception as exc:
                 delivery_error = redact(exc, secrets)
                 log(f"OCI delivery failed after patch completed: {delivery_error}")
@@ -504,6 +648,7 @@ def main() -> int:
         else:
             raise RuntimeError("Unknown patch output mode")
 
+        check_cancelled()
         result = {
             "status": "complete", "patch_status": comparison.get("patch_status", "FAILED"),
             "source_image": source_ref, "patched_image": patched_ref,
@@ -516,8 +661,14 @@ def main() -> int:
             "delivery_error": delivery_error,
             "immutable_destination": immutable_destination, "signature_status": signature_status,
             "signature": signature_metadata,
+            "attestations": attestations,
+            "scanner_input_digest": scanner_binding.digest if scanner_binding else None,
             "remediation_evidence": remediation_evidence,
+            **output_metadata,
+            **{"source_" + key: value for key, value in source_metadata.items()},
         }
+        if execution_binding is not None:
+            result["consumed_inputs"] = execution_binding.receipt(config, immutable_destination)
         (output / "patch-result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
         state("complete", "completed", summary={k: v for k, v in comparison.items() if not isinstance(v, list)}, patched_image=patched_ref, destination_image=result["destination_image"])
         return 0
@@ -556,6 +707,11 @@ def main() -> int:
                     pass
         # Authentication material and intermediate reports are removed after
         # image cleanup so Docker never falls back to a user's global config.
+        if execution_binding is not None:
+            try:
+                execution_binding.close()
+            except Exception as exc:
+                log(f"Bound BuildKit cleanup requires attention: {exc}")
         shutil.rmtree(docker_config, ignore_errors=True)
         shutil.rmtree(workspace, ignore_errors=True)
 

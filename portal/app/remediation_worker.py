@@ -151,9 +151,21 @@ def handle(ctx, payload):
     from .delivery_execution import delivery_lock
     token = worker_context.set(ctx)
     try:
+        if ctx.job.kind == "proposal_assessment":
+            from .proposal_scans import handle as proposal_scan
+            return proposal_scan(ctx, payload)
+        if ctx.job.kind == "oci_reassessment":
+            from .oci_lifecycle import handle as reassess
+            return reassess(ctx, payload)
         if ctx.job.kind == "cyber_release_publish":
             from .cyber_approvals import publish_job
             return publish_job(ctx, payload)
+        if ctx.job.kind == "artifact_recommendations":
+            from .artifact_catalog import handle_recommendation_reconciliation
+            return handle_recommendation_reconciliation(ctx, payload)
+        if ctx.job.kind == "patch_campaign_item":
+            from .patch_campaigns import handle as patch_campaign
+            return patch_campaign(ctx, payload)
         if ctx.job.kind == "remediation_plan":
             return _handle(ctx, payload)
         # A lease-expired process can still be alive. The OS lock prevents its
@@ -177,6 +189,10 @@ def maintenance():
     with main.SessionLocal() as db:
         from .cyber_approvals import reconcile_jobs
         reconcile_jobs(db)
+        from .oci_lifecycle import maintenance as lifecycle_maintenance
+        lifecycle_maintenance(db)
+        from .proposal_scans import maintenance as proposal_maintenance
+        proposal_maintenance(db)
         records = db.scalars(select(RemediationExecution).where(
             (RemediationExecution.status.in_(["queued", "running"])) |
             (RemediationExecution.verification_status.in_(["queued", "running"])) |
@@ -209,4 +225,4 @@ def maintenance():
 
 
 if __name__ == "__main__":
-    run_worker(KINDS, handle, maintenance=maintenance)
+    run_worker((*KINDS, "proposal_assessment", "oci_reassessment", "patch_campaign_item", "artifact_recommendations"), handle, maintenance=maintenance)

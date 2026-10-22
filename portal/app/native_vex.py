@@ -1,6 +1,6 @@
 """The sole effective VEX exclusion rule, shared by reads and action checks."""
 from datetime import timedelta
-from sqlalchemy import select, and_, func, insert
+from sqlalchemy import select, and_, func, insert, bindparam, event
 from .native_vex_models import (VexDispositionPolicy as Policy, VexDispositionService as State,
     VexDispositionEvaluation as Evaluation, VexFindingDisposition as FindingResult,
     VexObservationDisposition as ObservationResult)
@@ -14,13 +14,45 @@ MAX_OBSERVATIONS = 100000
 MAX_SCAN_AGE = timedelta(days=30)
 
 
+# A predicate may be reused across requests. Resolve its generation only when
+# executing it, retaining the shared intelligence fence through caller commit.
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import visitors
+from sqlalchemy.sql.elements import BindParameter
+
+
+@event.listens_for(Session, 'do_orm_execute')
+def _inject_intelligence_token(execution):
+    if not any(isinstance(node, BindParameter) and node.key == '_native_vex_intelligence_token'
+               for node in visitors.iterate(execution.statement)):
+        return
+    from .intelligence_generation import current_generation, guard_generation, GenerationUnavailable
+    try:
+        token = current_generation(execution.session)
+        guard_generation(execution.session, token)
+    except GenerationUnavailable:
+        token = ''  # No valid generation can equal the unavailable sentinel.
+    parameters = execution.parameters
+    if isinstance(parameters, list):
+        execution.parameters = [{**item, '_native_vex_intelligence_token': token} for item in parameters]
+    else:
+        execution.parameters = {**(parameters or {}), '_native_vex_intelligence_token': token}
+    return execution.invoke_statement()
+
+
 def current_evaluation(now, *, enabled=True):
+    from . import database
     conditions = [State.evaluation_id == Evaluation.id,
         State.generation == Evaluation.service_generation,
         Policy.id == 1, Policy.generation == Evaluation.intelligence_generation,
         Policy.policy_version == Evaluation.policy_version,
         Evaluation.algorithm == ALGORITHM, Evaluation.valid_until > now,
         Evaluation.evaluated_at <= now]
+    if database.INTELLIGENCE_SEPARATE:
+        # Supplied at execution time under the intelligence generation guard.
+        # Never capture a token when constructing a reusable SQL predicate.
+        conditions.append(Evaluation.summary['intelligence_token'].as_string() ==
+                          bindparam('_native_vex_intelligence_token'))
     if enabled:
         conditions.append(Policy.enabled.is_(True))
     return conditions
@@ -68,7 +100,13 @@ def evaluate_service(db, service_id, *, now=None, check=None):
     from .models import Finding, FindingObservation, Execution
     from .finding_classification import latest_execution_id
     from .container_intelligence import observation_identity, evaluate_container_batch
+    from . import database
+    from .intelligence_generation import current_generation, guard_generation
     now = aware(now or utcnow())
+    intelligence_token = None
+    if database.INTELLIGENCE_SEPARATE:
+        intelligence_token = current_generation(db)
+        guard_generation(db, intelligence_token)
     policy = db.get(Policy, 1, populate_existing=True)
     state = db.get(State, service_id, populate_existing=True)
     if not policy or not state:
@@ -131,11 +169,15 @@ def evaluate_service(db, service_id, *, now=None, check=None):
     if (state.generation != generation or policy.generation != intel or policy.policy_version != policy_version
             or latest_execution_id(db, service_id) != latest):
         raise ValueError('Evidence changed during VEX evaluation; retry required')
+    if intelligence_token is not None:
+        guard_generation(db, intelligence_token)
     evaluation.valid_until = expiry
     evaluation.summary = {'observations': total, 'findings': len(aggregate), 'scan_current': scan_valid,
         'excluded_observations': sum(c[1] for c in aggregate.values()),
         'fully_excluded_findings': sum(c[0] == c[1] for c in aggregate.values()),
         'mixed_findings': sum(0 < c[1] < c[0] for c in aggregate.values())}
+    if intelligence_token is not None:
+        evaluation.summary['intelligence_token'] = intelligence_token
     from .service_posture import _bump
     _bump(db.connection(), [service_id])
     state.evaluation_id = evaluation.id
@@ -153,4 +195,16 @@ def excluded_finding_ids(db, service_id, now):
 def cache_token(db):
     """Global invalidation without visiting the intelligence corpus."""
     row = db.execute(select(Policy.enabled, Policy.generation, Policy.policy_version).where(Policy.id == 1)).first()
-    return str(tuple(row)) + ALGORITHM if row else ALGORITHM
+    from . import database
+    mode = ':atomic'
+    if database.INTELLIGENCE_SEPARATE:
+        from .intelligence_generation import current_generation, guard_generation, GenerationUnavailable
+        try:
+            token = current_generation(db)
+            guard_generation(db, token)
+            mode = ':split:' + token
+        except GenerationUnavailable:
+            # An outage must never reuse a previously effective cached result.
+            mode = ':split:unavailable'
+
+    return (str(tuple(row)) + ALGORITHM if row else ALGORITHM) + mode

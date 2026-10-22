@@ -73,6 +73,8 @@ INTELLIGENCE_SEPARATE = INTELLIGENCE_DATABASE_URL != DATABASE_URL
 intelligence_connect_args = ({"check_same_thread": False}
                              if INTELLIGENCE_DATABASE_URL.startswith("sqlite") else {})
 intelligence_connect_args.update(_postgresql_options(INTELLIGENCE_DATABASE_URL))
+if INTELLIGENCE_DATABASE_URL.startswith("postgresql"):
+    intelligence_connect_args.setdefault("connect_timeout", 5)
 if INTELLIGENCE_DATABASE_URL.startswith("postgresql") and os.getenv("INTELLIGENCE_DB_PASSWORD"):
     intelligence_connect_args["password"] = os.environ["INTELLIGENCE_DB_PASSWORD"]
 intelligence_engine_options = {"pool_pre_ping": True, "connect_args": intelligence_connect_args}
@@ -90,7 +92,7 @@ intelligence_background_engine = (
 
 # Explicit ownership: native_vex_* are operational records, not feed data.
 INTELLIGENCE_TABLE_NAMES = frozenset({
-    "vex_sources", "vex_documents", "vex_statements", "vex_ingestion_audits",
+    "intelligence_generation", "vex_sources", "vex_documents", "vex_statements", "vex_ingestion_audits",
     "intelligence_records", "intelligence_package_installs", "intelligence_package_catalogs",
     "intelligence_package_members", "intelligence_package_state",
 })
@@ -150,7 +152,7 @@ class Base(DeclarativeBase):
 
 def intelligence_tables():
     """Registered feed tables, in foreign-key dependency order."""
-    from . import intelligence_models, vex_models  # noqa: F401
+    from . import intelligence_models, vex_models, intelligence_generation  # noqa: F401
     return [table for table in Base.metadata.sorted_tables if table.name in INTELLIGENCE_TABLE_NAMES]
 
 

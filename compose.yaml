@@ -117,6 +117,34 @@ services:
       start_period: 10m
     restart: unless-stopped
 
+  intelligence-db-backup:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: ["python3", "/opt/backup/backup.py"]
+    command: ["schedule"]
+    environment:
+      PGHOST: intelligence-db
+      PGPORT: 5432
+      PGDATABASE: ${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
+      PGUSER: ${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}
+      PGPASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
+      BACKUP_UTC_TIME: ${INTELLIGENCE_BACKUP_UTC_TIME:-03:30}
+      BACKUP_REQUIRED_TABLES: public.intelligence_records,public.intelligence_package_installs,public.intelligence_package_catalogs,public.intelligence_package_members,public.intelligence_package_state
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-7}
+    volumes:
+      - ${CATS_INTELLIGENCE_DB_BACKUP_DIR:-./backups/intelligence-postgres}:/backups
+    depends_on:
+      intelligence-db:
+        condition: service_healthy
+      intelligence-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python3", "/opt/backup/backup.py", "health"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+      start_period: 10m
+    restart: unless-stopped
+
   # =========================================================
   # Patch Worker
   # =========================================================

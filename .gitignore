@@ -9,6 +9,7 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.test-temp/
 .demo-scan-results/
 *.pyc
 *.db

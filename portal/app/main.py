@@ -121,6 +121,8 @@ from .remediation_summary import build_summary as build_remediation_summary, art
 from . import cyber_approvals
 from . import risk_routes, discovery_routes
 from . import vex_models, risk_models, intelligence_models, native_vex_models, discovery_models
+from . import oci_models, oci_lifecycle, oci_admin
+from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -460,6 +462,10 @@ app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
+app.include_router(oci_admin.router)
+app.include_router(oci_lifecycle.router)
+app.include_router(artifact_catalog_routes.router)
+app.include_router(patch_campaigns.router)
 from .definition_routes import router as definition_router
 app.include_router(definition_router)
 from .account_management import router as account_router
@@ -1066,6 +1072,9 @@ def _execute_deployment_validation(run_id: int) -> None:
         ):
             setattr(run, field, result.get(key, default))
         run.completed_at = utcnow(); run.updated_at = utcnow(); run.phase = "COMPLETE"
+        # Persist reconciliation with validation so a worker restart cannot lose it.
+        if run.status == ValidationStatus.VERIFIED.value:
+            artifact_catalog.enqueue_recommendation_reconciliation(db, validation_run_id=run.id)
         terminal_action = {
             ValidationStatus.VERIFIED.value: "deployment_validation.verified",
             ValidationStatus.PARTIALLY_VERIFIED.value: "deployment_validation.partially_verified",
@@ -1350,7 +1359,7 @@ def page_context(auth: AuthContext, **values):
             access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
                                      "href": "/admin#access-requests"}
                                     for item in access_requests.list_pending_requests(nav_db, auth)]
-            actionable_notifications = access_notifications + actionable_notifications
+            actionable_notifications = access_notifications + artifact_catalog_routes.replacement_notifications(nav_db, auth) + actionable_notifications
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
             # as the navigation count, so counting them in memory avoids a
@@ -3072,6 +3081,18 @@ def backfill_incomplete_scan_findings() -> None:
 
 
 
+@app.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201, dependencies=[Depends(require_pipeline)])
+def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db)):
+    try:
+        row = proposal_assessments.retain(db, proposal_id, payload)
+        db.commit()
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(409, str(exc)) from None
+    return {"accepted": True, "proposal_id": proposal_id, "assessment_id": row.id,
+            "active_release_changed": False}
+
+
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
 def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
     result = ingest_payload(payload, db)
@@ -3941,7 +3962,7 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     compose_uploads = compose_uploads or []
@@ -3988,6 +4009,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     security = admission_policy(owner_user_id, service_db_id)
     skipped_charts = list(definition_skipped or [])
     payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []) + [name for _, name in compose_uploads], "compose_enabled": bool(compose_uploads), "compose_files": compose_files, "compose_profiles": compose_profiles, "compose_preview": compose_preview, "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
+    payload["proposal_context"] = proposal_context or {}
     payload.update(security)
     if owner_user_id is None:
         if not capability_token:
@@ -4674,6 +4696,8 @@ def ingest_public_scan(
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
         job = PUBLIC_JOBS[job_id]
+    if job.get("proposal_context"):
+        raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
     if job.get("compose_preview"):
         raise HTTPException(status_code=409, detail="Compose previews cannot be ingested; start a scan first")
     result_path = PUBLIC_JOB_ROOT / job_id / "output" / "portal-result.json"
@@ -4894,15 +4918,43 @@ def _patch_job_update(job_id: str, **values):
                         "could_not_be_patched", "patched_image", "destination_image",
                         "patch_status", "reason", "image_changed", "delivery_status", "delivery_error",
                         "immutable_destination", "signature_status", "signature", "artifact_sha256",
-                        "stages", "failed_stage",
+                        "stages", "failed_stage", "artifact_receipt", "artifact_validation", "validated_source",
                     }
                 }
+                if summary:
+                    # Only this authenticated worker result path creates durable evidence.
+                    receipt_keys = {"status", "source_image", "immutable_destination", "patch_status",
+                        "delivery_status", "signature_status", "signature", "artifact_validation",
+                        "validated_source", "vulnerabilities_before", "vulnerabilities_after",
+                        "media_type", "platform", "source_media_type", "source_platform", "consumed_inputs"}
+                    record.summary["artifact_receipt"] = {key: value for key, value in summary.items() if key in receipt_keys}
+                if record.status == "complete" and summary:
+                    from .artifact_catalog import register_patch_artifacts
+                    receipt = record.summary.get("artifact_receipt") or {}
+                    diagnostic = None
+                    metadata = {key: receipt.get(key) for key in ("media_type", "platform", "source_media_type", "source_platform")}
+                    if not all(isinstance(value, str) and value.strip() and value != "unknown" for value in metadata.values()):
+                        diagnostic = "Exact source and output OCI metadata unavailable"
+                    else:
+                        try:
+                            # Flush the successful execution before the savepoint. A bad
+                            # catalog import must never roll back its retained result.
+                            with db.begin_nested():
+                                register_patch_artifacts(db, patch_execution_id=record.id, **metadata)
+                        except Exception:
+                            diagnostic = "Worker artifact identity could not be catalogued"
+                    if diagnostic and not db.scalar(select(AuditEvent.id).where(
+                        AuditEvent.action == "artifact.catalog.import_skipped", AuditEvent.target_type == "patch_execution",
+                        AuditEvent.target_id == str(record.id))):
+                        db.add(AuditEvent(actor_user_id=record.requested_by_id, action="artifact.catalog.import_skipped",
+                            target_type="patch_execution", target_id=str(record.id),
+                            detail={"service_id": record.service_id, "reason": diagnostic}))
                 if snapshot.get("stages"):
                     record.summary["stages"] = snapshot["stages"]
                 if snapshot.get("failed_stage"):
                     record.summary["failed_stage"] = snapshot["failed_stage"]
                 if result and record.status == "complete" and str(result.get("patch_status") or "") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}:
-                    associated_ref = str(result.get("destination_image") or result.get("patched_image") or "").strip()
+                    associated_ref = str(result.get("immutable_destination") or result.get("destination_image") or result.get("patched_image") or "").strip()
                     service = db.get(Service, record.service_id)
                     if service and associated_ref:
                         _ensure_service_image(db, service, associated_ref)
@@ -5031,7 +5083,7 @@ def _patch_worker_values(state: dict) -> tuple[dict, object | None]:
     return values, result
 
 
-def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | None = None, timeout: int = 15) -> dict:
     body = json.dumps(payload).encode("utf-8") if payload is not None else None
     headers = {"Accept": "application/json"}
     if body is not None:
@@ -5040,10 +5092,46 @@ def _patch_worker_request(path: str, *, method: str = "GET", payload: dict | Non
         headers["X-CATS-Worker-Token"] = PATCH_WORKER_TOKEN
     request = urllib.request.Request(f"{PATCH_WORKER_URL}{path}", data=body, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
     except Exception as exc:
         raise RuntimeError("Internal patch worker is unavailable") from exc
+
+
+def patch_recipe_identity(config: dict) -> dict | None:
+    """Prepare actual worker inputs before a campaign claims a canonical recipe."""
+    if "execution_binding" in config:
+        raise ValueError("Patch input binding must be issued by the trusted worker")
+    if PATCH_WORKER_URL:
+        if not PATCH_WORKER_TOKEN:
+            return None
+        result = _patch_worker_request("/internal/patch-bindings/prepare", method="POST",
+                                       payload={"config": safe_job_config(config)}, timeout=900)
+        prepared = result.get("prepared")
+    else:
+        from .patch_inputs import prepare_binding, default_binding_root
+        prepared = prepare_binding(safe_job_config(config), default_binding_root())
+    if prepared is None:
+        return None
+    if (not isinstance(prepared, dict) or set(prepared) != {"binding_id", "identity"} or
+            not isinstance(prepared["binding_id"], str) or
+            not re.fullmatch(r"[0-9a-f]{32}", prepared["binding_id"]) or
+            not isinstance(prepared["identity"], dict)):
+        raise RuntimeError("Trusted worker returned an invalid input binding")
+    config["execution_binding"] = prepared["binding_id"]
+    return prepared["identity"]
+
+
+def release_patch_recipe_binding(config: dict) -> None:
+    handle = config.get("execution_binding")
+    if handle is None:
+        return
+    if PATCH_WORKER_URL:
+        _patch_worker_request("/internal/patch-bindings/" + handle, method="DELETE")
+    else:
+        from .patch_inputs import release_binding, default_binding_root
+        release_binding(handle, default_binding_root())
+    config.pop("execution_binding", None)
 
 
 def _patch_page_context(
@@ -5076,7 +5164,34 @@ def _patch_page_context(
     })
 
 
+def _stop_local_patch_job(process: subprocess.Popen, output_dir: Path) -> None:
+    """Let the worker reap its active tool before releasing execution ownership.
+
+    Tool commands own separate process groups, so killing only the Python worker
+    (or its group) can leave an in-flight registry publication running.
+    """
+    (output_dir / "cancel.requested").touch(exist_ok=True)
+    try:
+        process.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            # Windows terminate() bypasses Python signal handlers. Kill the
+            # still-owned tree, including the virtualenv launcher and tools.
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=10)
+            process.wait(timeout=10)
+        else:
+            # SIGTERM invokes the worker's cancellation handler, which reaps
+            # independently grouped tools. Never SIGKILL it before that cleanup.
+            process.terminate()
+            process.wait(timeout=10)
+
+
 def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
+    from .remediation_jobs import check_worker
+    from .durable_jobs import JobCancelled, LeaseLost
+    check_worker()
     job_root = PATCH_JOB_ROOT / job_id
     output_dir = job_root / "output"
     state_path = output_dir / "patch-state.json"
@@ -5095,6 +5210,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
             )
             credential_env.clear()
             while True:
+                check_worker()
                 with PATCH_JOB_LOCK:
                     cancelled = PATCH_JOBS.get(job_id, {}).get("status") == "cancelled"
                 if cancelled:
@@ -5104,6 +5220,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                     _patch_worker_request(f"/internal/patch-jobs/{job_id}/cancel", method="POST")
                     raise TimeoutError("Patch job exceeded its configured time limit")
                 state = _patch_worker_request(f"/internal/patch-jobs/{job_id}")
+                check_worker()
                 state, result = _patch_worker_values(state)
                 _patch_job_update(job_id, **state, **({"result": result} if isinstance(result, dict) else {}))
                 if state.get("status") == "complete":
@@ -5123,17 +5240,14 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
             PATCH_PROCESSES[job_id] = process
         last_state = None
         while process.poll() is None:
+            check_worker()
             with PATCH_JOB_LOCK:
                 cancelled = PATCH_JOBS.get(job_id, {}).get("status") == "cancelled"
             if cancelled:
-                process.terminate()
-                try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+                _stop_local_patch_job(process, output_dir)
                 return
             if time.monotonic() - started > timeout:
-                process.kill()
+                _stop_local_patch_job(process, output_dir)
                 raise TimeoutError("Patch job exceeded its configured time limit")
             if state_path.exists():
                 try:
@@ -5144,6 +5258,7 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                 except (OSError, ValueError):
                     pass
             time.sleep(0.5)
+        check_worker()
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
             _patch_job_update(job_id, **state)
@@ -5162,6 +5277,16 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
                 _patch_job_update(job_id, **state)
                 return
             raise RuntimeError(state.get("error") or "Patch worker failed")
+    except (JobCancelled, LeaseLost):
+        # Stop execution when durable ownership is lost; never publish a stale result.
+        if process is not None and process.poll() is None:
+            _stop_local_patch_job(process, output_dir)
+        if PATCH_WORKER_URL:
+            try:
+                _patch_worker_request(f"/internal/patch-jobs/{job_id}/cancel", method="POST")
+            except Exception:
+                pass
+        raise
     except Exception as exc:
         with PATCH_JOB_LOCK:
             existing = dict(PATCH_JOBS.get(job_id, {}))
@@ -11414,6 +11539,13 @@ def save_signing_configuration(
 ):
     check_csrf(auth, csrf_token)
     try:
+        from .oci_lifecycle import retain_public_key
+        # Keep public verification material available after rotation/removal.
+        try:
+            previous = signing.configuration(get_global_configuration(db))
+            retain_public_key(db, previous)
+        except ValueError:
+            pass  # A malformed old key must not prevent administrators repairing it.
         current = {} if action == "remove" or (private_key and private_key.filename) else signing.configuration(get_global_configuration(db))
         if action == "remove":
             current = {}
@@ -11433,6 +11565,7 @@ def save_signing_configuration(
             raise ValueError("Unknown signing configuration action.")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    retain_public_key(db, current)
     _set_config_value(db, auth, signing.SETTING, json.dumps(current), None)
     record_audit(db, auth, "configuration.signing_updated", "portal", "global",
                  enabled=current.get("enabled", False), key_fingerprint=current.get("fingerprint"), removed=action == "remove")

@@ -228,7 +228,7 @@ def advisory_batch(db, items, now):
     latest = select(IntelligencePackageInstall.id).order_by(IntelligencePackageInstall.sequence.desc()).limit(1).scalar_subquery()
     rows = []
     scopes = {key: IntelligenceRecord.data[key] for key in ('affected', 'package', 'release', 'withdrawn')}
-    byte_length = (lambda value: func.octet_length(cast(value, Text))) if db.bind.dialect.name == 'postgresql' else (lambda value: func.length(cast(cast(value, Text), LargeBinary)))
+    byte_length = (lambda value: func.octet_length(cast(value, Text))) if db.get_bind(mapper=IntelligenceRecord.__mapper__).dialect.name == 'postgresql' else (lambda value: func.length(cast(cast(value, Text), LargeBinary)))
     scope_size = sum(func.coalesce(byte_length(value), 0) for value in scopes.values())
     scope_bounded = scope_size <= MAX_ADVISORY_SCOPE_BYTES
     for start in range(0, len(cves), 400):

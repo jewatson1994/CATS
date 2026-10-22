@@ -1,39 +1,48 @@
-import {cleanup, render, screen, within} from '@testing-library/react';
-import {afterEach, describe, expect, it} from 'vitest';
+import {afterEach, expect, it} from 'vitest';
+import {fireEvent, render, screen, within} from '@testing-library/react';
 import {Shell} from './Shell';
-import {AdminTabs} from '../features/admin_shared';
 
-afterEach(cleanup);
-const current_user = {display_name: 'Jane', theme: 'cats'};
-describe('unified administration navigation', () => {
-  it.each([
-    [['user.manage', 'config.manage', 'audit.view'], '/admin', ['Accounts & roles', 'Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Risk Policy', 'Dependency Watchlist']],
-    [['config.manage'], '/admin/configuration', ['Settings', 'General Policy', 'Hardening Policy', 'Vulnerability Policy', 'Risk Policy', 'Dependency Watchlist']],
-    [['audit.view'], '/admin/general-policy', ['General Policy']],
-    [['user.manage'], '/admin', ['Accounts & roles']],
-    [['release.destination.manage'], '/admin/approved-release-destinations', ['Release Destinations']],
-  ])('opens the first allowed section for %j', (permissions, href, sections) => {
-    const data = {current_user, can: Object.fromEntries((permissions as string[]).map(permission => [permission, {'*': true}]))};
-    render(<Shell data={data}><AdminTabs data={data} selected="accounts"/></Shell>);
-    const entry = screen.getByRole('link', {name: 'Administration'});
-    expect(entry).toHaveAttribute('href', href);
-    expect(entry.querySelector('svg.icon')).toBeInTheDocument();
-    expect(screen.queryByRole('link', {name: 'Configuration'})).not.toBeInTheDocument();
-    expect(within(screen.getByRole('navigation', {name: 'Administration sections'})).getAllByRole('link').map(link => link.textContent)).toEqual(sections);
-  });
-  it('hides administration when no administrative permissions are granted', () => {
-    render(<Shell data={{current_user, can: {'service.view': {'*': true}}}}>Services</Shell>);
-    expect(screen.queryByRole('link', {name: 'Administration'})).not.toBeInTheDocument();
-  });
-  it('does not expose global administration for service-scoped permissions', () => {
-    render(<Shell data={{current_user, can: {'config.manage': {'7': true}, 'user.manage': {'7': true}}}}>Services</Shell>);
-    expect(screen.queryByRole('link', {name: 'Administration'})).not.toBeInTheDocument();
-  });
+const data = {current_user: {display_name: 'Tester', theme: 'cats'}};
+afterEach(() => window.history.replaceState(null, '', '/'));
+
+it('groups existing destinations and marks the active child and group', () => {
+  window.history.replaceState(null, '', '/approved-releases');
+  render(<Shell data={data}>Content</Shell>);
+  const nav = screen.getByRole('navigation', {name: 'Primary navigation'});
+  expect(Array.from(nav.children).filter(child => child.tagName === 'A').map(child => child.textContent)).toEqual(['Services', 'Discovery', 'Scan', 'Patch']);
+  const summary = screen.getByText('Cybersecurity', {selector: 'summary'});
+  expect(summary.parentElement).toHaveAttribute('data-active', 'true');
+  fireEvent.click(summary);
+  expect(screen.getByRole('link', {name: 'Approved Releases'})).toHaveAttribute('aria-current', 'page');
+  expect(screen.getByRole('link', {name: 'Approvals'})).toHaveAttribute('href', '/cyber-approvals');
+  fireEvent.click(screen.getByText('More', {selector: 'summary'}));
+  for (const name of ['Remediate', 'SBOM', 'Jobs', 'Requests']) expect(within(nav).getByRole('link', {name})).toBeInTheDocument();
+  expect(screen.queryByRole('link', {name: 'Administration'})).not.toBeInTheDocument();
 });
 
-it('exposes Risk Policy for a group manager without global configuration authority', () => {
-  const data={current_user,may_manage_risk_policy:true,can:{'config.manage':{'7':true}}};
-  render(<Shell data={data}><AdminTabs data={data} selected="risk"/></Shell>);
-  expect(screen.getByRole('link',{name:'Administration'})).toHaveAttribute('href','/admin/risk-policy');
-  expect(within(screen.getByRole('navigation',{name:'Administration sections'})).getAllByRole('link').map(link=>link.textContent)).toEqual(['Risk Policy']);
+it('closes disclosures on Escape, outside click and navigation, restoring Escape focus', () => {
+  render(<Shell data={data}>Content</Shell>);
+  const summary = screen.getByText('More', {selector: 'summary'});
+  fireEvent.click(summary);
+  const link = screen.getByRole('link', {name: 'Jobs'});
+  link.focus();
+  fireEvent.keyDown(link, {key: 'Escape'});
+  expect(summary.parentElement).not.toHaveAttribute('open');
+  expect(summary).toHaveFocus();
+  fireEvent.click(summary);
+  fireEvent.click(document.body);
+  expect(summary.parentElement).not.toHaveAttribute('open');
+  fireEvent.click(summary);
+  fireEvent.click(screen.getByRole('link', {name: 'Services'}));
+  expect(summary.parentElement).not.toHaveAttribute('open');
+});
+
+it('preserves administration permissions, notification counts and public navigation', () => {
+  const {unmount} = render(<Shell data={{...data, may_manage_accounts: true, pending_request_count: 2}}>Content</Shell>);
+  expect(screen.getByRole('link', {name: 'Administration'})).toHaveAttribute('href', '/admin');
+  expect(screen.getByLabelText('Notifications (2 pending)')).toBeInTheDocument();
+  unmount();
+  render(<Shell data={{}}>Content</Shell>);
+  expect(screen.getByRole('link', {name: 'Login'})).toHaveAttribute('href', '/login');
+  expect(screen.queryByText('More', {selector: 'summary'})).not.toBeInTheDocument();
 });

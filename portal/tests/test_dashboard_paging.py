@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session
-from app.database import Base
+from app.database import Base, portal_tables
 from app.models import Service
 from app.dashboard_paging import dashboard_page
 from app.execution_summaries import CountOnly
@@ -97,7 +97,7 @@ def test_summary_startup_upgrade_and_indexes_are_idempotent_for_existing_sqlite(
         connection.execute(text("CREATE TABLE executions (id INTEGER PRIMARY KEY, service_id INTEGER, scanned_at TIMESTAMP, raw_payload JSON)"))
         connection.execute(text("INSERT INTO executions (id, raw_payload) VALUES (7, :payload)"), {"payload": '{"evidence":42}'})
         for _ in range(2):
-            exec(code, {"Base": Base, "connection": connection, "inspect": inspect, "text": text})
+            exec(code, {"Base": Base, "connection": connection, "inspect": inspect, "text": text, "portal_tables": portal_tables})
         columns = {column["name"]: column for column in inspect(connection).get_columns("executions")}
         assert columns["payload_digest"]["nullable"]
         assert "execution_summaries" in inspect(connection).get_table_names()

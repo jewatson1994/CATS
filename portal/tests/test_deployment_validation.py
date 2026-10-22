@@ -148,6 +148,8 @@ def test_resource_isolation_reports_each_supported_limit_as_enforced():
     assert result["overall"] == "ENFORCED"
     assert all(result[key]["status"] == "ENFORCED" for key in ("cpu", "memory", "pids"))
     assert len([call for call in calls if call[:2] == ("docker", "update")]) == 3
+    memory_update = next(call for call in calls if "--memory" in call)
+    assert memory_update[memory_update.index("--memory-swap") + 1] == memory_update[memory_update.index("--memory") + 1]
 
 
 def test_resource_isolation_unsupported_pid_is_best_effort_not_exceeded():
@@ -916,3 +918,21 @@ def test_isolated_api_port_fallback_recognizes_docker_29_empty_binding():
     assert not _missing_isolated_api_port(CommandResult(1, '', 'reflect: slice index out of range'))
     assert not _missing_isolated_api_port(CommandResult(1, '', prefix + 'permission denied'))
     assert not _missing_isolated_api_port(CommandResult(0, '', prefix + 'reflect: slice index out of range'))
+
+
+def test_isolated_transport_maps_workspace_outside_node_tmpfs(tmp_path):
+    from app.deployment_validation import _IsolatedNodeTransport
+    calls = []
+    def run(argv, **kwargs):
+        calls.append(argv)
+        return CommandResult(0, "", "")
+    root = tmp_path / "cats-deployment-test"
+    transport = _IsolatedNodeTransport(ValidationConfig(), "owned-node", root, root / "kubeconfig.yaml", run)
+    transport.tools["kubectl"] = "/usr/local/bin/cats-validation-kubectl"
+    transport.execute(["kubectl", "apply", "-f", str(root / "artifact"), "--kubeconfig", str(root / "kubeconfig.yaml")], timeout=10, env={"SSL_CERT_FILE": str(root / "trust/ca.pem")})
+    node_root = "/var/lib/cats-validation/cats-deployment-test"
+    assert calls[0][-1] == "owned-node:" + node_root
+    assert "KUBECONFIG=" + node_root + "/kubeconfig.yaml" in calls[1]
+    assert "SSL_CERT_FILE=" + node_root + "/trust/ca.pem" in calls[1]
+    assert calls[1][-3:] == [node_root + "/artifact", "--kubeconfig", node_root + "/kubeconfig.yaml"]
+    assert transport._node_path(str(root) + "-other/file") == str(root) + "-other/file"

@@ -516,6 +516,11 @@ def publish(db, approval, destination, checkpoint):
                                manifest=manifest, bundle_path=str(target), bundle_digest=bundle_digest,
                                bundle_bytes=target.stat().st_size, signing_fingerprint=config["signing_fingerprint"])
                 save()
+        if snapshot.get('release_revision') is not None:
+            from .release_revisions import publish_manifest
+            stage = "Signing immutable release revision"
+            receipt['revision_signature'] = publish_manifest(db, approval, (config, credentials))
+            save()
         return receipt
     except Exception as exc:
         diagnostic = failure_diagnostic(exc, stage)
@@ -596,6 +601,11 @@ def approval_window(manifest, now=None):
         end = datetime.fromisoformat(approval['expires_at'])
         days = approval['validity_days']
         validity = {key: approval[key] for key in ('approved_at', 'expires_at', 'validity_days')}
+        if 'owning_group_id' in approval:
+            group_id = approval['owning_group_id']
+            if type(group_id) is not int or group_id <= 0:
+                raise ValueError()
+            validity['owning_group_id'] = group_id
         decision = datetime.fromisoformat(approval['decided_at'])
         # Retained database dates may be naive UTC; signed validity dates must carry a zone.
         if decision.tzinfo is None:

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Form, HTTPException, Request, Response
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from .database import SessionLocal, get_db
 from .oidc_diagnostics import correlation_id
@@ -604,20 +604,20 @@ def optional_user(request: Request, db: Session = Depends(get_db)) -> AuthContex
     supplied = request.cookies.get(SESSION_COOKIE, "")
     if not supplied:
         return None
-    session = db.scalar(
+    session = db.execute(
         select(UserSession)
         .where(UserSession.token_hash == token_hash(supplied))
         .options(
-            selectinload(UserSession.user)
-            .selectinload(User.role_assignments)
-            .selectinload(UserRoleAssignment.role),
-            selectinload(UserSession.user)
-            .selectinload(User.role_assignments)
+            joinedload(UserSession.user)
+            .joinedload(User.role_assignments)
+            .joinedload(UserRoleAssignment.role),
+            joinedload(UserSession.user)
+            .joinedload(User.role_assignments)
             .selectinload(UserRoleAssignment.group)
             .selectinload(Group.services)
             .selectinload(Service.groups),
         )
-    )
+    ).unique().scalar_one_or_none()
     if not session or aware(session.expires_at) <= utcnow() or not session.user.enabled or db.get(AccountRetirement, session.user_id):
         return None
     session.last_seen_at = utcnow()

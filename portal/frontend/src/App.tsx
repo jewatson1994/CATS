@@ -20,6 +20,8 @@ import {Page as ServiceArtifacts} from './features/service-artifacts';
 
 /** Infrequent or administrative pages load as separate local chunks. */
 const loaders: Record<string, () => Promise<any>> = {
+  './features/patch_campaigns': () => import('./features/patch_campaigns'),
+  './features/artifact_catalog': () => import('./features/artifact_catalog'),
   './features/risk_intelligence': () => import('./features/risk_intelligence'),
   './features/cyber_approvals': () => import('./features/cyber_approvals'),
   './features/admin': () => import('./features/admin'),
@@ -68,6 +70,9 @@ export function lazyComponent<P extends object>(module: string, name: string,
 }
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
+const PatchCampaigns = lazyPage('./features/patch_campaigns', 'Page');
+const ArtifactCatalog = lazyPage('./features/artifact_catalog', 'Page');
+const ArtifactRecommendations = lazyPage('./features/artifact_catalog', 'Recommendations');
 const RiskIntelligence = lazyPage('./features/risk_intelligence', 'Page');
 const Discovery = lazyPage('./features/discovery', 'Page');
 const Patch = lazyPage('./features/patch', 'Page');
@@ -113,14 +118,14 @@ export function preloadPages() {
   return Promise.all(Object.keys(loaders).map(module => load(module).catch(() => undefined)));
 }
 
-const routes = new Set(['/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
+const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
   '/cyber-approvals', '/approved-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
 export const isPageRoute = (path: string) => routes.has(path) || [
-  /^\/services\/[^/]+\/(history|definitions|exchange)$/,
+  /^\/services\/[^/]+\/(history|definitions|exchange|artifact-recommendations)$/,
   /^\/services\/[^/]+$/, /^\/services\/[^/]+\/(findings|watchlist)\/\d+$/,
   /^\/services\/[^/]+\/remediations\/[^/]+$/, /^\/poam\/services\/[^/]+$/, /^\/poam\/entries\/\d+$/,
   /^\/api\/public\/jobs\/[^/]+\/results\/view$/, /^\/api\/public\/patch-jobs\/[^/]+\/results$/,
@@ -129,6 +134,7 @@ export const isPageRoute = (path: string) => routes.has(path) || [
 const pages: Record<string, ComponentType<{data: PageData}>> = {
   cyber_approvals: CyberApprovals, approved_releases: ApprovedReleases, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
+  patch_campaigns: PatchCampaigns, artifact_catalog: ArtifactCatalog, artifact_recommendations: ArtifactRecommendations,
   self_service: SelfService, discovery: Discovery, patch: Patch, cybersecurity: Cybersecurity,
   service: Service, service_simplified: Service,
   public_results: PublicResults, patch_results: PatchResults, finding: Finding, watchlist_match: Watchlist,
