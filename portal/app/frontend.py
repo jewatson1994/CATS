@@ -21,7 +21,7 @@ from .frontend_admin import project_admin
 from .frontend_policies import policies_data
 
 PAGE_MEDIA_TYPE = "application/vnd.cats.page+json"
-MIGRATED_PAGES = frozenset({"discovery.html", "risk_intelligence.html", "cyber_approvals.html", "approved_releases.html", "approved_release_destinations.html", "jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
+MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.html", "patch_campaigns.html", "discovery.html", "risk_intelligence.html", "cyber_approvals.html", "approved_releases.html", "approved_release_destinations.html", "jobs.html", "home.html", "login.html", "dashboard.html", "password.html",
                             "appearance.html", "request_error.html", "boozled.html", "self_service.html", "patch.html", "cybersecurity.html", "service.html", "service_simplified.html", "public_results.html", "patch_results.html", "finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html",
                             "service_overview.html", "service_activity.html", "service_history.html",
                             "service_dependencies.html", "service_artifacts.html", "service_validation.html",
@@ -177,7 +177,12 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "next_path": _DATA_ENDPOINT_PAGES.get(path, path) + ("?" + request.url.query if request.url.query else ""),
     }
     data["can"] = {permission: {"*": allowed} for permission, allowed in data["permissions"].items()}
-    if name == "validators.html":
+    if name == "artifact_recommendations.html":
+        data["service"] = _fields(context.get("service", {}), ("service_key", "name"))
+    elif name == "patch_campaigns.html":
+        data["services"] = [_fields(service, ("service_key", "name")) for service in context.get("services", [])]
+        data["configured_registries"] = [_fields(registry, ("id", "display_name", "endpoint", "namespace")) for registry in context.get("configured_registries", [])]
+    elif name == "validators.html":
         from .frontend_validators import validators_data
         data.update(validators_data(context))
         data["can"].update(data["validator_permissions"])

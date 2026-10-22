@@ -184,3 +184,23 @@ def test_managed_validator_bootstrap_projects_public_inventory_and_admin_permiss
         assert data["can"]["validator." + action] == {"*": allowed}
     assert "secret" not in json.dumps(envelope)
     assert data["validators"] == [{"id": "host-1", "name": "Validator", "health": {"ready": True}}]
+
+
+@pytest.mark.parametrize("page", ["artifact_catalog", "artifact_recommendations", "patch_campaigns"])
+@pytest.mark.parametrize("accept", ["text/html", PAGE_MEDIA_TYPE])
+def test_lifecycle_pages_use_react_without_legacy_templates(templates, page, accept):
+    templates.frontend_index.write_text("<html><head></head><body>React</body></html>", encoding="utf-8")
+    context = {"service": {"service_key": "svc", "name": "Service", "secret": "private-value"},
+               "services": [{"service_key": "svc", "name": "Service", "secret": "private-value"}],
+               "configured_registries": [{"id": "registry", "display_name": "Internal", "password": "private-value"}]}
+    response = templates.TemplateResponse(request(accept), page + ".html", context)
+    assert response.status_code == 200
+    body = response.body.decode()
+    assert "private-value" not in body
+    payload = json.loads(body if accept == PAGE_MEDIA_TYPE else body.split('id="cats-bootstrap">', 1)[1].split("</script>", 1)[0])
+    assert payload["page"] == page
+    if page == "artifact_recommendations":
+        assert payload["data"]["service"] == {"service_key": "svc", "name": "Service"}
+    if page == "patch_campaigns":
+        assert payload["data"]["services"] == [{"service_key": "svc", "name": "Service"}]
+        assert payload["data"]["configured_registries"][0]["id"] == "registry"
