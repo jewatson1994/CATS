@@ -275,7 +275,10 @@ def _ingest_one():
                 db.refresh(row, with_for_update=True)
                 if row.status == "cancelled":
                     return
-            if row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview"):
+            if payload.get("proposal_context"):
+                from .proposal_scans import ingest
+                ingest(db, job_id, payload, output)
+            elif row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview"):
                 from types import SimpleNamespace
                 from .models import Service
                 service = db.scalar(select(Service).where(Service.service_key == row.service_key))
@@ -299,10 +302,10 @@ def _ingest_one():
                                     and not summary.get("skipped_images")
                                     and not summary.get("skipped_charts")) else "incomplete"
             row.payload = {**payload, "status": status, "phase": "done", "summary": summary,
-                           "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview"))}
+                           "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview") and not payload.get("proposal_context"))}
             row.status = status
             row.finished_at = jobs.now()
-            for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id)):
+            for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id, not bool(payload.get("proposal_context")))):
                 image.scan_status = "scanned" if status == "complete" else "failed"
                 image.last_scanned_at = jobs.now()
             db.commit()

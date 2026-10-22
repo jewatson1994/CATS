@@ -386,8 +386,8 @@ def propose_recommendation(db, auth, recommendation):
         posture_status='requires_fresh_service_assessment',
         assessment_readiness=dict(status='blocked', code='proposed_assessment_required',
             message='A separate assessment of the proposed inventory is required before Cyber review.',
-            next_action='Submit a complete proposed inventory scan to the authenticated amendment-assessments pipeline endpoint.',
-            automatic_assessment_available=False))
+            next_action='The proposed inventory assessment is queued automatically; review its retained results before Cyber review.',
+            automatic_assessment_available=True))
     row = ReleaseAmendmentProposal(recommendation_id=recommendation.id,
         service_id=recommendation.service_id, base_revision_id=base.id,
         intent=json.loads(canonical(intent)))
@@ -431,9 +431,9 @@ def amendment_readiness(db, auth, identity, service_id):
     except ValueError as exc:
         assessment_blockers = [str(exc)]
     return dict(proposal_id=identity, ready_for_cyber_review=bool(assessment and assessment['ready']),
-        automatic_assessment_available=False, active_release_changed=False,
+        automatic_assessment_available=True, active_release_changed=False,
         blockers=[dict(code='proposed_assessment_required', message=message,
-            next_action='Submit the complete exact proposed inventory scan through the authenticated amendment-assessments pipeline endpoint.') for message in assessment_blockers],
+            next_action='Review the proposed inventory scan status; request a fresh assessment if its retained evidence is unavailable or stale.') for message in assessment_blockers],
         assessment_id=assessment.get('proposal_assessment_id') if assessment else None,
         artifacts=artifacts,
         required_steps=['Associate the selected artifact with this service.',

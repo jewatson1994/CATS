@@ -39,6 +39,8 @@ evidence=dict(endpoint=endpoint,repository=repo,tag='stable',digest='sha256:'+ha
 (root/'smoke-results.json').write_text(json.dumps(evidence));(root/'credentials.json').write_text('{"admin":"unused-local-registry"}')
 import gateway
 gateway.main(root)
+import concurrency
+concurrency.main(root)
 
 import active
 active.main(root,material,session,endpoint,repo,raw,config,layer)

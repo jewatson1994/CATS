@@ -169,3 +169,87 @@ def test_controls_require_csrf_owner_scope_and_running_cancel_is_request(setup, 
     assert result['items'][0]['status'] == 'running'
     assert result['items'][0]['cancel_requested']
     assert not result['items'][0]['can_retry']
+
+
+@pytest.mark.parametrize("prior_state", ["verified", "running", "running_complete", "different_signer"])
+def test_handler_reuses_verified_recipe_without_second_engine_run(setup, monkeypatch, tmp_path, prior_state):
+    import app
+    import threading
+    from datetime import datetime, timezone
+    from app.models import User, PatchExecution
+    from app.artifact_catalog import register_artifact, record_patch_lineage
+    from app.patch_recipes import PatchRecipeClaim
+    db, service, image, auth = setup
+    db.add(User(id=1, username='reuse-owner', display_name='Owner'))
+    campaign = submit(setup)
+    item = db.scalar(select(c.PatchCampaignItem))
+    job = db.get(c.durable_jobs.DurableJob, item.job_id)
+    source = register_artifact(db, digest=image.image_digest,
+        media_type='application/vnd.oci.image.manifest.v1+json', platform='linux/amd64')
+    output = register_artifact(db, digest='sha256:' + 'b'*64,
+        media_type=source.media_type, platform=source.platform)
+    reference = 'registry.example/patched/image-99@' + output.digest
+    receipt = {'status': 'complete', 'patch_status': 'PATCHED', 'delivery_status': 'delivered',
+        'source_image': item.image_reference, 'immutable_destination': reference,
+        'signature_status': 'verified', 'signature': {'image': reference, 'generator': 'cosign',
+            'key_fingerprint': 'current-key', 'verified_at': '2026-10-21T00:00:00Z'},
+        'artifact_validation': 'docker-load', 'validated_source': 'flattened-rootfs',
+        'vulnerabilities_before': 5, 'vulnerabilities_after': 1}
+    patch = PatchExecution(job_key='prior', service_id=service.id, requested_by_id=1,
+        source_mode='oci', output_mode='push', status='complete', source_image=item.image_reference,
+        destination_image=reference, summary={'artifact_receipt': receipt})
+    db.add(patch); db.flush()
+    record_patch_lineage(db, patch_execution_id=patch.id, source_artifact_id=source.id,
+                        output_artifact_id=output.id)
+    prior_job = c.durable_jobs.submit(db, kind=c.KIND, payload={}, service_id=service.id,
+                                     requested_by_id=1, commit=False)
+    config = {'job_id': 'ignored', 'source_mode': 'oci', 'source_image': item.image_reference,
+        'output_mode': 'push', 'destination_image': 'ignored', 'reuse_source_credentials': False,
+        'remediation_evidence': True, 'signing_fingerprint': 'current-key',
+        'trusted_ca_certificates': [], 'repository_policies': {}, 'os_definitions': {}}
+    identity = {'schema': 'cats-patch-inputs-v1', 'engine_digest': 'sha256:' + 'c'*64,
+        'repository_snapshot_digest': 'sha256:' + 'd'*64, 'scanner_database_digest': 'sha256:' + 'e'*64}
+    fingerprint = c.recipe_fingerprint(source=source, config=config, identity=identity,
+        destination_scope={'registry': 'destination', 'host': 'registry.example', 'namespace': '', 'prefix': 'patched'})
+    db.add(PatchRecipeClaim(fingerprint=fingerprint, owner_job_id=prior_job.id, patch_execution_id=patch.id))
+    if prior_state in ("running", "running_complete"):
+        patch.status = "running"
+        if prior_state == "running_complete":
+            from datetime import timedelta
+            from app import patch_recipes
+            prior_job.status = "running"
+            prior_job.lease_until = c.durable_jobs.now() + timedelta(seconds=120)
+            def complete_original(_seconds):
+                with Session(db.get_bind()) as publisher:
+                    publisher.get(PatchExecution, patch.id).status = "complete"
+                    publisher.commit()
+            monkeypatch.setattr(patch_recipes.time, "sleep", complete_original)
+    elif prior_state == "different_signer":
+        patch.summary = {"artifact_receipt": {**receipt, "signature": {**receipt["signature"], "key_fingerprint": "another-key"}}}
+    db.commit()
+    calls = []
+    fake = SimpleNamespace(SessionLocal=lambda: Session(db.get_bind()), PATCH_JOB_ROOT=tmp_path,
+        PATCH_JOB_LOCK=threading.Lock(), PATCH_JOBS={}, _validate_image_reference=lambda ref: None,
+        _portal_signing_material=lambda *a: ({'signing_fingerprint': 'current-key'}, {}),
+        configuration_for_service=lambda *a: {}, parse_json=lambda value, default: default,
+        patch_recipe_identity=lambda config: identity,
+        _run_patch_job=lambda *args: calls.append(args))
+    monkeypatch.setattr(app, 'main', fake, raising=False)
+    monkeypatch.setattr(c, 'AuthContext', lambda *a: auth)
+    monkeypatch.setattr(c, '_registries', lambda db: {'destination': {'endpoint': 'https://registry.example'}})
+    ctx = SimpleNamespace(job=job, check=lambda: None, stage=lambda *a: None)
+    if prior_state not in ("verified", "running_complete"):
+        with pytest.raises(c.durable_jobs.JobError, match="Equivalent patch"):
+            c.handle(ctx, job.payload)
+        assert calls == []
+        db.expire_all()
+        assert db.get(c.PatchCampaignItem, item.id).patch_execution_id is None
+        return
+    result = c.handle(ctx, job.payload)
+    assert result['reused'] is True
+    assert result['immutable_destination'] == reference
+    assert calls == []
+    assert list(tmp_path.iterdir()) == []
+    db.expire_all()
+    assert db.get(c.PatchCampaignItem, item.id).patch_execution_id == patch.id
+    assert c.campaign_data(db, campaign)['items'][0]['job_id'] == 'prior'

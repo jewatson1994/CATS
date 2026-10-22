@@ -14,7 +14,8 @@ from .auth import AuthContext, require_user, record_audit
 from .service_oci import _csrf
 from . import durable_jobs
 from .artifact_evidence_summary import vulnerability_evidence
-from .artifact_catalog import validate_digest
+from .artifact_catalog import validate_digest, GlobalArtifact, assign_artifact, ArtifactPatchLineage
+from .patch_recipes import recipe_fingerprint, claim_recipe, reusable_patch, wait_for_recipe
 
 MAX_IMAGES = 20
 KIND = "patch_campaign_item"
@@ -136,7 +137,7 @@ def campaign_data(db, campaign, auth=None):
         items.append({"id": item.id, **item_controls(item, job, allowed), "image_id": item.image_id, "image_reference": item.image_reference,
             "status": job.status if job else "failed", "error": job.error if job else "Job unavailable",
             "job_id": patch.job_key if patch else None,
-            "result": {**{key: (job.result or {}).get(key) for key in ("patch_status", "signature_status", "immutable_destination")}, "vulnerability_evidence": vulnerability_evidence(db, patch_id=patch.id) if patch else None} if job else {}})
+            "result": {**{key: (job.result or {}).get(key) for key in ("patch_status", "signature_status", "immutable_destination", "reused")}, "vulnerability_evidence": vulnerability_evidence(db, patch_id=patch.id) if patch else None} if job else {}})
     return {"id": campaign.id, "status": campaign_status([item["status"] for item in items]), "created_at": campaign.created_at.isoformat(), "items": items}
 
 
@@ -262,6 +263,47 @@ def handle(ctx, payload):
             "destination_image": destination, "reuse_source_credentials": False, "remediation_evidence": True,
             **signing_config, **{name: main.parse_json(policy.get(name), [] if name == "trusted_ca_certificates" else {})
                 for name in ("trusted_ca_certificates", "repository_policies", "os_definitions")}}
+        # The worker may expose a complete immutable-input manifest. Older
+        # engines continue normally, with reuse disabled rather than guessing.
+        identity_provider = getattr(main, "patch_recipe_identity", None)
+        identity = identity_provider(config) if callable(identity_provider) else None
+        candidates = list(db.scalars(select(GlobalArtifact).where(
+            GlobalArtifact.digest == source.rsplit("@", 1)[-1])))
+        source_artifact = candidates[0] if len(candidates) == 1 else None
+        fingerprint = recipe_fingerprint(source=source_artifact, config=config,
+            identity=identity, destination_scope={"registry": campaign.destination_registry_id,
+                "host": host, "namespace": namespace, "prefix": campaign.destination_prefix})
+        recipe_claim = None
+        if fingerprint:
+            recipe_claim = claim_recipe(db, fingerprint, ctx.job.id)
+            if recipe_claim.owner_job_id != ctx.job.id:
+                previous = reusable_patch(db, recipe_claim, source_artifact,
+                    signing_fingerprint=signing_config.get("signing_fingerprint"),
+                    destination_scope={"host": host, "namespace": namespace,
+                                       "prefix": campaign.destination_prefix})
+                if previous is None:
+                    pending = db.get(PatchExecution, recipe_claim.patch_execution_id) if recipe_claim.patch_execution_id else None
+                    if pending is not None and pending.status == "complete":
+                        raise durable_jobs.JobError("Equivalent patch lacks verified retained output; inspect its original campaign")
+                    # Release the item lock and snapshot before waiting. Re-enter
+                    # to revalidate authorization, policy and receipts afterwards.
+                    db.rollback()
+                    wait_for_recipe(main.SessionLocal, fingerprint, ctx)
+                    return handle(ctx, payload)
+                item.patch_execution_id = previous.id
+                lineage = db.scalar(select(ArtifactPatchLineage).where(
+                    ArtifactPatchLineage.patch_execution_id == previous.id,
+                    ArtifactPatchLineage.source_artifact_id == source_artifact.id))
+                assign_artifact(db, service_id=service.id, artifact_id=source_artifact.id)
+                assign_artifact(db, service_id=service.id, artifact_id=lineage.output_artifact_id, role="patched")
+                record_audit(db, auth, "patch.campaign.reused", "patch_campaign", campaign.id,
+                    service_id=service.id, patch_execution_id=previous.id)
+                receipt = previous.summary["artifact_receipt"]
+                reused = {"patch_job_id": previous.job_key, "reused": True,
+                    **{name: receipt.get(name) for name in ("patch_status", "signature_status", "immutable_destination")}}
+                ctx.check()
+                db.commit()
+                return reused
         def credentials(registry):
             return (str(registry.get("username") or ""), main.decrypt_secret(str(registry["password"])) if registry.get("password") else "") if registry else ("", "")
         source_user, source_password = credentials(main._configured_registry_for_image(source, list(registries.values())))
@@ -273,6 +315,8 @@ def handle(ctx, payload):
             source_mode="oci", source_image=source, output_mode="push", destination_image=destination)
         db.add(patch); db.flush()
         item.patch_execution_id = patch.id
+        if recipe_claim is not None:
+            recipe_claim.patch_execution_id = patch.id
         public = {"job_id": key, "patch_execution_id": patch.id, "status": "queued", "phase": "queued",
             "source_mode": "oci", "source_image": source, "output_mode": "push", "destination_image": destination,
             "signing_enabled": bool(signing_config), "signing_fingerprint": signing_config.get("signing_fingerprint"),

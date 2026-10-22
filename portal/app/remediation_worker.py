@@ -151,6 +151,9 @@ def handle(ctx, payload):
     from .delivery_execution import delivery_lock
     token = worker_context.set(ctx)
     try:
+        if ctx.job.kind == "proposal_assessment":
+            from .proposal_scans import handle as proposal_scan
+            return proposal_scan(ctx, payload)
         if ctx.job.kind == "oci_reassessment":
             from .oci_lifecycle import handle as reassess
             return reassess(ctx, payload)
@@ -188,6 +191,8 @@ def maintenance():
         reconcile_jobs(db)
         from .oci_lifecycle import maintenance as lifecycle_maintenance
         lifecycle_maintenance(db)
+        from .proposal_scans import maintenance as proposal_maintenance
+        proposal_maintenance(db)
         records = db.scalars(select(RemediationExecution).where(
             (RemediationExecution.status.in_(["queued", "running"])) |
             (RemediationExecution.verification_status.in_(["queued", "running"])) |
@@ -220,4 +225,4 @@ def maintenance():
 
 
 if __name__ == "__main__":
-    run_worker((*KINDS, "oci_reassessment", "patch_campaign_item", "artifact_recommendations"), handle, maintenance=maintenance)
+    run_worker((*KINDS, "proposal_assessment", "oci_reassessment", "patch_campaign_item", "artifact_recommendations"), handle, maintenance=maintenance)

@@ -548,3 +548,48 @@ def test_worker_service_removes_ephemeral_job_inputs(monkeypatch, tmp_path: Path
     assert not input_root.exists()
     assert not config_path.exists()
     assert "job4" not in patch_service.PROCESSES
+
+
+def test_worker_binds_trusted_scanner_snapshot_and_records_digest(monkeypatch, tmp_path):
+    from app.scanner_inputs import snapshot_digest
+    source = tmp_path / "scanner-db"
+    source.mkdir()
+    (source / "vulnerability.db").write_bytes(b"trusted database")
+    digest = snapshot_digest(source)
+    monkeypatch.setenv("CATS_PATCH_GRYPE_DB_SNAPSHOT", str(source))
+    monkeypatch.setenv("CATS_PATCH_GRYPE_DB_DIGEST", digest)
+    config = {"job_id": "bound", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
+    code, output, state, calls = run_worker(monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2"])]), grype_report([]))
+    assert code == 0
+    assert json.loads((output / "patch-result.json").read_text())["scanner_input_digest"] == digest
+
+
+def test_worker_rejects_snapshot_mismatch_before_registry_access(monkeypatch, tmp_path):
+    source = tmp_path / "scanner-db"
+    source.mkdir()
+    (source / "db").write_bytes(b"untrusted")
+    monkeypatch.setenv("CATS_PATCH_GRYPE_DB_SNAPSHOT", str(source))
+    monkeypatch.setenv("CATS_PATCH_GRYPE_DB_DIGEST", "sha256:" + "0" * 64)
+    config = {"job_id": "bad-bound", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
+    code, output, state, calls = run_worker(monkeypatch, tmp_path, config, grype_report([]), grype_report([]))
+    assert code == 1
+    assert not calls
+    assert "digest does not match" in state["error"]
+
+
+def test_worker_refuses_publication_when_bound_database_changes(monkeypatch, tmp_path):
+    class ChangedSnapshot:
+        digest = "sha256:" + "a" * 64
+        checks = 0
+        def verify(self):
+            self.checks += 1
+            if self.checks > 1:
+                raise RuntimeError("Bound scanner database changed during patch execution")
+    monkeypatch.setattr(patch_worker, "bind_scanner_snapshot", lambda *args: ChangedSnapshot())
+    config = {"job_id": "changed-bound", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "push", "destination_image": "registry/output:test"}
+    code, output, state, calls = run_worker(monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2"])]), grype_report([]))
+    assert code == 1
+    assert "database changed" in state["error"]
+    assert not any(command[:2] == ["docker", "push"] for command, _ in calls)

@@ -148,3 +148,26 @@ it('shows precise adoption blockers before live readiness finishes', async () =>
   expect(screen.getByText('Next step: Submit a complete proposed inventory scan')).toBeInTheDocument();
   expect(screen.queryByRole('button',{name:'Request Cyber Approval'})).not.toBeInTheDocument();
 });
+
+it('retries a failed proposed assessment with service scope and CSRF', async () => {
+  let queued = false;
+  const fetch = vi.fn().mockImplementation((url:string, options?:RequestInit) => {
+    if (url.endsWith('/assessment') && options?.method === 'POST') {
+      queued = true;
+      return Promise.resolve(response({status:'queued'}));
+    }
+    if (url.endsWith('/readiness')) return Promise.resolve(response({ready_for_cyber_review:false,assessment_status:queued?'queued':'failed',assessment_error:queued?null:'Scanner unavailable',blockers:[]}));
+    return Promise.resolve(response({can_adopt:true,items:[{id:3,status:'proposed',amendment_proposal_id:12,source_artifact:source,target_artifact:target,can_adopt:false}]}));
+  });
+  vi.stubGlobal('fetch',fetch);
+  render(<Recommendations data={serviceData}/>);
+  fireEvent.click(await screen.findByRole('button',{name:'Continue amendment review'}));
+  await screen.findByText('Scanner unavailable');
+  fireEvent.click(screen.getByRole('button',{name:'Retry proposed inventory assessment'}));
+  await screen.findByText('Proposed inventory assessment: queued — updates automatically');
+  const call = fetch.mock.calls.find(([url, options]) => url.endsWith('/assessment') && options?.method === 'POST');
+  expect(new URL(call![0]).pathname).toBe('/api/services/payments/amendment-proposals/12/assessment');
+  expect(call?.[1].headers.get('X-CSRF-Token')).toBe('token');
+  expect(screen.queryByText('Scanner unavailable')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Request Cyber Approval'})).not.toBeInTheDocument();
+});

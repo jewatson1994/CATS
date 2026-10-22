@@ -10,7 +10,7 @@ from .execution_summaries import payload_digest
 from .release_revisions import ReleaseAmendmentProposal, ServiceActiveRelease, ReleaseRevision, CyberApproval, _immutable
 
 
-class ProposalAssessment(Base):
+class LegacyProposalAssessment(Base):
     __tablename__ = 'proposal_assessments'
     id: Mapped[int] = mapped_column(primary_key=True)
     proposal_id: Mapped[int] = mapped_column(ForeignKey('release_amendment_proposals.id'), unique=True)
@@ -19,18 +19,41 @@ class ProposalAssessment(Base):
     digest: Mapped[str] = mapped_column(String(64))
 
 
+class ProposalAssessment(Base):
+    __tablename__ = 'proposal_assessment_versions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    proposal_id: Mapped[int] = mapped_column(ForeignKey('release_amendment_proposals.id'), index=True)
+    execution_key: Mapped[str] = mapped_column(String(240), unique=True)
+    raw_payload: Mapped[dict] = mapped_column(JSON)
+    digest: Mapped[str] = mapped_column(String(64))
+
+
+def latest(db, identity):
+    return db.scalar(select(ProposalAssessment).where(ProposalAssessment.proposal_id == identity)
+        .order_by(ProposalAssessment.id.desc()).limit(1)) or db.scalar(select(LegacyProposalAssessment)
+        .where(LegacyProposalAssessment.proposal_id == identity))
+
+
+event.listen(LegacyProposalAssessment, 'before_update', _immutable)
+event.listen(LegacyProposalAssessment, 'before_delete', _immutable)
+
+
 event.listen(ProposalAssessment, 'before_update', _immutable)
 event.listen(ProposalAssessment, 'before_delete', _immutable)
+
+
+class InactiveProposalBase(ValueError):
+    """The proposal no longer targets the service's active revision."""
 
 
 def proposal(db, identity, service_id):
     row = db.get(ReleaseAmendmentProposal, identity)
     pointer = db.scalar(select(ServiceActiveRelease).where(
-        ServiceActiveRelease.service_id == service_id).with_for_update())
+        ServiceActiveRelease.service_id == service_id).with_for_update().execution_options(populate_existing=True))
     if row is None or row.service_id != service_id:
         raise ValueError('Amendment proposal unavailable')
     if pointer is None or pointer.revision_id != row.base_revision_id:
-        raise ValueError('Amendment base is no longer active')
+        raise InactiveProposalBase('Amendment base is no longer active')
     return row
 
 
@@ -43,9 +66,11 @@ def retain(db, identity, payload):
     if not payload.fixable_only or not payload.complete or payload.scan_scope != 'service' or payload.skipped_images or payload.skipped_charts:
         raise ValueError('A complete whole-service fixable assessment without skipped inputs is required')
     raw = payload.model_dump(mode='json')
-    existing = db.scalar(select(ProposalAssessment).where(ProposalAssessment.proposal_id == row.id))
+    existing = db.scalar(select(ProposalAssessment).where(ProposalAssessment.execution_key == payload.execution_id))
+    if existing is None:
+        existing = db.scalar(select(LegacyProposalAssessment).where(LegacyProposalAssessment.execution_key == payload.execution_id))
     if existing:
-        if existing.raw_payload != raw:
+        if existing.proposal_id != row.id or existing.raw_payload != raw:
             raise ValueError('Proposal assessment already retained with different evidence')
         return existing
     assessment = ProposalAssessment(proposal_id=row.id, execution_key=payload.execution_id,
@@ -64,9 +89,17 @@ def assess(db, service, identity, *, assessment=None):
     from .cyber_approval_evidence import readiness
     from .artifact_catalog import GlobalArtifact
     row = proposal(db, identity, service.id)
-    assessment = assessment or db.scalar(select(ProposalAssessment).where(ProposalAssessment.proposal_id == identity))
+    assessment = assessment or latest(db, identity)
     if assessment is None or assessment.digest != payload_digest(assessment.raw_payload):
         raise ValueError('Retained proposal assessment is missing or corrupt')
+    from .proposal_scans import require_assessment_dispatch, freshness_deadline, latest_dispatch, evidence_inputs_token, proposal_inputs_token
+    require_assessment_dispatch(db, row, assessment.execution_key)
+    dispatch = latest_dispatch(db, row.id)
+    if dispatch and (dispatch.payload.get('evidence_inputs_token') != evidence_inputs_token(db, service.id)
+            or dispatch.payload.get('proposal_inputs_token') != proposal_inputs_token(db, row)):
+        raise ValueError('Proposal assessment inputs changed; a fresh assessment is required')
+    if freshness_deadline(assessment.raw_payload) <= datetime.now(timezone.utc):
+        raise ValueError('Proposal assessment evidence has expired; a fresh assessment is required')
     payload = ExecutionPayload.model_validate(assessment.raw_payload)
     base = db.get(ReleaseRevision, row.base_revision_id)
     approval = db.get(CyberApproval, base.approval_id)

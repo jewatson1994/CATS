@@ -106,9 +106,11 @@ async def propose_selection(service_key: str, recommendation_id: int, request: R
         row.status = "proposed"
         record_audit(db, auth, "artifact.recommendation.proposed", "artifact_recommendation", row.id,
             service_id=service.id, source_artifact_id=row.source_artifact_id, target_artifact_id=row.target_artifact_id)
+    from .proposal_scans import enqueue
+    assessment_job = enqueue(db, proposal, auth.user.id) if proposal else None
     db.commit()
-    return {"amendment_proposal_id": proposal.id if proposal else None, "proposal": proposal.intent if proposal else None, "id": row.id, "status": "proposed", "active_release_changed": False,
-        "message": "Selection proposed. Retain the updated service assessment and complete service validation and Cyber approval before activating a release revision."}
+    return {"assessment_job_id": assessment_job.id if assessment_job else None, "amendment_proposal_id": proposal.id if proposal else None, "proposal": proposal.intent if proposal else None, "id": row.id, "status": "proposed", "active_release_changed": False,
+        "message": "Selection proposed and isolated assessment queued. Complete service validation and Cyber approval before activating a release revision."}
 
 
 @router.post("/api/services/{service_key}/artifact-recommendations/{recommendation_id}/decision")
@@ -162,6 +164,30 @@ def proposal_readiness(service_key: str, proposal_id: int, db=Depends(get_db), a
     if not _can_propose(auth, service):
         raise HTTPException(403, "Service edit and approval request permissions required")
     try:
-        return amendment_readiness(db, auth, proposal_id, service.id)
+        from .proposal_scans import state
+        return {**amendment_readiness(db, auth, proposal_id, service.id), **state(db, proposal_id),
+            "automatic_assessment_available": True}
     except (ValueError, PermissionError) as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+@router.post("/api/services/{service_key}/amendment-proposals/{proposal_id}/assessment")
+def request_proposal_assessment(service_key: str, proposal_id: int, request: Request,
+        db=Depends(get_db), auth=Depends(require_user)):
+    _csrf(request, auth)
+    service = _service(db, auth, service_key)
+    if not _can_propose(auth, service):
+        raise HTTPException(403, "Service edit and approval request permissions required")
+    from .proposal_assessments import proposal
+    from .proposal_scans import enqueue, state
+    try:
+        row = proposal(db, proposal_id, service.id)
+        current = state(db, proposal_id)
+        if current['assessment_status'] in {'queued', 'running', 'preparing', 'evidence_ready'}:
+            return current
+        enqueue(db, row, auth.user.id, fresh=True)
+        db.commit()
+        return state(db, proposal_id)
+    except ValueError as exc:
+        db.rollback()
         raise HTTPException(409, str(exc)) from None

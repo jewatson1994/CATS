@@ -12,7 +12,9 @@ from pathlib import Path
 
 from .admin_config import OS_DEFINITIONS, resolve_policy, write_repository_config
 from .signing import SECRET_ENV, clean_environment, sign_and_verify
+from .oci_attestations import attest_patch_evidence
 from .remediation import summarize_grype_reports
+from .scanner_inputs import bind_scanner_snapshot
 from .patching import (
     PATCH_PHASES,
     archive_sha256, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
@@ -164,8 +166,16 @@ def main() -> int:
     signal.signal(signal.SIGTERM, cancel)
     signal.signal(signal.SIGINT, cancel)
 
+    scanner_binding = None
+
     def run(command, **kwargs):
-        return run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), **kwargs)
+        bound_scan = scanner_binding is not None and command[0] == "grype"
+        if bound_scan:
+            scanner_binding.verify()
+        result = run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), **kwargs)
+        if bound_scan:
+            scanner_binding.verify()
+        return result
 
     def extract_scan_root(reference: str, label: str) -> Path:
         """Use identical filesystem coverage on both sides without starting the image."""
@@ -188,6 +198,7 @@ def main() -> int:
         run(["docker", "login", registry, "--username", username, "--password-stdin"], stdin=password + "\n")
 
     try:
+        scanner_binding = bind_scanner_snapshot(env, workspace)
         state("running", "acquiring_image")
         source_mode = config.get("source_mode")
         if source_mode == "oci":
@@ -461,6 +472,8 @@ def main() -> int:
                 except Exception:
                     remediation_evidence[name] = "failed"
                     evidence_path.unlink(missing_ok=True)
+        if scanner_binding is not None:
+            scanner_binding.verify()
         source_id = run(["docker", "image", "inspect", source_ref, "--format", "{{.Id}}"]).stdout.strip()
         patched_id = run(["docker", "image", "inspect", canonical_ref, "--format", "{{.Id}}"]).stdout.strip()
         image_changed = None if not (source_id.startswith("sha256:") and patched_id.startswith("sha256:")) else source_id != patched_id
@@ -479,6 +492,7 @@ def main() -> int:
         immutable_destination = None
         signature_status = "not_configured"
         signature_metadata = {}
+        attestations = []
         if comparison.get("patch_status") == "FAILED":
             delivery_error = "Publishing was not attempted because Copa did not produce a changed image"
         elif output_mode == "download":
@@ -519,6 +533,8 @@ def main() -> int:
                     state("running", "signing_image", immutable_destination=immutable_destination)
                     signature_status = "failed"
                     signed = sign_and_verify(immutable_destination, config, signing_credentials, env)
+                    attestations = attest_patch_evidence(immutable_destination, before_path, after_path,
+                                                         patched_archive, (config, signing_credentials), env)
                     signature_status = signed["signature_status"]
                     signature_metadata = signed["signature"]
             except Exception as exc:
@@ -552,6 +568,8 @@ def main() -> int:
             "delivery_error": delivery_error,
             "immutable_destination": immutable_destination, "signature_status": signature_status,
             "signature": signature_metadata,
+            "attestations": attestations,
+            "scanner_input_digest": scanner_binding.digest if scanner_binding else None,
             "remediation_evidence": remediation_evidence,
             **output_metadata,
             **{"source_" + key: value for key, value in source_metadata.items()},

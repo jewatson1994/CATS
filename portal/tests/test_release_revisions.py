@@ -204,7 +204,7 @@ def test_recommendation_amendment_retains_inventory_and_requires_current_base(db
     assert proposal.intent['release_revision']['artifact_ids'] == [target.id, unchanged.id]
     assert proposal.intent['previous_artifacts'] == db.get(revisions.CyberApproval, base.approval_id).snapshot['artifacts']
     assert proposal.intent['posture_status'] == 'requires_fresh_service_assessment'
-    assert proposal.intent['assessment_readiness']['automatic_assessment_available'] is False
+    assert proposal.intent['assessment_readiness']['automatic_assessment_available'] is True
     readiness = revisions.amendment_readiness(db, auth, proposal.id, base.service_id)
     assert readiness['ready_for_cyber_review'] is False
     assert readiness['artifacts'][0]['assigned'] is False

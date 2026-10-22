@@ -36,7 +36,7 @@ Verified on 2026-10-21 with Docker Engine 29.6.2:
 
 - Tampering with the other service's signed manifest denies its tag request.
 
-The runner writes `proxy-results.json` and `active-results.json`. This is integration coverage of fixture evidence, not certification of patch correctness or a complete human approval journey.
+The runner writes `proxy-results.json`, `active-results.json` and `concurrency-results.json`. The concurrency check uses separate PostgreSQL sessions to verify same-key durable dispatch serialization and preservation of unrelated caller writes. This is integration coverage of fixture evidence, not certification of patch correctness or a complete human approval journey.
 
 ## Real Docker and Helm clients
 
@@ -77,3 +77,7 @@ On 2026-10-21 the runner exited successfully and actual host clients passed:
 Ten sequential actual authenticated gateway manifest reads measured 39.02-54.21 ms (median 42.05 ms). These are local, single-client fixture measurements including database authorization and registry traffic, not load-test results or production latency guarantees. Host-client pulls exercise legacy nonrevision approvals; the separate signed active revision checks still run through real HTTP. The gateway-to-registry link uses TLS with the generated trusted CA; host-client-to-gateway HTTP is confined to loopback. The tiny image contains a file and valid filesystem layer but no executable; this is pull/unpack verification, not workload execution. Chart pull does not establish Kubernetes installation readiness. Approval, scan and validation fixture records remain synthetic.
 
 `client-results.json` records actual command results; `clients-ready.json` records gateway lookup timings. The test only removes its dedicated project resources and unique image tag. No existing deployment containers or volumes are modified.
+
+## Continuation run
+
+On 2026-10-21, `CATS_LIFECYCLE_RUN=lifecycle-continue-20261021` completed successfully, including concurrent PostgreSQL deduplication checks. This run did not repeat host Docker/Helm client checks. The private bridge allows external egress; this is not disconnected acceptance. Preserve the ignored run directory for local evidence; never commit its generated signing keys. Only remove volumes belonging to the dedicated disposable fixture when cleanup is intended.

@@ -3959,7 +3959,7 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     compose_uploads = compose_uploads or []
@@ -4006,6 +4006,7 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
     security = admission_policy(owner_user_id, service_db_id)
     skipped_charts = list(definition_skipped or [])
     payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []) + [name for _, name in compose_uploads], "compose_enabled": bool(compose_uploads), "compose_files": compose_files, "compose_profiles": compose_profiles, "compose_preview": compose_preview, "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
+    payload["proposal_context"] = proposal_context or {}
     payload.update(security)
     if owner_user_id is None:
         if not capability_token:
@@ -4692,6 +4693,8 @@ def ingest_public_scan(
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
         job = PUBLIC_JOBS[job_id]
+    if job.get("proposal_context"):
+        raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
     if job.get("compose_preview"):
         raise HTTPException(status_code=409, detail="Compose previews cannot be ingested; start a scan first")
     result_path = PUBLIC_JOB_ROOT / job_id / "output" / "portal-result.json"

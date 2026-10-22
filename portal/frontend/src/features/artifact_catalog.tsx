@@ -1,5 +1,5 @@
 import {ArtifactEvidence, type VulnerabilityEvidence} from './artifact_evidence';
-import {useEffect, useState, type FormEvent} from 'react';
+import {useCallback, useEffect, useState, type FormEvent} from 'react';
 
 import {requestJson, type PageData} from '../api';
 
@@ -17,7 +17,7 @@ type Artifact = {id: number; digest: string; media_type: string; platform: strin
 type Recommendation = {vulnerability_evidence?: VulnerabilityEvidence | null; amendment_proposal_id?: number | null; id: number; status: string; source_artifact: Artifact; target_artifact: Artifact; eligibility?: {eligible: boolean; reasons: string[]}; can_adopt?: boolean};
 
 type AssessmentReadiness = {status?: string; code?: string; message?: string; next_action?: string};
-type ProposalReadiness = {ready_for_cyber_review: boolean; blockers?: AssessmentReadiness[]; artifacts?: {artifact_id: number; assigned: boolean; eligible: boolean; reasons: string[]}[]; required_steps?: string[]};
+type ProposalReadiness = {ready_for_cyber_review: boolean; blockers?: AssessmentReadiness[]; artifacts?: {artifact_id: number; assigned: boolean; eligible: boolean; reasons: string[]}[]; required_steps?: string[]; assessment_status?: string; assessment_scan_id?: string; assessment_error?: string};
 
 type CatalogResult = {items: Artifact[]; total: number; page_size?: number};
 
@@ -35,7 +35,7 @@ function useCatalogResource<T>(url: string) {
 
     const controller = new AbortController();
 
-    setState({url});
+    setState(previous => previous.url === url ? previous : {url});
 
     requestJson<T>(url, {signal: controller.signal}).then(value => {if (!controller.signal.aborted) setState({url, value});}).catch(error => {if (!controller.signal.aborted) setState({url, error: errorText(error)});});
 
@@ -43,7 +43,7 @@ function useCatalogResource<T>(url: string) {
 
   }, [url, revision]);
 
-  return {...(state.url === url ? state : {url}), refresh: () => setRevision(value => value + 1)};
+  return {...(state.url === url ? state : {url}), refresh: useCallback(() => setRevision(value => value + 1), [])};
 
 }
 
@@ -149,6 +149,25 @@ function ServiceRecommendations({data, service}: {data: PageData; service: {serv
 
 function AmendmentReview({data, serviceKey, id, initial}: {data: PageData; serviceKey: string; id: number; initial?: AssessmentReadiness}) {
   const result = useCatalogResource<ProposalReadiness>(`/api/services/${encodeURIComponent(serviceKey)}/amendment-proposals/${id}/readiness`);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
+  const status = result.value?.assessment_status;
+  const processing = ['queued', 'running', 'preparing'].includes(status || '');
+  useEffect(() => {
+    if (!processing) return;
+    const timer = window.setInterval(result.refresh, 5000);
+    return () => window.clearInterval(timer);
+  }, [processing, result.refresh]);
+  async function retryAssessment() {
+    setRetrying(true); setRetryError('');
+    try {
+      await requestJson(`/api/services/${encodeURIComponent(serviceKey)}/amendment-proposals/${id}/assessment`, {
+        method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': data.csrf_token || ''}, body: '{}',
+      });
+      result.refresh();
+    } catch (error) { setRetryError(errorText(error)); }
+    finally { setRetrying(false); }
+  }
   const blockers = result.value?.blockers || (initial ? [initial] : []);
-  return <section className="panel catalog-card" aria-label="Amendment assessment readiness"><h2>Amendment proposal #{id}</h2><p>Current service posture remains unchanged. A fresh assessment must cover the complete proposed inventory.</p>{result.error && <ErrorState title="Amendment readiness unavailable" onRetry={result.refresh}>{result.error}</ErrorState>}{!result.value && !result.error && <Loading label="Checking amendment evidence…"/>}{blockers.map((blocker,index) => <div key={index}><p>{blocker.message || blocker.code}</p>{blocker.next_action && <p>Next step: {blocker.next_action}</p>}</div>)}{result.value?.artifacts?.map(item => <div key={item.artifact_id}><h3>Artifact {item.artifact_id}</h3><p>{item.assigned ? 'Assigned to this service' : 'Service assignment missing'} · {item.eligible ? 'Evidence eligible' : 'Evidence incomplete'}</p><ul>{item.reasons.map((reason,index) => <li key={index}>{reason}</li>)}</ul></div>)}{result.value?.required_steps?.length ? <ol>{result.value.required_steps.map(step => <li key={step}>{step}</li>)}</ol> : null}<button className="secondary-button" onClick={result.refresh}>Refresh amendment readiness</button>{result.value?.ready_for_cyber_review === true ? <RequestApproval data={data} serviceKey={serviceKey} amendmentProposalId={id}/> : <p>Cyber submission is blocked until the proposed inventory evidence is ready.</p>}</section>;
+  return <section className="panel catalog-card" aria-label="Amendment assessment readiness"><h2>Amendment proposal #{id}</h2><p>Current service posture remains unchanged. A fresh assessment must cover the complete proposed inventory.</p>{result.error && <ErrorState title="Amendment readiness unavailable" onRetry={result.refresh}>{result.error}</ErrorState>}{!result.value && !result.error && <Loading label="Checking amendment evidence…"/>}{status && <p role="status">Proposed inventory assessment: {status.replaceAll('_', ' ')}{processing ? ' — updates automatically' : ''}</p>}{result.value?.assessment_error && <p role="alert">{result.value.assessment_error}</p>}{retryError && <p role="alert">{retryError}</p>}{['failed', 'cancelled', 'not_requested'].includes(status || '') && <button className="secondary-button" disabled={retrying} onClick={() => void retryAssessment()}>{retrying ? 'Queuing assessment…' : 'Retry proposed inventory assessment'}</button>}{blockers.map((blocker,index) => <div key={index}><p>{blocker.message || blocker.code}</p>{blocker.next_action && <p>Next step: {blocker.next_action}</p>}</div>)}{result.value?.artifacts?.map(item => <div key={item.artifact_id}><h3>Artifact {item.artifact_id}</h3><p>{item.assigned ? 'Assigned to this service' : 'Service assignment missing'} · {item.eligible ? 'Evidence eligible' : 'Evidence incomplete'}</p><ul>{item.reasons.map((reason,index) => <li key={index}>{reason}</li>)}</ul></div>)}{result.value?.required_steps?.length ? <ol>{result.value.required_steps.map(step => <li key={step}>{step}</li>)}</ol> : null}<button className="secondary-button" onClick={result.refresh}>Refresh amendment readiness</button>{!result.error && result.value?.ready_for_cyber_review === true ? <RequestApproval data={data} serviceKey={serviceKey} amendmentProposalId={id}/> : <p>Cyber submission is blocked until the proposed inventory evidence is ready.</p>}</section>;
 }
