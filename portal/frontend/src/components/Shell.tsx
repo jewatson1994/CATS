@@ -13,7 +13,7 @@ const primaryNav: NavItem[] = [
   ['/patch', 'Patch', path => path === '/patch' || path === '/patch-campaigns' || path.startsWith('/api/public/patch-jobs/')],
 ];
 const cyberNav: NavSection[] = [{items: [
-  ['/cybersecurity', 'Cybersecurity overview', path => path.startsWith('/cybersecurity')],
+  ['/cybersecurity', 'Dashboard', path => path.startsWith('/cybersecurity')],
   ['/cyber-approvals', 'Approvals', path => path.startsWith('/cyber-approvals')],
   ['/approved-releases', 'Approved Releases', path => path.startsWith('/approved-releases')],
 ]}];

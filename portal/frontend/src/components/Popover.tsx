@@ -24,7 +24,13 @@ export function Popover({label, button, children, align = 'end', className = '',
     if (!open) return;
     panel.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
     const outside = (event: Event) => {
-      if (root.current && event.target instanceof Node && !root.current.contains(event.target)) setOpen(false);
+      const target = event.target;
+      if (!root.current || !(target instanceof Node) || root.current.contains(target)) return;
+      // Pressing on non-focusable content inside the panel (an option's label text)
+      // moves focus to the nearest focusable ancestor, such as <main>. That is not
+      // leaving the popover, so focus landing on an ancestor never closes it.
+      if (event.type === 'focusin' && target.contains(root.current)) return;
+      setOpen(false);
     };
     document.addEventListener('pointerdown', outside);
     document.addEventListener('focusin', outside);

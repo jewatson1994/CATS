@@ -105,6 +105,7 @@ body > #root > header.app-header, header.app-header {
 .popover-panel {
   position: absolute; top: calc(100% + 6px); z-index: 45; min-width: 250px; max-width: min(360px, calc(100vw - 24px)); max-height: min(72vh, 560px); overflow: auto;
   padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover); color: var(--text); text-align: left;
+  overflow-x: hidden;
 }
 .popover-end { right: 0; } .popover-start { left: 0; }
 
@@ -195,8 +196,8 @@ body.dg-resizing, body.dg-resizing * { cursor: col-resize !important; user-selec
 .dg-pin { margin-top: 4px; padding: 6px 6px 2px; border-top: 1px solid var(--border); }
 .dg-menu-hint { margin: 4px 6px; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.45; }
 .dg-reset { width: 100%; margin-top: 4px; }
-.dg-density-options { margin: 0; padding: 0; border: 0; min-width: 190px; }
-.dg-density-options legend { float: left; width: 100%; }
+.dg-density-options { margin: 0; padding: 0; border: 0; min-width: 0; min-inline-size: 0; }
+.dg-density-options > legend { float: none; display: block; width: auto; padding: 0; }
 .dg-density-options label { padding: 0 6px; border-radius: var(--radius-sm); }
 .dg-density-options label:hover { background: var(--surface-raised); }
 .dg-hidden-count { height: 18px; padding: 0 6px; font-size: 10.5px; }
