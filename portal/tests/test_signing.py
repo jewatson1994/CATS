@@ -315,7 +315,7 @@ def test_remote_worker_passes_signing_secrets_only_through_environment(keys, mon
     monkeypatch.setattr(patch_service, "TOKEN", "worker-token")
     captured = {}
     def popen(args, **kw):
-        captured.update(kw)
+        captured.update({**kw, "env": dict(kw["env"])})
         return SimpleNamespace(poll=lambda: None)
     monkeypatch.setattr(patch_service.subprocess, "Popen", popen)
     monkeypatch.setattr(patch_service.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: None))

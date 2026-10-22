@@ -216,7 +216,8 @@ def test_simplified_current_observation_compiles_as_lateral_on_postgresql():
     service, latest = SimpleNamespace(id=1), SimpleNamespace(id=7)
     for name, dialect, expected, absent in (("postgresql", postgresql.dialect(), "LATERAL", None),
                                             ("sqlite", sqlite.dialect(), None, "LATERAL")):
-        fake = SimpleNamespace(get_bind=lambda name=name: SimpleNamespace(dialect=SimpleNamespace(name=name)))
+        fake = SimpleNamespace(get_bind=lambda name=name: SimpleNamespace(dialect=SimpleNamespace(name=name)),
+                               scalar=db.scalar)
         # The live (reference) query; ``candidates`` serves current
         # classification rows instead when they exist.
         members = simplified_queries.live_candidates(fake, service, latest, utcnow(), configuration)

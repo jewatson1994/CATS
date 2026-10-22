@@ -37,9 +37,17 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
     proxy = SimpleNamespace(**{column.key: getattr(service, column.key)
                                for column in service.__table__.columns})
     proxy.findings, proxy.policy_findings, proxy.poam_entries = [], [], []
-    proxy.groups = [SimpleNamespace(**dict(row)) for row in db.execute(
-        select(*Group.__table__.columns).join(ServiceGroup, ServiceGroup.group_id == Group.id)
-        .where(ServiceGroup.service_id == service.id).order_by(Group.id)).mappings()]
+    from sqlalchemy import inspect
+    from sqlalchemy.orm.attributes import NO_VALUE
+    loaded_groups = inspect(service).attrs.groups.loaded_value
+    if loaded_groups is not NO_VALUE:
+        proxy.groups = [SimpleNamespace(**{column.key: getattr(group, column.key)
+                                          for column in Group.__table__.columns})
+                        for group in sorted(loaded_groups, key=lambda group: group.id)]
+    else:
+        proxy.groups = [SimpleNamespace(**dict(row)) for row in db.execute(
+            select(*Group.__table__.columns).join(ServiceGroup, ServiceGroup.group_id == Group.id)
+            .where(ServiceGroup.service_id == service.id).order_by(Group.id)).mappings()]
     proxy.archive_events = [SimpleNamespace(**dict(row)) for row in db.execute(
         select(*ServiceArchiveEvent.__table__.columns).where(ServiceArchiveEvent.service_id == service.id)
         .order_by(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc()).limit(1)).mappings()]
@@ -122,7 +130,7 @@ def prepare_summary_header(db, proxy, current, latest, now, configuration, servi
         raw_payload={"service": {"version": summaries[scan.id].get("raw_version")}})
         for scan in executions]
     from .native_vex import excluded_finding_ids
-    proxy._native_vex_excluded_ids = excluded_finding_ids(db, proxy.id, now)
+    proxy._native_vex_excluded_ids = excluded_finding_ids(db, proxy.id, now) if proxy.findings else set()
     view = service_view_callback(proxy, now, configuration)
     proxy.executions = executions
     if current is not None:

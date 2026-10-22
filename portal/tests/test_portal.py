@@ -1056,6 +1056,8 @@ def test_services_overview_query_count_is_constant_as_services_grow():
     # being (re)built or served from the Service Posture read model.
     client = new_client()
 
+    measured_sql = []
+
     def measure():
         calls = []
         listener = lambda *args: calls.append(args[2])
@@ -1065,6 +1067,7 @@ def test_services_overview_query_count_is_constant_as_services_grow():
         finally:
             event.remove(engine, "before_cursor_execute", listener)
         assert response.status_code == 200
+        measured_sql.append(calls)
         return len(calls)
 
     for index in range(20):
@@ -1076,7 +1079,7 @@ def test_services_overview_query_count_is_constant_as_services_grow():
     # loader may add one fallback read for summaries still being prepared).
     assert measure() - cold <= 1
     assert measure() == warm
-    assert warm <= 20
+    assert warm <= 20, "\n".join(measured_sql[1])
 
 
 def test_configuration_policy_findings_render_as_generic_active_findings():

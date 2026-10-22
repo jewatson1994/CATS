@@ -63,7 +63,8 @@ def database(tmp_path, monkeypatch):
     coordination.Base.metadata.create_all(engine)
     sessions = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
     with sessions() as db:
-        db.add(models.Service(id=1, service_key="service", name="Coordination test service"))
+        db.add(models.Service(id=1, service_key="service", name="Coordination test service",
+                              groups=[models.Group(name="Coordination owners")]))
         db.commit()
     monkeypatch.setattr(coordination, "SessionLocal", sessions)
     monkeypatch.setenv("CATS_SCAN_MAX_ATTEMPTS", "2")

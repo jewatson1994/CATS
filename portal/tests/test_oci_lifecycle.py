@@ -8,15 +8,16 @@ from sqlalchemy.orm import Session
 from app.database import Base
 from app import oci_lifecycle as lifecycle
 from app.cyber_approvals import CyberApproval, digest
-from app.models import Service, Execution
+from app.models import Service, Execution, Group
 from app.durable_jobs import DurableJob, now
 
 @pytest.fixture
 def db():
+    from app import main  # Register ingestion models before creating the test schema.
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        service = Service(service_key='one', name='One')
+        service = Service(service_key='one', name='One', groups=[Group(name='Test group')])
         db.add(service); db.flush()
         execution = Execution(service_id=service.id, execution_key='one', scanned_at=now(), complete=True, raw_payload={})
         db.add(execution); db.flush()

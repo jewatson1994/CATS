@@ -92,7 +92,7 @@ def measure(engine,main,name,size, *, route_kwargs=None, capture_plan=False):
     def after(*args):metrics['database_execute_ms']+=(time.perf_counter()-stack.pop())*1000
     def loaded(item,context):metrics['orm_objects_loaded']+=1;orm[type(item).__name__]+=1
     event.listen(engine,'before_cursor_execute',before);event.listen(engine,'after_cursor_execute',after);event.listen(Base,'load',loaded,propagate=True)
-    auth=SimpleNamespace(user=SimpleNamespace(id=1,username='benchmark',display_name='Benchmark',role_assignments=[]),csrf_token='benchmark',has=lambda *a,**k:True,accessible_service_ids=lambda permission:None)
+    auth=SimpleNamespace(user=SimpleNamespace(id=1,username='benchmark',display_name='Benchmark',role_assignments=[]),csrf_token='benchmark',effective_assignments=[],has=lambda *a,**k:True,accessible_service_ids=lambda permission:None)
     request=Request({'type':'http','method':'GET','path':name,'query_string':b'','headers':[(b'accept',b'application/vnd.cats.page+json')],'scheme':'http','server':('benchmark',80)})
     gc.collect();tracemalloc.start();profile=cProfile.Profile();ACTIVE=metrics;started=time.perf_counter()
     try:

@@ -55,7 +55,7 @@ def seed():
     for index, (severity, started) in enumerate(EPISODES.items()):
         body = {"schema_version": "1.0", "execution_id": f"due-{index}", "scanned_at": started.isoformat(), "complete": True,
                 "skipped_images": [], "fixable_only": True,
-                "service": {"id": "due", "name": "Due", "version": "1", "poc": "poc@example.invalid"},
+                "service": {"id": "due", "name": "Due", "version": "1", "poc": "poc@example.invalid", "groups": ["Test group"]},
                 # One package per severity: one Simplified group each.
                 "findings": [{"cve": f"CVE-2026-{1000 + other}", "severity": name, "image": "registry/app:1",
                               "package": f"package-{name.lower()}", "fixed_version": "2.0", "evidence": {}}

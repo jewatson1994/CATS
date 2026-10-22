@@ -245,3 +245,10 @@ def test_recipe_requires_execution_source_matches_identity(reference):
     args = inputs()
     args["config"]["source_image"] = reference
     assert recipe_fingerprint(**args) is None
+
+
+@pytest.mark.parametrize("field", ["package_versions", "mirror_digest", "runtime_digest"])
+def test_unknown_manifest_inputs_disable_reuse(field):
+    args = inputs()
+    args["identity"][field] = "sha256:" + "f" * 64
+    assert recipe_fingerprint(**args) is None

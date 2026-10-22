@@ -8,7 +8,16 @@ Grype database. Optional trusted scanner snapshot binding alone does not bind
 repository and engine inputs, and no production identity provider is installed. Campaigns must
 therefore keep reuse disabled. A future provider must bind the same immutable
 inputs to actual execution (including a remote worker), not hash portal settings
-or accept operator/request assertions. Interrupted publication claims never
+or accept operator/request assertions. Production reuse requires a worker-side
+prepare/execute protocol: prepare must materialize the exact scanner database,
+package repository bytes and execution engine, return an authenticated opaque
+binding token, and execute must consume only those retained inputs. Repository
+URLs, even URLs containing snapshot names, do not prove immutable content;
+network fallback must be prevented and remote workers must enforce the binding.
+The portal must obtain this binding before claiming a recipe and retain the
+worker's consumed-input receipt before permitting reuse. Until that protocol
+exists, scanner snapshot evidence must never enable production recipe reuse.
+Interrupted publication claims never
 expire automatically because registry side effects may already have happened.
 """
 from __future__ import annotations
@@ -40,6 +49,11 @@ def recipe_fingerprint(*, source, config, identity, destination_scope):
     if not isinstance(config, dict):
         return None
     if not isinstance(identity, dict) or identity.get("schema") != "cats-patch-inputs-v1":
+        return None
+    # Unknown manifest fields may describe additional material inputs. Never
+    # silently discard them and collapse distinct recipes into one claim.
+    if set(identity) != {"schema", "engine_digest", "repository_snapshot_digest",
+                         "scanner_database_digest"}:
         return None
     try:
         immutable = {key: validate_digest(identity.get(key)) for key in (

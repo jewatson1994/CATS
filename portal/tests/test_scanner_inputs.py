@@ -43,3 +43,34 @@ def test_snapshot_fails_closed_on_partial_configuration_or_bad_digest(tmp_path):
     with pytest.raises(ValueError):
         bind_scanner_snapshot({"CATS_PATCH_GRYPE_DB_SNAPSHOT": str(tmp_path),
                                "CATS_PATCH_GRYPE_DB_DIGEST": "sha256:bad"}, tmp_path)
+
+
+def test_snapshot_derives_identity_without_operator_digest(tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "db").write_bytes(b"trusted database bytes")
+    work = tmp_path / "work"
+    work.mkdir()
+    env = {"CATS_PATCH_GRYPE_DB_SNAPSHOT": str(source)}
+    binding = bind_scanner_snapshot(env, work)
+    assert binding.digest == snapshot_digest(binding.root) == snapshot_digest(source)
+    binding.verify()
+
+
+def test_snapshot_copy_drift_fails_before_scanning(tmp_path, monkeypatch):
+    from app import scanner_inputs
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "db").write_bytes(b"original")
+    work = tmp_path / "work"
+    work.mkdir()
+    copytree = scanner_inputs.shutil.copytree
+    def changed_copy(source, destination):
+        result = copytree(source, destination)
+        (destination / "db").write_bytes(b"changed during copy")
+        return result
+    monkeypatch.setattr(scanner_inputs.shutil, "copytree", changed_copy)
+    env = {"CATS_PATCH_GRYPE_DB_SNAPSHOT": str(source)}
+    with pytest.raises(RuntimeError, match="changed"):
+        bind_scanner_snapshot(env, work)
+    assert "GRYPE_DB_CACHE_DIR" not in env

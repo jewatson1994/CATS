@@ -42,11 +42,35 @@ def _watch(job_id: str, process: subprocess.Popen, secrets: list[str]) -> None:
     finally:
         for index in range(len(secrets)):
             secrets[index] = ""
-        root = JOB_ROOT / job_id
-        shutil.rmtree(root / "input", ignore_errors=True)
-        (root / "job-config.json").unlink(missing_ok=True)
         with LOCK:
-            PROCESSES.pop(job_id, None)
+            # A stale watcher must never clean up a newer execution.
+            if PROCESSES.get(job_id) is not process:
+                return
+            root, state_path, _ = _job_paths(job_id)
+            try:
+                _record_interrupted(state_path)
+            finally:
+                # Persistence failures must not retain sensitive inputs or a
+                # dead process registration. Keep the original error visible.
+                shutil.rmtree(root / "input", ignore_errors=True)
+                try:
+                    (root / "job-config.json").unlink(missing_ok=True)
+                finally:
+                    PROCESSES.pop(job_id, None)
+
+
+def _record_interrupted(state_path: Path) -> None:
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        state = {}
+    if state.get("status") in {"complete", "failed", "cancelled"}:
+        return
+    state.update(status="failed", error="Patch worker stopped before producing a result; retry with a new job")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = state_path.with_suffix(".recovery.tmp")
+    temporary.write_text(json.dumps(state), encoding="utf-8")
+    temporary.replace(state_path)
 
 
 @app.post("/internal/patch-jobs/{job_id}")
@@ -59,9 +83,7 @@ def start_patch_job(job_id: str, payload: dict, x_cats_worker_token: str | None 
     if config.get("job_id") != job_id:
         raise HTTPException(status_code=400, detail="Job identifier does not match configuration")
     config_path = root / "job-config.json"
-    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     initial_state = {"status": "running", "phase": "queued", "stages": initial_patch_stages(config.get("output_mode", "download"))}
-    state_path.write_text(json.dumps(initial_state, indent=2), encoding="utf-8")
 
     credentials = dict(payload.get("credentials") or {})
     allowed = {
@@ -72,17 +94,34 @@ def start_patch_job(job_id: str, payload: dict, x_cats_worker_token: str | None 
     credentials = {key: str(value or "") for key, value in credentials.items() if key in allowed}
     secrets = [credentials.get("CATS_PATCH_SOURCE_PASSWORD", ""), credentials.get("CATS_PATCH_DEST_PASSWORD", "")]
     with LOCK:
-        running = PROCESSES.get(job_id)
-        if running and running.poll() is None:
-            raise HTTPException(status_code=409, detail="Patch job is already running")
+        if job_id in PROCESSES:
+            raise HTTPException(status_code=409, detail="Patch job already has an execution")
+        # Reusing an execution directory can pair a stale result with new inputs.
+        if state_path.exists():
+            raise HTTPException(status_code=409, detail="Patch job already exists; retry with a new job identifier")
+        config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        state_path.write_text(json.dumps(initial_state, indent=2), encoding="utf-8")
         env = dict(os.environ)
         env.update(credentials)
-        process = subprocess.Popen(
-            [sys.executable, "-m", "app.patch_worker", str(config_path), str(output)],
-            env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        credentials.clear()
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "app.patch_worker", str(config_path), str(output)],
+                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception:
+            try:
+                _record_interrupted(state_path)
+            finally:
+                try:
+                    config_path.unlink(missing_ok=True)
+                finally:
+                    for index in range(len(secrets)):
+                        secrets[index] = ""
+            raise HTTPException(status_code=503, detail="Patch worker failed to start") from None
+        finally:
+            credentials.clear()
+            env.clear()
         PROCESSES[job_id] = process
     threading.Thread(target=_watch, args=(job_id, process, secrets), daemon=True).start()
     return {"job_id": job_id, **initial_state, "state_available": state_path.exists()}
@@ -125,28 +164,55 @@ def patch_job_status(job_id: str, x_cats_worker_token: str | None = Header(None)
 @app.post("/internal/patch-jobs/{job_id}/cancel")
 def cancel_patch_job(job_id: str, x_cats_worker_token: str | None = Header(None)):
     _authorize(x_cats_worker_token)
-    root, _, _ = _job_paths(job_id)
+    _, state_path, _ = _job_paths(job_id)
     with LOCK:
+        if not state_path.exists():
+            raise HTTPException(status_code=404, detail="Patch job not found")
+
+        def read_state():
+            try:
+                return json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                raise HTTPException(status_code=503, detail="Patch state is unavailable") from None
+
+        existing = read_state()
+        if existing.get("status") in {"complete", "failed", "cancelled"}:
+            return {"job_id": job_id, **existing}
         process = PROCESSES.get(job_id)
-    if process and process.poll() is None:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            process.terminate()
-    output = root / "output"
-    output.mkdir(parents=True, exist_ok=True)
-    state_path = output / "patch-state.json"
-    existing = {}
-    if state_path.exists():
-        try:
-            existing = json.loads(state_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            existing = {}
-    state_path.write_text(json.dumps({
-        "status": "cancelled", "phase": existing.get("phase", "cancelled"),
-        "stages": existing.get("stages") or initial_patch_stages("download"),
-    }, indent=2), encoding="utf-8")
-    return {"job_id": job_id, "status": "cancelled", "phase": "cancelled"}
+        if process and process.poll() is None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (AttributeError, ProcessLookupError, PermissionError):
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    # Exit can race both termination attempts; wait and inspect
+                    # retained evidence before deciding the terminal status.
+                    pass
+                except PermissionError:
+                    raise HTTPException(status_code=409, detail="Patch could not be stopped; check its status before retrying") from None
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                # Do not report cancellation while the worker can still publish.
+                raise HTTPException(status_code=409, detail="Patch is still stopping; check its status before retrying") from None
+            existing = read_state()
+            if existing.get("status") in {"complete", "failed", "cancelled"}:
+                return {"job_id": job_id, **existing}
+        elif process is None:
+            # After a supervisor restart, absence from this process map does not
+            # prove an old execution stopped. Never claim cancellation here.
+            raise HTTPException(status_code=409, detail="Patch execution is not owned by this worker; verify recovery before retrying")
+        else:
+            # A process which already exited was not cancelled by this request.
+            # Preserve a completed result or record the interrupted execution.
+            _record_interrupted(state_path)
+            return {"job_id": job_id, **read_state()}
+        existing.update(status="cancelled")
+        temporary = state_path.with_suffix(".cancel.tmp")
+        temporary.write_text(json.dumps(existing), encoding="utf-8")
+        temporary.replace(state_path)
+        return {"job_id": job_id, **existing}
 
 
 # Configuration verification belongs to the remediation worker, separate from
