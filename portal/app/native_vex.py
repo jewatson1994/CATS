@@ -1,6 +1,6 @@
 """The sole effective VEX exclusion rule, shared by reads and action checks."""
 from datetime import timedelta
-from sqlalchemy import select, and_, func, insert
+from sqlalchemy import select, and_, func, insert, false
 from .native_vex_models import (VexDispositionPolicy as Policy, VexDispositionService as State,
     VexDispositionEvaluation as Evaluation, VexFindingDisposition as FindingResult,
     VexObservationDisposition as ObservationResult)
@@ -15,6 +15,12 @@ MAX_SCAN_AGE = timedelta(days=30)
 
 
 def current_evaluation(now, *, enabled=True):
+    from . import database
+    # Portal SQL cannot atomically observe authority/revision changes committed
+    # to the independent intelligence database. Retain evidence for inspection,
+    # but never treat it as an effective exclusion (including preview).
+    if database.INTELLIGENCE_SEPARATE:
+        return [false()]
     conditions = [State.evaluation_id == Evaluation.id,
         State.generation == Evaluation.service_generation,
         Policy.id == 1, Policy.generation == Evaluation.intelligence_generation,
@@ -136,6 +142,10 @@ def evaluate_service(db, service_id, *, now=None, check=None):
         'excluded_observations': sum(c[1] for c in aggregate.values()),
         'fully_excluded_findings': sum(c[0] == c[1] for c in aggregate.values()),
         'mixed_findings': sum(0 < c[1] < c[0] for c in aggregate.values())}
+    from . import database
+    if database.INTELLIGENCE_SEPARATE:
+        evaluation.summary['exclusion_unavailable_reason'] = (
+            'Separate intelligence database: automatic exclusions require atomic intelligence invalidation')
     from .service_posture import _bump
     _bump(db.connection(), [service_id])
     state.evaluation_id = evaluation.id
@@ -153,4 +163,6 @@ def excluded_finding_ids(db, service_id, now):
 def cache_token(db):
     """Global invalidation without visiting the intelligence corpus."""
     row = db.execute(select(Policy.enabled, Policy.generation, Policy.policy_version).where(Policy.id == 1)).first()
-    return str(tuple(row)) + ALGORITHM if row else ALGORITHM
+    from . import database
+    mode = ':split-evidence-only' if database.INTELLIGENCE_SEPARATE else ':atomic'
+    return (str(tuple(row)) + ALGORITHM if row else ALGORITHM) + mode

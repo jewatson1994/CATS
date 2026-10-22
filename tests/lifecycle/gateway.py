@@ -22,11 +22,8 @@ def main(root):
     from cryptography.fernet import Fernet
     os.environ['CATS_CONFIG_ENCRYPTION_KEY'] = Fernet.generate_key().decode()
     sys.path.insert(0, '/source/portal')
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
     from app import oci_proxy as proxy
-    from app.database import Base
+    from app.database import Base, engine, intelligence_engine, intelligence_tables, portal_tables, SessionLocal
     from app.models import Service, Execution
     from app.oci_models import OCIUpstream, OCIRepository, OCIPrincipal
     from app.cyber_approvals import CyberApproval, digest as snapshot_digest
@@ -35,9 +32,9 @@ def main(root):
     from app.secrets import encrypt_secret
     evidence = json.loads((root / 'smoke-results.json').read_text())
     password = json.loads((root / 'credentials.json').read_text())['admin']
-    engine = create_engine(os.environ['DATABASE_URL'])
-    Base.metadata.create_all(engine)
-    sessions = sessionmaker(engine, expire_on_commit=False)
+    Base.metadata.create_all(intelligence_engine, tables=intelligence_tables())
+    Base.metadata.create_all(engine, tables=portal_tables())
+    sessions = SessionLocal
     proxy.SessionLocal = sessions
     now = datetime.now(timezone.utc)
     with sessions() as db:

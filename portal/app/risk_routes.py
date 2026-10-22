@@ -390,8 +390,13 @@ def native_vex_policy(auth: AuthContext = Depends(require_user), db=Depends(get_
     allowed(auth, 'config.manage')
     from .native_vex_models import VexDispositionPolicy
     policy = db.get(VexDispositionPolicy, 1)
+    from . import database
     return {'enabled': policy.enabled, 'version': policy.policy_version,
-            'name': 'Automatic VEX Not Affected Exclusion'}
+            'name': 'Automatic VEX Not Affected Exclusion',
+            'effective_available': not database.INTELLIGENCE_SEPARATE,
+            'unavailable_reason': ('Automatic exclusions are unavailable with a separate intelligence database; '
+                'findings remain actionable and VEX evidence remains available for review.'
+                if database.INTELLIGENCE_SEPARATE else None)}
 
 
 @router.post('/native-vex/policy')

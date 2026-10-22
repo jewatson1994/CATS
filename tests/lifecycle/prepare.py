@@ -20,6 +20,10 @@ compose={'name':project,'services':{
  'registry':{'image':'registry:2.8.3','volumes':[str(root)+':/tls:ro'],'environment':{'REGISTRY_HTTP_TLS_CERTIFICATE':'/tls/server.crt','REGISTRY_HTTP_TLS_KEY':'/tls/server.key'}},
  'db':{'image':'postgres:16-alpine','environment':{'POSTGRES_PASSWORD':'lifecycle-disposable-only','POSTGRES_DB':'lifecycle'},'healthcheck':{'test':['CMD-SHELL','pg_isready -U postgres'],'interval':'2s','timeout':'2s','retries':30}},
  'runner':{'image':'cats:1.2','entrypoint':['python','/test/run.py'],'volumes':[str(source)+':/source:ro',str(root)+':/test'],'environment':{'DATABASE_URL':'postgresql+psycopg://postgres:lifecycle-disposable-only@db/lifecycle','PYTHONPATH':'/source/portal','CATS_APPROVED_RELEASE_ROOT':'/test/approved'},'depends_on':{'db':{'condition':'service_healthy'},'registry':{'condition':'service_started'}}}}}
+if os.getenv('CATS_SPLIT_INTELLIGENCE'):
+ compose['services']['intelligence-db']={'image':'postgres:16-alpine','environment':{'POSTGRES_PASSWORD':'intelligence-disposable-only','POSTGRES_DB':'intelligence'},'healthcheck':{'test':['CMD-SHELL','pg_isready -U postgres'],'interval':'2s','timeout':'2s','retries':30}}
+ compose['services']['runner']['environment']['INTELLIGENCE_DATABASE_URL']='postgresql+psycopg://postgres:intelligence-disposable-only@intelligence-db/intelligence'
+ compose['services']['runner']['depends_on']['intelligence-db']={'condition':'service_healthy'}
 if os.getenv('CATS_CLIENT_PROBE'):
  compose['services']['runner']['ports']=['127.0.0.1:18083:18083']
  compose['services']['runner']['environment']['CATS_CLIENT_PROBE']='1'

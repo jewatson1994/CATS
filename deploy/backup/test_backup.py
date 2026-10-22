@@ -38,6 +38,48 @@ class BackupTests(unittest.TestCase):
             finally:
                 b.run(['su-exec', 'postgres', 'pg_ctl', '-D', data, '-m', 'immediate', '-w', 'stop'])
 
+    def test_real_split_database_backups_restore_rows(self):
+        tables = ['intelligence_records', 'intelligence_package_installs',
+                  'intelligence_package_catalogs', 'intelligence_package_members',
+                  'intelligence_package_state']
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as backups:
+            account = pwd.getpwnam('postgres')
+            os.chown(tmp, account.pw_uid, account.pw_gid)
+            data = str(Path(tmp) / 'data')
+            prefix = ['su-exec', 'postgres']
+            b.run(prefix + ['initdb', '-D', data, '-A', 'trust', '--no-locale'])
+            b.run(prefix + ['pg_ctl', '-D', data, '-l', str(Path(tmp) / 'log'),
+                           '-o', f"-c listen_addresses='' -k {tmp}", '-w', 'start'])
+            try:
+                sql = ['psql', '-h', tmp, '-U', 'postgres', '-X', '-v', 'ON_ERROR_STOP=1', '-At']
+                for name, required in [('portal', ['services', 'users', 'executions']),
+                                       ('intelligence', tables)]:
+                    b.run(sql + ['-d', 'postgres', '-c', f'CREATE DATABASE {name}'])
+                    for table in required:
+                        b.run(sql + ['-d', name, '-c',
+                              f"CREATE TABLE {table}(id integer PRIMARY KEY, value text NOT NULL); "
+                              f"INSERT INTO {table} VALUES(42, 'preserved-{table}');"])
+                    with patch.object(b, 'ROOT', Path(backups) / name), patch.dict(os.environ, {
+                        'PGHOST': tmp, 'PGUSER': 'postgres', 'PGDATABASE': name,
+                        'BACKUP_REQUIRED_TABLES': ','.join('public.' + t for t in required),
+                    }):
+                        b.backup()
+                        archive = next(b.ROOT.glob('backup-*'))
+                        manifest = json.loads((archive / 'manifest.json').read_text())
+                        self.assertTrue(manifest['verified'])
+                        self.assertEqual(manifest['tables_read'], len(required))
+                        self.assertEqual(manifest['sha256'], b.checksum(archive / 'database.dump'))
+                        restored = name + '_restored'
+                        b.run(sql + ['-d', 'postgres', '-c', f'CREATE DATABASE {restored}'])
+                        b.run(['pg_restore', '-h', tmp, '-U', 'postgres', '-d', restored,
+                               '--exit-on-error', '--no-owner', '--no-acl', str(archive / 'database.dump')])
+                        for table in required:
+                            self.assertEqual(b.run(sql + ['-d', restored, '-c',
+                                f'SELECT id, value FROM {table}']).strip(), f'42|preserved-{table}')
+                        self.assertEqual(b.main('health'), 0)
+            finally:
+                b.run(prefix + ['pg_ctl', '-D', data, '-m', 'immediate', '-w', 'stop'])
+
     def test_schedule(self):
         now = dt.datetime(2026, 10, 21, 3, tzinfo=b.UTC)
         self.assertEqual(b.next_run(now, '03:00'), now + dt.timedelta(days=1))

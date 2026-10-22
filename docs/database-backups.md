@@ -1,4 +1,4 @@
-# Portal database backups
+# Portal and intelligence database backups
 
 For an existing combined database, follow the [intelligence migration guide](../deploy/intelligence/README.md)
 before starting the new stack. The updated CATS image, Compose file, and deployment
@@ -15,6 +15,8 @@ a failed import exits 1 and retries up to three times. Retry manually with
 
 These containers still share the VM's CPU and disk. Separate database volumes and
 processes isolate storage and transactions, but do not provide separate hardware.
+
+The `intelligence-db-backup` service backs up the separate intelligence database on startup and daily at **03:30 UTC** (override `INTELLIGENCE_BACKUP_UTC_TIME`). It waits for schema initialization, verifies all five intelligence tables, and uses its own host directory (`CATS_INTELLIGENCE_DB_BACKUP_DIR`, default `./backups/intelligence-postgres`). Keep this directory distinct from `CATS_DB_BACKUP_DIR` so status, locks, and retention remain independent. Both services use `BACKUP_RETENTION_COUNT`.
 
 The `db-backup` service creates a backup on startup, then daily at **03:00 UTC**.
 Set `BACKUP_UTC_TIME` (`HH:MM`) to change the UTC schedule and
@@ -33,12 +35,12 @@ in the source database; backups are not a substitute for that migration.
 
 `pg_dump` uses a consistent PostgreSQL snapshot in custom format. Publication
 requires restoring into a new temporary PostgreSQL 16 cluster with TCP disabled,
-reading every user table, confirming required portal tables, and checking index
+reading every user table, confirming the configured required tables, and checking index
 validity. The scratch server never connects to the portal database. Restore
 also validates constraints represented by the dump. This is a restore health
 check, not a proof of application-level semantic correctness. Roles, global
-objects, configuration secrets, uploaded files, and a separate intelligence
-database are not included. Allow space for the dump plus a complete temporary
+objects, configuration secrets, and uploaded files are not included. Each archive
+contains one database; retain both services' archives for complete recovery. Allow space for the dump plus a complete temporary
 restored database in the backup container's writable layer.
 
 Files are private by default. Credentials are passed through PostgreSQL's
@@ -67,10 +69,11 @@ copy the matching Compose file. Existing PostgreSQL service images must also be
 available locally, as for the rest of the stack. Keep your existing `.env` and
 set `CATS_IMAGE` to the updated image tag. `CATS_BACKUP_IMAGE` is no longer used.
 
-Start offline: `docker compose up -d --no-build --pull never db-backup`.
+Start offline: `docker compose up -d --no-build --pull never db-backup intelligence-db-backup`.
 Run an immediate backup without starting the portal:
 `docker compose run --rm --no-deps --pull never db-backup once`.
-The existing `db` service must already be running.
+For intelligence, run `docker compose run --rm --no-deps --pull never intelligence-db-backup once`.
+The corresponding database service must already be running and initialized.
 It exits nonzero on failure. A lock prevents concurrent jobs using the same
 backup directory. View health with `docker compose ps db-backup`, and inspect
 the mounted `status.json` for the last successful archive. Required table names
@@ -87,7 +90,10 @@ identifiers; the default is `public.services,public.users,public.executions`.
    -U RECOVERY_ROLE -d RECOVERY_DATABASE database.dump` using secure credential
    handling. These options assign restored objects to the connecting role;
    recreate any custom grants separately.
-4. Test the portal against that recovery database, check recent executions,
+4. Repeat for the other database using its own archive and an empty recovery database.
+   Configure both `DATABASE_URL` and `INTELLIGENCE_DATABASE_URL` for the recovery drill.
+   The two backups are independent snapshots; confirm application/feed compatibility.
+5. Test the portal against that recovery database, check recent executions,
    users, findings, and historical intelligence. Keep the original database
    untouched until the recovery is accepted. Stop application writes before
    a deliberate cutover and document the selected archive's time/data loss.
