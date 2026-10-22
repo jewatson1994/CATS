@@ -391,12 +391,20 @@ def native_vex_policy(auth: AuthContext = Depends(require_user), db=Depends(get_
     from .native_vex_models import VexDispositionPolicy
     policy = db.get(VexDispositionPolicy, 1)
     from . import database
+    available = True
+    if database.INTELLIGENCE_SEPARATE:
+        from .intelligence_generation import current_generation, GenerationUnavailable
+        try:
+            current_generation(db)
+        except GenerationUnavailable:
+            available = False
     return {'enabled': policy.enabled, 'version': policy.policy_version,
             'name': 'Automatic VEX Not Affected Exclusion',
-            'effective_available': not database.INTELLIGENCE_SEPARATE,
-            'unavailable_reason': ('Automatic exclusions are unavailable with a separate intelligence database; '
-                'findings remain actionable and VEX evidence remains available for review.'
-                if database.INTELLIGENCE_SEPARATE else None)}
+            'effective_available': available,
+            'unavailable_reason': (None if available else
+                'Intelligence generation validation is unavailable; findings remain actionable '
+                'and VEX evidence remains available for review.')}
+
 
 
 @router.post('/native-vex/policy')

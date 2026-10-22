@@ -30,13 +30,23 @@ def maintenance(session_factory=SessionLocal):
         policy = db.get(Policy, 1)
         if policy is None:
             return 0
+        from . import database
+        token_mismatch = []
+        if database.INTELLIGENCE_SEPARATE:
+            from .intelligence_generation import current_generation, GenerationUnavailable
+            try:
+                token = current_generation(db)
+            except GenerationUnavailable:
+                return 0
+            stored_token = Evaluation.summary['intelligence_token'].as_string()
+            token_mismatch = [stored_token.is_(None), stored_token != token]
         busy = select(DurableJob.id).where(DurableJob.kind == 'native_vex', DurableJob.service_id == State.service_id,
             or_(DurableJob.status.in_(('queued', 'running')), and_(DurableJob.status.in_(('failed', 'cancelled')),
                 DurableJob.completed_at > now - timedelta(hours=1)))).exists()
         pending = list(db.scalars(select(State.service_id).outerjoin(Evaluation, Evaluation.id == State.evaluation_id).where(
             ~busy, or_(Evaluation.id.is_(None), Evaluation.service_generation != State.generation,
                 Evaluation.intelligence_generation != policy.generation, Evaluation.policy_version != policy.policy_version,
-                Evaluation.algorithm != nv.ALGORITHM, Evaluation.valid_until <= now))
+                Evaluation.algorithm != nv.ALGORITHM, Evaluation.valid_until <= now, *token_mismatch))
             .order_by(State.service_id).limit(50)))
         admitted = 0
         for service_id in pending:

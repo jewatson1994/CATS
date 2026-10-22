@@ -9,7 +9,7 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, inspect, select, text
 
-from app import database, service_posture
+from app import database, service_posture, durable_jobs  # Register worker tables before schema creation.
 from app.database import Base
 import test_native_vex as native_cases
 import test_risk_profiles as risk_cases
@@ -75,10 +75,10 @@ def test_split_native_invalidation(splitdb, mutation):
     evaluation = nv.evaluate_service(splitdb, service.id, now=vex_cases.NOW)
     splitdb.commit()
     assert evaluation.summary['excluded_observations'] == 1
-    assert 'atomic intelligence invalidation' in evaluation.summary['exclusion_unavailable_reason']
-    assert not native_cases.excluded(splitdb, finding)
-    assert not splitdb.scalar(select(nv.finding_excluded(finding.id, vex_cases.NOW, preview=True)))
-    assert not splitdb.scalar(select(nv.observation_excluded(observations[0].id, vex_cases.NOW)))
+    assert native_cases.excluded(splitdb, finding)
+    assert splitdb.scalar(select(nv.finding_excluded(finding.id, vex_cases.NOW, preview=True)))
+    assert splitdb.scalar(select(nv.observation_excluded(observations[0].id, vex_cases.NOW)))
+    splitdb.commit()
     if mutation == 'observation':
         splitdb.execute(update(FindingObservation).values(installed_version='2.0'))
     elif mutation == 'execution':
@@ -158,7 +158,7 @@ def test_split_risk_reads_live_intelligence_after_independent_trust_change(split
 
 
 
-def test_split_native_policy_reports_configured_but_unavailable(splitdb):
+def test_split_native_policy_reports_available_generation_fence(splitdb):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app import risk_routes as routes
@@ -173,5 +173,132 @@ def test_split_native_policy_reports_configured_but_unavailable(splitdb):
         response = client.get('/api/risk/native-vex/policy')
     assert response.status_code == 200
     assert response.json()['enabled'] is True
-    assert response.json()['effective_available'] is False
-    assert 'findings remain actionable' in response.json()['unavailable_reason']
+    assert response.json()['effective_available'] is True
+    assert not response.json().get('unavailable_reason')
+
+
+def _published(splitdb):
+    from app import native_vex as nv
+    service, finding, observations, source = native_cases.setup(splitdb)
+    native_cases.enable(splitdb)
+    nv.evaluate_service(splitdb, service.id, now=vex_cases.NOW)
+    splitdb.commit()
+    assert native_cases.excluded(splitdb, finding)
+    splitdb.commit()  # End authorization read fence before an independent writer.
+    return service, finding, observations, source
+
+
+@pytest.mark.parametrize('mutation', ['trust', 'package'])
+def test_split_independent_intelligence_update_invalidates_reused_predicate(splitdb, mutation):
+    from app import native_vex as nv
+    from app.vex_models import VexSource
+    from app.intelligence_models import IntelligencePackageInstall
+    from sqlalchemy import update
+    service, finding, observations, source = _published(splitdb)
+    predicate = select(nv.finding_excluded(finding.id, vex_cases.NOW))
+    assert splitdb.scalar(predicate)
+    splitdb.commit()
+    with database.IntelligenceSessionLocal() as importer:
+        if mutation == 'trust':
+            importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+        else:
+            importer.add(IntelligencePackageInstall(sequence=1, version='replacement', manifest={}, counts={}))
+        importer.commit()
+    assert not splitdb.scalar(predicate)
+    assert not splitdb.scalar(select(nv.observation_excluded(observations[0].id, vex_cases.NOW)))
+    assert finding.active
+
+
+def test_split_unreachable_intelligence_fails_closed(splitdb, monkeypatch):
+    from app import native_vex as nv
+    service, finding, observations, source = _published(splitdb)
+    predicate = select(nv.finding_excluded(finding.id, vex_cases.NOW))
+    unavailable = create_engine(database.intelligence_engine.url.set(port=1), connect_args={'connect_timeout': 1})
+    try:
+        monkeypatch.setattr(database, 'intelligence_engine', unavailable)
+        monkeypatch.setattr(database, 'intelligence_background_engine', unavailable)
+        assert not splitdb.scalar(predicate)
+        assert not splitdb.scalar(select(nv.finding_excluded(finding.id, vex_cases.NOW, preview=True)))
+        assert not splitdb.scalar(select(nv.observation_excluded(observations[0].id, vex_cases.NOW)))
+    finally:
+        splitdb.rollback()
+        unavailable.dispose()
+
+
+def test_split_restored_relation_incarnation_requires_reassessment(splitdb):
+    from app import native_vex as nv
+    from app.intelligence_generation import current_generation
+    service, finding, observations, source = _published(splitdb)
+    before = current_generation()
+    with database.intelligence_engine.connect().execution_options(isolation_level='AUTOCOMMIT') as connection:
+        original_token = connection.execute(text('SELECT token FROM intelligence_generation WHERE id=1')).scalar_one()
+        connection.execute(text('VACUUM FULL intelligence_generation'))
+        assert connection.execute(text('SELECT token FROM intelligence_generation WHERE id=1')).scalar_one() == original_token
+    assert current_generation() != before  # Same saved token, different physical incarnation.
+    assert not native_cases.excluded(splitdb, finding)
+    splitdb.commit()
+    nv.evaluate_service(splitdb, service.id, now=vex_cases.NOW)
+    splitdb.commit()
+    assert native_cases.excluded(splitdb, finding)
+
+
+def test_split_publication_serializes_independent_writer_and_rejects_stale_token(splitdb):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import update
+    from app import native_vex as nv
+    from app.vex_models import VexSource
+    from app.intelligence_generation import current_generation, guard_generation, GenerationChanged
+    service, finding, observations, source = _published(splitdb)
+    token = current_generation()
+    nv.evaluate_service(splitdb, service.id, now=vex_cases.NOW)
+    entered, finished = threading.Event(), threading.Event()
+    def mutate():
+        with database.IntelligenceSessionLocal() as importer:
+            entered.set()
+            importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+            importer.commit()
+            finished.set()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(mutate)
+        assert entered.wait(3)
+        assert not finished.wait(.2), 'Writer must wait for the publication transaction fence'
+        splitdb.commit()
+        future.result(timeout=10)
+    assert finished.is_set()
+    assert not native_cases.excluded(splitdb, finding)
+    splitdb.commit()
+    with pytest.raises(GenerationChanged):
+        guard_generation(splitdb, token)
+    splitdb.rollback()
+
+
+def test_split_generation_change_queues_worker_reassessment(splitdb, monkeypatch):
+    from sqlalchemy import update
+    from app import native_vex_worker
+    from app.vex_models import VexSource
+    from app.durable_jobs import DurableJob
+    service, finding, observations, source = _published(splitdb)
+    monkeypatch.setattr(native_vex_worker, 'utcnow', lambda: vex_cases.NOW)
+    assert native_vex_worker.maintenance(database.SessionLocal) == 0
+    with database.IntelligenceSessionLocal() as importer:
+        importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+        importer.commit()
+    assert native_vex_worker.maintenance(database.SessionLocal) == 1
+    splitdb.expire_all()
+    job = splitdb.scalar(select(DurableJob).where(DurableJob.kind == 'native_vex', DurableJob.service_id == service.id))
+    assert job is not None and job.status == 'queued'
+    assert native_vex_worker.maintenance(database.SessionLocal) == 0
+
+
+def test_split_cache_token_tracks_independent_generation(splitdb):
+    from sqlalchemy import update
+    from app import native_vex as nv
+    from app.vex_models import VexSource
+    service, finding, observations, source = _published(splitdb)
+    before = nv.cache_token(splitdb)
+    splitdb.commit()
+    with database.IntelligenceSessionLocal() as importer:
+        importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+        importer.commit()
+    assert nv.cache_token(splitdb) != before
