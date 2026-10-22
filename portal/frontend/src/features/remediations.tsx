@@ -239,7 +239,6 @@ function Redeliver({data,root,job}: {data:PageData;root:string;job:any}) {
   const [submitting,setSubmitting] = useState(false);
   const submission = useRef(false);
   const planController = useRef<AbortController | null>(null);
-  const [planning,setPlanning] = useState<any>(null);
   useEffect(() => () => planController.current?.abort(),[]);
   const options = (job.workflow?.delivery_options || []).filter((option:any) => option.supported !== false).map((option:any) => option.mode === 'oci' && !can(data,'service.export',data.service.id) ? {...option,available:false,reason:'Publishing release documentation requires service export permission.'} : option);
   const selected = options.find((option:any) => option.mode === output && option.available);
