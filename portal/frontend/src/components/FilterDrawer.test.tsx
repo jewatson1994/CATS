@@ -99,3 +99,17 @@ describe('FilterChips', () => {
     expect(hrefWithout({q: null, severity: null, page_size: null}, location)).toBe('/services/api');
   });
 });
+
+describe('FilterDrawer focus loop', () => {
+  it('cycles Tab and Shift+Tab within the open drawer', () => {
+    render(<Drawer/>);
+    fireEvent.click(screen.getByRole('button', {name: /Filters/}));
+    const apply = screen.getByRole('button', {name: 'Apply filters'});
+    const close = screen.getByRole('button', {name: 'Close filters'});
+    apply.focus();
+    fireEvent.keyDown(apply, {key: 'Tab'});
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, {key: 'Tab', shiftKey: true});
+    expect(apply).toHaveFocus();
+  });
+});

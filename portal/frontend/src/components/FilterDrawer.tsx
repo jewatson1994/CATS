@@ -10,6 +10,8 @@
 import {useEffect, useRef, useState, type FormEvent, type ReactNode} from 'react';
 import {Icon} from './ui';
 
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export interface ActiveFilter {
   /** Stable key (usually the parameter name, plus the value for multi-value filters). */
   key: string;
@@ -67,7 +69,16 @@ export function FilterDrawer({id, title = 'Filters', description, action, method
     </button>
     <dialog ref={dialog} id={`${id}-drawer`} className="filter-drawer" aria-labelledby={`${id}-title`}
       onClose={finish} onCancel={event => {event.preventDefault(); close();}}
-      onClick={event => {if (event.target === event.currentTarget) close();}}>
+      onClick={event => {if (event.target === event.currentTarget) close();}}
+      onKeyDown={event => {
+        // Keep Tab focus cycling inside the open drawer (the page behind is inert).
+        if (event.key !== 'Tab') return;
+        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(element => !element.closest('[hidden]'));
+        if (!focusable.length) return;
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last.focus();}
+        else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first.focus();}
+      }}>
       <form id={id} className="filter-drawer-form" method={method} action={action} onSubmit={onSubmit} role="search" aria-labelledby={`${id}-title`}>
         {hidden.map(([name, value]) => <input key={name} type="hidden" name={name} value={value}/>)}
         <header className="filter-drawer-head">

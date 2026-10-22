@@ -30,7 +30,7 @@ body > #root > header.app-header, header.app-header {
 }
 .app-header .brand { flex: none; display: inline-flex; align-items: center; gap: var(--space-2); color: var(--text); text-decoration: none; font-size: var(--text-md); margin-right: var(--space-3); }
 .app-header .brand-icon { width: 28px; height: 28px; }
-.app-header .brand-name { color: var(--accent); font-weight: 800; letter-spacing: .1em; }
+.app-header .brand .brand-name { display: inline; color: var(--accent); font-weight: 800; letter-spacing: .1em; }
 .app-header .cats-version {
   display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-pill);
   color: var(--text-muted); font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; letter-spacing: 0; white-space: nowrap;
@@ -95,6 +95,9 @@ body > #root > header.app-header, header.app-header {
   .app-header .account-nav > a[aria-current="page"]::after, .app-header .navigation-menu[data-active] > summary::after { bottom: -6px; }
   .app-header .account-nav > .navigation-menu { position: relative; }
   .app-header .navigation-popover { left: 0; right: auto; }
+  /* Brand and account utilities share the first row; destinations take the second. */
+  .app-header .header-utilities { position: absolute; top: 8px; right: clamp(16px, 2.4vw, 40px); }
+  .app-header .account-nav { padding-right: 0; }
 }
 
 /* ---------------------------------------------------------------- popover */
