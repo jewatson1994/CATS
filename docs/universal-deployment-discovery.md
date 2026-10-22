@@ -77,7 +77,7 @@ Existing SBOM, VEX, risk/classification, patch, remediation, validation and publ
 
 ## Offline build and operation
 
-Build the main CATS image first, then `docker build --build-arg CATS_TOOL_IMAGE=cats:<version> -f Dockerfile.discovery -t cats-discovery:<version> .`. Set `CATS_DISCOVERY_IMAGE` to that tag. Transfer both images plus existing PostgreSQL/runtime dependencies into disconnected environments. The worker image includes Helm/kubectl from CATS, Compose 2.39.4, Bubblewrap and Python dependencies; no runtime package download is required. Connected image construction needs the declared base images/package repositories. Pin approved base-image digests in release packaging; current Dockerfile defaults use version tags.
+Build the unified CATS image with `cats-image/Dockerfile.all-in-one` and set `CATS_IMAGE` to its tag. Discovery uses this same image. Deploy the updated Compose definition: its explicit entrypoint launches `app.discovery_worker` rather than the default portal entrypoint. Compose retains UID 10003, read-only storage, capability restrictions, resource limits and the approved seccomp profile. The shared image includes Helm, kubectl, Compose 2.39.4 and Bubblewrap; no runtime package download is required. Transfer the image and sandbox files into disconnected environments. `Dockerfile.discovery` is retained only as a compatibility wrapper.
 
 Configure the source encryption key and supply local charts/configuration in the uploaded bundle. Native rendering additionally requires the approved container sandbox policy described above. Worker source mounts are read-only; portal writes and retention own the encrypted source volume. Durable leasing/recovery/cancellation reuse CATS infrastructure. One worker processes bounded work; scale only within database and storage capacity.
 
@@ -112,7 +112,7 @@ Entries match exact kind (`helm`, `git`, `oci`), reference and version. Flux Hel
 
 The resolution panel supports retry with revised non-secret configuration. `source_map` maps `Kind/namespace/name` to a source directory within the upload. Flux Kustomizations use native Kustomize for that local source and support simple `${NAME}` postBuild substitution from inline values and ConfigMaps. Secret substitutions and unsupported expressions remain unresolved. Candidate environment paths are review hints, never automatic environment selection. Retry currently reruns discovery as a new immutable version; it does not claim incremental dependency caching.
 
-The unified build script builds the matching Discovery worker. `--discovery-offline-output <directory>` exports its Docker archive, approved seccomp profile, optional mirror overlay, checksums and import instructions. This is a companion to the main CATS release, not a complete installation bundle. A real local export of the acceptance image produced a 610,633,216-byte archive with 13 layers in 9.122 seconds; all manifest checksums and the non-root image configuration were verified. Import/redeployment was not tested.
+The unified build script builds one image for the portal and all workers. `--discovery-offline-output <directory>` exports its Docker archive, approved seccomp profile, optional mirror overlay, checksums and import instructions. This exports the same unified image, not a second worker image; it is not a complete installation bundle. A real local export of the acceptance image produced a 610,633,216-byte archive with 13 layers in 9.122 seconds; all manifest checksums and the non-root image configuration were verified. Import/redeployment was not tested.
 
 `python scripts/benchmark-discovery-renderers.py` provides a synthetic native benchmark. In the hardened, network-disabled worker with 1 CPU/1 GiB/128 PIDs, 12 jobs each rendering 100 objects across Helm/Kustomize/Compose took 0.619 seconds serial and 0.762 seconds with concurrency four (0.256-second median job, 0.307-second maximum). These small fixtures exclude database, queue and upload costs and do not establish production throughput.
 
@@ -276,3 +276,14 @@ a vulnerability scan or full deployment acceptance. The inventory remains partia
 because external Secrets and other unresolved resources require operator review.
 Example values are not production configuration. Singularity and the disconnected
 deployment remain unverified. No push or merge was performed for this change.
+
+### Shared-image worker acceptance
+
+Discovery runs from the same `CATS_IMAGE` as the portal and other workers. Deploy the rebuilt image **and** the updated Compose definition: `entrypoint: []` is required to bypass the image's default portal entrypoint. The worker still runs as UID/GID 10003 with its existing read-only filesystem, dropped capabilities, seccomp policy and renderer sandbox.
+
+Local verification of this change:
+
+- Built `cats-image/Dockerfile.all-in-one` successfully, including the frontend production build.
+- Four release-packaging tests passed; both deployment Compose files validated.
+- Ran `scripts/test-discovery-deployed.ps1 -Image cats:discovery-shared-test` against real PostgreSQL and a separate restricted worker. Queued jobs were consumed, native Helm/Kustomize/Compose rendering produced five image references, and supplemental resolution preserved prior evidence.
+- Inventory confirmation, durable Scan-job linkage and idempotent handoff passed. This verifies scan dispatch, not execution of a vulnerability scan or deployment into the operator's disconnected environment.

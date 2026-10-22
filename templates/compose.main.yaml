@@ -658,8 +658,9 @@ services:
 
 
   discovery-worker:
-    image: ${CATS_DISCOVERY_IMAGE:?Set CATS_DISCOVERY_IMAGE to the matching Discovery release image}
-    command: ["python", "-m", "app.discovery_worker"]
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["/opt/cats-venv/bin/python", "-m", "app.discovery_worker"]
     user: "10003:10003"
     read_only: true
     cap_drop: [ALL]

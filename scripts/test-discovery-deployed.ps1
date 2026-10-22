@@ -1,4 +1,4 @@
-param([string]$Image = 'cats-discovery:incremental', [string]$Archive = '', [string]$HelmSources = '[]', [string]$HelmOrigins = '[]', [string]$HelmTokenOrigins = '[]', [string]$ArtifactMirror = '', [string]$DiscoveryOptions = '{}', [switch]$AllowHelmNetwork)
+param([string]$Image = 'cats:local', [string]$Archive = '', [string]$HelmSources = '[]', [string]$HelmOrigins = '[]', [string]$HelmTokenOrigins = '[]', [string]$ArtifactMirror = '', [string]$DiscoveryOptions = '{}', [switch]$AllowHelmNetwork)
 $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $identity = 'cats-discovery-e2e-' + [guid]::NewGuid().ToString('N').Substring(0,10)
@@ -36,9 +36,9 @@ try {
         Start-Sleep -Seconds 1
     }
     if (-not $ready) { throw 'Disposable PostgreSQL did not become ready' }
-    Invoke-Docker run --rm --network $identity @environment $Image python -c 'from app.database import Base, engine; from app import models, discovery_models, durable_jobs; Base.metadata.create_all(engine)'
-    Invoke-Docker run -d --name $worker --network $identity --read-only --cap-drop ALL --security-opt no-new-privileges:true --security-opt "seccomp=$repository/deploy/discovery-seccomp.json" --cpus 1 --memory 1g --pids-limit 128 --tmpfs "/tmp:rw,nosuid,nodev,size=536870912,mode=1777" --mount "type=volume,src=$volume,dst=/data/discovery-uploads,readonly" @mirrorMount @environment $Image
-    Invoke-Docker run --rm --network $identity --mount "type=volume,src=$volume,dst=/data/discovery-uploads" --mount "type=bind,src=$PSScriptRoot,dst=/acceptance,readonly" @archiveMount @environment $Image python /acceptance/discovery-deployed-acceptance.py
+    Invoke-Docker run --rm --network $identity @environment --entrypoint /opt/cats-venv/bin/python $Image -c 'from app.database import Base, engine; from app import models, discovery_models, durable_jobs; Base.metadata.create_all(engine)'
+    Invoke-Docker run -d --name $worker --network $identity --read-only --cap-drop ALL --security-opt no-new-privileges:true --security-opt "seccomp=$repository/deploy/discovery-seccomp.json" --cpus 1 --memory 1g --pids-limit 128 --tmpfs "/tmp:rw,nosuid,nodev,size=536870912,mode=1777" --mount "type=volume,src=$volume,dst=/data/discovery-uploads,readonly" @mirrorMount @environment --user 10003:10003 --entrypoint /opt/cats-venv/bin/python $Image -m app.discovery_worker
+    Invoke-Docker run --rm --network $identity --mount "type=volume,src=$volume,dst=/data/discovery-uploads" --mount "type=bind,src=$PSScriptRoot,dst=/acceptance,readonly" @archiveMount @environment --entrypoint /opt/cats-venv/bin/python $Image /acceptance/discovery-deployed-acceptance.py
 } finally {
     & docker logs $worker
     & docker rm -f $worker $database

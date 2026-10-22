@@ -14,10 +14,9 @@ spec.loader.exec_module(release)
 def test_unified_builds_discovery_from_exact_release_tag():
     args = SimpleNamespace(image='unified', scanner_base='scanner:ready', tag='cats:release', cats_version='2', discovery_tag='discovery:release')
     commands = release.commands(args)
-    assert len(commands) == 2
+    assert len(commands) == 1
     assert commands[0][-2] == 'cats:release'
-    assert 'CATS_TOOL_IMAGE=cats:release' in commands[1]
-    assert commands[1][-2] == 'discovery:release'
+    assert release.discovery_tag(args) == 'cats:release'
     args.image = 'portal'
     assert len(release.commands(args)) == 1
 
@@ -38,7 +37,7 @@ def test_offline_companion_includes_exact_policy_and_image(tmp_path, monkeypatch
     def run(command, **kwargs):
         calls.append(command)
         if command[1:3] == ['image', 'inspect']:
-            return SimpleNamespace(stdout=json.dumps([{'Id': identity, 'Os': 'linux', 'Architecture': 'amd64', 'Config': {'User': '10003:10003'}}]))
+            return SimpleNamespace(stdout=json.dumps([{'Id': identity, 'Os': 'linux', 'Architecture': 'amd64', 'Config': {'User': ''}}]))
         if command[1] == 'save':
             Path(command[3]).write_bytes(b'image archive')
         return SimpleNamespace()
@@ -52,7 +51,23 @@ def test_offline_companion_includes_exact_policy_and_image(tmp_path, monkeypatch
     assert (output / 'deploy/compose.discovery-mirror.yaml').read_bytes() == mirror
     assert (output / 'deploy/discovery-mirror/manifest.json').read_bytes() == default_manifest
     assert manifest['image_id'] == identity
-    assert calls[-1][-1] == 'cats-discovery:' + 'a' * 64
+    assert calls[-1][-1] == 'cats:' + 'a' * 64
     assert all('pull' not in call for call in calls)
     with pytest.raises(FileExistsError):
         release.export_discovery(output, 'discovery:release')
+
+
+@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+def test_discovery_uses_shared_image_with_isolated_worker_entrypoint(filename):
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    worker = yaml.safe_load((root / filename).read_text())["services"]["discovery-worker"]
+    assert worker["image"] == "${CATS_IMAGE:-cats:local}"
+    assert worker["entrypoint"] == []
+    assert worker["command"] == ["/opt/cats-venv/bin/python", "-m", "app.discovery_worker"]
+    assert worker["user"] == "10003:10003"
+    assert worker["read_only"] is True
+    assert "ALL" in worker["cap_drop"]
+    assert any("no-new-privileges" in option for option in worker["security_opt"])
+    assert any("discovery-seccomp.json" in option for option in worker["security_opt"])
+    assert "docker.sock" not in str(worker.get("volumes", []))

@@ -659,13 +659,12 @@ services:
 
   # Broker has DB access; native subprocesses enter an offline, empty namespace.
   discovery-worker:
-    image: ${CATS_DISCOVERY_IMAGE:-cats-discovery:local}
+    image: ${CATS_IMAGE:-cats:local}
     build:
       context: .
-      dockerfile: Dockerfile.discovery
-      args:
-        CATS_TOOL_IMAGE: ${CATS_IMAGE:-cats:local}
-    command: ["python", "-m", "app.discovery_worker"]
+      dockerfile: cats-image/Dockerfile.all-in-one
+    entrypoint: []
+    command: ["/opt/cats-venv/bin/python", "-m", "app.discovery_worker"]
     user: "10003:10003"
     read_only: true
     cap_drop: [ALL]

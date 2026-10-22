@@ -28,19 +28,15 @@ def commands(args, assets=None):
     final += ['--build-arg', 'CATS_VERSION=' + args.cats_version,
               '-t', args.tag or 'cats:' + args.cats_version, str(context)]
     result.append(final)
-    if args.image == 'unified':
-        result.append(common + ['--build-arg', 'CATS_TOOL_IMAGE=' + (args.tag or 'cats:' + args.cats_version),
-                               '-f', str(ROOT / 'Dockerfile.discovery'),
-                               '-t', discovery_tag(args), str(ROOT)])
     return result
 
 
 def discovery_tag(args):
-    return getattr(args, 'discovery_tag', None) or 'cats-discovery:' + args.cats_version
+    return args.tag or 'cats:' + args.cats_version
 
 
 def export_discovery(output, reference):
-    """Export a local companion image and its exact approved sandbox policy.
+    """Export the unified image and its exact approved sandbox policy.
 
     This is a companion bundle, not a complete CATS installation archive.
     No registry pull is performed and existing destinations are never replaced.
@@ -52,8 +48,6 @@ def export_discovery(output, reference):
     if len(rows) != 1 or rows[0].get('Os') != 'linux' or rows[0].get('Architecture') != 'amd64':
         raise ValueError('Discovery image must be local linux/amd64')
     row = rows[0]
-    if (row.get('Config') or {}).get('User') != '10003:10003':
-        raise ValueError('Discovery image must use the dedicated non-root identity')
     policy = ROOT / 'deploy/discovery-seccomp.json'
     json.loads(policy.read_text(encoding='utf-8'))
     output.mkdir(parents=True, exist_ok=False)
@@ -63,20 +57,20 @@ def export_discovery(output, reference):
     (output / 'deploy/discovery-mirror').mkdir()
     shutil.copyfile(ROOT / 'deploy/discovery-mirror/manifest.json', output / 'deploy/discovery-mirror/manifest.json')
     # Save the inspected identity under a content-specific tag, avoiding a mutable-tag race.
-    saved_reference = 'cats-discovery:' + row['Id'].split(':', 1)[1]
+    saved_reference = 'cats:' + row['Id'].split(':', 1)[1]
     subprocess.run(['docker', 'tag', row['Id'], saved_reference], check=True)
     subprocess.run(['docker', 'save', '--output', str(output / 'discovery-image.tar'), saved_reference], check=True)
     files = {}
     for name in ('discovery-image.tar', 'deploy/discovery-seccomp.json', 'deploy/compose.discovery-mirror.yaml', 'deploy/discovery-mirror/manifest.json'):
         with (output / name).open('rb') as handle:
             files[name] = hashlib.file_digest(handle, 'sha256').hexdigest()
-    manifest = {'schema_version': 1, 'kind': 'cats-discovery-companion',
+    manifest = {'schema_version': 1, 'kind': 'cats-unified-runtime',
                 'image_reference': saved_reference, 'image_id': row['Id'], 'files': files}
     (output / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n', encoding='utf-8')
     (output / 'IMPORT.txt').write_text(
         'Verify manifest.json file SHA-256 digests before import.\n'
         'docker load --input discovery-image.tar\n'
-        'Set CATS_DISCOVERY_IMAGE=' + saved_reference + ' in the CATS deployment environment.\n'
+        'Set CATS_IMAGE=' + saved_reference + ' in the CATS deployment environment.\n'
         'Copy deploy/discovery-seccomp.json and deploy/discovery-mirror/manifest.json into the matching CATS deployment paths.\n'
         'Optionally copy deploy/compose.discovery-mirror.yaml and set CATS_DISCOVERY_MIRROR_DIR to your verified local mirror.\n'
         'Add -f deploy/compose.discovery-mirror.yaml after -f compose.yaml to enable that read-only mirror.\n'
@@ -88,7 +82,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cats-version', default='1.3')
     parser.add_argument('--tag')
-    parser.add_argument('--discovery-tag', help='Unified release Discovery image tag')
+    parser.add_argument('--discovery-tag', help='Deprecated compatibility option; Discovery uses --tag')
     parser.add_argument('--discovery-offline-output', type=pathlib.Path, help='Export Discovery image and approved seccomp policy into a new companion directory')
     parser.add_argument('--image', choices=['unified', 'portal'], default='unified')
     parser.add_argument('--profile', choices=['release', 'development', 'runtime'], default='release')
