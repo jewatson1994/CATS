@@ -12,6 +12,17 @@ interface Job {
 interface Snapshot {jobs: Job[]; counts: Record<string, number>; limit: number}
 const labels: Record<string, string> = {export: 'Export', scan: 'Scan', 'remediation_plan': 'Remediation plan',
   'remediation_execute': 'Remediation', 'remediation_validate': 'Validation', 'remediation_deliver': 'Delivery'};
+/** A result link worth showing: not one that only reopens this same job on the Jobs page (exports point there). */
+function resultLink(job: Job): string | undefined {
+  if (!job.result_url) return undefined;
+  try {
+    const url = new URL(job.result_url, window.location.origin);
+    if (url.origin === window.location.origin && url.pathname === '/jobs' && url.searchParams.get('job') === job.id) return undefined;
+  } catch {
+    return job.result_url;
+  }
+  return job.result_url;
+}
 function duration(seconds: number) {return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;}
 const kindLabel = (kind: string) => labels[kind] || kind;
 
@@ -52,10 +63,10 @@ export function Page({data}: {data: PageData}) {
   }
   function actions(job: Job) {return <span className="row-actions">
     {job.download_url && job.status === 'completed' && <a className="secondary-button" href={job.download_url}>Download</a>}
-    {job.result_url && <a className="secondary-button" href={job.result_url}>Open result</a>}
+    {resultLink(job) && <a className="secondary-button" href={resultLink(job)}>Open result</a>}
     {job.can_retry && <button disabled={!!busy} onClick={() => void act(job, 'retry')}>Retry</button>}
     {job.can_cancel && <button className="secondary-button" disabled={!!busy} onClick={() => void act(job, 'cancel')}>Cancel</button>}
-    {!job.download_url && !job.result_url && !job.can_retry && !job.can_cancel && <span className="muted">—</span>}
+    {!(job.download_url && job.status === 'completed') && !resultLink(job) && !job.can_retry && !job.can_cancel && <span className="muted">—</span>}
   </span>;}
   const columns = useMemo<GridColumn<Job>[]>(() => [
     {key: 'job', header: 'Job', identifier: true, hideable: false, value: job => kindLabel(job.kind),

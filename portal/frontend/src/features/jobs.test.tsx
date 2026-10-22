@@ -21,3 +21,13 @@ it('shows completed download and failed diagnostics without unsupported controls
   expect(screen.getByText('Pinned Kind image is missing.')).toBeTruthy();
   expect(screen.queryByRole('button', {name: 'Cancel'})).toBeNull();
 });
+it('hides an Open result link that only points back to the same job, keeping real result links', async () => {
+  vi.mocked(requestJson).mockResolvedValue({jobs: [
+    {...row, status: 'completed', can_cancel: false, download_url: '/api/v1/exports/job-1/download', result_url: '/jobs?job=job-1'},
+    {...row, id: 'scan-1', kind: 'scan', status: 'completed', can_cancel: false, result_url: '/api/public/jobs/scan-1/results/view'}], counts: {completed: 2}, limit: 100});
+  render(<Page data={{}}/>);
+  expect(await screen.findByRole('link', {name: 'Download'})).toHaveAttribute('href', '/api/v1/exports/job-1/download');
+  const results = screen.getAllByRole('link', {name: 'Open result'});
+  expect(results).toHaveLength(1);
+  expect(results[0]).toHaveAttribute('href', '/api/public/jobs/scan-1/results/view');
+});
