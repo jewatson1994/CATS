@@ -4,6 +4,7 @@
 # Supply the environment-specific CatScan image at build time. The local
 # default avoids embedding any registry hostname in the image definition.
 ARG CATSCAN_BASE_IMAGE=catscan-base:local
+FROM docker/compose-bin:v2.39.4 AS discovery-compose
 FROM node:24.19.0-alpine AS frontend
 WORKDIR /build/frontend
 COPY portal/frontend/package.json portal/frontend/pnpm-lock.yaml portal/frontend/pnpm-workspace.yaml ./
@@ -41,7 +42,7 @@ RUN test -s /opt/cats/validation/loadbalancer/bundle.json \
     && test -s /opt/cats/validation/ingress/kube-webhook-certgen.tar \
     || { echo "Rebuild catscan-base with the bundled MetalLB and ingress-nginx capabilities before building CATS." >&2; exit 1; }
 
-RUN apk add --no-cache docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
+RUN apk add --no-cache bubblewrap docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
     && python3 -m venv /opt/cats-venv
 
 # Portal signing is self-contained at runtime, including disconnected sites.
@@ -145,5 +146,12 @@ RUN addgroup -g 10001 cats-scan \
     && chown 0:0 /run/cats-scan-control \
     && chmod 0711 /var/lib/cats-scan \
     && chown 0:0 /var/lib/cats-scan
+# Discovery shares the release image; Compose supplies its restricted identity.
+COPY --from=discovery-compose /docker-compose /usr/local/bin/docker-compose
+RUN addgroup -g 10003 discovery \
+    && adduser -D -u 10003 -G discovery -h /tmp discovery \
+    && mkdir -p /data/discovery-uploads /opt/discovery \
+    && chown 10003:10003 /data/discovery-uploads
+RUN mkdir -p /opt/discovery && /opt/cats-venv/bin/python -c "import json, subprocess; commands={'helm':['helm','version','--short'], 'kustomize':['kubectl','version','--client','-o','json'], 'compose':['docker-compose','version','--short']}; versions={key:subprocess.check_output(args,text=True).strip() for key,args in commands.items()}; versions['kustomize']=json.loads(versions['kustomize'])['kustomizeVersion']; open('/opt/discovery/tool-versions.json','w').write(json.dumps(versions))"
 EXPOSE 8000 8443
 ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]
