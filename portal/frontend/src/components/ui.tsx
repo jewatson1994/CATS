@@ -27,6 +27,19 @@ const iconPaths: Record<string, ReactNode> = {
   arrowDown: <path d="M12 5v14M19 12l-7 7-7-7"/>,
   arrowUp: <path d="M12 19V5M5 12l7-7 7 7"/>,
   spinner: <path d="M21 12a9 9 0 1 1-6.2-8.56"/>,
+  sort: <path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>,
+  sortAsc: <path d="m7 14 5-5 5 5"/>,
+  sortDesc: <path d="m7 10 5 5 5-5"/>,
+  filter: <path d="M3 5h18l-7 8.5V19l-4 2v-7.5z"/>,
+  columns: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></>,
+  rows: <path d="M4 6h16M4 12h16M4 18h16"/>,
+  search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></>,
+  menu: <path d="M4 7h16M4 12h16M4 17h16"/>,
+  download: <path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>,
+  grip: <><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></>,
+  chevronLeft: <path d="m15 18-6-6 6-6"/>,
+  chevronRight: <path d="m9 18 6-6-6-6"/>,
+  external: <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>,
 };
 export type IconName = keyof typeof iconPaths;
 

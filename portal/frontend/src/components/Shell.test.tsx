@@ -46,3 +46,57 @@ it('preserves administration permissions, notification counts and public navigat
   expect(screen.getByRole('link', {name: 'Login'})).toHaveAttribute('href', '/login');
   expect(screen.queryByText('More', {selector: 'summary'})).not.toBeInTheDocument();
 });
+
+it('shows a compact brand with the full product name and version available without wrapping the header', () => {
+  render(<Shell data={{...data, cats_deployed_version: '2.4.1'}}>Content</Shell>);
+  const brand = screen.getByRole('link', {name: /^CATS.*Continuous Assessment & Tracking System/});
+  expect(brand).toHaveAttribute('title', 'CATS — Continuous Assessment & Tracking System · 2.4.1');
+  expect(within(brand).getByText('2.4.1')).toHaveClass('cats-version');
+  expect(screen.getByRole('link', {name: 'Skip to main content'})).toHaveAttribute('href', '#main-content');
+  expect(screen.getByRole('main')).toHaveAttribute('id', 'main-content');
+  fireEvent.click(screen.getByText('Tester', {selector: '.user-name'}));
+  fireEvent.click(screen.getByRole('button', {name: 'About CATS'}));
+  const about = screen.getByRole('dialog', {name: 'CATS'});
+  expect(about).toHaveTextContent('Continuous Assessment & Tracking System');
+  expect(about).toHaveTextContent('2.4.1');
+});
+
+it('groups secondary destinations into labelled sections and supports arrow-key movement', () => {
+  render(<Shell data={data}>Content</Shell>);
+  const more = screen.getByText('More', {selector: 'summary'});
+  fireEvent.click(more);
+  const menu = more.parentElement!;
+  expect(within(menu).getAllByRole('group').map(group => group.getAttribute('aria-label'))).toEqual(['Governance', 'Inventory', 'Operations']);
+  const links = within(menu).getAllByRole('link');
+  expect(links.map(link => link.textContent)).toEqual(['Remediate', 'Requests', 'Artifact catalog', 'SBOM', 'Jobs']);
+  links[0].focus();
+  fireEvent.keyDown(links[0], {key: 'ArrowDown'});
+  expect(links[1]).toHaveFocus();
+  fireEvent.keyDown(links[1], {key: 'End'});
+  expect(links[4]).toHaveFocus();
+  fireEvent.keyDown(links[4], {key: 'ArrowDown'});
+  expect(links[0]).toHaveFocus();
+  fireEvent.keyDown(links[0], {key: 'ArrowUp'});
+  expect(links[4]).toHaveFocus();
+  fireEvent.keyDown(links[4], {key: 'Home'});
+  expect(links[0]).toHaveFocus();
+});
+
+it('keeps only one header menu open at a time', () => {
+  render(<Shell data={data}>Content</Shell>);
+  const cyber = screen.getByText('Cybersecurity', {selector: 'summary'}).parentElement as HTMLDetailsElement;
+  const more = screen.getByText('More', {selector: 'summary'}).parentElement as HTMLDetailsElement;
+  cyber.open = true;
+  fireEvent(cyber, new Event('toggle'));
+  more.open = true;
+  fireEvent(more, new Event('toggle'));
+  expect(more.open).toBe(true);
+  expect(cyber.open).toBe(false);
+});
+
+it('shows user initials while keeping the account name accessible', () => {
+  render(<Shell data={{current_user: {display_name: 'Ada Lovelace', theme: 'cats'}}}>Content</Shell>);
+  const summary = screen.getByTitle('Ada Lovelace');
+  expect(within(summary).getByText('AL')).toHaveAttribute('aria-hidden', 'true');
+  expect(summary).toHaveTextContent('Ada Lovelace');
+});
