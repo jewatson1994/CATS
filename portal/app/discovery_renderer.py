@@ -12,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
 
 
 class RendererError(RuntimeError):
@@ -88,15 +89,19 @@ def sandbox_command(tool: str, args: list[str], cwd: str | Path) -> list[str]:
 
 
 def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
-                    timeout: float = 60, max_output: int = 16 * 1024 * 1024) -> dict[str, str]:
-    """Bound wall time and combined output; never fall back to host execution."""
+                    timeout: float = 60, max_output: int | None = None) -> dict[str, str]:
+    """Bound wall time and optional output budget; spool native output to disk."""
+    if max_output is None:
+        from .discovery_limits import limit
+        max_output = limit('RENDERED_BYTES')
     command = sandbox_command(tool, args, cwd)
     with child_seccomp() as policy:
         command[1:1] = ["--seccomp", str(policy.fileno())]
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    env={"PATH": "/usr/bin:/bin"}, start_new_session=True,
                                    pass_fds=(policy.fileno(),))
-    outputs = {"stdout": bytearray(), "stderr": bytearray()}
+    outputs = {name: tempfile.TemporaryFile() for name in ("stdout", "stderr")}
+    output_size = 0
     deadline = time.monotonic() + timeout
     try:
         with selectors.DefaultSelector() as selector:
@@ -111,14 +116,17 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
                     if not chunk:
                         selector.unregister(key.fileobj)
                         continue
-                    outputs[key.data].extend(chunk)
-                    if sum(map(len, outputs.values())) > max_output:
+                    outputs[key.data].write(chunk)
+                    output_size += len(chunk)
+                    if max_output and output_size > max_output:
                         raise RendererError("Discovery renderer exceeded output limit")
             process.wait(timeout=max(0.001, deadline - time.monotonic()))
+        for output in outputs.values():
+            output.seek(0)
         if process.returncode:
             # Native stderr can contain user secrets; keep it out of persisted errors.
-            raise RendererError("Discovery rendering failed (including unavailable sandbox support)", value_paths=missing_value_paths(outputs["stderr"].decode("utf-8", errors="replace")))
-        return {"stdout": outputs["stdout"].decode("utf-8", errors="strict"),
+            raise RendererError("Discovery rendering failed (including unavailable sandbox support)", value_paths=missing_value_paths(outputs["stderr"].read().decode("utf-8", errors="replace")))
+        return {"stdout": outputs["stdout"].read().decode("utf-8", errors="strict"),
                 "version": tool_version(tool)}
     except subprocess.TimeoutExpired as exc:
         raise RendererError("Discovery renderer exceeded time limit") from exc
@@ -131,6 +139,8 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
         process.wait()
         process.stdout.close()
         process.stderr.close()
+        for output in outputs.values():
+            output.close()
 
 
 def child_seccomp():

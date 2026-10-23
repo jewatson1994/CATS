@@ -11,6 +11,7 @@ import json
 import re
 import ssl
 import time
+import tempfile
 from urllib import request, error
 from urllib.parse import urlsplit, urljoin, urlencode, unquote
 from http.client import HTTPException
@@ -20,7 +21,9 @@ import yaml
 from .discovery_artifacts import ArtifactResolutionError, ResolvedArtifact, _identity
 from .trusted_ca import additional_pem
 
-MAX_BYTES = 32 * 1024 * 1024
+from .discovery_limits import limit as discovery_limit
+
+MAX_BYTES = discovery_limit("UPLOAD_BYTES")
 MAX_METADATA = 16 * 1024 * 1024
 CHART_LAYER = 'application/vnd.cncf.helm.chart.content.v1.tar+gzip'
 
@@ -114,7 +117,7 @@ class HelmNetworkResolver:
         self.opener = request.build_opener(request.ProxyHandler({}),
             request.HTTPSHandler(context=context), _NoRedirect())
 
-    def _get(self, url, *, limit=MAX_BYTES, headers=None, origins=(), query=False):
+    def _get(self, url, *, limit=MAX_BYTES, headers=None, origins=(), query=False, file_backed=False):
         # Queries are generated only by the token client or returned by approved redirects.
         initial = urlsplit(url)
         clean = initial._replace(query='').geturl() if query else url
@@ -125,17 +128,25 @@ class HelmNetworkResolver:
         for hop in range(6):
             try:
                 with self.opener.open(request.Request(url, headers=headers), timeout=self.timeout) as response:
-                    chunks, size = [], 0
-                    while True:
-                        if time.monotonic() > deadline:
-                            raise ArtifactResolutionError('Helm download timed out; retry or check the source.')
-                        chunk = response.read(min(65536, limit + 1 - size))
-                        if not chunk:
-                            return b''.join(chunks), response.headers
-                        chunks.append(chunk)
-                        size += len(chunk)
-                        if size > limit:
-                            raise ArtifactResolutionError('Helm download exceeds the configured size limit.')
+                    spool, size = tempfile.TemporaryFile(), 0
+                    try:
+                        while True:
+                            if time.monotonic() > deadline:
+                                raise ArtifactResolutionError('Helm download timed out; retry or check the source.')
+                            chunk = response.read(min(65536, limit + 1 - size) if limit else 65536)
+                            if not chunk:
+                                spool.seek(0)
+                                if file_backed:
+                                    result, spool = spool, None
+                                    return result, response.headers
+                                return spool.read(), response.headers
+                            spool.write(chunk)
+                            size += len(chunk)
+                            if limit and size > limit:
+                                raise ArtifactResolutionError('Helm download exceeds the configured size limit.')
+                    finally:
+                        if spool is not None:
+                            spool.close()
             except error.HTTPError as exc:
                 if exc.code not in (301, 302, 303, 307, 308):
                     raise
@@ -161,14 +172,14 @@ class HelmNetworkResolver:
         matches = sorted((pair for pair in self.credentials if _under(reference, pair[0])), key=lambda x: len(x[0]), reverse=True)
         basic = matches[0][1] if matches else ''
         authorization = basic
-        def fetch(url, limit):
+        def fetch(url, limit, file_backed=False):
             nonlocal authorization
             for attempt in range(2):
                 headers = {'Accept': 'application/vnd.oci.image.manifest.v1+json'}
                 if authorization:
                     headers['Authorization'] = authorization
                 try:
-                    return self._get(url, limit=limit, headers=headers, origins=origins)
+                    return self._get(url, limit=limit, headers=headers, origins=origins, file_backed=file_backed)
                 except error.HTTPError as exc:
                     if exc.code != 401 or attempt:
                         raise
@@ -197,10 +208,15 @@ class HelmNetworkResolver:
             raise ArtifactResolutionError('OCI manifest must contain exactly one Helm chart layer.')
         layer = layers[0]
         digest = layer.get('digest', '')
-        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest) or type(layer.get('size')) is not int or not 0 <= layer['size'] <= MAX_BYTES:
+        if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest) or type(layer.get('size')) is not int or (layer['size'] < 0 or (MAX_BYTES and layer['size'] > MAX_BYTES)):
             raise ArtifactResolutionError('Invalid or oversized OCI chart layer.')
-        archive, _ = fetch(base + '/v2/' + repository + '/blobs/' + digest, MAX_BYTES)
-        if len(archive) != layer['size']:
+        archive, _ = fetch(base + '/v2/' + repository + '/blobs/' + digest, MAX_BYTES, file_backed=True)
+        actual_size = len(archive) if isinstance(archive, bytes) else archive.seek(0, 2)
+        if not isinstance(archive, bytes):
+            archive.seek(0)
+        if actual_size != layer['size']:
+            if not isinstance(archive, bytes):
+                archive.close()
             raise ArtifactResolutionError('OCI chart layer size verification failed.')
         return archive, digest[7:]
 
@@ -230,9 +246,13 @@ class HelmNetworkResolver:
                 urls = entry.get('urls', [])
                 if not urls or not isinstance(urls[0], str):
                     raise ArtifactResolutionError('Helm repository index has no chart download URL.')
-                data, _ = self._get(urljoin(repository + '/', urls[0]), origins=origins)
-            digest = hashlib.sha256(data).hexdigest()
+                data, _ = self._get(urljoin(repository + '/', urls[0]), origins=origins, file_backed=True)
+            digest = hashlib.sha256(data).hexdigest() if isinstance(data, bytes) else hashlib.file_digest(data, 'sha256').hexdigest()
+            if not isinstance(data, bytes):
+                data.seek(0)
             if digest != expected:
+                if not isinstance(data, bytes):
+                    data.close()
                 raise ArtifactResolutionError('Helm chart checksum verification failed.')
             return ResolvedArtifact(data, 'chart.tgz', digest, kind,
                 hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest(), 'admin-approved-helm-network')

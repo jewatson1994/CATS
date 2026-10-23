@@ -14,7 +14,7 @@ If discovery is incomplete, review diagnostics and candidate environment paths. 
 
 ## Native rendering isolation
 
-The dedicated Linux worker runs as UID 10003. Bubblewrap exposes only the selected static renderer binary and the job source directory (read-only), creates fresh user, network, process and mount namespaces, clears the environment, drops capabilities, and supplies private temporary storage. Plugins, executable post-renderers and Kustomize exec extensions are rejected. A child seccomp filter blocks subsequent namespace creation/entry and mount changes, checks the syscall architecture, and fails closed on unsupported architectures. The worker records trusted build-time Helm, Kustomize and Compose versions. Wall-clock and combined output limits apply to every render.
+The dedicated Linux worker runs as UID 10003. Bubblewrap exposes only the selected static renderer binary and the job source directory (read-only), creates fresh user, network, process and mount namespaces, clears the environment, drops capabilities, and supplies private temporary storage. Plugins, executable post-renderers and Kustomize exec extensions are rejected. A child seccomp filter blocks subsequent namespace creation/entry and mount changes, checks the syscall architecture, and fails closed on unsupported architectures. The worker records trusted build-time Helm, Kustomize and Compose versions. Wall-clock limits apply to every render. Combined output limits are optional and default to unlimited (see the resource settings below).
 
 Docker's built-in seccomp policy can prevent Bubblewrap namespace setup. The implementation fails closed in that case. Compose applies the explicitly approved `deploy/discovery-seccomp.json` profile only to the Discovery worker, permitting Bubblewrap setup; no privileged mode, unconfined profile or writable host `/proc` is supported. The container policy is separate from the stricter child filter applied after namespace setup.
 
@@ -25,3 +25,34 @@ Acceptance on Docker Desktop Linux used an ephemeral default-derived policy with
 The real project is available only to the operator. Upload the complete source archive with local chart dependencies, select the intended root values files in deployment order, and compare the reviewed image inventory against the previous all-but-two-chart result. Inspect each generated Flux release, effective ConfigMap values, downstream chart and image provenance. For the two previously unresolved charts, retain the exact missing-reference diagnostics and check whether their required values exist in the source archive. Missing external artifacts remain unresolved. Record the archive hash, selected configuration, tool versions, inventory ID, component/image counts and unresolved diagnostics. Confirm service boundaries and use the existing Scan handoff only after review. Synthetic renderer tests are not Singularity acceptance.
 
 The installed worker-only profile was also verified with Compose configuration validation, all 11 renderer regression tests, and an offline non-root Helm smoke render using the committed profile path.
+
+
+### Discovery input capacity
+
+Discovery defaults to unlimited upload bytes, per-file bytes, extracted bytes,
+file counts, and renderer output bytes. Operators can set positive values for
+`CATS_DISCOVERY_MAX_UPLOAD_BYTES`, `CATS_DISCOVERY_MAX_FILE_BYTES`,
+`CATS_DISCOVERY_MAX_EXTRACTED_BYTES`, `CATS_DISCOVERY_MAX_FILES`, and
+`CATS_DISCOVERY_MAX_RENDERED_BYTES`; zero disables the respective budget. There
+is no hidden upper clamp. Direct Compose ingestion retains its separate budgets.
+Supplemental inputs use the Discovery budgets and have no fixed chain-count cap.
+
+Uploads and supplemental copies stream in chunks. Native renderer output spools
+to disk before parsing; parsing still requires memory proportional to document
+size. The Discovery worker uses the `discovery_scratch` disk volume for temporary
+inputs instead of a 512 MiB tmpfs. Provision and monitor that volume and the
+upload volume for source, decrypted, extracted and rendered data. Container
+memory (`CATS_DISCOVERY_MEMORY`, default 1 GiB), CPU, process and execution-time
+budgets still apply. A process killed by the operating system cannot emit its own
+resource diagnostic; inspect worker/container logs in that case. Configure any
+external reverse proxy request-body limit and request timeout for the intended
+upload sizes; application settings cannot override an external proxy rejection.
+
+Archive extraction, repository hashing, and approved mirror/Helm artifact downloads
+use file-backed streaming. Archive buffers do not grow with the combined archive
+and extracted payload. ZIP directory metadata, inventory data, parsed documents,
+and final renderer text still occupy memory. Structural YAML protections and
+inventory complexity limits remain; these are distinct from uploaded file-count
+budgets. Helm metadata and administrator mirror manifests remain bounded. Network
+socket/deadline limits remain in force. Render input scoping and encrypted cache
+size thresholds only skip optimizations; they do not reject larger sources.

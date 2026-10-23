@@ -11,6 +11,8 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
+from .discovery_limits import limit
+
 MAGIC = b'CATS-DISCOVERY\x01'
 CHUNK = 1024 * 1024
 
@@ -50,13 +52,13 @@ def encrypted_writer(path, identity):
 
 @contextmanager
 def decrypted_source(path, identity, expected_hash, check=lambda: None):
-    """Authenticate fully before exposing a bounded temporary plaintext file."""
+    """Authenticate fully before exposing a temporary plaintext file."""
     path = Path(path)
     key = storage_key()
-    maximum = min(128 * 1024 * 1024, max(1, int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32 * 1024 * 1024)))))
+    maximum = limit('UPLOAD_BYTES')
     overhead = len(MAGIC) + 12 + 16
     size = path.stat().st_size
-    if size < overhead or size > maximum + overhead:
+    if size < overhead or (maximum > 0 and size > maximum + overhead):
         raise SourceStorageError('Encrypted discovery source is invalid or exceeds limits')
     with tempfile.TemporaryDirectory(prefix='cats-discovery-decrypted-') as temporary:
         target = Path(temporary) / path.name

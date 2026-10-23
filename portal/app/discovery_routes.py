@@ -1,5 +1,7 @@
 """Group-scoped Discovery: source review and confirmation precede scan admission."""
 import hashlib
+import errno
+from functools import wraps
 import hmac
 import json
 import os
@@ -18,6 +20,23 @@ from .discovery_worker import upload_root
 from .discovery_sources import encrypted_writer, storage_key, SourceStorageError
 
 router = APIRouter(prefix='/api/discovery', tags=['Discovery'])
+
+
+def upload_resource_diagnostics(endpoint):
+    """Report exhausted upload storage/memory without exposing local paths."""
+    @wraps(endpoint)
+    async def wrapped(*args, **kwargs):
+        try:
+            return await endpoint(*args, **kwargs)
+        except MemoryError:
+            raise HTTPException(503, 'Discovery upload exhausted available memory; increase upload service memory and retry.') from None
+        except OSError as exc:
+            if exc.errno in (errno.ENOSPC, getattr(errno, 'EDQUOT', -1)):
+                raise HTTPException(507, 'Discovery upload storage is full or its quota is exhausted; free storage and retry.') from None
+            if exc.errno == errno.ENOMEM:
+                raise HTTPException(503, 'Discovery upload exhausted available memory; increase upload service memory and retry.') from None
+            raise
+    return wrapped
 
 def permitted_group(auth, group_id):
     return any(a.service_id is None and a.group_id in (None, group_id) and
@@ -96,15 +115,18 @@ def listing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids][:100], 'groups': [{'id':g.id,'name':g.name,'can_stage':can_stage(db,auth,g.id)} for g in groups], 'services': services}
 
 @router.post('')
+@upload_resource_diagnostics
 async def create(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
-    # Count the whole multipart body before Starlette can spool unbounded files.
-    limit = int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024))) + 131072
+    # Enforce an optional operator budget while multipart files spool to disk.
+    from .discovery_limits import limit as discovery_limit
+    maximum = discovery_limit('UPLOAD_BYTES')
+    limit = maximum + 131072
     receive, received = request._receive, 0
     async def bounded_receive():
         nonlocal received
         message = await receive()
         received += len(message.get('body', b''))
-        if received > limit: raise HTTPException(413, 'Discovery upload exceeds size limit')
+        if maximum and received > limit: raise HTTPException(413, 'Discovery upload exceeds size limit')
         return message
     request._receive = bounded_receive
     form = await request.form(max_files=1, max_fields=8, max_part_size=65536)
@@ -147,7 +169,7 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
                 else:
                     while chunk := await upload.read(1024*1024):
                         size += len(chunk)
-                        if size > int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024))):
+                        if maximum and size > maximum:
                             raise HTTPException(413, 'Discovery upload exceeds size limit')
                         stream.write(chunk); digest.update(chunk)
             if os.name == 'posix':
@@ -198,25 +220,24 @@ async def retry(job_id: str, request: Request, auth: AuthContext = Depends(requi
     return {'job_id':job.id}
 
 @router.post('/{job_id}/supplements')
+@upload_resource_diagnostics
 async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
-    from .discovery_supplements import MAX_SUPPLEMENTS
+    from .discovery_limits import limit as discovery_limit
     from .compose_ingestion import _relative, ComposeInputError
     old = get_job(db, auth, job_id, True)
     parent = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == old.id))
     if old.status != 'completed' or parent is None:
         raise HTTPException(409, 'Discovery must finish before supplying dependencies')
     chain = old.payload.get('supplements', [])
-    if len(chain) >= MAX_SUPPLEMENTS:
-        raise HTTPException(422, 'Supplemental upload limit reached; submit a new source bundle')
     if not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
         raise HTTPException(410, 'Discovery source expired; upload it again')
-    maximum = min(128*1024*1024, max(1, int(os.getenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(32*1024*1024)))))
+    maximum = discovery_limit('UPLOAD_BYTES')
     receive, received = request._receive, 0
     async def bounded_receive():
         nonlocal received
         message = await receive()
         received += len(message.get('body', b''))
-        if received > maximum + 131072:
+        if maximum and received > maximum + 131072:
             raise HTTPException(413, 'Discovery upload exceeds size limit')
         return message
     request._receive = bounded_receive
@@ -249,7 +270,7 @@ async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(
             with encrypted_writer(target, identity) as stream:
                 while chunk := await upload.read(1024*1024):
                     size += len(chunk)
-                    if size > maximum:
+                    if maximum and size > maximum:
                         raise HTTPException(413, 'Discovery upload exceeds size limit')
                     stream.write(chunk)
                     digest.update(chunk)

@@ -1,28 +1,31 @@
-"""Bounded, add-only supplemental inputs; source inventories remain immutable."""
+"""Add-only supplemental inputs; source inventories remain immutable."""
 import hashlib
 from pathlib import Path
 import tempfile
 from . import compose_ingestion as compose
 
-MAX_SUPPLEMENTS = 8
+from .discovery_limits import staging_limits
 
 
-def apply_supplements(base, supplements):
-    if len(supplements) > MAX_SUPPLEMENTS:
-        raise compose.ComposeInputError('Too many supplemental uploads.')
+def apply_supplements(base, supplements, check=None):
+    check = check or (lambda: None)
+    check()
+    limits = staging_limits()
     base = Path(base)
     records = []
     for item in supplements:
+        check()
         source = Path(item['plaintext'])
         prefix = compose._relative(item.get('target_path', '.'))
         with tempfile.TemporaryDirectory(prefix='cats-supplement-') as scratch:
             with source.open('rb') as stream:
-                staged = compose.stage_uploads(Path(scratch), [(stream, source.name)])
+                staged = compose.stage_uploads(Path(scratch), [(stream, source.name)], check=check, **limits)
             existing = {p.relative_to(base).as_posix().casefold(): p for p in base.rglob('*')}
             files = [p for p in existing.values() if p.is_file()]
             incoming = [(p, compose._relative((Path(prefix) / p.relative_to(staged['root'])).as_posix()))
                         for p in Path(staged['root']).rglob('*') if p.is_file()]
-            if len(files) + len(incoming) > compose.MAX_FILES or sum(p.stat().st_size for p in files) + sum(p.stat().st_size for p, _ in incoming) > compose.MAX_TOTAL:
+            if ((limits['max_files'] and len(files) + len(incoming) > limits['max_files'])
+                    or (limits['max_total'] and sum(p.stat().st_size for p in files) + sum(p.stat().st_size for p, _ in incoming) > limits['max_total'])):
                 raise compose.ComposeInputError('Combined discovery inputs exceed limits.')
             for _, name in incoming:
                 if name.casefold() in existing or any(parent.as_posix().casefold() in existing and existing[parent.as_posix().casefold()].is_file() for parent in Path(name).parents):
@@ -30,12 +33,15 @@ def apply_supplements(base, supplements):
                 compose._inside(base, name)
             hashes = []
             for p, name in sorted(incoming, key=lambda entry: entry[1]):
-                data = p.read_bytes()
+                digest = hashlib.sha256()
                 target = compose._inside(base, name)
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with target.open('xb') as output:
-                    output.write(data)
-                hashes.append({'path': name, 'sha256': hashlib.sha256(data).hexdigest()})
+                with p.open('rb') as source_stream, target.open('xb') as output:
+                    while chunk := source_stream.read(1024 * 1024):
+                        check()
+                        output.write(chunk)
+                        digest.update(chunk)
+                hashes.append({'path': name, 'sha256': digest.hexdigest()})
             records.append({key: item[key] for key in ('source_id', 'source_hash', 'target_path', 'parent_job_id', 'parent_inventory_id', 'parent_content_hash')} | {'files': hashes})
     return records
 

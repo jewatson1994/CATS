@@ -45,7 +45,7 @@ def test_combined_limit_and_case_collision(tmp_path, monkeypatch):
     source=tmp_path/'values.yaml'; source.write_text('new')
     with pytest.raises(ComposeInputError):
         apply_supplements(base, [item(source)])
-    monkeypatch.setattr(compose, 'MAX_FILES', 1)
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_FILES', '1')
     with pytest.raises(ComposeInputError):
         apply_supplements(base, [item(source, 'other')])
 
@@ -76,3 +76,23 @@ def test_remove_supplements_preserves_unrelated_sources(tmp_path):
         {'source_id':'a'*32, 'filename':'../../other'}]})])
     assert not (folder/'values.yaml').exists()
     assert unrelated.read_text() == 'keep'
+
+
+def test_default_supplements_ignore_compose_limits_and_chain_cap(tmp_path, monkeypatch):
+    from app import compose_ingestion as compose
+    monkeypatch.setattr(compose, 'MAX_FILES', 1)
+    monkeypatch.setattr(compose, 'MAX_TOTAL', 1)
+    base = tmp_path/'base'; base.mkdir()
+    source = tmp_path/'values.yaml'; source.write_text('image: nginx:1')
+    result = apply_supplements(base, [item(source, f'chart{i}') for i in range(9)])
+    assert len(result) == 9
+
+
+def test_supplement_cancellation_before_staging_leaves_base_unchanged(tmp_path):
+    base = tmp_path/'base'; base.mkdir()
+    source = tmp_path/'values.yaml'; source.write_text('image: nginx:1')
+    def cancelled():
+        raise RuntimeError('cancelled')
+    with pytest.raises(RuntimeError, match='cancelled'):
+        apply_supplements(base, [item(source)], check=cancelled)
+    assert list(base.iterdir()) == []

@@ -21,11 +21,14 @@ from pathlib import Path
 import re
 import stat
 import ssl
+import tempfile
 import time
+import io
 from urllib import request, error
 from urllib.parse import urlsplit
 
 from . import compose_ingestion as compose
+from .discovery_limits import limit, staging_limits
 
 MAX_MANIFEST = 1024 * 1024
 MAX_ARTIFACTS = 500
@@ -74,7 +77,7 @@ def _unique_object(pairs):
 
 @dataclass(frozen=True)
 class ResolvedArtifact:
-    data: bytes = field(repr=False)
+    payload: object = field(repr=False)
     archive_name: str
     sha256: str
     kind: str
@@ -82,17 +85,28 @@ class ResolvedArtifact:
     source: str = 'admin-local-mirror'
 
     @property
+    def data(self):
+        """Compatibility accessor; staging consumes the file-backed payload directly."""
+        if isinstance(self.payload, bytes):
+            return self.payload
+        self.payload.seek(0)
+        return self.payload.read()
+
+    @property
     def provenance(self):
         return {'source': self.source, 'kind': self.kind,
                 'sha256': self.sha256, 'identity_hash': self.identity_hash,
                 'integrity': 'verified'}
 
-    def stage(self, root: Path) -> dict:
+    def stage(self, root: Path, *, check=None) -> dict:
         """Use a fresh scratch directory; safe extraction rejects unsafe members."""
         try:
-            staged = compose.stage_uploads(Path(root), [(self.data, self.archive_name)])
-        except compose.ComposeInputError:
-            raise ArtifactResolutionError('Artifact archive could not be safely staged.') from None
+            source = io.BytesIO(self.payload) if isinstance(self.payload, bytes) else self.payload
+            source.seek(0)
+            staged = compose.stage_uploads(Path(root), [(source, self.archive_name)],
+                                           **staging_limits(), check=check)
+        except compose.ComposeInputError as exc:
+            raise ArtifactResolutionError('Artifact archive could not be safely staged. ' + str(exc)) from None
         return {**staged, 'provenance': self.provenance}
 
 
@@ -142,10 +156,31 @@ class LocalArtifactResolver:
             path = compose._inside(self._root, name)
         except compose.ComposeInputError:
             raise ArtifactResolutionError('Unsafe mirror artifact path.') from None
-        data = _bounded_read(path, compose.MAX_TOTAL)
-        digest = hashlib.sha256(data).hexdigest()
-        if digest != expected:
-            raise ArtifactResolutionError('Artifact checksum verification failed.')
+        data = tempfile.TemporaryFile()
+        try:
+            if not stat.S_ISREG(path.stat().st_mode):
+                raise ArtifactResolutionError('Artifact input is not a regular file.')
+            maximum = limit('UPLOAD_BYTES')
+            if maximum and path.stat().st_size > maximum:
+                raise ArtifactResolutionError('Artifact input exceeds size limits.')
+            size = 0
+            hasher = hashlib.sha256()
+            with path.open('rb') as stream:
+                while chunk := stream.read(65536):
+                    size += len(chunk)
+                    if maximum and size > maximum:
+                        raise ArtifactResolutionError('Artifact input exceeds size limits.')
+                    hasher.update(chunk)
+                    data.write(chunk)
+            digest = hasher.hexdigest()
+            if digest != expected:
+                raise ArtifactResolutionError('Artifact checksum verification failed.')
+            data.seek(0)
+        except Exception as exc:
+            data.close()
+            if isinstance(exc, OSError):
+                raise ArtifactResolutionError('Artifact input is unavailable.') from None
+            raise
         identity_hash = hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
         suffix = '.tar.gz' if name.lower().endswith('.tar.gz') else Path(name).suffix.lower()
         return ResolvedArtifact(data, 'artifact' + suffix, digest, kind, identity_hash)
@@ -243,48 +278,59 @@ class ApprovedHTTPSArtifactResolver:
         cache_id = hashlib.sha256(json.dumps([key, url, expected]).encode()).hexdigest()
         cached = read_cached(self._disk_cache, cache_id, expected)
         if cached is not None:
+            maximum = limit('UPLOAD_BYTES')
+            cached.seek(0, 2)
+            if maximum and cached.tell() > maximum:
+                cached.close()
+                raise ArtifactResolutionError('Artifact input exceeds size limits.')
+            cached.seek(0)
             self.cache_hits += 1
             identity_hash = hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
             suffix = '.tar.gz' if name.lower().endswith('.tar.gz') else Path(name).suffix.lower()
             return ResolvedArtifact(cached, 'artifact' + suffix, expected, kind, identity_hash,
                                     'admin-approved-https-mirror')
+        data = tempfile.TemporaryFile()
+        hasher = hashlib.sha256()
         started = time.monotonic()
-        data = bytearray()
+        maximum = limit('UPLOAD_BYTES')
+        size = 0
         try:
             with self._opener.open(request.Request(url, headers={'Accept-Encoding': 'identity'}), timeout=10) as response:
                 if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
                     raise ArtifactResolutionError('Artifact response is not supported.')
                 length = response.headers.get('Content-Length')
-                if length is not None and (not length.isdigit() or int(length) > compose.MAX_TOTAL):
+                if length is not None and (not length.isdigit() or (maximum and int(length) > maximum)):
                     raise ArtifactResolutionError('Artifact input exceeds size limits.')
                 while True:
                     if time.monotonic() - started > 30:
                         raise ArtifactResolutionError('Artifact retrieval time limit exceeded.')
-                    # read1 returns after one underlying read, so slow chunk streams
-                    # cannot hide the overall deadline inside a buffered read loop.
-                    chunk = response.read1(min(65536, compose.MAX_TOTAL + 1 - len(data)))
+                    chunk = response.read1(65536)
                     if time.monotonic() - started > 30:
                         raise ArtifactResolutionError('Artifact retrieval time limit exceeded.')
                     if not chunk:
                         break
-                    data.extend(chunk)
-                    if len(data) > compose.MAX_TOTAL:
+                    size += len(chunk)
+                    if maximum and size > maximum:
                         raise ArtifactResolutionError('Artifact input exceeds size limits.')
-        except (OSError, error.URLError, HTTPException, ValueError) as exc:
+                    hasher.update(chunk)
+                    data.write(chunk)
+            digest = hasher.hexdigest()
+            if digest != expected:
+                raise ArtifactResolutionError('Artifact checksum verification failed.')
+            data.seek(0)
+        except Exception as exc:
+            data.close()
             if isinstance(exc, ArtifactResolutionError):
                 raise
-            raise ArtifactResolutionError('Approved artifact retrieval failed.') from None
-        digest = hashlib.sha256(data).hexdigest()
-        if digest != expected:
-            raise ArtifactResolutionError('Artifact checksum verification failed.')
+            if isinstance(exc, (OSError, error.URLError, HTTPException, ValueError)):
+                raise ArtifactResolutionError('Approved artifact retrieval failed.') from None
+            raise
         identity_hash = hashlib.sha256(json.dumps(key, separators=(',', ':')).encode()).hexdigest()
         suffix = '.tar.gz' if name.lower().endswith('.tar.gz') else Path(name).suffix.lower()
-        result = ResolvedArtifact(bytes(data), 'artifact' + suffix, digest, kind, identity_hash,
+        result = ResolvedArtifact(data, 'artifact' + suffix, digest, kind, identity_hash,
                                   'admin-approved-https-mirror')
-        write_cached(self._disk_cache, cache_id, bytes(data))
-        # Bound retained bytes per discovery invocation, even with many identities.
-        if sum(len(item.data) for item in self._cache.values()) + len(data) <= compose.MAX_TOTAL:
-            self._cache[key] = result
+        write_cached(self._disk_cache, cache_id, data)
+        self._cache[key] = result
         return result
 
 

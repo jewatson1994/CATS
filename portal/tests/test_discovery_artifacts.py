@@ -71,15 +71,15 @@ def test_manifest_and_artifact_bounds(tmp_path, monkeypatch):
         artifacts.LocalArtifactResolver(manifest)
     monkeypatch.setattr(artifacts, 'MAX_MANIFEST', 1024 * 1024)
     resolver = artifacts.LocalArtifactResolver(manifest)
-    monkeypatch.setattr(artifacts.compose, 'MAX_TOTAL', 10)
-    with pytest.raises(artifacts.ArtifactResolutionError, match='bounded regular file'):
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', '10')
+    with pytest.raises(artifacts.ArtifactResolutionError, match='size limits'):
         resolver.resolve('helm', entry['reference'], '1.0')
 
 
 def test_decompressed_member_bound(tmp_path, monkeypatch):
     manifest, entry = mirror(tmp_path, content=b'x' * 100)
     result = artifacts.LocalArtifactResolver(manifest).resolve('helm', entry['reference'], '1.0')
-    monkeypatch.setattr(artifacts.compose, 'MAX_FILE', 10)
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_FILE_BYTES', '10')
     with pytest.raises(artifacts.ArtifactResolutionError):
         result.stage(tmp_path / 'scratch')
 
@@ -127,3 +127,13 @@ def test_worker_mirror_requires_absolute_admin_path(tmp_path, monkeypatch):
         configured_artifact_resolver()
     monkeypatch.setenv('CATS_DISCOVERY_UPLOAD_ROOT', str(tmp_path / 'uploads'))
     assert isinstance(configured_artifact_resolver(), artifacts.LocalArtifactResolver)
+
+
+def test_artifact_ignores_legacy_compose_budgets(tmp_path, monkeypatch):
+    manifest, entry = mirror(tmp_path, content=b'x' * 100)
+    monkeypatch.setattr(artifacts.compose, 'MAX_TOTAL', 10)
+    monkeypatch.setattr(artifacts.compose, 'MAX_FILE', 10)
+    result = artifacts.LocalArtifactResolver(manifest).resolve('helm', entry['reference'], '1.0')
+    assert not isinstance(result.payload, bytes)
+    staged = result.stage(tmp_path / 'scratch')
+    assert (staged['root'] / 'chart/Chart.yaml').stat().st_size == 100

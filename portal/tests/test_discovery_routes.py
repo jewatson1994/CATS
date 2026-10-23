@@ -249,7 +249,7 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
              'group_id':1,'options':{}}
     stages=[]
     checkpoints=[]
-    def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None):
+    def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None):
         assert runner is discovery_renderer.isolated_runner
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})
@@ -356,3 +356,61 @@ def test_supplements_are_scoped_immutable_and_encrypted(api, tmp_path):
         assert plain.read_bytes() == b'image: nginx:1'
     fields['target_path']='../outside'
     assert client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token':'csrf'}).status_code == 422
+
+
+def test_discovery_upload_default_exceeds_old_limit_and_optional_budget(api, monkeypatch):
+    client, db, _ = api
+    monkeypatch.delenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', raising=False)
+    data = b'x' * (33 * 1024 * 1024)
+    form = {'group_id': '1', 'csrf_token': 'csrf'}
+    response = client.post('/api/discovery', data=form, files={'upload': ('source.zip', data)})
+    assert response.status_code == 200, response.text
+    row = db.get(DurableJob, response.json()['job_id'])
+    assert row.payload['source_hash'] == hashlib.sha256(data).hexdigest()
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', '4')
+    response = client.post('/api/discovery', data=form, files={'upload': ('images.txt', b'nginx:1')})
+    assert response.status_code == 413
+
+
+def test_discovery_budget_has_no_upper_clamp(monkeypatch):
+    from app.discovery_limits import limit
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', str(1024 * 1024 * 1024))
+    assert limit('UPLOAD_BYTES') == 1024 * 1024 * 1024
+
+
+@pytest.mark.parametrize('failure,status,detail', [
+    ('ENOSPC', 507, 'storage'), ('EDQUOT', 507, 'quota'),
+    ('ENOMEM', 503, 'memory'), ('MemoryError', 503, 'memory'),
+])
+@pytest.mark.parametrize('supplement', [False, True])
+def test_upload_resource_exhaustion_removes_encrypted_partial(api, tmp_path, monkeypatch, failure, status, detail, supplement):
+    import errno
+    from contextlib import contextmanager
+    client, db, _ = api
+    if supplement:
+        old, _ = job(db)
+        original = tmp_path/old.payload['source_id']; original.mkdir()
+        (original/old.payload['filename']).write_bytes(b'original encrypted input')
+        endpoint = '/api/discovery/own/supplements'
+        fields = {'acknowledge_non_secret': 'true', 'target_path': 'chart'}
+    else:
+        endpoint = '/api/discovery'
+        fields = {'group_id': '1', 'csrf_token': 'csrf'}
+    before = set(tmp_path.iterdir())
+    @contextmanager
+    def failing_writer(path, identity):
+        # Preserve the real encrypted writer's partial-write behavior.
+        with encrypted_writer(path, identity) as stream:
+            def fail(data):
+                stream.write(data)
+                if failure == 'MemoryError':
+                    raise MemoryError()
+                raise OSError(getattr(errno, failure), 'private path should not escape')
+            yield SimpleNamespace(write=fail)
+    monkeypatch.setattr(routes, 'encrypted_writer', failing_writer)
+    response = client.post(endpoint, data=fields, files={'upload': ('values.yaml', b'image: nginx:1')}, headers={'X-CSRF-Token': 'csrf'})
+    assert response.status_code == status, response.text
+    assert detail in response.json()['detail']
+    assert 'private path' not in response.text
+    assert set(tmp_path.iterdir()) == before
+    assert len(db.scalars(select(DurableJob)).all()) == int(supplement)

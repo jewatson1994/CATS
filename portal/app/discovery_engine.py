@@ -4,18 +4,28 @@ from dataclasses import dataclass
 import base64
 import hashlib
 import json
+import stat
 import re
 import shutil
 import tempfile
 from pathlib import Path
 import yaml
+from .discovery_limits import limit
 from . import compose_ingestion as compose
 from . import service_definitions as legacy
 
 SCHEMA_VERSION = '1.0'
 # Repository extraction budgets; direct Compose uploads keep their smaller defaults.
-MAX_REPOSITORY_ENTRIES = 10000
-MAX_REPOSITORY_BYTES = 128 * 1024 * 1024
+MAX_REPOSITORY_ENTRIES = limit("FILES")
+MAX_REPOSITORY_BYTES = limit("EXTRACTED_BYTES")
+MAX_REPOSITORY_FILE_BYTES = limit("FILE_BYTES")
+
+def _exceeds(value, limit):
+    return bool(limit and value > limit)
+
+def _file_hash(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 @dataclass(frozen=True)
 class DiscoveryAdapter:
     """Trusted format adapter. Custom handlers receive bounded staged inputs.
@@ -68,7 +78,7 @@ def _id(*parts):
     return hashlib.sha256(json.dumps(parts, separators=(',', ':')).encode()).hexdigest()[:24]
 
 def _documents(text):
-    if not isinstance(text, str) or len(text.encode()) > compose.MAX_FILE:
+    if not isinstance(text, str) or _exceeds(len(text.encode()), MAX_REPOSITORY_FILE_BYTES):
         raise DiscoveryError('Document exceeds limits.')
     class BoundedLoader(yaml.SafeLoader):
         structural_nodes = 0
@@ -123,7 +133,7 @@ def _text(v):
 def _image(v):
     return isinstance(v, str) and len(v) <= 512 and bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._/:@+-]*', v))
 
-def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None):
+def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None, check_cancelled=None):
     options = options or {}
     if not isinstance(options, dict):
         raise DiscoveryError('Options must be a mapping.')
@@ -322,9 +332,9 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 try:
                     artifact = artifact_resolver.resolve('helm', reference, options.get('reference_version', ''))
                     with tempfile.TemporaryDirectory(prefix='cats-discovery-mirror-') as mirror:
-                        staged_artifact = artifact.stage(Path(mirror))
+                        staged_artifact = artifact.stage(Path(mirror), check=check_cancelled)
                         nested_options = {k: v for k, v in options.items() if k not in ('reference', 'reference_kind', 'reference_version')}
-                        resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver, supplemental_inputs)
+                        resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver, supplemental_inputs, check_cancelled)
                         resolved['artifact_provenance'] = [staged_artifact['provenance'], *resolved.get('artifact_provenance', [])]
                         return resolved
                 except (ValueError, OSError):
@@ -338,56 +348,72 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         return result
     with tempfile.TemporaryDirectory(prefix='cats-discovery-') as temporary:
         staging, source = Path(temporary), Path(source_path)
-        uploads = []
-        if source.is_symlink():
-            raise DiscoveryError('Source links are not allowed.')
-        if source.is_dir():
-            total = 0
-            for p in sorted(source.rglob('*')):
-                if p.is_symlink():
-                    raise DiscoveryError('Source links are not allowed.')
-                if not p.is_file() or '.git' in p.relative_to(source).parts:
-                    continue
-                total += p.stat().st_size
-                if len(uploads) >= MAX_REPOSITORY_ENTRIES or p.stat().st_size > compose.MAX_FILE or total > MAX_REPOSITORY_BYTES:
-                    raise DiscoveryError('Source exceeds discovery limits.')
-                uploads.append((p.read_bytes(), p.relative_to(source).as_posix()))
-        elif source.is_file() and source.stat().st_size <= MAX_REPOSITORY_BYTES:
-            uploads = [(source.read_bytes(), source.name)]
-        else:
-            raise DiscoveryError('Source is unavailable or oversized.')
+        def check():
+            if check_cancelled:
+                check_cancelled()
         try:
+            if source.is_symlink():
+                raise DiscoveryError('Source links are not allowed.')
             if source.is_dir():
                 destination = staging / '.cats-compose'
                 destination.mkdir()
-                seen = set()
-                for data, name in uploads:
-                    name = compose._relative(name)
+                seen, total = set(), 0
+                for p in source.rglob('*'):
+                    check()
+                    if p.is_symlink():
+                        raise DiscoveryError('Source links are not allowed.')
+                    if '.git' in p.relative_to(source).parts or p.is_dir():
+                        continue
+                    if not stat.S_ISREG(p.stat().st_mode):
+                        raise DiscoveryError('Source special files are not allowed.')
+                    name = compose._relative(p.relative_to(source).as_posix())
                     if name.casefold() in seen:
                         raise DiscoveryError('Duplicate source paths.')
                     seen.add(name.casefold())
+                    total += p.stat().st_size
+                    if (_exceeds(len(seen), MAX_REPOSITORY_ENTRIES) or
+                            _exceeds(total, MAX_REPOSITORY_BYTES) or
+                            _exceeds(p.stat().st_size, MAX_REPOSITORY_FILE_BYTES)):
+                        raise DiscoveryError('Source exceeds configured discovery limits.')
                     target = compose._inside(destination, name)
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    target.write_bytes(data)
+                    with p.open('rb') as incoming, target.open('xb') as output:
+                        while chunk := incoming.read(1024 * 1024):
+                            check()
+                            output.write(chunk)
                 staged = {'root': destination}
+            elif source.is_file():
+                with source.open('rb') as stream:
+                    staged = compose.stage_uploads(staging, [(stream, source.name)],
+                        max_files=MAX_REPOSITORY_ENTRIES, max_total=MAX_REPOSITORY_BYTES,
+                        max_file=MAX_REPOSITORY_FILE_BYTES, max_archive_bytes=limit("UPLOAD_BYTES"), check=check)
             else:
-                staged = compose.stage_uploads(staging, uploads, max_files=MAX_REPOSITORY_ENTRIES, max_total=MAX_REPOSITORY_BYTES)
+                raise DiscoveryError('Source is unavailable.')
         except compose.ComposeInputError as exc:
             raise DiscoveryError(str(exc)) from None
-        except (OSError, ValueError):
-            raise DiscoveryError('Source archive is invalid or unsafe.') from None
+        except OSError as exc:
+            import errno
+            if exc.errno in (errno.ENOSPC, errno.EDQUOT):
+                raise DiscoveryError('Discovery scratch storage is full; increase available disk space.') from None
+            raise DiscoveryError('Discovery source could not be read or staged.') from None
         base = Path(staged['root'])
         if supplemental_inputs:
             from .discovery_supplements import apply_supplements
             try:
-                result['supplemental_provenance'] = apply_supplements(base, supplemental_inputs)
-            except (compose.ComposeInputError, OSError, ValueError):
+                result['supplemental_provenance'] = apply_supplements(base, supplemental_inputs, check=check)
+            except compose.ComposeInputError as exc:
+                raise DiscoveryError(str(exc)) from None
+            except ValueError:
                 raise DiscoveryError('Supplemental inputs are unsafe, conflict, or exceed limits.') from None
         files = sorted(p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file())
         digest = hashlib.sha256()
         for path in files:
-            data = (base / path).read_bytes()
-            digest.update(len(path.encode()).to_bytes(8, 'big') + path.encode() + len(data).to_bytes(8, 'big') + data)
+            source_file = base / path
+            digest.update(len(path.encode()).to_bytes(8, 'big') + path.encode() + source_file.stat().st_size.to_bytes(8, 'big'))
+            with source_file.open('rb') as stream:
+                while chunk := stream.read(1024 * 1024):
+                    check()
+                    digest.update(chunk)
         result['source_hash'] = 'sha256:' + digest.hexdigest()
         parsed = {}
         charts = [p for p in files if Path(p).name == 'Chart.yaml']
@@ -446,11 +472,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if identity in staged_artifacts:
                 return staged_artifacts[identity]
             with tempfile.TemporaryDirectory(prefix='.discovery-artifact-', dir=base) as artifact_dir:
-                staged_artifact = artifact.stage(Path(artifact_dir))
+                staged_artifact = artifact.stage(Path(artifact_dir), check=check_cancelled)
                 artifact_files = list(Path(staged_artifact['root']).rglob('*'))
                 artifact_files = [p for p in artifact_files if p.is_file()]
                 new_size = sum(p.stat().st_size for p in artifact_files)
-                if artifact_file_count + len(artifact_files) > MAX_REPOSITORY_ENTRIES or artifact_bytes + new_size > MAX_REPOSITORY_BYTES:
+                if _exceeds(artifact_file_count + len(artifact_files), MAX_REPOSITORY_ENTRIES) or _exceeds(artifact_bytes + new_size, MAX_REPOSITORY_BYTES):
                     raise ValueError()
                 destination = base / ('.discovery-source-' + _id(*identity))
                 if destination.exists():
@@ -534,7 +560,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                             raise ValueError('identity')
                         copied_files = [p for p in candidates[0].parent.rglob('*') if p.is_file()]
                         copied_bytes = sum(p.stat().st_size for p in copied_files)
-                        if artifact_file_count + len(copied_files) > MAX_REPOSITORY_ENTRIES or artifact_bytes + copied_bytes > MAX_REPOSITORY_BYTES:
+                        if _exceeds(artifact_file_count + len(copied_files), MAX_REPOSITORY_ENTRIES) or _exceeds(artifact_bytes + copied_bytes, MAX_REPOSITORY_BYTES):
                             raise ValueError('budget')
                         artifact_file_count += len(copied_files)
                         artifact_bytes += copied_bytes
@@ -603,12 +629,16 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         index_resource(document, path)
                     if 'toolkit.fluxcd.io/' in str(document.get('apiVersion', '')):
                         rendered_documents.append((path, document, True))
+            except (MemoryError, OSError):
+                raise
             except Exception as exc:
                 issue('native_render_failed', rid, path)
                 diagnostic = result['diagnostics'][-1]
                 diagnostic['message'] = 'Rendering could not produce workloads. Review the chart configuration and select appropriate values files below. Required values may be reported one at a time; rerun after each correction.'
                 from .discovery_renderer import RendererError
                 if isinstance(exc, RendererError):
+                    if str(exc) in ('Discovery renderer exceeded time limit', 'Discovery renderer exceeded output limit'):
+                        diagnostic['message'] = str(exc) + '. Increase the configured budget or reduce the render scope.'
                     diagnostic['value_paths'] = [clean(value) for value in exc.value_paths]
 
         referenced_charts = set(options.get('chart_map', {}).values())
@@ -657,7 +687,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if candidate in files:
                     selection.append(candidate)
                     break
-            model = compose.discover(base, selection, profiles=options.get('profiles'))
+            model = compose.discover(base, selection, profiles=options.get('profiles'), max_file=MAX_REPOSITORY_FILE_BYTES, max_files=MAX_REPOSITORY_ENTRIES, max_total=MAX_REPOSITORY_BYTES, max_selected_files=0)
             native_services = None
             if runner is not None:
                 args = ['--project-name', 'discovery']
@@ -973,7 +1003,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     target = ref.get('targetPath')
                     if target is not None and target != '':
                         # Delegate Helm strvals syntax, escaping, lists and scalar typing to Helm.
-                        if not isinstance(target, str) or len(target) > 500 or not isinstance(raw_value, str) or len(raw_value) > compose.MAX_FILE:
+                        if not isinstance(target, str) or len(target) > 500 or not isinstance(raw_value, str) or _exceeds(len(raw_value), MAX_REPOSITORY_FILE_BYTES):
                             raise ValueError()
                         if any(ord(c) < 32 for c in target):
                             raise ValueError()
@@ -1058,7 +1088,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                             value_file = compose._inside(values_base, selected_file)
                             if not value_file.exists() and chart_spec.get('ignoreMissingValuesFiles') is True:
                                 continue
-                            if not value_file.is_file() or value_file.stat().st_size > compose.MAX_FILE:
+                            if not value_file.is_file() or _exceeds(value_file.stat().st_size, MAX_REPOSITORY_FILE_BYTES):
                                 raise ValueError()
                             value_documents = _documents(value_file.read_text(encoding='utf-8-sig'))
                             if len(value_documents) != 1 or not isinstance(value_documents[0], dict):
@@ -1143,7 +1173,9 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if not matches:
                 issue('service_selector_no_local_workload', rid, path)
         for path in files:
-            if (base / path).read_bytes().startswith(b'version https://git-lfs.github.com/spec/v1'):
+            with (base / path).open('rb') as stream:
+                is_lfs = stream.read(43).startswith(b'version https://git-lfs.github.com/spec/v1')
+            if is_lfs:
                 issue('missing_lfs_object', path=path)
             if Path(path).name == '.gitmodules':
                 for subpath in re.findall(r'^\s*path\s*=\s*(.+)$', (base / path).read_text(errors='replace'), re.MULTILINE):
@@ -1173,7 +1205,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             for provenance in item['provenance']:
                 source_file = base / provenance['path']
                 if source_file.is_file():
-                    provenance['sha256'] = hashlib.sha256(source_file.read_bytes()).hexdigest()
+                    provenance['sha256'] = _file_hash(source_file)
         candidates = {}
         for source_file in files:
             parts = Path(source_file).parts

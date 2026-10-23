@@ -13,11 +13,14 @@ commands, healthchecks and build arguments are always redacted in retained data.
 from __future__ import annotations
 
 import io
+import errno
 import math
 import re
 import stat
+import tempfile
 import tarfile
 import zipfile
+import zlib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -61,11 +64,11 @@ def _inside(root: Path, name: str) -> Path:
     return candidate
 
 
-def _read(root: Path, name: str) -> str:
+def _read(root: Path, name: str, max_file: int | None = MAX_FILE) -> str:
     path = _inside(root, name)
     if not path.is_file():
         raise ComposeInputError("Required bundle input is missing.")
-    if path.stat().st_size > MAX_FILE:
+    if max_file and path.stat().st_size > max_file:
         raise ComposeInputError("Bundle input exceeds the per-file size limit.")
     try:
         return path.read_bytes().decode("utf-8-sig")
@@ -73,85 +76,153 @@ def _read(root: Path, name: str) -> str:
         raise ComposeInputError("Bundle input must be readable UTF-8 text.") from None
 
 
-def stage_uploads(root: Path, uploads: list[tuple[Any, str]], *, max_files: int = MAX_FILES, max_total: int = MAX_TOTAL) -> dict:
-    """Stage uploaded bytes/streams in root/.cats-compose; return root/files.
+def stage_uploads(root: Path, uploads: list[tuple[Any, str]], *,
+                  max_files: int | None = MAX_FILES, max_total: int | None = MAX_TOTAL,
+                  max_file: int | None = MAX_FILE, max_archive_bytes: int | None = MAX_TOTAL,
+                  check_cancelled=None, check=None) -> dict:
+    """Stage binary streams through private disk storage, with bounded memory.
 
-    Extraction is bounded and rejects links, devices, traversal, collisions and
-    encrypted archives. No archive member is passed to extract()/extractall().
-    Existing destinations are never overwritten. Errors contain no source data.
+    None or zero disables a limit; Compose retains its finite defaults.
+    A cancellation callback may raise to abort. Failure removes files created
+    by this call without overwriting existing destination files.
     """
     root = Path(root).resolve()
     destination = _inside(root, ".cats-compose")
-    entries: dict[str, bytes] = {}
-    total = 0
+    names, created, directories = [], [], []
     seen = set()
+    total = 0
+    complete = False
+    cancellation_error = None
+    check_cancelled = check_cancelled or check
 
-    def add(name: str, data: bytes):
+    def checkpoint():
+        nonlocal cancellation_error
+        if check_cancelled is not None:
+            try:
+                check_cancelled()
+            except Exception as exc:
+                cancellation_error = exc
+                raise
+
+    def copy(source, target, limit, message, expanded=False):
         nonlocal total
-        name = _relative(name)
-        if name.casefold() in seen:
-            raise ComposeInputError("Duplicate bundle paths are not allowed.")
-        total += len(data)
-        if len(data) > MAX_FILE:
-            raise ComposeInputError(f"Archive file exceeds {MAX_FILE} bytes.")
-        if total > max_total:
-            raise ComposeInputError(f"Expanded archive exceeds {max_total} bytes.")
-        if len(entries) >= max_files:
-            raise ComposeInputError(f"Archive exceeds {max_files} entries.")
-        seen.add(name.casefold())
-        entries[name] = data
+        size = 0
+        while True:
+            checkpoint()
+            block = source.read(1024 * 1024)
+            if not block:
+                return
+            size += len(block)
+            if limit and size > limit:
+                raise ComposeInputError(message)
+            if expanded:
+                total += len(block)
+                if max_total and total > max_total:
+                    raise ComposeInputError(f"Expanded archive exceeds {max_total} bytes.")
+            target.write(block)
+
+    def mkdir(path):
+        missing = []
+        while not path.exists():
+            missing.append(path)
+            path = path.parent
+        for item in reversed(missing):
+            item.mkdir()
+            directories.append(item)
 
     try:
-        if len(uploads) > max_files:
+        if max_files and len(uploads) > max_files:
             raise ComposeInputError(f"Archive exceeds {max_files} entries.")
-        for stream, filename in uploads:
-            filename = _relative(filename)
-            data = stream if isinstance(stream, bytes) else stream.read(max_total + 1)
-            if len(data) > max_total:
-                raise ComposeInputError(f"Uploaded archive exceeds {max_total} bytes.")
-            suffix = filename.lower()
-            if suffix.endswith(".zip"):
-                with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                    if len(archive.infolist()) > max_files:
-                        raise ComposeInputError(f"Archive exceeds {max_files} entries.")
-                    for member in archive.infolist():
-                        _relative(member.filename)
-                        mode = member.external_attr >> 16
-                        if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR)):
-                            raise ComposeInputError("Archive links and special files are not allowed.")
-                        if member.is_dir():
-                            continue
-                        if member.file_size > MAX_FILE or member.flag_bits & 1:
-                            raise ComposeInputError("Archive member is oversized or encrypted.")
-                        with archive.open(member) as source:
-                            add(member.filename, source.read(MAX_FILE + 1))
-            elif suffix.endswith((".tar", ".tgz", ".tar.gz")):
-                with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
-                    for number, member in enumerate(archive):
-                        if number >= max_files:
-                            raise ComposeInputError(f"Archive exceeds {max_files} entries.")
-                        _relative(member.name)
-                        if member.isdir():
-                            continue
-                        if not member.isfile() or member.size > MAX_FILE:
-                            raise ComposeInputError("Archive links, special files and oversized members are not allowed.")
-                        with archive.extractfile(member) as source:
-                            add(member.name, source.read(MAX_FILE + 1))
-            else:
-                add(filename, data)
-        # Validate every destination before performing any writes.
-        targets = {name: _inside(destination, name) for name in entries}
-        if any(path.exists() for path in targets.values()):
-            raise ComposeInputError("Compose bundle destination already exists.")
-        for name, path in targets.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("xb") as output:
-                output.write(entries[name])
+        root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=".cats-stage-", dir=root) as temporary:
+            staging = Path(temporary)
+
+            def add(name, source):
+                checkpoint()
+                name = _relative(name)
+                if name.casefold() in seen:
+                    raise ComposeInputError("Duplicate bundle paths are not allowed.")
+                if max_files and len(names) >= max_files:
+                    raise ComposeInputError(f"Archive exceeds {max_files} entries.")
+                seen.add(name.casefold())
+                with (staging / str(len(names))).open("xb") as output:
+                    copy(source, output, max_file, f"Archive file exceeds {max_file} bytes.", expanded=True)
+                names.append(name)
+
+            for stream, filename in uploads:
+                checkpoint()
+                filename = _relative(filename)
+                source = io.BytesIO(stream) if isinstance(stream, bytes) else stream
+                suffix = filename.lower()
+                if suffix.endswith((".zip", ".tar", ".tgz", ".tar.gz")):
+                    # ZIP needs a seekable central directory; spool also supports
+                    # non-seekable uploaded streams without retaining their data.
+                    with tempfile.TemporaryFile(dir=staging) as spool:
+                        copy(source, spool, max_archive_bytes, f"Uploaded archive exceeds {max_archive_bytes} bytes.")
+                        spool.seek(0)
+                        if suffix.endswith(".zip"):
+                            with zipfile.ZipFile(spool) as archive:
+                                if max_files and len(archive.infolist()) > max_files:
+                                    raise ComposeInputError(f"Archive exceeds {max_files} entries.")
+                                for member in archive.infolist():
+                                    checkpoint()
+                                    _relative(member.filename)
+                                    mode = member.external_attr >> 16
+                                    if stat.S_ISLNK(mode) or stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR):
+                                        raise ComposeInputError("Archive links and special files are not allowed.")
+                                    if member.flag_bits & 1:
+                                        raise ComposeInputError("Encrypted archives are not supported; upload a decrypted archive.")
+                                    if max_file and member.file_size > max_file:
+                                        raise ComposeInputError("Archive member exceeds the configured per-file size limit.")
+                                    if member.is_dir():
+                                        continue
+                                    with archive.open(member) as member_source:
+                                        add(member.filename, member_source)
+                        else:
+                            with tarfile.open(fileobj=spool, mode="r|*") as archive:
+                                for number, member in enumerate(archive):
+                                    checkpoint()
+                                    if max_files and number >= max_files:
+                                        raise ComposeInputError(f"Archive exceeds {max_files} entries.")
+                                    _relative(member.name)
+                                    if member.isdir():
+                                        continue
+                                    if not member.isfile() or (max_file and member.size > max_file):
+                                        raise ComposeInputError("Archive links, special files and oversized members are not allowed.")
+                                    with archive.extractfile(member) as member_source:
+                                        add(member.name, member_source)
+                else:
+                    add(filename, source)
+            targets = [_inside(destination, name) for name in names]
+            if any(path.exists() for path in targets):
+                raise ComposeInputError("Compose bundle destination already exists.")
+            for index, path in enumerate(targets):
+                checkpoint()
+                mkdir(path.parent)
+                with path.open("xb") as output:
+                    created.append(path)
+                    with (staging / str(index)).open("rb") as source:
+                        copy(source, output, None, "")
+        complete = True
     except ComposeInputError:
         raise
-    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile, tarfile.TarError):
-        raise ComposeInputError("Unable to read or stage the Compose bundle.") from None
-    return {"root": destination, "files": sorted(entries)}
+    except (OSError, ValueError, RuntimeError, EOFError, MemoryError, zlib.error, zipfile.BadZipFile, tarfile.TarError) as exc:
+        if cancellation_error is not None:
+            raise cancellation_error
+        if isinstance(exc, MemoryError) or getattr(exc, 'errno', None) == errno.ENOMEM:
+            raise ComposeInputError("Insufficient memory to stage the bundle; retry on a worker with more available memory.") from None
+        if getattr(exc, 'errno', None) in (errno.ENOSPC, getattr(errno, 'EDQUOT', -1)) or getattr(exc, 'winerror', None) == 112:
+            raise ComposeInputError("Insufficient disk space to stage the bundle; free worker storage and retry.") from None
+        if isinstance(exc, (EOFError, zlib.error, zipfile.BadZipFile, tarfile.TarError)):
+            raise ComposeInputError("Archive is corrupt or incomplete; recreate it and upload again.") from None
+        raise ComposeInputError("Unable to read or stage the bundle; verify its files are readable and retry.") from None
+    finally:
+        if not complete:
+            for path in reversed(created):
+                path.unlink(missing_ok=True)
+            for path in reversed(directories):
+                path.rmdir()
+    return {"root": destination, "files": sorted(names)}
 
 
 @dataclass
@@ -492,7 +563,9 @@ def _sanitize(value, key=""):
     return _safe_text(value) if isinstance(value, str) else value
 
 
-def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = None) -> dict:
+def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = None, *,
+             max_file: int | None = MAX_FILE, max_files: int | None = MAX_FILES,
+             max_total: int | None = MAX_TOTAL, max_selected_files: int | None = 50) -> dict:
     """Normalize selected files in explicit order; [] discovers the default pair.
 
     Issues never contain source values. ``complete`` means image discovery has
@@ -505,9 +578,9 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
     read_sizes = {}
 
     def read_input(name):
-        text = _read(root, name)
+        text = _read(root, name, max_file)
         read_sizes[name] = len(text.encode("utf-8"))
-        if len(read_sizes) > MAX_FILES or sum(read_sizes.values()) > MAX_TOTAL:
+        if (max_files and len(read_sizes) > max_files) or (max_total and sum(read_sizes.values()) > max_total):
             raise ComposeInputError("Compose inputs exceed aggregate read limits.")
         return text
 
@@ -545,8 +618,10 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             if len(overrides) > 1:
                 issue("compose_selection", "Multiple default overrides exist; select files explicitly in order."); return finish()
             files += [p.relative_to(root).as_posix() for p in overrides]
-        if len(files) > 50 or len(set(files)) != len(files):
-            issue("compose_selection", "Select at most 50 distinct Compose files in order."); return finish()
+        if max_selected_files and len(files) > max_selected_files:
+            issue("compose_selection", f"Select at most {max_selected_files} distinct Compose files in order."); return finish()
+        if len(set(files)) != len(files):
+            issue("compose_selection", "Select distinct Compose files in order."); return finish()
         base = PurePosixPath(files[0]).parent
         def local(name):
             return _relative((base / str(name)).as_posix())

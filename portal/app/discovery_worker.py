@@ -99,9 +99,6 @@ def handle(ctx, payload):
         with ExitStack() as stack:
             plaintext = stack.enter_context(decrypted_source(source, token, payload['source_hash'], ctx.check))
             supplements = []
-            from .discovery_supplements import MAX_SUPPLEMENTS
-            if len(payload.get('supplements', [])) > MAX_SUPPLEMENTS:
-                raise JobError('Too many supplemental uploads.')
             for item in payload.get('supplements', []):
                 identity = item['source_id']
                 if len(identity) != 32 or any(c not in '0123456789abcdef' for c in identity):
@@ -115,7 +112,14 @@ def handle(ctx, payload):
             if plaintext.name == 'chart-reference.txt':
                 selected.update(reference=plaintext.read_text().strip(), reference_kind='chart')
                 input_path = None
-            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver, supplemental_inputs=supplements)
+            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver, supplemental_inputs=supplements, check_cancelled=ctx.check)
+    except (OSError, MemoryError) as exc:
+        import errno
+        if isinstance(exc, MemoryError) or getattr(exc, 'errno', None) == errno.ENOMEM:
+            raise JobError('Discovery exhausted available memory; increase worker memory or reduce concurrent work.') from None
+        if getattr(exc, 'errno', None) in (errno.ENOSPC, errno.EDQUOT):
+            raise JobError('Discovery storage is full; increase available scratch or upload disk space.') from None
+        raise JobError('Discovery storage could not be accessed.') from None
     except SourceStorageError as exc:
         raise JobError(str(exc)) from None
     except DiscoveryError as exc:

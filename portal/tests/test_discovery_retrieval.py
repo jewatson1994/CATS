@@ -68,9 +68,10 @@ def test_bounds_checksum_and_deadline(tmp_path, monkeypatch):
     with pytest.raises(a.ArtifactResolutionError, match='checksum'):
         resolver.resolve('helm', 'oci://registry.example/chart', '1.2.3')
     assert not resolver._cache
-    monkeypatch.setattr(a.compose, 'MAX_TOTAL', 3)
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES', '3')
     with pytest.raises(a.ArtifactResolutionError, match='size limits'):
         resolver.resolve('helm', 'oci://registry.example/chart', '1.2.3')
+    monkeypatch.delenv('CATS_DISCOVERY_MAX_UPLOAD_BYTES')
     ticks = iter([0, 31])
     monkeypatch.setattr(a.time, 'monotonic', lambda: next(ticks))
     with pytest.raises(a.ArtifactResolutionError, match='time limit'):
@@ -130,3 +131,12 @@ def test_persistent_cache_reauthorizes_and_checks_integrity(tmp_path, monkeypatc
     revoked = a.ApprovedHTTPSArtifactResolver(path, cache_directory=cache)
     with pytest.raises(a.ArtifactResolutionError, match='Exact artifact'):
         revoked.resolve('helm', 'oci://registry.example/chart', '1.2.3')
+
+
+def test_https_payload_is_file_backed_without_legacy_size_limit(tmp_path, monkeypatch):
+    monkeypatch.setattr(a.compose, 'MAX_TOTAL', 3)
+    resolver = a.ApprovedHTTPSArtifactResolver(manifest(tmp_path))
+    resolver._opener = Opener()
+    result = resolver.resolve('helm', 'oci://registry.example/chart', '1.2.3')
+    assert not isinstance(result.payload, bytes)
+    assert result.data == b'archive'
