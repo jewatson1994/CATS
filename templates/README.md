@@ -92,3 +92,9 @@ CATS submits and polls validation jobs; the validator does not call back into pr
 ## Maintaining the templates
 
 Keep root and template Compose service definitions synchronized, including the shared worker anchors. Their intended differences are the main template's required image selection and the validator template's relative build context. Keep `.env.example` and `main.env.example` worker settings aligned. Environment examples contain placeholders only; do not commit live settings, credentials, or private keys.
+
+### Discovery storage and optional limits
+
+Discovery uses the disk-backed `discovery_scratch` volume at `/tmp`, replacing its previous 512 MiB tmpfs. The five `CATS_DISCOVERY_MAX_*` settings in `main.env.example` default to `0` (unlimited); positive values impose administrator ceilings. Keep the portal and Discovery worker settings aligned. Other services retain their existing tmpfs settings.
+
+When upgrading, retain your existing credentials and encryption key, update the Compose template and optional settings, then recreate the portal and discovery-worker using your existing Compose project name. Do not remove existing volumes. Available Docker host disk space, worker memory/CPU, execution timeouts, and reverse-proxy request limits still constrain processing; provision and monitor storage for retained uploads and expanded repositories.

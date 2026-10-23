@@ -71,3 +71,23 @@ def test_discovery_uses_shared_image_with_isolated_worker_entrypoint(filename):
     assert any("no-new-privileges" in option for option in worker["security_opt"])
     assert any("discovery-seccomp.json" in option for option in worker["security_opt"])
     assert "docker.sock" not in str(worker.get("volumes", []))
+
+
+@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+def test_discovery_large_input_deployment_settings(filename):
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    deployment = yaml.safe_load((root / filename).read_text())
+    for service in ("portal", "discovery-worker"):
+        env = deployment["services"][service]["environment"]
+        for suffix in ("UPLOAD_BYTES", "FILE_BYTES", "EXTRACTED_BYTES", "FILES", "RENDERED_BYTES"):
+            key = "CATS_DISCOVERY_MAX_" + suffix
+            assert env[key] == "${" + key + ":-0}"
+    worker = deployment["services"]["discovery-worker"]
+    assert "discovery_scratch:/tmp" in worker["volumes"]
+    assert not worker.get("tmpfs")
+    assert "discovery_scratch" in deployment["volumes"]
+    example = "templates/main.env.example" if filename.startswith("templates/") else ".env.example"
+    settings = (root / example).read_text().splitlines()
+    for suffix in ("UPLOAD_BYTES", "FILE_BYTES", "EXTRACTED_BYTES", "FILES", "RENDERED_BYTES"):
+        assert "CATS_DISCOVERY_MAX_" + suffix + "=0" in settings
