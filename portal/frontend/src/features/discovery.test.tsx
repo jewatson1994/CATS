@@ -233,3 +233,16 @@ it('shows missing chart keys and retries with selected values instead of a succe
   expect(JSON.parse(String(mutation?.[1]?.body)).options.values_files).toEqual(['examples/values.yaml']);
 
 });
+
+it('restores isolated component values and submits explicit override order', async () => {
+  const configured = {...inventory, candidate_values_files: ['a.yaml', 'b.yaml'], selection: {values_files: ['parent.yaml'], component_values: {child: ['a.yaml', 'b.yaml']}}, configurable_components: [{id: 'child', label: 'Child release', path: 'Chart.yaml', technology: 'helm', values_origin: 'Generated ConfigMap'}], diagnostics: [{code: 'native_render_failed', renderer: 'kustomize', path: 'kustomization.yaml', message: 'Missing base'}]};
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: configured} : catalog), {headers: {'Content-Type': 'application/json'}}));
+  vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
+  await screen.findByText('Kustomize configuration needs attention');
+  expect(screen.getByText('Base configuration: Generated ConfigMap')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Move b.yaml earlier for Child release', hidden: true}));
+  fireEvent.click(screen.getByRole('button', {name: 'Render with selected values'}));
+  await waitFor(() => expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
+  const request = fetch.mock.calls.find(([, init]) => init?.method === 'POST');
+  expect(JSON.parse(String(request?.[1]?.body)).options).toEqual({values_files: ['parent.yaml'], component_values: {child: ['b.yaml', 'a.yaml']}});
+});

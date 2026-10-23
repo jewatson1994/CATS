@@ -128,11 +128,12 @@ def test_retry_creates_new_job_and_cancel_preserves_evidence(api):
     folder.mkdir()
     with encrypted_writer(folder/'images.txt','a'*32) as stream:
         stream.write(b'nginx:1.2')
-    response=post(client,'/own/retry',{'options':{'profiles':['prod']}})
+    selected = {'profiles':['prod'], 'component_values':{'release-a':['env/base.yaml','env/prod.yaml']}}
+    response=post(client,'/own/retry',{'options':selected})
     assert response.status_code == 200,response.text
     new=db.get(DurableJob,response.json()['job_id'])
     assert new.id != old.id and new.payload['previous_job_id'] == old.id
-    assert new.payload['options'] == {'profiles':['prod']}
+    assert new.payload['options'] == selected
     assert old.payload['options'] == {} and item.inventory['completeness'] == 'complete'
     assert post(client,'/'+new.id+'/retry').status_code == 409
     assert post(client,'/'+new.id+'/cancel').status_code == 200
@@ -414,3 +415,14 @@ def test_upload_resource_exhaustion_removes_encrypted_partial(api, tmp_path, mon
     assert 'private path' not in response.text
     assert set(tmp_path.iterdir()) == before
     assert len(db.scalars(select(DurableJob)).all()) == int(supplement)
+
+
+@pytest.mark.parametrize('selection', [[], {'release': 'values.yaml'}, {'release': [1]}, {'release': None}])
+def test_component_values_requires_ordered_path_lists(api, selection):
+    client, db, _ = api
+    old, _ = job(db)
+    folder = worker.upload_root() / old.payload['source_id']
+    folder.mkdir()
+    with encrypted_writer(folder / 'images.txt', 'a'*32) as stream:
+        stream.write(b'nginx:1.2')
+    assert post(client, '/own/retry', {'options': {'component_values': selection}}).status_code == 422

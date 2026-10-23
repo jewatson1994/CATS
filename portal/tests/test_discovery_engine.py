@@ -666,3 +666,87 @@ def test_failed_chart_offers_values_without_claiming_complete(tmp_path):
     assert result['completeness'] != 'complete'
     assert result['images'] == []
     assert 'SECRET_ERROR_BODY' not in json.dumps(result)
+
+
+def test_native_parent_generated_sibling_values_and_scoped_overrides(tmp_path):
+    import shutil
+    import subprocess
+    helm = shutil.which('helm')
+    if not helm:
+        pytest.skip('Native Helm is required for rendering integration')
+    write(tmp_path, 'parent/Chart.yaml', 'apiVersion: v2\nname: parent\nversion: 1.0.0\n')
+    write(tmp_path, 'parent/values.yaml', 'tag: default\ndisabled: false\n')
+    write(tmp_path, 'parent/templates/releases.yaml', '''{{ range $name := list "broken" "alpha" "beta" }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: {{ $name }}-values}
+data:
+  values.yaml: 'image: {repository: nginx, tag: {{ $.Values.tag }}}'
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: {{ $name }}}
+spec:
+  chart: {spec: {chart: remote-child}}
+  valuesFrom:
+    - {kind: ConfigMap, name: {{ if eq $name "broken" }}missing{{ else }}{{ $name }}-values{{ end }}}
+{{ end }}
+{{ if .Values.disabled }}
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: disabled}
+spec: {chart: {spec: {chart: remote-child}}}
+{{ end }}
+''')
+    # A locally supplied library chart is not rendered as another deployment root.
+    write(tmp_path, 'child/Chart.yaml', 'apiVersion: v2\nname: child\nversion: 1.0.0\n')
+    write(tmp_path, 'child/values.yaml', 'image: {repository: nginx, tag: child-default}\n')
+    write(tmp_path, 'child/templates/pod.yaml', '''apiVersion: v1
+kind: Pod
+metadata: {name: {{ .Release.Name }}}
+spec:
+  containers:
+    - name: app
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+''')
+    write(tmp_path, 'first-values.yaml', 'tag: first\n')
+    write(tmp_path, 'last-values.yaml', 'tag: parent-selected\n')
+    write(tmp_path, 'component-first-values.yaml', 'image: {tag: first-child}\n')
+    write(tmp_path, 'component-last-values.yaml', 'image: {tag: final-child}\n')
+    write(tmp_path, 'parent/templates/helm-values.yaml', '{{ define "defaults" }}image: ignored{{ end }}')
+    def runner(tool, args, cwd):
+        assert tool == 'helm'
+        result = subprocess.run([helm, *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        return result.stdout
+    options = {'chart_map': {'remote-child': 'child'}, 'values_files': ['first-values.yaml', 'last-values.yaml']}
+    initial = run_discovery(tmp_path, options, runner)
+    assert {i['reference'] for i in initial['images']} == {'nginx:parent-selected'}
+    assert initial['completeness'] == 'partial'
+    assert sum(d['code'] == 'flux_render_blocked_by_values' for d in initial['diagnostics']) == 1
+    components = initial['configurable_components']
+    assert not any(c['label'] == 'disabled' for c in components)
+    alpha = next(c['id'] for c in components if c['label'] == 'alpha')
+    options['component_values'] = {alpha: ['component-first-values.yaml', 'component-last-values.yaml']}
+    amended = run_discovery(tmp_path, options, runner)
+    assert {i['reference'] for i in amended['images']} == {'nginx:parent-selected', 'nginx:final-child'}
+    assert next(c for c in amended['configurable_components'] if c['id'] == alpha)['selected_values'] == options['component_values'][alpha]
+    assert run_discovery(tmp_path, options, runner) == amended
+    assert not any('templates/helm-values' in str(c) for c in amended['candidate_values_files'])
+    (tmp_path / 'component-last-values.yaml').unlink()
+    changed = run_discovery(tmp_path, options, runner)
+    assert any(d['code'] == 'component_values_file_unavailable' for d in changed['diagnostics'])
+    assert {i['reference'] for i in changed['images']} == {'nginx:parent-selected'}
+
+
+def test_kustomize_failure_does_not_request_helm_values(tmp_path):
+    write(tmp_path, 'kustomization.yaml', 'resources: [missing.yaml]\n')
+    def fail(*args):
+        raise RuntimeError('render failed')
+    result = run_discovery(tmp_path, runner=fail)
+    diagnostic = next(d for d in result['diagnostics'] if d['code'] == 'native_render_failed')
+    assert diagnostic['renderer'] == 'kustomize'
+    assert 'Kustomize build failed' in diagnostic['message']

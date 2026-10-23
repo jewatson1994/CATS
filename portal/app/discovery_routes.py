@@ -77,11 +77,13 @@ async def body(request, auth):
 def options(value):
     if not isinstance(value, dict) or len(json.dumps(value)) > 32768:
         raise HTTPException(422, 'Invalid discovery configuration')
-    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'source_map', 'reference_kind', 'reference_version'}
+    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'source_map', 'reference_kind', 'reference_version', 'component_values'}
     if set(value) - allowed: raise HTTPException(422, 'Unsupported discovery option')
     for key in ('values_files', 'profiles', 'compose_files'):
         if key in value and (not isinstance(value[key], list) or len(value[key]) > 100 or any(not isinstance(v, str) or len(v)>512 for v in value[key])):
             raise HTTPException(422, 'Invalid configuration selection')
+    if 'component_values' in value and (not isinstance(value['component_values'], dict) or any(not isinstance(k, str) or len(k) > 128 or not isinstance(v, list) or any(not isinstance(item, str) or len(item) > 512 for item in v) for k, v in value['component_values'].items())):
+        raise HTTPException(422, 'Invalid component values selection')
     if 'environment' in value and (not isinstance(value['environment'], str) or len(value['environment']) > 128):
         raise HTTPException(422, 'Invalid environment selection')
     if 'source_map' in value and (not isinstance(value['source_map'], dict) or len(value['source_map']) > 100 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 512 or len(v) > 512 for k,v in value['source_map'].items())):

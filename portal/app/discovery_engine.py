@@ -151,7 +151,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     if progress:
         progress({'stage': 'reading'})
     result = dict(schema_version=SCHEMA_VERSION, source_hash='', roots=[], nodes=[], edges=[], images=[],
-                  diagnostics=[], completeness='complete', metrics={}, tool_versions={})
+                  diagnostics=[], completeness='complete', metrics={}, tool_versions={}, configurable_components=[])
     secret_values = set()
     root_ids, node_ids, image_ids = set(), set(), set()
     pending_refs, definitions, workloads, services, edge_ids = [], {}, [], [], set()
@@ -179,11 +179,14 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     def clean(value):
         text = _text(value)
         return '[redacted]' if any(secret in text for secret in secret_values) else text
+    diagnostic_component = None
     def issue(code, rid=None, path=None):
         if len(result['diagnostics']) >= 30000:
             raise DiscoveryError('Diagnostic limit exceeded.')
         result['diagnostics'].append(dict(code=code, severity='warning', root_id=rid, path=path,
                                           message=code.replace('_', ' ') + '.', blocking=True))
+        if diagnostic_component:
+            result['diagnostics'][-1].update(component_id=diagnostic_component[0], component_name=clean(diagnostic_component[1]))
         result['completeness'] = 'partial'
         for item in result['roots']:
             if item['id'] == rid:
@@ -196,6 +199,24 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             root_ids.add(item['id'])
             result['roots'].append(item)
         return item['id']
+    def component_values(component_id, label, path, rid, inherited=()):
+        selected = options.get('component_values', {}).get(component_id, [])
+        result['configurable_components'].append(dict(id=component_id, label=clean(label), path=path,
+            technology='helm', root_id=rid, values_origin=list(inherited), selected_values=list(selected)))
+        arguments = []
+        for selected_file in selected:
+            try:
+                value_path = compose._inside(base, selected_file)
+                documents = _documents(value_path.read_text(encoding='utf-8-sig'))
+                if '/templates/' in '/' + selected_file or len(documents) != 1 or not isinstance(documents[0], dict) or any(key in documents[0] for key in ('apiVersion', 'kind')):
+                    raise ValueError()
+                arguments += ['-f', str(value_path)]
+            except (ValueError, TypeError, OSError, UnicodeError, yaml.YAMLError, compose.ComposeInputError):
+                issue('component_values_file_unavailable', rid, selected_file)
+                result['diagnostics'][-1].update(component_id=component_id, message='Selected component values are missing or are not an ordinary values mapping. Select a current non-secret values file.')
+                return None
+        return arguments
+
     def node(rid, kind, name, path, state='declared', namespace=''):
         item = dict(id=_id(rid, kind, namespace, name, path), root_id=rid, kind=clean(kind), name=clean(name),
                     namespace=clean(namespace), completeness='partial' if state == 'unresolved' else 'complete', state=state if state in ('declared', 'selected', 'rendered', 'unresolved') else 'unresolved', provenance=[dict(path=path)])
@@ -634,7 +655,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             except Exception as exc:
                 issue('native_render_failed', rid, path)
                 diagnostic = result['diagnostics'][-1]
+                diagnostic['renderer'] = tool
                 diagnostic['message'] = 'Rendering could not produce workloads. Review the chart configuration and select appropriate values files below. Required values may be reported one at a time; rerun after each correction.'
+                if tool == 'kustomize':
+                    diagnostic['message'] = 'Kustomize build failed. Review this overlay, its resources, bases, components and patches; Helm values files do not configure Kustomize.'
                 from .discovery_renderer import RendererError
                 if isinstance(exc, RendererError):
                     if str(exc) in ('Discovery renderer exceeded time limit', 'Discovery renderer exceeded output limit'):
@@ -678,6 +702,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                             args += ['-f', str(value_path)]
                         except (ValueError, TypeError):
                             issue('values_file_unavailable', rid, path)
+                if adapter.tool == 'helm':
+                    overrides = component_values(rid, Path(path).parent.name or 'Root chart', path, rid, ['chart defaults', 'ordered parent values selection'])
+                    if overrides is None:
+                        continue
+                    args += overrides
                 render(adapter.tool, args, rid, path)
         for path in compose_files:
             rid = root(path, 'compose')
@@ -807,6 +836,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         rendered_documents.clear()
         cursor = 0
         while cursor < len(queue):
+            diagnostic_component = None
             if cursor > 2000:
                 issue('render_graph_limit_exceeded')
                 break
@@ -965,6 +995,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if release_key in rendered_releases:
                 continue
             rendered_releases.add(release_key)
+            release_diagnostic_start = len(result['diagnostics'])
+            component_id = _id('helm-release', path, release_ns, release_meta.get('name', ''))
+            diagnostic_component = (component_id, str(release_meta.get('name', 'Helm release')))
+            overrides = component_values(component_id, str(release_meta.get('name', 'Helm release')), path, rid, ['chart defaults', 'ordered Flux valuesFrom', 'inline Flux values', 'Flux targetPath (highest Helm precedence)'])
+            if overrides is None:
+                continue
             values = {}
             targets = []
             namespace = doc.get('metadata', {}).get('namespace', 'default')
@@ -1064,7 +1100,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if chart_ref_key:
                     resolved_helm_sources.add(chart_ref_key)
                 child_rid = root(local.relative_to(base).as_posix(), 'helm')
-                if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics']):
+                if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics'][release_diagnostic_start:]):
                     issue('flux_render_blocked_by_values', rid, path)
                     continue
                 chart_values = None
@@ -1097,7 +1133,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     except (ValueError, TypeError, OSError, UnicodeError, compose.ComposeInputError, yaml.YAMLError):
                         issue('unsupported_flux_chart_values_files', rid, path)
                         continue
-                values_path = base / ('.discovery-values-' + rid + '.yaml')
+                values_path = base / ('.discovery-values-' + component_id + '.yaml')
                 if values_path.exists():
                     raise ValueError()
                 values_path.write_text(yaml.safe_dump(values), encoding='utf-8')
@@ -1106,7 +1142,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if not all(isinstance(value, str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', value) for value in (release_name, release_namespace)):
                     raise ValueError()
                 def render_release(chart_directory):
-                    render('helm', ['template', release_name, str(chart_directory), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *targets], rid, path, spec.get('postRenderers'))
+                    render('helm', ['template', release_name, str(chart_directory), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *overrides, *targets], rid, path, spec.get('postRenderers'))
                 if chart_values is None:
                     render_release(local)
                 else:
@@ -1125,6 +1161,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 issue('flux_controller_semantics_not_evaluated', rid, path)
             queue.extend(rendered_documents)
             rendered_documents.clear()
+        diagnostic_component = None
         for source_key, source_rid, source_path in helm_source_declarations:
             if source_key not in resolved_helm_sources:
                 issue('flux_controller_semantics_not_evaluated', source_rid, source_path)
@@ -1222,7 +1259,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if Path(source_file).suffix.lower() in ('.yaml', '.yml')
             and ('values' in Path(source_file).stem.lower() or
                  (source_file in parsed and any(isinstance(doc, dict) and not any(key in doc for key in ('apiVersion', 'kind', 'services')) for doc in parsed[source_file])))
-            and '/templates/' not in '/' + source_file]
+            and '/templates/' not in '/' + source_file
+            and len(parsed.get(source_file, [])) == 1
+            and isinstance(parsed[source_file][0], dict)
+            and not any(key in parsed[source_file][0] for key in ('apiVersion', 'kind'))]
 
         result['metrics'] = dict(files=len(files), roots=len(result['roots']), nodes=len(result['nodes']), images=len(result['images']))
         if progress:
