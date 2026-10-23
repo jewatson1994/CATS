@@ -166,12 +166,13 @@ def test_upload_requires_csrf_and_admin(keys):
     assert guest.post("/admin/configuration/signing", data={"csrf_token": "bad"}, follow_redirects=False).status_code in {303, 401, 403}
 
 
-def test_signed_push_authorization_csrf_secret_transport_and_audits(keys, monkeypatch, tmp_path):
+@pytest.mark.parametrize("destination", ["team/alpine:patched", "cats:patched"])
+def test_signed_push_authorization_csrf_secret_transport_and_audits(keys, monkeypatch, tmp_path, destination):
     configure(keys)
     jobs = []
     monkeypatch.setattr(main, "PATCH_JOB_ROOT", tmp_path)
     monkeypatch.setattr(main.PUBLIC_WORKERS, "submit", lambda fn, job, creds: jobs.append((job, creds)))
-    data = {"source_image": "alpine:3.20", "output_mode": "push", "destination_registry_id": "dest", "destination_image": "team/alpine:patched"}
+    data = {"source_image": "alpine:3.20", "output_mode": "push", "destination_registry_id": "dest", "destination_image": destination}
     assert TestClient(app).post("/patch", data=data).status_code == 403
     client = new_client()
     assert client.post("/patch", data=data).status_code == 403
@@ -181,6 +182,7 @@ def test_signed_push_authorization_csrf_secret_transport_and_audits(keys, monkey
     assert credentials["CATS_SIGNING_PASSWORD"] == "key-password"
     durable = (tmp_path / job / "job-config.json").read_text()
     assert json.loads(durable)["signing_enabled"] is True
+    assert json.loads(durable)["destination_image"] == "registry.example/" + destination
     assert "TEST-PRIVATE" not in durable and "key-password" not in durable
     main._patch_job_update(job, status="complete", phase="completed")
     with SessionLocal() as db:

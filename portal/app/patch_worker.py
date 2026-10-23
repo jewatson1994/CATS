@@ -17,6 +17,7 @@ from .remediation import summarize_grype_reports
 from .scanner_inputs import bind_scanner_snapshot, snapshot_digest
 from .patch_inputs import consume_binding, default_binding_root, system_ca_bundle
 from .patch_ownership import execution_lock, ExecutionAlreadyOwned
+from .patch_publication import publication_error
 from .patching import (
     PATCH_PHASES,
     archive_sha256, image_repository, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
@@ -630,7 +631,7 @@ def execute() -> int:
             except PatchCancelled:
                 raise
             except Exception as exc:
-                delivery_error = redact(exc, secrets)
+                delivery_error = publication_error(redact(exc, secrets), destination)
                 log(f"OCI delivery failed after patch completed: {delivery_error}")
                 result = {
                     "status": "failed", "patch_status": comparison.get("patch_status", "FAILED"),

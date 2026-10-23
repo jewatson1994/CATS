@@ -110,6 +110,7 @@ from .compose_architecture import compose_services
 from .capability_evidence import WORKLOAD_KINDS, pod_spec
 from .architecture_export import build_architecture_svg
 from .report_html import build_public_scan_report
+from .patch_publication import resolve_destination
 from .patching import PATCH_PHASES, advance_patch_stages, initial_patch_stages, redact, registry_host, safe_job_config
 from .secrets import encrypt_secret, decrypt_secret, secret_configured
 from . import signing, release_validity
@@ -5351,7 +5352,7 @@ def public_patch_submit(
         host = urllib.parse.urlparse(endpoint if "://" in endpoint else f"https://{endpoint}").netloc
         prefix = str(registry.get("namespace") or "").strip().strip("/")
         first = image.split("/", 1)[0]
-        already_qualified = "." in first or ":" in first or first == "localhost"
+        already_qualified = "/" in image and ("." in first or ":" in first or first == "localhost")
         return image if already_qualified else "/".join(part for part in (host, prefix, image.lstrip("/")) if part)
     if source_registry_id and not selected_source_registry:
         return _patch_page_context(request, auth, db, error="Selected source registry is not configured.", selected_service_id=service_id)
@@ -5379,7 +5380,10 @@ def public_patch_submit(
     if source_mode == "oci" and selected_source_registry:
         source_image = resolve_registry_image(source_image, selected_source_registry)
     if output_mode == "push" and selected_destination_registry:
-        destination_image = resolve_registry_image(destination_image, selected_destination_registry)
+        try:
+            destination_image = resolve_destination(destination_image, selected_destination_registry)
+        except ValueError as exc:
+            return _patch_page_context(request, auth, db, error=str(exc), selected_service_id=service_id)
     if source_mode not in {"oci", "upload"} or output_mode not in {"download", "push"}:
         return _patch_page_context(request, auth, db, error="Choose a valid image source and output mode.", selected_service_id=service_id)
     if source_mode == "oci" and not source_image.strip():

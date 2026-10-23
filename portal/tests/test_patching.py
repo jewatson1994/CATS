@@ -503,7 +503,7 @@ def test_output_archive_must_complete_docker_load_round_trip(monkeypatch, tmp_pa
 
 def test_push_failure_keeps_validated_download_and_fails_push_stage(monkeypatch, tmp_path: Path):
     config = {"job_id": "job-push-fail", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "push", "destination_image": "registry.example/team/alpine:patched"}
-    code, output, state, _ = run_worker(
+    code, output, state, calls = run_worker(
         monkeypatch, tmp_path, config, grype_report([("CVE-1", "openssl", ["2"])]) , grype_report([]), fail_on="docker push",
     )
     result = json.loads((output / "patch-result.json").read_text(encoding="utf-8"))
@@ -512,6 +512,9 @@ def test_push_failure_keeps_validated_download_and_fails_push_stage(monkeypatch,
     assert state["stages"]["pushing_image"]["status"] == "failed"
     assert state["stages"]["completed"] == {"status": "skipped", "reason": "not_reached"}
     assert result["artifact_available"] is True and result["delivery_status"] == "failed"
+    assert (output / "grype-before.json").is_file() and (output / "grype-after.json").is_file()
+    assert not any(command[0] == "cosign" for command, _ in calls)
+    assert config["destination_image"] in result["delivery_error"]
 
 
 def test_stage_snapshot_survives_memory_loss_and_refresh(monkeypatch, tmp_path: Path):

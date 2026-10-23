@@ -3,7 +3,7 @@ import {requestJson, type PageData} from '../api';
 import {useJob, TERMINAL, type JobState} from '../hooks/useJob';
 
 interface PatchJob extends JobState {
-  phase: string; failed_stage?: string; error?: string;
+  phase: string; destination_image?: string; failed_stage?: string; error?: string;
   stages?: Record<string, {status: string; reason?: string}>;
   result?: {artifact_available?: boolean};
 }
@@ -29,6 +29,7 @@ function Progress({id}: {id: string}) {
     const text = status === 'success' ? 'Completed' : status === 'running' ? 'Running' : status === 'failed' ? 'Failed' : status === 'skipped' ? stage?.reason === 'not_reached' ? 'Not reached' : 'Skipped' : terminal ? 'Not reached' : 'Waiting';
     return <div className={`patch-step ${state}`} key={key}><span className="scan-pipeline-dot"/><strong>{label}</strong><small>{text}</small></div>;
   })}</div><p className="muted" role="status">{job ? job.status === 'failed' ? `Failed during "${phase}"${job.error ? ` · ${job.error}` : ''}` : job.status === 'complete' ? 'Completed' : job.status === 'cancelled' ? 'Cancelled' : `${job.status} · ${phase}` : 'Reading patch status…'} · {elapsedSeconds}s</p>
+    {job?.destination_image && <p>Resolved destination: <code>{job.destination_image}</code></p>}
     {(error || cancelError) && <p role="alert">{error || cancelError} <button type="button" onClick={retry}>Retry</button></p>}
     <div className="scan-result-actions">{job?.result && <a className="secondary-button" href={`/api/public/patch-jobs/${id}/results`}>View results</a>}
       {job?.result?.artifact_available && <a className="secondary-button" href={`/api/public/patch-jobs/${id}/patched-image.tar`}>Download patched image</a>}
@@ -41,7 +42,8 @@ export function Page({data}: {data: PageData}) {
   const [source, setSource] = useState('oci'); const [output, setOutput] = useState('download');
   const [registryId, setRegistryId] = useState(''); const [image, setImage] = useState(''); const [submitting,setSubmitting] = useState(false);
   const registry = data.configured_registries?.find((item: {id: number}) => String(item.id) === registryId);
-  const destination = registry && image.trim() ? [String(registry.endpoint || '').replace(/^https?:\/\//,'').replace(/\/$/,''),
+  const qualified = image.trim().includes('/') && /[.:]|^localhost$/.test(image.trim().split('/')[0]);
+  const destination = registry && image.trim() ? qualified ? image.trim() : [String(registry.endpoint || '').replace(/^https?:\/\//,'').replace(/\/$/,''),
     String(registry.namespace || '').replace(/^\/+|\/+$/g,''), image.trim().replace(/^\/+/,'')].filter(Boolean).join('/') : '';
   return <><a className="back" href="/home">← CATS overview</a><section className="heading"><div><p className="eyebrow">SELF-SERVICE WORKSPACE</p>
     <h1>Patch</h1><p>Patch a public, private, or uploaded container image and verify the result with before-and-after vulnerability scans.</p></div></section>
@@ -59,8 +61,8 @@ export function Page({data}: {data: PageData}) {
           <div className="patch-choice-list" role="radiogroup" aria-label="Patched image output">{[['download','Download patched image'],['push','Push patched image to OCI registry']].map(([value,label]) =>
             <label key={value}><input type="radio" name="output_mode" value={value} checked={output === value} onChange={() => setOutput(value)}/>{label}</label>)}</div>
           {output === 'push' && <div className="patch-source-option"><p>{data.signing?.enabled ? 'Signing is required. Sign in with image-signing permission to publish. CATS signs the pushed digest and verifies the signature before completing the job.' : 'Image signing is disabled in Configuration.'}</p>
-            {!!data.configured_registries?.length && <label>Destination registry<select name="destination_registry_id" value={registryId} onChange={event => setRegistryId(event.target.value)}><option value="">Select a configured registry</option>{data.configured_registries.map((item: any) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>}
-            <label>Image / repository / tag<input name="destination_image" placeholder="nginx:1.27-patched" value={image} onChange={event => setImage(event.target.value)}/></label>
+            {!!data.configured_registries?.length && <label>Destination registry<select required name="destination_registry_id" value={registryId} onChange={event => setRegistryId(event.target.value)}><option value="">Select a configured registry</option>{data.configured_registries.map((item: any) => <option key={item.id} value={item.id}>{item.display_name}</option>)}</select></label>}
+            <label>Image / repository / tag<input required name="destination_image" placeholder="nginx:1.27-patched" value={image} onChange={event => setImage(event.target.value)}/></label>
             <small className="muted">{destination && `Resolved destination: ${destination}`}</small></div>}
         </section>{data.current_user && !!data.authenticated_services?.length && <label className="patch-service-association">Associate completed patch with service <span className="muted">(optional)</span>
           <select name="service_id" defaultValue={data.selected_service_id || ''}><option value="">Do not retain this patch in a service</option>{data.authenticated_services.map((service: any) => <option key={service.service_key} value={service.service_key}>{service.name} ({service.service_key})</option>)}</select></label>}
