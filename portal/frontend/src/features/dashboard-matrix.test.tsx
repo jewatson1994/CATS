@@ -10,6 +10,27 @@ const row = (key: string, name: string, critical: number, extra: Record<string, 
 });
 
 describe('Services security matrix', () => {
+  it('shows pending posture without empty-service or zero-compliance claims, then displays refreshed results', () => {
+    const initial = {rows: [], total_count: 0, compliant_count: 0, noncompliant_count: 0, poam_active_count: 0, posture_preparing: 7};
+    const {rerender} = render(<Page data={initial}/>);
+    const summary = screen.getByRole('region', {name: 'Service summary'});
+    expect(within(summary).getAllByText('Pending')).toHaveLength(4);
+    expect(within(summary).queryByText('0')).not.toBeInTheDocument();
+    expect(screen.getByText('Service posture is being prepared.')).toBeInTheDocument();
+    expect(screen.queryByText('No active services.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('navigation', {name: 'Service pages'})).not.toBeInTheDocument();
+    rerender(<Page data={{...initial, posture_preparing: 0, rows: [row('a', 'Alpha', 0)], total_count: 1, compliant_count: 1}}/>);
+    expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', {name: 'Alpha'})).toBeInTheDocument();
+    expect(screen.getByRole('navigation', {name: 'Service pages'})).toHaveTextContent('1–1 of 1 services');
+  });
+
+  it('retains real totals while some posture is still being prepared', () => {
+    render(<Page data={{rows: [row('a', 'Alpha', 0)], total_count: 1, compliant_count: 1, noncompliant_count: 0, posture_preparing: 7}}/>);
+    expect(screen.queryByText('Pending')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', {name: 'Alpha'})).toBeInTheDocument();
+  });
+
   it('preserves submitted filters and server portfolio totals independent of filtered rows', () => {
     render(<Page data={{ q: 'payments', cve: 'CVE-2026-12345', component: 'openssl', since: '2026-09-01', status: 'RED', severity: 'High', attention: 'kev', rows: [], total_count: 20,
       pagination_base: '/?lifecycle=active&q=payments&status=RED&attention=kev&severity=High&component=openssl&cve=CVE-2026-12345&since=2026-09-01&page_size=50' }} />);

@@ -305,7 +305,11 @@ def _intelligence_token(db=None) -> str:
         return risk_catalog_token()[:80]
     from .native_vex import cache_token
     import hashlib
-    return hashlib.sha256((risk_catalog_token() + cache_token(db)).encode()).hexdigest()
+    token = cache_token(db)
+    if ":split:unavailable" in token:
+        from .intelligence_generation import GenerationUnavailable
+        raise GenerationUnavailable("Posture intelligence generation is unavailable")
+    return hashlib.sha256((risk_catalog_token() + token).encode()).hexdigest()
 
 
 def _aware(value):
@@ -520,31 +524,52 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
 
 
 _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cats-posture")
-_queued: set[tuple[str, int]] = set()
+_queued: set[tuple[object, str, int]] = set()
 _queue_lock = Lock()
+_log_times = {}
+
+
+def _refresh_log(event, kind, count):
+    # Bound repeated refresh/outage messages; never include database URLs.
+    with _queue_lock:
+        key = (event, kind)
+        previous = _log_times.get(key, 0)
+        if perf_counter() - previous < 30:
+            return
+        _log_times[key] = perf_counter()
+    logger.info("service_posture_%s kind=%s services=%s", event, kind, count)
 
 
 def schedule(bind, service_ids, kinds=KINDS):
-    """Background refresh (single worker, coalesced); never blocks a request."""
+    """Coalesce queued AND running work, separately for each database engine."""
     from .database import background_bind
-    bind = background_bind(bind)
+    bind = background_bind(getattr(bind, "engine", bind))
     with _queue_lock:
-        fresh = {(kind, sid) for kind in kinds for sid in service_ids} - _queued
+        fresh = {(bind, kind, sid) for kind in kinds for sid in service_ids} - _queued
         if not fresh:
             return None
         _queued.update(fresh)
+    for kind in kinds:
+        _refresh_log("scheduled", kind, sum(item[1] == kind for item in fresh))
 
     def run():
+        try:
+            for kind in KINDS:
+                for chunk in _chunks(sorted(sid for _, item_kind, sid in fresh if item_kind == kind), 250):
+                    try:
+                        rebuild(bind, kind, chunk)
+                    except Exception as exc:
+                        # Exception type is sufficient here; DB driver messages can contain secrets.
+                        _refresh_log("failed_" + type(exc).__name__, kind, len(chunk))
+        finally:
+            with _queue_lock:
+                _queued.difference_update(fresh)
+    try:
+        return _executor.submit(run)
+    except Exception:
         with _queue_lock:
-            batch = sorted(_queued)
-            _queued.clear()
-        for kind in KINDS:
-            for chunk in _chunks([sid for item_kind, sid in batch if item_kind == kind], 250):
-                try:
-                    rebuild(bind, kind, chunk)
-                except Exception:
-                    logger.exception("Service posture refresh failed; readers recompute on demand")
-    return _executor.submit(run)
+            _queued.difference_update(fresh)
+        raise
 
 
 # ---------------------------------------------------------------- reading
@@ -584,18 +609,30 @@ def _classify(db, rows, service_ids, configurations, now):
 
 
 def _load(db, kind, service_ids, configurations, now):
+    from .intelligence_generation import GenerationUnavailable
+    try:
+        return _load_available(db, kind, service_ids, configurations, now)
+    except GenerationUnavailable:
+        _refresh_log("intelligence_unavailable", kind, len(service_ids))
+        if background_enabled(db.get_bind()):
+            schedule(db.get_bind(), service_ids, kinds=(kind,))
+        return {}, {"services": len(service_ids), "stale": 0, "missing": 0,
+                    "recomputed": 0, "refreshing": True, "preparing": len(service_ids)}
+
+
+def _load_available(db, kind, service_ids, configurations, now):
     rows = _read(db, kind, service_ids)
     stale, missing = _classify(db, rows, service_ids, configurations, now)
+    if stale or missing:
+        _refresh_log("freshness_rejected", kind, len(stale) + len(missing))
     background = background_enabled(db.get_bind())
     limit = sync_limit()
-    # Bounded inline work. Above the bound (portfolio-wide invalidation, or a
-    # first start before preparation finished), previous rows are served as
-    # stale, services without any row yet are reported as preparing, and the
-    # rest is rebuilt in the background. In-memory SQLite has one shared
-    # connection and no background work, so everything is inline there.
+    # Above the synchronous threshold, queue all invalid projections instead
+    # of delaying the request with a partial inline rebuild. Unprepared rows
+    # remain explicitly pending. In-memory SQLite rebuilds inline.
     if background and len(missing) + len(stale) > limit:
-        synchronous = missing[:limit]
-        deferred = missing[limit:] + stale
+        synchronous = []
+        deferred = missing + stale
         schedule(db.get_bind(), deferred, kinds=(kind,))
     else:
         synchronous, deferred = missing + stale, []
@@ -670,7 +707,7 @@ def _compare(kind, direct, stored):
 
 def background_enabled(bind) -> bool:
     """Background work is skipped for in-memory SQLite (tests, ephemeral tools)."""
-    url = bind.url
+    url = getattr(bind, "engine", bind).url
     return not (url.get_backend_name() == "sqlite" and url.database in (None, "", ":memory:"))
 
 

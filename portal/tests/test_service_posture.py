@@ -379,16 +379,16 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
     scheduled = []
     monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds=service_posture.KINDS: scheduled.append(set(ids)))
     body = client.get("/api/dashboard/services?page_size=200").json()
-    assert body["posture_preparing"] == 3 and body["posture_refreshing"] is True
-    assert len(body["views"]) == 1  # no invented rows for services not yet prepared
-    assert scheduled and len(scheduled[0]) == 3
+    assert body["posture_preparing"] == 4 and body["posture_refreshing"] is True
+    assert len(body["views"]) == 0  # no invented rows while background work is pending
+    assert scheduled and len(scheduled[0]) == 4
     cyber_body = client.get("/api/dashboard/cybersecurity?page_size=200").json()
-    # Services now prepares its security matrix too. The next request may
-    # prepare one more service, while retaining the first cached projection.
-    assert cyber_body["posture_preparing"] == 2 and cyber_body["metrics"]["services"] == 2
+    # Repeated requests do not perform inline rebuilds above the threshold.
+    assert cyber_body["posture_preparing"] == 4 and cyber_body["metrics"]["services"] == 0
     assert cyber_body["posture_refreshing"] is True
-    assert len(cyber_body["rows"]) == 2
-    assert len(scheduled[-1]) == 2
+    assert len(cyber_body["rows"]) == 0
+    assert len(scheduled[-1]) == 4
+
 
 
 def test_services_matrix_filters_paging_and_lifecycle():

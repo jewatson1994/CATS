@@ -81,3 +81,22 @@ def test_schema_partition_and_actual_core_and_orm_writes(split):
         assert _source_statement_count(session, 1)['statements'] == 0
     assert "vex_sources" not in inspect(portal).get_table_names()
     assert "vex_disposition_policy" not in inspect(intelligence).get_table_names()
+
+
+def test_generation_routing_preserves_explicit_isolation(split, monkeypatch):
+    from sqlalchemy.orm import Session
+    from app.intelligence_generation import _engine
+    portal, intelligence, background = split
+    isolated = create_engine("sqlite://")
+    try:
+        with Session(bind=portal) as session:
+            assert _engine(session) is intelligence
+        with Session(bind=isolated) as session:
+            assert _engine(session) is isolated
+        with isolated.connect() as connection, Session(bind=connection) as session:
+            assert _engine(session) is isolated
+        monkeypatch.setattr(database, "INTELLIGENCE_SEPARATE", False)
+        with Session(bind=portal) as session:
+            assert _engine(session) is portal
+    finally:
+        isolated.dispose()

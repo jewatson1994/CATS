@@ -104,6 +104,7 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
   ], []);
 
   const rows: SecurityRow[] = data.rows || [];
+  const pending = Number(data.posture_preparing || 0) > 0 && rows.length === 0;
   const filtered = filters.length > 0;
 
 
@@ -130,8 +131,8 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
     // parameter, so headers sort only when every matching row is on screen.
     sort={pageCount <= 1 ? {mode: 'client'} : {mode: 'none'}}
     rowClassName={row => row.status === 'RED' ? 'row-noncompliant' : undefined}
-    empty={<EmptyState kind={filtered ? 'filtered' : 'empty'} title={filtered ? 'No services match these filters.' : `No ${lifecycleLabels[lifecycle]?.label.toLowerCase() || ''} services.`}
+    empty={<EmptyState kind={filtered ? 'filtered' : 'empty'} title={pending ? 'Service posture is being prepared.' : filtered ? 'No services match these filters.' : `No ${lifecycleLabels[lifecycle]?.label.toLowerCase() || ''} services.`}
       action={filtered ? <a className="secondary-button" href={`/?lifecycle=${lifecycle}`}>Clear filters</a> : undefined}/>}
-    footer={<Pager label="Service pages" page={page} pageCount={pageCount} total={total} pageSize={pageSize} hrefFor={pageHref} unit="services" pageSizes={[10, 25, 50, 100]}/>}
+    footer={pending ? undefined : <Pager label="Service pages" page={page} pageCount={pageCount} total={total} pageSize={pageSize} hrefFor={pageHref} unit="services" pageSizes={[10, 25, 50, 100]}/>}
   />;
 }

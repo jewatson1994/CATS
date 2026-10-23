@@ -302,3 +302,80 @@ def test_split_cache_token_tracks_independent_generation(splitdb):
         importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
         importer.commit()
     assert nv.cache_token(splitdb) != before
+
+def test_explicit_operational_generation_routing(splitdb):
+    from sqlalchemy.orm import Session
+    from app.intelligence_generation import current_generation, guard_generation
+    expected = current_generation(splitdb)
+    splitdb.rollback()
+    for bind in (database.engine, database.background_engine):
+        with Session(bind=bind) as db:
+            assert current_generation(db) == expected
+            assert guard_generation(db, expected) == expected
+            guard = db.info['intelligence_generation_guard'][0]
+            db.commit()
+            assert guard.closed
+    with database.engine.connect() as connection, Session(bind=connection) as db:
+        assert current_generation(db) == expected
+        guard_generation(db, expected)
+        db.rollback()
+        assert not connection.closed
+
+def test_27_service_background_posture_recovery(splitdb, monkeypatch):
+    from app import main
+    from app.models import Service, ServicePosture
+    from app.vex_models import VexSource
+    from sqlalchemy import update
+    service, finding, observations, source = native_cases.setup(splitdb)
+    native_cases.enable(splitdb)
+    splitdb.add_all([Service(name=f'Posture {i}', service_key=f'posture-{i}') for i in range(26)])
+    splitdb.commit()
+    monkeypatch.setattr(service_posture, 'background_enabled', lambda bind: True)
+    monkeypatch.setenv('CATS_POSTURE_SYNC_LIMIT', '25')
+
+    def read():
+        splitdb.expire_all()
+        services = list(splitdb.scalars(select(Service).order_by(Service.id)))
+        config = main.get_configuration(splitdb)
+        configs = service_posture.resolve_configurations(splitdb, [s.id for s in services], config)
+        result = service_posture.services_rows(splitdb, services, configs, config, main.utcnow())
+        splitdb.commit()
+        return result
+
+    def drain():
+        service_posture._executor.submit(lambda: None).result(timeout=60)
+
+    rows, _, meta = read()
+    assert not rows and meta['preparing'] == 27 and meta['recomputed'] == 0
+    drain()
+    for _ in range(3):
+        rows, _, meta = read()
+        assert len(rows) == 27 and not meta['refreshing']
+    before = dict(splitdb.execute(select(ServicePosture.service_id, ServicePosture.services_calculated_at)).all())
+    splitdb.commit()
+    read()
+    assert dict(splitdb.execute(select(ServicePosture.service_id, ServicePosture.services_calculated_at)).all()) == before
+    splitdb.commit()
+    with database.IntelligenceSessionLocal() as importer:
+        importer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+        importer.commit()
+    rows, _, meta = read()
+    assert not rows and meta['preparing'] == 27
+    drain()
+    assert len(read()[0]) == 27
+
+    original = database.intelligence_engine
+    unavailable = create_engine(original.url.set(port=1), connect_args={'connect_timeout': 1})
+    try:
+        with monkeypatch.context() as outage:
+            outage.setattr(database, 'intelligence_engine', unavailable)
+            outage.setattr(database, 'intelligence_background_engine', unavailable)
+            rows, _, meta = read()
+            assert not rows and meta['preparing'] == 27
+            drain()
+        assert len(read()[0]) == 27
+        drain()
+        assert len(read()[0]) == 27
+    finally:
+        unavailable.dispose()
+        drain()

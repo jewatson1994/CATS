@@ -20,16 +20,17 @@ function Dashboard({data}: {data: any}) {
   const groups = data.stage_groups || [];
   const canStage = lifecycle === 'active' && groups.length > 0;
   const preparing = Number(data.posture_preparing || 0);
+  const pending = preparing > 0 && !data.rows?.length && !Number(data.total_count || 0);
   return <>
     <PageHeader eyebrow="Production service cyber hygiene" title={labels.title} description={labels.description}
       actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>{canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
     {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is still being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}; {preparing === 1 ? 'it is' : 'they are'} not listed yet and totals exclude {preparing === 1 ? 'it' : 'them'}. Refresh shortly.</p>
       : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is being refreshed after a portfolio-wide change; some rows may briefly show their previous values.</p>}
     <MetricGrid label="Service summary" className="metric-grid-compact">
-      <MetricCard label="Services" value={data.total_count ?? 0}/>
-      <MetricCard label="Compliant" value={data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
-      <MetricCard label="Non-compliant" value={data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
-      <MetricCard label="Active POA&Ms" value={data.poam_active_count} hint={`${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
+      <MetricCard label="Services" value={pending ? 'Pending' : data.total_count ?? 0}/>
+      <MetricCard label="Compliant" value={pending ? 'Pending' : data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
+      <MetricCard label="Non-compliant" value={pending ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
+      <MetricCard label="Active POA&Ms" value={pending ? 'Pending' : data.poam_active_count} hint={pending ? undefined : `${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
     </MetricGrid>
     <section className="panel cyber-matrix" aria-label="Service Security Matrix">
       <ServiceSecurityMatrix data={data}/>

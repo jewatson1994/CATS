@@ -55,7 +55,17 @@ def _created(metadata, connection, **kwargs):
 
 def _engine(db):
     if db is not None and db.bind is not None:
-        return db.bind
+        bind = db.bind
+        engine = getattr(bind, "engine", bind)
+        # Explicit operational sessions are common in background projections.
+        # Only route known application engines; independent test/tenant binds
+        # must never accidentally read the process-global intelligence store.
+        if database.INTELLIGENCE_SEPARATE:
+            if engine is database.background_engine:
+                return database.intelligence_background_engine
+            if engine is database.engine:
+                return database.intelligence_engine
+        return engine
     return database.intelligence_engine if database.interactive_thread() else database.intelligence_background_engine
 
 
