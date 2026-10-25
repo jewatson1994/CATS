@@ -1,3 +1,5 @@
+import {PageHeader} from '../components/ui';
+import {WorkspaceGuide} from '../components/WorkspaceGuide';
 import {useState} from 'react';
 import {requestJson, type PageData} from '../api';
 import {useJob, TERMINAL, type JobState} from '../hooks/useJob';
@@ -45,9 +47,10 @@ export function Page({data}: {data: PageData}) {
   const qualified = image.trim().includes('/') && /[.:]|^localhost$/.test(image.trim().split('/')[0]);
   const destination = registry && image.trim() ? qualified ? image.trim() : [String(registry.endpoint || '').replace(/^https?:\/\//,'').replace(/\/$/,''),
     String(registry.namespace || '').replace(/^\/+|\/+$/g,''), image.trim().replace(/^\/+/,'')].filter(Boolean).join('/') : '';
-  return <><a className="back" href="/home">← CATS overview</a><section className="heading"><div><p className="eyebrow">SELF-SERVICE WORKSPACE</p>
-    <h1>Patch</h1><p>Patch a public, private, or uploaded container image and verify the result with before-and-after vulnerability scans.</p></div></section>
-    {data.current_user && <p><a className="secondary-button" href="/patch-campaigns">Patch multiple service images</a></p>}
+  return <><PageHeader eyebrow="Self-service workspace" title="Patch" description="Patch a public, private, or uploaded container image and verify the result with before-and-after vulnerability scans."
+      back={data.current_user ? undefined : {href: '/home', label: 'CATS overview'}}
+      actions={data.current_user ? <a className="secondary-button" href="/patch-campaigns">Patch multiple service images</a> : undefined}/>
+    <div className="workspace-split">
     <section className="panel patch-panel"><h2>Container patch inputs</h2><p className="muted patch-helper">Patch a registry image or upload an image archive.<br/>Registry credentials are managed centrally by CATS.</p>
       {data.error && <div className="notice notice-error" role="alert">{data.error}</div>}
       <form method="post" action="/patch" encType="multipart/form-data" onSubmit={() => setSubmitting(true)}>
@@ -67,5 +70,15 @@ export function Page({data}: {data: PageData}) {
         </section>{data.current_user && !!data.authenticated_services?.length && <label className="patch-service-association">Associate completed patch with service <span className="muted">(optional)</span>
           <select name="service_id" defaultValue={data.selected_service_id || ''}><option value="">Do not retain this patch in a service</option>{data.authenticated_services.map((service: any) => <option key={service.service_key} value={service.service_key}>{service.name} ({service.service_key})</option>)}</select></label>}
         <button className="patch-start-button" disabled={submitting} aria-busy={submitting}>{submitting ? 'Queuing patch…' : 'Start patch'}</button>
-      </form>{data.job_id && <Progress key={data.job_id} id={data.job_id}/>}</section></>;
+      </form>{data.job_id && <Progress key={data.job_id} id={data.job_id}/>}</section>
+    <WorkspaceGuide title="How patching works" steps={[
+      {title: 'Choose a source', detail: 'A registry image reference or an uploaded image archive. Configured registry credentials are applied automatically.'},
+      {title: 'Patch', detail: 'Operating-system packages with available fixes are updated in a new image.'},
+      {title: 'Verify', detail: 'The original and patched images are scanned so you can compare before and after.'},
+      {title: 'Deliver', detail: 'Download the patched image, or push it to a configured registry (signed when signing is enabled).'},
+    ]} links={data.current_user ? [
+      {href: '/jobs', label: 'Track background jobs', icon: 'history'},
+      {href: '/', label: 'Services', icon: 'layers'},
+    ] : [{href: '/login', label: 'Sign in for service workflows', icon: 'key'}]}/>
+    </div></>;
 }

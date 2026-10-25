@@ -1,0 +1,155 @@
+/*
+ * CATS phase-2 polish: administration console, menus, self-service workspaces,
+ * account pages and remaining page refinements. Loaded after enterprise.css and
+ * uses only design-system tokens, so every theme keeps its own palette.
+ */
+
+/* ------------------------------------------------- administration console */
+/* The page container that holds the admin nav becomes a two-column console.
+   Browsers without :has() keep the stacked layout (nav above content). */
+:is(div, section, main):has(> .admin-sidenav) {
+  display: grid !important; grid-template-columns: 224px minmax(0, 1fr); column-gap: 28px; row-gap: 0; align-items: start;
+}
+:is(div, section, main):has(> .admin-sidenav) > * { grid-column: 2; min-width: 0; }
+:is(div, section, main):has(> .admin-sidenav) > :is(.heading, .back, .page-header) { grid-column: 1 / -1; }
+:is(div, section, main):has(> .admin-sidenav) > * + * { margin-top: 0; }
+:is(div, section, main):has(> .admin-sidenav) > :not(.admin-sidenav):not(.heading) { margin-bottom: var(--space-4); }
+nav.admin-tabs.admin-sidenav {
+  grid-column: 1 !important; grid-row: 2 / span 40; position: sticky; top: 76px; align-self: start;
+  display: flex !important; flex-direction: column; flex-wrap: nowrap !important; gap: var(--space-4) !important;
+  margin: 0 !important; padding: var(--space-3) !important; overflow: visible;
+  border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface);
+}
+.admin-sidenav-group { display: grid; gap: 2px; }
+.admin-sidenav-label { padding: 0 var(--space-2) 4px; color: var(--text-muted); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+nav.admin-sidenav a {
+  display: flex !important; align-items: center; gap: 10px; width: 100% !important; margin: 0 !important; padding: 7px var(--space-2) !important;
+  border: 0 !important; border-radius: var(--radius-md) !important; background: none !important;
+  color: var(--text-muted) !important; font-size: var(--text-sm); font-weight: 500; text-decoration: none; white-space: nowrap;
+}
+nav.admin-sidenav a .icon { width: 16px; height: 16px; opacity: .8; }
+nav.admin-sidenav a:hover { color: var(--text) !important; background: var(--surface-raised) !important; }
+nav.admin-sidenav a.selected, nav.admin-sidenav a[aria-current="page"] {
+  color: var(--text) !important; font-weight: 600; background: color-mix(in srgb, var(--accent) 13%, transparent) !important; box-shadow: inset 2px 0 0 var(--accent);
+}
+nav.admin-sidenav a[aria-current="page"] .icon { color: var(--accent); opacity: 1; }
+.admin-heading { margin-bottom: var(--space-5); }
+/* Admin forms use the available width instead of a narrow column. */
+:is(div, section, main):has(> .admin-sidenav) .configuration-panel,
+:is(div, section, main):has(> .admin-sidenav) .settings-section,
+:is(div, section, main):has(> .admin-sidenav) .admin-card { max-width: none; }
+.save-confirmation.callout { margin-bottom: var(--space-4); }
+@media (max-width: 1000px) {
+  :is(div, section, main):has(> .admin-sidenav) { grid-template-columns: minmax(0, 1fr); }
+  :is(div, section, main):has(> .admin-sidenav) > * { grid-column: 1; }
+  nav.admin-tabs.admin-sidenav { grid-row: auto; position: static; flex-direction: row; overflow-x: auto; gap: var(--space-2) !important; padding: 6px !important; margin-bottom: var(--space-4) !important; }
+  .admin-sidenav-group { display: flex; gap: 2px; }
+  .admin-sidenav-label { display: none; }
+  nav.admin-sidenav a { width: auto !important; }
+}
+
+/* ------------------------------------------------------------------- menus */
+/* One menu language for header dropdowns, the account menu, notifications and
+   in-page action menus (service Actions, Export, version history). */
+@keyframes cats-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+:is(.navigation-popover, .notification-popover, .user-menu .menu-popover, .actions-menu-popover, .popover-panel) {
+  border-radius: 10px !important; padding: 6px !important;
+  box-shadow: 0 16px 40px rgb(0 0 0 / 38%), 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent) !important;
+}
+details[open] > :is(.navigation-popover, .notification-popover, .menu-popover, .actions-menu-popover), .popover-panel { animation: cats-menu-in .12s ease-out; }
+@media (prefers-reduced-motion: reduce) { details[open] > :is(.navigation-popover, .notification-popover, .menu-popover, .actions-menu-popover), .popover-panel { animation: none; } }
+
+/* Header dropdown items: icon, name and a one-line description */
+.app-header .navigation-popover { min-width: 300px; }
+.navigation-popover .menu-item { display: flex !important; align-items: flex-start; gap: 10px; padding: 8px 10px !important; border-radius: 6px; }
+.menu-item-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border-radius: 7px;
+  background: var(--surface-raised); border: 1px solid var(--border); color: var(--text-muted); }
+.menu-item-icon .icon { width: 16px; height: 16px; }
+.menu-item-text { display: grid; gap: 1px; min-width: 0; }
+.menu-item-label { color: var(--text); font-size: var(--text-sm); font-weight: 500; line-height: 1.3; }
+.menu-item-hint { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.35; white-space: normal; }
+.navigation-popover .menu-item:hover .menu-item-icon, .navigation-popover .menu-item:focus-visible .menu-item-icon { color: var(--text); border-color: var(--border-strong); }
+.navigation-popover .menu-item[aria-current="page"] { box-shadow: none !important; }
+.navigation-popover .menu-item[aria-current="page"] .menu-item-icon { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, var(--surface-raised)); }
+.navigation-popover .menu-item[aria-current="page"] .menu-item-label { font-weight: 600; }
+
+/* Account menu rows */
+.user-menu .menu-popover { min-width: 240px !important; }
+.user-menu .menu-row { display: flex !important; align-items: center; gap: 10px; width: 100%; padding: 7px 8px !important; border-radius: 6px; color: var(--text) !important;
+  font-size: var(--text-sm); font-weight: 400; text-align: left; text-decoration: none !important; list-style: none; cursor: pointer; }
+.user-menu .menu-row > .icon { width: 16px; height: 16px; color: var(--text-muted); }
+.user-menu .menu-row:hover, .user-menu .menu-row:focus-visible { background: var(--surface-raised); }
+.user-menu .menu-row:hover > .icon { color: var(--text); }
+.user-menu .menu-row-end { margin-left: auto; transform: rotate(-90deg); transition: transform .12s; }
+.user-menu .appearance-menu[open] > .menu-row .menu-row-end { transform: none; }
+.user-menu .appearance-menu > summary::-webkit-details-marker { display: none; }
+.user-menu .appearance-menu > form { position: static !important; display: grid; gap: 8px; width: auto !important; margin: 0; padding: 4px 4px 8px 32px !important;
+  background: none !important; border: 0 !important; box-shadow: none !important; }
+.user-menu .appearance-theme-grid { display: grid !important; grid-template-columns: minmax(0, 1fr) !important; gap: 4px !important; }
+.user-menu .theme-option { display: flex !important; align-items: center; gap: 6px; padding: 6px 8px !important; border: 1px solid var(--border) !important; border-radius: 6px; font-size: var(--text-xs); cursor: pointer; }
+.user-menu .theme-option:has(input:checked) { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+.user-menu .theme-option strong { font-weight: 500; }
+.user-menu .appearance-apply { min-height: 30px; font-size: var(--text-xs); }
+.user-menu .menu-popover > form:last-child { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--border); }
+.user-menu .menu-row-signout:hover { color: var(--danger) !important; }
+.user-menu .menu-row-signout:hover > .icon { color: var(--danger); }
+
+/* Notifications */
+.notification-popover .notification-item { display: flex !important; align-items: flex-start; gap: 10px; }
+.notification-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 20%, transparent); }
+.notification-text { display: grid; gap: 1px; min-width: 0; }
+.notification-text small { color: var(--text-muted); font-size: var(--text-xs); }
+.notification-empty { display: flex; align-items: center; gap: 8px; }
+
+/* In-page action menus (service Actions, Export, version history) */
+.actions-menu-popover { display: grid !important; gap: 1px !important; min-width: 220px; }
+.actions-menu-popover > a, .actions-menu-popover > button, .actions-menu-popover > form > button {
+  display: flex !important; align-items: center; justify-content: flex-start; gap: 8px; width: 100%; min-height: 34px; padding: 0 10px !important;
+  border: 0 !important; border-radius: 6px !important; background: none !important; color: var(--text) !important;
+  font-size: var(--text-sm); font-weight: 400 !important; text-align: left; text-decoration: none; box-shadow: none !important;
+}
+.actions-menu-popover > a:hover, .actions-menu-popover > button:hover, .actions-menu-popover > form > button:hover,
+.actions-menu-popover > a:focus-visible, .actions-menu-popover > button:focus-visible { background: var(--surface-raised) !important; }
+.actions-menu-popover > .danger-button, .actions-menu-popover > button.danger-button { color: var(--danger) !important; margin-top: 4px; border-top: 1px solid var(--border) !important; border-radius: 0 0 6px 6px !important; }
+.actions-menu > summary .icon { transition: transform .12s; }
+.actions-menu[open] > summary .icon { transform: rotate(180deg); }
+.version-menu .actions-menu-popover { max-height: 320px; overflow-y: auto; font-family: var(--font-mono); }
+.user-menu .appearance-apply { justify-self: stretch; min-height: 30px !important; border: 1px solid var(--accent) !important; background: var(--accent) !important; color: var(--accent-contrast) !important; font-weight: 600; }
+
+/* -------------------------------------------------- task workspaces (Scan, SBOM, Patch) */
+.workspace-split { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: var(--space-5); align-items: start; }
+.workspace-split > .panel { max-width: none !important; margin: 0; }
+.workspace-guide { position: sticky; top: 76px; display: grid; gap: var(--space-4); }
+.workspace-guide-card { padding: var(--space-4) var(--space-5); }
+.workspace-guide-card > h2 { margin: 0 0 var(--space-3); font-size: var(--text-md); font-weight: 600; }
+.workspace-steps { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.workspace-steps li { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: var(--space-3); }
+.workspace-step-index { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--accent); font-size: var(--text-xs); font-weight: 700; }
+.workspace-steps strong { display: block; font-size: var(--text-sm); }
+.workspace-steps p { margin: 2px 0 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.workspace-guide-note { display: flex; gap: 8px; margin: var(--space-4) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--text-muted); font-size: var(--text-xs); }
+.workspace-links { display: grid; gap: 2px; }
+.workspace-links > a { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 6px; color: var(--text); text-decoration: none; font-size: var(--text-sm); }
+.workspace-links > a:hover { background: var(--surface-raised); }
+.workspace-links > a .icon { width: 16px; height: 16px; color: var(--text-muted); }
+.workspace-links .workspace-link-end { margin-left: auto; }
+/* form structure */
+.self-service-panel, .patch-panel { padding: var(--space-5) var(--space-6) !important; }
+.self-service-panel > h2, .patch-panel > h2 { margin: 0 0 4px; font-size: var(--text-lg); font-weight: 600; }
+.self-service-form { gap: 6px !important; }
+.form-group-title { margin: var(--space-5) 0 var(--space-1); padding-top: var(--space-4); border-top: 1px solid var(--border); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.self-service-form > .form-group-title:first-of-type { margin-top: var(--space-2); padding-top: 0; border-top: 0; }
+.self-service-form label { margin-top: var(--space-2); color: var(--text) !important; font-weight: 500; }
+.self-service-form small, .self-service-form label .muted { font-weight: 400; }
+.self-service-form input[type="file"] { padding: 6px; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.self-service-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.patch-input-section { padding: var(--space-4) 0 0; border-top: 1px solid var(--border); }
+.patch-input-section h3 { margin: 0 0 var(--space-3); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); }
+.patch-start-button { justify-self: start; min-width: 160px; }
+@media (max-width: 1100px) {
+  .workspace-split { grid-template-columns: minmax(0, 1fr); }
+  .workspace-guide { position: static; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+}
+.workspace-split .panel > h2:first-child, .workspace-guide-card > h2:first-child { padding: 0 !important; border-bottom: 0 !important; }
+.self-service-panel > p.muted, .patch-panel > p.muted { margin: 0 0 var(--space-2) !important; padding: 0 !important; }

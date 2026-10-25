@@ -46,3 +46,12 @@ it('keeps navigation usable when a route fails and can retry', async () => {
   fireEvent.click(screen.getByRole('button', {name:'Retry'}));
   await screen.findByText('Recovered');
 });
+
+it('gives every page a readable browser tab title', async () => {
+  const {documentTitle} = await import('./App');
+  expect(documentTitle('self_service', {mode: 'scan'})).toBe('Scan · CATS');
+  expect(documentTitle('self_service', {mode: 'sbom'})).toBe('SBOM · CATS');
+  expect(documentTitle('compliance_frameworks')).toBe('Hardening Policy · CATS');
+  expect(documentTitle('service_dependencies', {view: {service: {name: 'Payments'}}})).toBe('Dependencies · Payments · CATS');
+  expect(documentTitle('unknown_page')).toBe('unknown page · CATS');
+});
