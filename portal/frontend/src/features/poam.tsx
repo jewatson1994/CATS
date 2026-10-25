@@ -2,13 +2,35 @@ import {VexPoamReview} from './native_vex';
 import type {PageData} from '../api';
 import {Csrf, Dialog, Status} from '../components/Form';
 import {ServiceTabs} from '../components/ServiceHeader';
+import {DataGrid, type GridColumn} from '../components/DataGrid';
+import {EmptyState, Icon, MetricCard, MetricGrid, PageHeader} from '../components/ui';
 
 export function Create({data, service}: {data: PageData; service?: any}) {
   return <Dialog button={service ? 'Create POA&M entry' : 'Create Entry'} title={service ? `Create ${service.name} POA&M entry` : 'Create POA&M entry'} className="review-dialog poam-dialog"><form method="post" action="/poam"><Csrf data={data}/><p>The entry remains pending until Cybersecurity approves it.</p>{service ? <input type="hidden" name="service_id" value={service.id}/> : <label>Service<select name="service_id" required>{data.poam_services.map((item: any) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}<label>Item type<select name="item_type" required><option value="missing_evidence">Missing evidence</option><option value="missing_requirement">Missing requirement</option><option value="vulnerability">Vulnerability finding</option></select></label><label>Finding ID <small>Required only for vulnerability findings.</small><input type="number" name="finding_id" min={1}/></label><label>Title<input name="title" minLength={3} required/></label><label>Finding / requirement details<textarea name="description" minLength={3} required/></label><label>Remediation plan<textarea name="remediation" minLength={3} required/></label><label>Due date<input type="datetime-local" name="due_date"/></label><label>Ticket<input name="ticket"/></label><button>Create for approval</button></form></Dialog>;
 }
 
+const summaryColumns: GridColumn<any>[] = [
+  {key: 'service', header: 'Service', identifier: true, hideable: false, value: row => row.service.name,
+    render: row => <span className="cell-stack"><a href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}><strong>{row.service.name}</strong></a><code>{row.service.service_key}</code></span>},
+  {key: 'total', header: 'Total entries', type: 'number', value: row => row.total, render: row => <span className={row.total ? undefined : 'count-zero'}>{row.total}</span>},
+  {key: 'active', header: 'Active', type: 'number', value: row => row.active, render: row => <span className={row.active ? undefined : 'count-zero'}>{row.active}</span>},
+  {key: 'pending', header: 'Pending approval', type: 'number', value: row => row.pending, render: row => <span className={row.pending ? 'count-warning' : 'count-zero'}>{row.pending}</span>},
+  {key: 'overdue', header: 'Overdue', type: 'number', hideable: false, value: row => row.overdue, render: row => <span className={row.overdue ? 'text-danger' : 'count-zero'}>{row.overdue}</span>},
+  {key: 'action', header: 'Action', render: row => <a className="secondary-button" href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>Open POA&amp;M</a>},
+];
 export function Page({data}: {data: PageData}) {
-  return <><section className="heading"><div><p className="eyebrow">PLAN OF ACTION &amp; MILESTONES</p><h1>POA&amp;M</h1><p>Select a service to review its scoped remediation plan and milestones.</p></div><div className="heading-actions"><a className="secondary-button" href="/poam/export.xlsx">Export</a>{data.poam_services.length > 0 && <Create data={data}/>}</div></section><section className="panel"><div className="panel-heading"><div><h2>Service POA&amp;Ms</h2><p>Only services available to your account are shown.</p></div></div><div className="table-wrap"><table className="poam-service-list"><thead><tr>{['Service', 'Total entries', 'Active', 'Pending approval', 'Overdue', 'Action'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.service_summaries.length ? data.service_summaries.map((row: any) => <tr key={row.service.id}><td><a className="finding-link" href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}><strong>{row.service.name}</strong></a><br/><code>{row.service.service_key}</code></td>{['total', 'active', 'pending', 'overdue'].map(key => <td key={key}>{row[key]}</td>)}<td><a className="secondary-button" href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>Open POA&amp;M</a></td></tr>) : <tr><td colSpan={6} className="empty">No services are visible in your account scope.</td></tr>}</tbody></table></div></section></>;
+  const rows = data.service_summaries || [];
+  const total = (key: string) => rows.reduce((sum: number, row: any) => sum + Number(row[key] || 0), 0);
+  return <><PageHeader eyebrow="Plan of action & milestones" title="POA&M" description="Select a service to review its scoped remediation plan and milestones."
+      actions={<><a className="secondary-button" href="/poam/export.xlsx"><Icon name="download"/>Export</a>{data.poam_services.length > 0 && <Create data={data}/>}</>}/>
+    <MetricGrid label="POA&M totals across visible services" className="metric-grid-compact">
+      <MetricCard label="Entries" value={total('total')}/><MetricCard label="Active" value={total('active')}/>
+      <MetricCard label="Pending approval" value={total('pending')} tone={total('pending') ? 'warning' : undefined}/>
+      <MetricCard label="Overdue" value={total('overdue')} tone={total('overdue') ? 'danger' : undefined}/></MetricGrid>
+    <section className="panel"><DataGrid<any> id="poam-services" label="Service POA&Ms" title="Service POA&Ms" description="Only services available to your account are shown."
+      columns={summaryColumns} rows={rows} rowKey={row => row.service.id} sort={{mode: 'client'}}
+      rowClassName={row => row.overdue ? 'row-noncompliant' : undefined}
+      empty={<EmptyState title="No services are visible in your account scope."/>}/></section></>;
 }
 
 export function Service({data}: {data: PageData}) {

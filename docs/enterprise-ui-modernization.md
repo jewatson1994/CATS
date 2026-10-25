@@ -292,3 +292,60 @@ not visually verified.
 5. **Exceptions ordering:** accept `sort`/`direction` on the Exceptions tab (currently created-at only).
 6. **Server-side layout preferences** if users need their column layouts across browsers (today they are
    local per browser, by design).
+
+---
+
+# Phase 2: menus and remaining pages
+
+Branch: `feature/ui-modernization-phase-2`, based on `main` at `22f35d5`. Same rules as phase 1: presentation
+only. Every form keeps its method, action, field names and field order; every link keeps its destination;
+every permission check is unchanged.
+
+## What changed
+
+| Area | Change |
+| --- | --- |
+| Header menus | Cybersecurity and More items show an icon and a one-line description. The destination stays the link's accessible name; the description is its accessible description. Popovers share one style and a short entrance animation (off with reduced motion). The More menu right-aligns on narrow screens so it never runs off-screen. |
+| Account menu | Icon rows for Appearance, Change password, About and Sign out. The theme picker expands inline as swatches instead of a 720 px flyout. |
+| Notifications and in-page menus | Notification items show a status dot with the service beneath. Service Actions, Export and version menus use the same row style; destructive actions are separated and red. |
+| Administration | One grouped console sidebar (Access, Platform, Policy, Delivery) on every admin page, replacing tab strips that differed from page to page. Policy pages keep their own permission flags. Save and error messages are callouts. Below 1000 px the sidebar becomes a scrollable strip. |
+| Account pages | Change password and Appearance share an Account sidebar. Without a session the password page keeps the focused sign-in card. |
+| Scan, SBOM, Patch | Standard page header; form split into labelled sections (images, Helm charts, Docker Compose, service definition, ingest); a side panel explaining the workflow steps with links to related pages. The back link to the public overview appears only when signed out. |
+| Cybersecurity dashboard | Thousands separators (164,372), left-aligned cards with a "View details" cue, tighter charts and consistent panel styling. |
+| Artifact catalog | Toolbar-style search, two-column card grid, identity blocks and service chips. |
+| POA&M overview | Totals row (entries, active, pending, overdue) and the shared data grid with muted zeros and an overdue row marker. |
+| Browser tab titles | Readable titles such as "Scan · CATS", "Hardening Policy · CATS" and "Dependencies · Payments Service · CATS" instead of internal page keys ("self service · CATS"). |
+
+New files: `components/WorkspaceGuide.tsx`, `features/account_shared.tsx`, `styles/console.css`, and tests in
+`features/admin_shared.test.tsx` (plus additions to `App.test.tsx` and `components/Shell.test.tsx`).
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm build` | Pass |
+| `pnpm test` | 62 files, 424 tests passed |
+| Browser (Chromium, demo data) | No horizontal page overflow on Settings, Scan, Patch, POA&M and Change password at 1920, 1366, 1024, 768 and 480 px; the More menu fits the viewport at every size. |
+
+The admin console layout uses the CSS `:has()` selector. Browsers without it (Firefox before 121) show the
+navigation stacked above the content instead of beside it; nothing is lost.
+
+## Before and after
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-2/configuration-before.png) | ![](enterprise-ui-modernization/phase-2/configuration-after.png) |
+| ![](enterprise-ui-modernization/phase-2/scan-before.png) | ![](enterprise-ui-modernization/phase-2/scan-after.png) |
+| ![](enterprise-ui-modernization/phase-2/patch-before.png) | ![](enterprise-ui-modernization/phase-2/patch-after.png) |
+| ![](enterprise-ui-modernization/phase-2/cybersecurity-before.png) | ![](enterprise-ui-modernization/phase-2/cybersecurity-after.png) |
+| ![](enterprise-ui-modernization/phase-2/poam-before.png) | ![](enterprise-ui-modernization/phase-2/poam-after.png) |
+| ![](enterprise-ui-modernization/phase-2/password-before.png) | ![](enterprise-ui-modernization/phase-2/password-after.png) |
+
+Menus: ![](enterprise-ui-modernization/phase-2/menus-after.png)
+![](enterprise-ui-modernization/phase-2/account-menu-after.png)
+
+## Still not modernized
+
+Service sub-pages (Architecture, Artifacts, Dependencies, Deployment Validation, Activity) use slightly
+different headers from the main service workspace; Discovery's two-column form, Risk Policy internals,
+Validators and finding detail keep their existing layouts. These are good candidates for a phase 3.
