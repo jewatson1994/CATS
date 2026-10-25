@@ -201,6 +201,9 @@ def latest_assessment(db, service_id, now=None, include_details=True):
     from .package_identity_resolution import RESOLVER_VERSION
     if row.provenance.get('identity_resolver_version') != RESOLVER_VERSION:
         reasons.append('identity_resolver_changed')
+    from .container_intelligence import identity_source_generation
+    if row.provenance.get('identity_source_generation') != identity_source_generation(db, service_id):
+        reasons.append('identity_source_changed')
     if aware(row.valid_until) <= now:
         reasons.append('assessment_expired')
     if row.source_execution_id != latest_execution_id(db, service_id):

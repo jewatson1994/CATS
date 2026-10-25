@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 import sys
 
-from sbom_identity import IDENTITY_LIMITS, document_identity, package_identity, package_purl, purl_fields
+from sbom_identity import (BINDING_LIMITS, IDENTITY_LIMITS, artifact_projection, document_binding,
+                           document_identity, package_identity, package_purl, purl_fields)
 
 
 LIMITS = {"name": 300, "version": 200, "ecosystem": 80, "purl": 1500,
@@ -14,7 +15,7 @@ LIMITS = {"name": 300, "version": 200, "ecosystem": 80, "purl": 1500,
           "license_declared": 500, "license_detected": 500,
           "license_expression": 500, "license_source": 120,
           "location": 1000, "sbom": 300, "image_digest": 180,
-          "dependency_parents": 1000, "dependency_children": 1000, **IDENTITY_LIMITS}
+          "dependency_parents": 1000, "dependency_children": 1000, **IDENTITY_LIMITS, **BINDING_LIMITS}
 
 
 def text(value):
@@ -86,6 +87,7 @@ def normalize(artifact, image, digest, sbom_name, source, graph=None, image_iden
               "dependency_children": "; ".join(children[:12])}
     fields.update(image_identity or {})
     fields.update(package_identity(artifact))
+    fields["sbom_artifact"] = artifact_projection(artifact)
     # Omit oversized identity values rather than alter them by truncation.
     result = {key: text(value) for key, value in fields.items()
               if key != "purl" and text(value) and len(text(value)) <= LIMITS[key]}
@@ -109,7 +111,8 @@ def main(root: Path, output: Path) -> None:
         if len(digest) > LIMITS["image_digest"]:
             digest = ""
         try:
-            sbom = json.loads(path.read_text(encoding="utf-8"))
+            raw_bytes = path.read_bytes()
+            sbom = json.loads(raw_bytes)
             if not isinstance(sbom, dict):
                 continue
             if isinstance(sbom.get("artifacts"), list):
@@ -142,6 +145,7 @@ def main(root: Path, output: Path) -> None:
                 graph.setdefault(parent, [[], []])[1].append(child)
                 graph.setdefault(child, [[], []])[0].append(parent)
             image_identity = document_identity(sbom)
+            provenance = None
             provenance_path = path.with_suffix(".provenance")
             if provenance_path.is_file():
                 try:
@@ -150,6 +154,7 @@ def main(root: Path, output: Path) -> None:
                         image_identity.update(document_identity({"source": {"metadata": provenance}}))
                 except (OSError, ValueError, UnicodeError):
                     pass
+            image_identity.update(document_binding(raw_bytes, sbom, image, provenance))
             images.append(image)
             for artifact in artifacts:
                 if len(components) >= 50000:

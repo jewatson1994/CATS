@@ -378,6 +378,21 @@ class Finding(Base):
     exceptions: Mapped[list["ExceptionRecord"]] = relationship(back_populates="finding")
 
 
+class SbomComponent(Base):
+    """Execution-owned lookup projection; raw scanner evidence remains immutable."""
+    __tablename__ = "sbom_components"
+    __table_args__ = (
+        Index("ix_sbom_component_reference", "execution_id", "image_key", "reference_key"),
+        Index("ix_sbom_component_purl", "execution_id", "image_key", "purl_key"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    execution_id: Mapped[int] = mapped_column(ForeignKey("executions.id", ondelete="CASCADE"), index=True)
+    image_key: Mapped[str] = mapped_column(String(64))
+    reference_key: Mapped[str | None] = mapped_column(String(64))
+    purl_key: Mapped[str | None] = mapped_column(String(64))
+    data: Mapped[dict] = mapped_column(JSON)
+
+
 class FindingObservation(Base):
     __tablename__ = "finding_observations"
     __table_args__ = (Index('ix_obs_finding_execution_id', 'finding_id', 'execution_id', 'id'),)

@@ -201,7 +201,9 @@ def main() -> int:
     input_path = Path(args.input)
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    raw = json.loads(input_path.read_text(encoding="utf-8"))
+    input_bytes = input_path.read_bytes()
+    source_sbom_digest = "sha256:" + hashlib.sha256(input_bytes).hexdigest()
+    raw = json.loads(input_bytes)
     provenance_path = input_path.with_suffix(".provenance")
     if provenance_path.is_file():
         try:
@@ -233,7 +235,7 @@ def main() -> int:
             target = output_dir / f"{base}.spdx.json"
             target.write_text(json.dumps(spdx_document(raw, args.image, args.digest, timestamp), indent=2) + "\n", encoding="utf-8")
             spec_version = "SPDX-2.3"
-        entries.append({**metadata, "format": format_name, "spec_version": spec_version, "path": target.as_posix(), "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+        entries.append({**metadata, "source_sbom_digest": source_sbom_digest, "format": format_name, "spec_version": spec_version, "path": target.as_posix(), "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
     update_manifest(output_dir / "manifest.json", entries)
     return 0
 

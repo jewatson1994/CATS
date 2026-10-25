@@ -22,3 +22,20 @@ it('flags fully excluded POAM findings independently of evidence pagination',asy
  render(<VexPoamReview serviceKey="payments" findingId={7}/>);
  await screen.findByText(/Cyber review required/);
 });
+it('exposes the same SBOM identity and applicability evidence in native disposition review',async()=>{
+ vi.mocked(requestJson).mockResolvedValue({enabled:true,current:true,items:[{id:1,finding_id:7,observation_id:9,
+   effective_disposition:'vex_not_affected',evidence:{status:'not_affected',cve_present:true,exact_candidate_count:1,
+     direct_applicable_count:1,resolved_applicable_count:0,identity:{
+       scanner_identity:{raw_purl:null,raw_installed_version:'1'},context:{purl:'pkg:npm/component@1',version:'1'},
+       sbom_binding:{status:'matched',component_id:4,provenance:{execution_id:2,component_ref:'component-4'}},
+       resolution:{outcome:'no_verified_relationship',candidates:[]}}}}]});
+ render(<VexEvidence serviceKey="payments" findingId={7} expanded/>);
+ await screen.findByText('VEX Excluded');
+ fireEvent.click(screen.getByText('Applicability, identity and provenance'));
+ expect(screen.getByRole('region',{name:'VEX lookup and applicability'})).toBeInTheDocument();
+ expect(screen.getByText('Verified component binding')).toBeInTheDocument();
+ expect(screen.getByText('pkg:npm/component@1')).toBeInTheDocument();
+ expect(screen.getByText('Original scanner identity').nextElementSibling).toHaveTextContent('Not recorded');
+ expect(screen.getByText('Statements passing applicability checks').nextElementSibling).toHaveTextContent('1');
+ expect(screen.getByText(/the effective disposition controls exclusion/)).toBeInTheDocument();
+});

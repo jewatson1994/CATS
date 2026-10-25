@@ -1,6 +1,8 @@
 """Bounded offline container evidence diagnostics; never alters scanner findings."""
 from collections import defaultdict
+from copy import deepcopy
 from datetime import timedelta
+from types import SimpleNamespace
 import re
 import math
 from urllib.parse import unquote, parse_qsl
@@ -82,6 +84,9 @@ def observation_identity(observation):
     alias_count = evidence.get('alias_count')
     alias_count = max(len(aliases), alias_count) if type(alias_count) is int and alias_count >= 0 else len(aliases)
     result = {'raw_purl': raw, 'scanner_distro': evidence.get('scanner_distro'),
+              'component_id': evidence.get('component_id'),
+              'scanner_component_id': evidence.get('scanner_component_id'),
+              'sbom_digest': evidence.get('sbom_digest'), 'image_platform': evidence.get('image_platform'),
               'scanner_artifact': evidence.get('scanner_artifact'),
               'scanner_source': evidence.get('scanner_source'),
               'scanner_descriptor': evidence.get('scanner_descriptor'),
@@ -121,6 +126,71 @@ def observation_identity(observation):
     except (ValueError, TypeError, UnicodeError) as exc:
         result['reasons'] = [str(exc)]
     return result
+
+
+def observation_identities(db, observations):
+    """Recover missing scanner identity through an exact retained component binding.
+
+    Complete scanner identities do not depend on inventory lookup. The original
+    scanner evidence remains visible; the retained component only fills absent
+    fields, and the existing package resolver decides any source relationship.
+    """
+    identities = [observation_identity(observation) for observation in observations]
+    pending = []
+    for index, identity in enumerate(identities):
+        raw = identity.get('raw_purl')
+        if (not identity['context'] and (raw is None or raw == ''
+                or identity['reasons'] == ['missing_package_version'])):
+            pending.append(index)
+    if not pending:
+        return identities
+    from .sbom_components import recover_identities
+    recovered = recover_identities(db, [observations[index] for index in pending])
+    if len(recovered) != len(pending):
+        raise ValueError('Incomplete retained SBOM identity lookup')
+
+    def fill_missing(original, supplemental, *, top_level=True):
+        merged = deepcopy(original)
+        for key, value in supplemental.items():
+            # Nested null/empty metadata can mean an absent epoch or the binary
+            # package as its own source. Presence is evidence, not a blank.
+            if key not in merged or top_level and (merged[key] is None or merged[key] == ''):
+                merged[key] = deepcopy(value)
+            elif isinstance(merged[key], dict) and isinstance(value, dict):
+                merged[key] = fill_missing(merged[key], value, top_level=False)
+        return merged
+
+    for index, binding in zip(pending, recovered):
+        original = identities[index]
+        diagnostic = deepcopy({key: value for key, value in binding.items() if key != 'evidence'})
+        identity = original
+        if binding.get('status') == 'matched':
+            observation = observations[index]
+            supplied = observation.evidence if isinstance(observation.evidence, dict) else {}
+            evidence = fill_missing(supplied, binding.get('evidence') or {})
+            projected = SimpleNamespace(evidence=evidence,
+                installed_version=observation.installed_version or binding.get('installed_version'),
+                image_digest=observation.image_digest or binding.get('image_digest'))
+            identity = observation_identity(projected)
+            # raw_purl always describes the scanner input, including absence.
+            identity['raw_purl'] = original['raw_purl']
+            if not identity['context']:
+                diagnostic['status'] = 'conflict'
+                diagnostic['reasons'] = list(dict.fromkeys([
+                    *diagnostic.get('reasons', []), 'retained_component_identity_unusable']))
+        identity['scanner_identity'] = deepcopy(original)
+        identity['sbom_binding'] = diagnostic
+        identity['reasons'] = list(dict.fromkeys([
+            *identity['reasons'], *diagnostic.get('reasons', [])]))
+        identities[index] = identity
+    return identities
+
+
+def identity_source_generation(db, service_id):
+    """Read the source fence even when native VEX exclusion is disabled."""
+    from .native_vex_models import VexDispositionService
+    return db.scalar(select(VexDispositionService.generation).where(
+        VexDispositionService.service_id == service_id))
 
 
 def _presence_samples(db, cves):

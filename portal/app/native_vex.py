@@ -99,7 +99,7 @@ def evaluate_service(db, service_id, *, now=None, check=None):
     """
     from .models import Finding, FindingObservation, Execution
     from .finding_classification import latest_execution_id
-    from .container_intelligence import observation_identity, evaluate_container_batch
+    from .container_intelligence import observation_identities, evaluate_container_batch
     from . import database
     from .intelligence_generation import current_generation, guard_generation
     now = aware(now or utcnow())
@@ -136,8 +136,8 @@ def evaluate_service(db, service_id, *, now=None, check=None):
         if total > MAX_OBSERVATIONS:
             raise ValueError('Native VEX observation bound exceeded; findings remain actionable')
         items = []
-        for observation, finding in rows:
-            identity = observation_identity(observation)
+        identities = observation_identities(db, [observation for observation, _ in rows])
+        for (observation, finding), identity in zip(rows, identities):
             identity['observed_at'] = aware(execution.scanned_at).isoformat()
             identity['evidence_valid_until'] = (aware(execution.scanned_at) + MAX_SCAN_AGE).isoformat()
             items.append({'cve': finding.cve, 'identity': identity, 'context': identity['context'], 'aliases': identity['aliases']})
@@ -145,7 +145,7 @@ def evaluate_service(db, service_id, *, now=None, check=None):
         if len(results) != len(rows):
             raise ValueError('Incomplete VEX evaluation')
         values = []
-        for (observation, finding), result in zip(rows, results):
+        for (observation, finding), identity, result in zip(rows, identities, results):
             excluded = qualifies(result, now)
             if excluded:
                 expiry = min(expiry, aware(result['valid_until']))
@@ -153,7 +153,7 @@ def evaluate_service(db, service_id, *, now=None, check=None):
             counts[0] += 1
             counts[1] += int(excluded)
             values.append(dict(evaluation_id=evaluation.id, observation_id=observation.id,
-                finding_id=finding.id, excluded=excluded, evidence={**result,
+                finding_id=finding.id, excluded=excluded, evidence={**result, 'identity': identity,
                 'component': {'package': observation.package, 'version': observation.installed_version,
                               'image': observation.image, 'digest': observation.image_digest},
                 'original_severity': finding.severity}))

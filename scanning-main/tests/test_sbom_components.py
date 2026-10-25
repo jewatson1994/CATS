@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -27,7 +28,10 @@ def test_extracts_components_with_image_provenance_and_skips_unpaired_json(tmp_p
     assert result["components"] == [{
         "name": "openssl", "version": "3.0.1", "ecosystem": "apk",
         "purl": "pkg:apk/alpine/openssl@3.0.1", "image": "registry.internal/app:1",
-        "sbom": "one.json",
+        "sbom": "one.json", "sbom_format": "syft-json",
+        "sbom_digest": "sha256:" + hashlib.sha256((sboms / "one.json").read_bytes()).hexdigest(),
+        "sbom_artifact": json.dumps({"name": "openssl", "version": "3.0.1", "type": "apk",
+            "purl": "pkg:apk/alpine/openssl@3.0.1"}, sort_keys=True, separators=(",", ":")),
     }]
 
 

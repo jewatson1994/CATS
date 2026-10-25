@@ -117,7 +117,10 @@ class ExecutionPayload(BaseModel):
                    "package_metadata_type": 120, "package_found_by": 200,
                    "package_db_path": 1000, "package_db_name": 300, "package_db_version": 200,
                    "package_nevra": 1000, "package_metadata": 8192,
-                   "scanner_name": 80, "scanner_version": 120, "scanner_timestamp": 120, "scanner_schema_version": 80}
+                   "scanner_name": 80, "scanner_version": 120, "scanner_timestamp": 120, "scanner_schema_version": 80,
+                   "sbom_digest": 80, "sbom_format": 80, "sbom_artifact": 65536,
+                   "sbom_descriptor": 2048, "sbom_distro": 2048, "sbom_source": 4096,
+                   "image_platform": 180}
         for component in components:
             if any(key not in allowed or len(value) > allowed[key] for key, value in component.items()):
                 raise ValueError("SBOM component field is invalid or too long")

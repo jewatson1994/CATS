@@ -11,7 +11,7 @@ import json
 import re
 from urllib.parse import parse_qsl, quote, unquote
 
-RESOLVER_VERSION = 'cats-package-identity/v1'
+RESOLVER_VERSION = 'cats-package-identity/v2'
 MAX_CANDIDATES = 8
 MAX_ARTIFACT_BYTES = 65536
 OUTCOMES = frozenset({

@@ -25,16 +25,18 @@ def _scanner_findings_filter():
     return source.split("--arg raw \"$REPORT_RAW_FINDINGS\" '", 1)[1].split("' \"$RESULT\" > current-findings.json", 1)[0]
 
 
-def _jq_command():
+def _jq_command(binding=None):
+    import json
     import os
     import shutil
     import pytest
     if os.environ.get("JQ_DOCKER_IMAGE"):
-        return ["docker", "run", "--rm", "-i", "--entrypoint", "jq", os.environ["JQ_DOCKER_IMAGE"]]
+        return ["docker", "run", "--rm", "-i", "--entrypoint", "jq", os.environ["JQ_DOCKER_IMAGE"],
+                "--argjson", "sbom_binding_input", json.dumps([binding or {}])]
     executable = os.environ.get("JQ_BINARY") or shutil.which("jq")
     if not executable:
         pytest.skip("jq is required to run the scanner transformation")
-    return [executable]
+    return [executable, "--argjson", "sbom_binding_input", json.dumps([binding or {}])]
 
 
 def test_scanner_preserves_exact_bounded_identity_evidence():
@@ -111,7 +113,7 @@ def test_scanner_links_only_unique_consistent_sbom_artifact_ids():
     distro = {"id": "ubuntu", "versionID": "22.04", "versionCodename": "jammy"}
     def render(components):
         sbom = {"artifacts": components, "distro": distro, "source": {"type": "directory", "name": "/rootfs"}}
-        result = subprocess.run([*_jq_command(), "--argjson", "image_provenance", "[null]",
+        result = subprocess.run([*_jq_command({"sbom_digest": "sha256:" + "b" * 64}), "--argjson", "image_provenance", "[null]",
             "--argjson", "sbom_input", json.dumps([sbom]), "--arg", "image", "ubuntu:22.04",
             "--arg", "digest", "sha256:test", "--arg", "raw", "true", _scanner_findings_filter()],
             input=json.dumps(value), text=True, capture_output=True, check=True)
@@ -175,7 +177,7 @@ def test_real_package_database_fields_and_scanner_revision_are_preserved():
     value = {"descriptor": {"name": "grype", "version": "0.98.0", "timestamp": "2026-10-20T05:00:51.002735148Z", "configuration": {"ignore": "private"}},
              "matches": [{"artifact": {key: record["artifact"][key] for key in ("id", "name", "version", "type", "purl")},
                           "vulnerability": {"id": "CVE-2026-12345"}} for record in records]}
-    result = subprocess.run([*_jq_command(), "--argjson", "image_provenance", "[null]",
+    result = subprocess.run([*_jq_command({"sbom_digest": "sha256:" + "b" * 64}), "--argjson", "image_provenance", "[null]",
         "--argjson", "sbom_input", json.dumps([sbom]), "--arg", "image", "example:1",
         "--arg", "digest", "sha256:test", "--arg", "raw", "true", _scanner_findings_filter()],
         input=json.dumps(value), text=True, capture_output=True, check=True)
@@ -191,3 +193,76 @@ def test_real_package_database_fields_and_scanner_revision_are_preserved():
         assert evidence["scanner_descriptor"] == {"name": "grype", "version": "0.98.0", "timestamp": "2026-10-20T05:00:51.002735148Z"}
         assert evidence["sbom_schema"] == {"version": "16.0.37", "url": "https://example.invalid/schema"}
         assert "csaf_product_context" not in evidence
+
+
+def test_finding_keeps_original_component_and_verified_inventory_binding():
+    import json
+    import subprocess
+    binding = {"sbom_digest": "sha256:" + "b" * 64, "sbom_format": "syft-json",
+               "image_digest": "sha256:" + "a" * 64,
+               "image_manifest_digest": "sha256:" + "a" * 64, "image_platform": "linux/arm64/v8"}
+    artifact = {"id": "original-scanner-id", "name": "libexample", "version": "1", "type": "deb"}
+    value = {"matches": [{"artifact": artifact, "vulnerability": {"id": "CVE-2026-12345"}}]}
+    result = subprocess.run([*_jq_command(binding), "--argjson", "sbom_input", json.dumps([{"artifacts": [artifact]}]),
+        "--argjson", "image_provenance", "[null]", "--arg", "image", "example:1", "--arg", "digest", "sha256:legacy-index",
+        "--arg", "raw", "true", _scanner_findings_filter()], input=json.dumps(value), text=True,
+        capture_output=True, check=True)
+    finding = json.loads(result.stdout)[0]
+    assert finding["image_digest"] == binding["image_digest"]
+    evidence = finding["evidence"]
+    for key in ("sbom_digest", "sbom_format", "image_manifest_digest", "image_platform"):
+        assert evidence[key] == binding[key]
+    assert evidence["scanner_component_id"] == artifact["id"]
+    assert evidence["scanner_artifact"]["id"] == artifact["id"]
+    assert evidence["sbom_artifact"]["id"] == artifact["id"]
+
+
+def test_unbound_or_replaced_sbom_cannot_supply_authoritative_source_metadata(tmp_path):
+    import importlib.util
+    import json
+    import subprocess
+    spec = importlib.util.spec_from_file_location("report_binding_identity", SCRIPT.parent / "sbom_identity.py")
+    identity = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(identity)
+    artifact = {"id": "same-id", "name": "libssl3", "version": "3.0.2-0ubuntu1", "type": "deb",
+        "purl": "pkg:deb/ubuntu/libssl3@3.0.2-0ubuntu1?arch=amd64&distro=ubuntu-22.04"}
+    component = {**artifact, "metadataType": "dpkg-db-entry", "foundBy": "dpkg-db-cataloger",
+        "metadata": {"package": "libssl3", "version": artifact["version"],
+            "architecture": "amd64", "source": "openssl", "sourceVersion": artifact["version"]},
+        "locations": [{"path": "/var/lib/dpkg/status", "annotations": {"evidence": "primary"}}]}
+    sbom = {"artifacts": [component], "distro": {"id": "ubuntu", "versionID": "22.04"},
+        "source": {"type": "directory", "name": "/rootfs"},
+        "descriptor": {"name": "syft", "version": "1.31.0"}, "schema": {"version": "16.0.37"}}
+    report = {"matches": [{"artifact": artifact, "vulnerability": {"id": "CVE-2026-12345"}}]}
+    raw_sbom, raw_report = json.dumps(sbom).encode(), json.dumps(report).encode()
+    sbom_path, report_path, binding_path = [tmp_path / name for name in ("sbom.json", "report.json", "scan.binding")]
+    recorded = {**identity.document_binding(raw_sbom, sbom, "example:1"),
+        "image": "example:1", "scanner_report_digest": identity._digest(raw_report)}
+    for mutation in ("missing_sidecar", "replaced_sbom", "replaced_report"):
+        sbom_path.write_bytes(raw_sbom)
+        report_path.write_bytes(raw_report)
+        if mutation != "missing_sidecar":
+            binding_path.write_text(json.dumps(recorded), encoding="utf-8")
+        if mutation == "replaced_sbom":
+            replaced = json.loads(raw_sbom)
+            replaced["artifacts"][0]["metadata"]["source"] = "different-source"
+            sbom_path.write_text(json.dumps(replaced), encoding="utf-8")
+        elif mutation == "replaced_report":
+            report_path.write_bytes(raw_report + b"\n")
+        binding = identity.binding_from_files(sbom_path, "example:1", scan_binding_path=binding_path,
+            report_path=report_path)
+        assert binding == {}, mutation
+        result = subprocess.run([*_jq_command(binding), "--argjson", "image_provenance", "[null]",
+            "--argjson", "sbom_input", json.dumps([json.loads(sbom_path.read_bytes())]),
+            "--arg", "image", "example:1", "--arg", "digest", "sha256:legacy",
+            "--arg", "raw", "true", _scanner_findings_filter()], input=report_path.read_text(),
+            text=True, capture_output=True, check=True)
+        finding = json.loads(result.stdout)[0]
+        evidence = finding["evidence"]
+        assert finding["installed_version"] == artifact["version"]
+        assert evidence["purl"] == artifact["purl"]
+        assert evidence["scanner_artifact"]["id"] == artifact["id"]
+        assert evidence["scanner_artifact"]["metadata"] is None
+        assert all(evidence[field] is None for field in
+            ("sbom_artifact", "sbom_distro", "sbom_source", "sbom_descriptor", "sbom_schema", "sbom_digest")), mutation
+        assert json.loads(sbom_path.read_bytes())["artifacts"][0]["metadata"]["source"], "inventory remains retained"

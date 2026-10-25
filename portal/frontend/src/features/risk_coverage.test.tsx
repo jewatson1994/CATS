@@ -161,3 +161,54 @@ it('records separate direct and derived coverage without adding absent historica
   expect(screen.getByRole('row',{name:'Authoritatively resolved package identities 3 / 4 75.0%'})).toBeInTheDocument();
   expect(screen.getByRole('row',{name:'Applicable VEX through resolved identities 1 / 4 25.0%'})).toBeInTheDocument();
 });
+it('keeps a missing scanner identity distinct from a verified SBOM identity and its provenance', () => {
+  render(<ObservationIntelligence assessmentId={7} observation={{identity: {
+    raw_purl: null, raw_installed_version: '3', context: {purl: 'pkg:deb/ubuntu/libssl3@3', version: '3'},
+    scanner_identity: {raw_purl: null, raw_installed_version: null, context: {}, reasons: ['missing_package_identity']},
+    sbom_artifact: {id: 'artifact-7', name: 'libssl3', version: '3'},
+    sbom_binding: {status: 'matched', reasons: [], component_id: 41, provenance: {execution_id: 9,
+      component_ref: 'artifact-7', binding_kind: 'artifact_id', image: 'ubuntu', digest: 'sha256:image',
+      platform: 'linux/amd64', sbom_digest: 'sha256:sbom'}},
+    resolution: {outcome: 'no_verified_relationship', candidates: []},
+  }, vex: {status: 'no_vex', cve_present: true, exact_candidate_count: 0, direct_applicable_count: 0, resolved_applicable_count: 0}}}/>);
+  const identity = within(screen.getByRole('region', {name: 'Package identity resolution'}));
+  expect(identity.getByText('Original scanner identity').nextElementSibling).toHaveTextContent('Not recorded');
+  expect(identity.getByText('Installed version').nextElementSibling).toHaveTextContent('Not recorded');
+  expect(identity.getByText('SBOM component identity used for lookup').nextElementSibling).toHaveTextContent('pkg:deb/ubuntu/libssl3@3');
+  expect(identity.getByText('Verified component binding')).toBeInTheDocument();
+  expect(identity.getByText(/It does not establish VEX applicability/)).toBeInTheDocument();
+  fireEvent.click(identity.getByText('SBOM binding provenance and original records'));
+  expect(identity.getByText('Scan execution').nextElementSibling).toHaveTextContent('9');
+  expect(identity.getByText('Component reference').nextElementSibling).toHaveTextContent('artifact-7');
+  expect(identity.getByText('sha256:sbom')).toBeInTheDocument();
+  expect(identity.getByText('Original scanner record').nextElementSibling).toHaveTextContent('"raw_purl": null');
+  const lookup = within(screen.getByRole('region', {name: 'VEX lookup and applicability'}));
+  expect(lookup.getByText('CVE or alias present in VEX').nextElementSibling).toHaveTextContent('Present');
+  expect(lookup.getByText('Exact identity candidates').nextElementSibling).toHaveTextContent('0');
+  expect(lookup.getByText('Statements passing applicability checks').nextElementSibling).toHaveTextContent('0');
+  expect(requestJson).not.toHaveBeenCalled();
+});
+it.each([
+  ['missing', 'No matching component'], ['ambiguous', 'Multiple components match'],
+  ['conflict', 'Conflicting component evidence'], ['scope_missing', 'Scan or image scope is missing'],
+])('shows a failed %s binding without promoting a correlated identity', (status, label) => {
+  render(<ObservationIntelligence assessmentId={7} observation={{identity: {
+    scanner_identity: {raw_purl: 'pkg:npm/original@1', raw_installed_version: '1'},
+    context: {purl: 'pkg:npm/unaccepted@1'}, sbom_binding: {status, reasons: ['sbom_binding_unverified']},
+  }, vex: {status: 'under_investigation', cve_present: true, exact_candidate_count: 1,
+    direct_applicable_count: 0, resolved_applicable_count: 0}}}/>);
+  expect(screen.getByText(label)).toBeInTheDocument();
+  expect(screen.getByText('Binding reasons: sbom binding unverified.')).toBeInTheDocument();
+  expect(screen.getByText('pkg:npm/original@1')).toBeInTheDocument();
+  expect(screen.queryByText('SBOM component identity used for lookup')).not.toBeInTheDocument();
+  const lookup = within(screen.getByRole('region', {name: 'VEX lookup and applicability'}));
+  expect(lookup.getByText('Exact identity candidates').nextElementSibling).toHaveTextContent('1');
+  expect(lookup.getByText('Statements passing applicability checks').nextElementSibling).toHaveTextContent('0');
+});
+it('does not interpret absent historical lookup metrics as an empty corpus or zero candidates', () => {
+  render(<ObservationIntelligence assessmentId={7} observation={{vex: {status: 'under_investigation'}}}/>);
+  const lookup = within(screen.getByRole('region', {name: 'VEX lookup and applicability'}));
+  expect(lookup.getByText('Not established')).toBeInTheDocument();
+  expect(lookup.getAllByText('Not recorded')).toHaveLength(2);
+  expect(lookup.queryByText('0')).not.toBeInTheDocument();
+});

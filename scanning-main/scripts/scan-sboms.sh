@@ -28,9 +28,7 @@ for SBOM in "${SBOM_FILES[@]}"; do
   echo "Scanning: $SAFE_NAME"
   echo "======================================"
 
-  if ! grype "sbom:$SBOM" \
-      --only-fixed -o json \
-      > "results/${SAFE_NAME}-results.json"; then
+  if ! python3 "$(dirname "$0")/scan-sbom.py" "$SBOM" "results/${SAFE_NAME}-results.json"; then
 
     echo "WARNING: Failed scanning $SBOM"
     if [ -f "sboms/${SAFE_NAME}.image" ]; then
@@ -38,7 +36,7 @@ for SBOM in "${SBOM_FILES[@]}"; do
     fi
 
     # A failed Grype invocation must not be counted as a scanned result.
-    rm -f "results/${SAFE_NAME}-results.json"
+    rm -f "results/${SAFE_NAME}-results.json" "results/${SAFE_NAME}-results.binding"
 
     continue
   fi

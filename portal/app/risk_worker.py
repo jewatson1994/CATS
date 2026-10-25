@@ -38,7 +38,8 @@ def refresh_assessment(db, service_id, now=None, configuration=None, check=None)
     from . import finding_classification as fc
     from . import policy_data
     from .vex_intelligence import intelligence_token, _item_cves
-    from .container_intelligence import observation_identity, evaluate_container_batch, advisory_batch, coverage_report, valid_epss
+    from .container_intelligence import (observation_identities, evaluate_container_batch,
+        advisory_batch, coverage_report, valid_epss, identity_source_generation)
     now = aware(now or utcnow())
     from .native_vex import observation_excluded
     from .remediation_jobs import native_vex_token
@@ -65,6 +66,7 @@ def refresh_assessment(db, service_id, now=None, configuration=None, check=None)
     token = policy_data.risk_catalog_token()
     package_token = packaged_catalog_token(db)
     vex_token = intelligence_token(db)
+    identity_generation = identity_source_generation(db, service_id)
     finding_count = db.scalar(select(func.count()).select_from(Finding).where(Finding.service_id == service_id, Finding.active.is_(True))) or 0
     if finding_count > MAX_OBSERVATIONS:
         raise ValueError('Assessment exceeds bounded finding limit; narrow the service')
@@ -90,8 +92,8 @@ def refresh_assessment(db, service_id, now=None, configuration=None, check=None)
         if total > MAX_OBSERVATIONS:
             raise ValueError('Assessment exceeds bounded observation limit; narrow the service')
         items = []
-        for observation, finding, classification in rows:
-            identity = observation_identity(observation)
+        identities = observation_identities(db, [observation for observation, _, _ in rows])
+        for (observation, finding, classification), identity in zip(rows, identities):
             identity['observed_at'] = aware(execution.scanned_at).isoformat() if execution else None
             identity['evidence_valid_until'] = scan_expiry.isoformat() if scan_expiry else None
             items.append({'cve': finding.cve, 'context': identity['context'], 'identity': identity,
@@ -174,6 +176,8 @@ def refresh_assessment(db, service_id, now=None, configuration=None, check=None)
         raise ValueError('Classification rebuilt during assessment; retry')
     if native_vex_token(db, service_id, now) != native_token:
         raise ValueError('Native VEX disposition changed during assessment; retry')
+    if identity_source_generation(db, service_id) != identity_generation:
+        raise ValueError('Package identity evidence changed during assessment; retry')
     final_policy, final_assignment = resolve_policy(db, service_id)
     if final_assignment != assignment or (final_policy.id if final_policy else None) != (policy_row.id if policy_row else None):
         raise ValueError('Policy assignment changed during assessment; retry')
@@ -181,7 +185,9 @@ def refresh_assessment(db, service_id, now=None, configuration=None, check=None)
     if fc.latest_execution_id(db, service_id) != latest or policy_data.risk_catalog_token() != token or packaged_catalog_token(db) != package_token or intelligence_token(db) != vex_token or fc.status(db, service_id, fc._service_configuration(db, service_id), now, latest)[0] != 'current':
         raise ValueError('Source changed during assessment; retry')
     from .package_identity_resolution import RESOLVER_VERSION
-    provenance = {'native_vex_token': native_token, 'algorithm': 3, 'identity_resolver_version': RESOLVER_VERSION, 'configuration': policy, 'policy_digest': digest(policy), 'assignment': assignment,
+    provenance = {'native_vex_token': native_token, 'algorithm': 3, 'identity_resolver_version': RESOLVER_VERSION,
+                  'identity_source_generation': identity_generation,
+                  'configuration': policy, 'policy_digest': digest(policy), 'assignment': assignment,
                   'catalog_token': token, 'intelligence': {k: v for k, v in snapshot.items() if k != 'findings'}, 'intelligence_current': intel_current,
                   'catalog_metadata': catalog_metadata, 'packaged_catalog_token': package_token,
                   'classification_token': classification_token(state),

@@ -3263,6 +3263,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     )
     db.add(execution)
     db.flush()
+    from .sbom_components import retain_components
+    retain_components(db, execution.id, payload.sbom_components)
     reconcile_watchlist_matches(db, execution)
     observed = set()
     finding_by_cve: dict[str, Finding] = {}

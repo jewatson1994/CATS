@@ -71,7 +71,9 @@ for RESULT in results/*-results.json; do
     SBOM_FILE="current-sbom-identity.json"
     printf '%s\n' 'null' > "$SBOM_FILE"
   fi
-  jq --slurpfile image_provenance "$PROVENANCE_FILE" --slurpfile sbom_input "$SBOM_FILE" --arg image "$IMAGE" --arg digest "$DIGEST" --arg raw "$REPORT_RAW_FINDINGS" '
+  python3 "$(dirname "$0")/sbom_identity.py" "$SBOM_FILE" "$IMAGE" "$PROVENANCE_FILE" "${RESULT%.json}.binding" "$RESULT" > current-sbom-binding.json
+
+  jq --slurpfile sbom_binding_input current-sbom-binding.json --slurpfile image_provenance "$PROVENANCE_FILE" --slurpfile sbom_input "$SBOM_FILE" --arg image "$IMAGE" --arg digest "$DIGEST" --arg raw "$REPORT_RAW_FINDINGS" '
     # Keep source evidence separate from authoritative applicability context.
     def bounded($kind; $limit):
       if type == $kind and ((tojson | utf8bytelength) <= $limit) then . else null end;
@@ -105,7 +107,12 @@ for RESULT in results/*-results.json; do
        cpes: (.cpes | bounded("array"; 8192))} | bounded("object"; 32768);
     # Grype can omit package metadata that remains in its input Syft SBOM.
     # Join only a unique exact artifact ID in this image, and reject conflicts.
-    ($sbom_input[0] // {}) as $sbom
+    ($sbom_binding_input[0] // {}) as $sbom_binding
+    # Only the document bound to these exact scanner-result bytes can supply
+    # authoritative package metadata. A current file with matching IDs is not enough.
+    | (if ($sbom_binding.sbom_digest | type) == "string"
+          and ($sbom_binding.sbom_digest | length) > 0
+        then ($sbom_input[0] // {}) else {} end) as $sbom
     | ([$sbom.artifacts[]? | select(type == "object")
         | select((.id | type) == "string") | select((.id | length) > 0)]
         | group_by(.id) | map(select(length == 1) | {key: .[0].id, value: .[0]})
@@ -133,7 +140,7 @@ for RESULT in results/*-results.json; do
           cve: .vulnerability.id,
           severity: (.vulnerability.severity // "Unknown"),
           image: $image,
-          image_digest: (if ($digest | length) > 0 then $digest else null end),
+          image_digest: ($sbom_binding.image_digest // (if ($digest | length) > 0 then $digest else null end)),
           package: .artifact.name,
           installed_version: .artifact.version,
           fixed_version: ((.vulnerability.fix.versions // []) | join(", ")),
@@ -152,6 +159,11 @@ for RESULT in results/*-results.json; do
             scanner_descriptor: $scanner_descriptor,
             image_provenance: (($image_provenance[0] // null) | bounded("object"; 32768)),
             scanner_artifact: (.artifact | package_identity),
+            scanner_component_id: (.artifact.id | bounded("string"; 1500)),
+            sbom_digest: $sbom_binding.sbom_digest,
+            sbom_format: $sbom_binding.sbom_format,
+            image_manifest_digest: $sbom_binding.image_manifest_digest,
+            image_platform: $sbom_binding.image_platform,
             sbom_artifact: $sbom_artifact,
             sbom_distro: ($sbom.distro | bounded("object"; 4096)),
             sbom_source: ($sbom.source | image_source),

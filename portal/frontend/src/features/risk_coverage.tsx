@@ -83,7 +83,7 @@ function VexStatement({statement, assessmentId, rejected}: {statement: Row, asse
     <p>Statement #{statement.id} · document #{statement.document_id}{statement.source_id != null ? ` · source #${statement.source_id}` : ''}. Publisher status: {humanize(statement.status || 'unknown')}.</p>
     {statement.sample_only && <p>This is one retained example showing that the CVE occurs in the VEX corpus. It does not establish applicability and does not represent all rejected candidates.</p>}
     <p>Reason: {statement.reason ? humanize(statement.reason) : accepted ? 'Exact identity and configured trust requirements satisfied' : 'Acceptance not established'}.</p>
-    {statement.identity_kind && <p>Match method: {statement.identity_kind === 'exact_observed' ? 'Original scanner identity' : 'Authoritatively resolved identity'}{statement.relationship ? ` · ${humanize(statement.relationship)}` : ''}.</p>}
+    {statement.identity_kind && <p>Match method: {statement.identity_kind === 'exact_observed' ? 'Component identity used for exact lookup' : 'Authoritatively resolved identity'}{statement.relationship ? ` · ${humanize(statement.relationship)}` : ''}.</p>}
     {statement.matched_product_id && <p>Matched product: <code>{statement.matched_product_id}</code></p>}
     {statement.identity && <details><summary>Statement matching identifiers</summary><Json value={statement.identity}/></details>}
     {statement.justification && <p>Justification: {statement.justification}</p>}
@@ -93,19 +93,53 @@ function VexStatement({statement, assessmentId, rejected}: {statement: Row, asse
     {statement.document_id != null && <OriginalEvidence url={`/api/risk/assessments/${assessmentId}/documents/${statement.document_id}`} label={`original VEX document #${statement.document_id}`}/>}
   </article>;
 }
-function IdentityResolution({identity}: {identity: Row}) {
+export function VexLookupSummary({vex}: {vex: Row}) {
+  const applicable = typeof vex.direct_applicable_count === 'number' && typeof vex.resolved_applicable_count === 'number'
+    ? vex.direct_applicable_count + vex.resolved_applicable_count : null;
+  return <section aria-label="VEX lookup and applicability">
+    <h4>VEX lookup and applicability</h4>
+    <dl><dt>CVE or alias present in VEX</dt><dd>{vex.cve_present === true ? 'Present' : vex.cve_present === false ? 'Absent' : 'Not established'}</dd>
+      <dt>Exact identity candidates</dt><dd>{vex.exact_candidate_count ?? 'Not recorded'}</dd>
+      <dt>Statements passing applicability checks</dt><dd>{applicable ?? 'Not recorded'}</dd></dl>
+    <p>CVE presence alone does not establish a package match. Exact candidates still require trusted, current evidence and matching product context. Accepted statements can conflict; the effective disposition controls exclusion.</p>
+  </section>;
+}
+export function IdentityResolution({identity}: {identity: Row}) {
   const resolution = identity.resolution;
-  if (!resolution) return <p>Package identity resolution was not recorded. Reassess to generate this evidence.</p>;
-  const derived: Row[] = (resolution.candidates || []).filter((candidate: Row) => candidate.kind === 'authoritative_resolved');
-  const original = resolution.observed_identity || identity;
+  const derived: Row[] = (resolution?.candidates || []).filter((candidate: Row) => candidate.kind === 'authoritative_resolved');
+  const original = identity.scanner_identity || resolution?.observed_identity || identity;
+  const binding = identity.sbom_binding;
+  const provenance = binding?.provenance || {};
+  const bindingLabels: Record<string, string> = {matched: 'Verified component binding', missing: 'No matching component',
+    ambiguous: 'Multiple components match', conflict: 'Conflicting component evidence', scope_missing: 'Scan or image scope is missing'};
   return <section aria-label="Package identity resolution">
     <h4>Package identity resolution</h4>
-    <p><strong>{humanize(resolution.outcome || 'insufficient_identity_evidence')}</strong></p>
+    {resolution ? <p><strong>{humanize(resolution.outcome || 'insufficient_identity_evidence')}</strong></p>
+      : <p>Package identity resolution was not recorded. Reassess to generate this evidence.</p>}
     <dl><dt>Original scanner identity</dt><dd><code>{original.raw_purl || original.context?.purl || 'Not recorded'}</code></dd>
       <dt>Installed version</dt><dd>{original.raw_installed_version || original.context?.version || 'Not recorded'}</dd>
-      <dt>Resolver version</dt><dd>{resolution.resolver_version || 'Not recorded'}</dd></dl>
-    {resolution.reasons?.length > 0 && <p className="risk-callout">Unresolved evidence: {resolution.reasons.map(humanize).join('; ')}.</p>}
-    {!derived.length && <p>No additional authoritative identity is eligible for VEX matching.</p>}
+      <dt>Resolver version</dt><dd>{resolution?.resolver_version || 'Not recorded'}</dd></dl>
+    {binding && <section aria-label="SBOM component correlation">
+      <h5>SBOM component correlation</h5><p><strong>{bindingLabels[binding.status] || humanize(binding.status || 'not recorded')}</strong></p>
+      {binding.reasons?.length > 0 && <p className="risk-callout">Binding reasons: {binding.reasons.map(humanize).join('; ')}.</p>}
+      {binding.status === 'matched' && <dl><dt>SBOM component identity used for lookup</dt><dd><code>{identity.context?.purl || identity.context?.product_id || 'Not recorded'}</code></dd>
+        <dt>Correlated installed version</dt><dd>{identity.context?.version || identity.raw_installed_version || 'Not recorded'}</dd></dl>}
+      <p>A verified SBOM binding supplies component identity. It does not establish VEX applicability or a Not Affected disposition.</p>
+      <details><summary>SBOM binding provenance and original records</summary>
+        <dl><dt>Scan execution</dt><dd>{provenance.execution_id ?? 'Not recorded'}</dd>
+          <dt>Component record</dt><dd>{binding.component_id ?? 'Not recorded'}</dd>
+          <dt>Component reference</dt><dd>{provenance.component_ref || 'Not recorded'}</dd>
+          <dt>Binding method</dt><dd>{humanize(provenance.binding_kind || 'not recorded')}</dd>
+          <dt>Image</dt><dd>{provenance.image || 'Not recorded'}</dd>
+          <dt>Image digest</dt><dd><code>{provenance.digest || 'Not recorded'}</code></dd>
+          <dt>Platform</dt><dd>{typeof provenance.platform === 'object' ? pretty(provenance.platform) : provenance.platform || 'Not recorded'}</dd>
+          <dt>SBOM digest</dt><dd><code>{provenance.sbom_digest || 'Not recorded'}</code></dd></dl>
+        <h6>Original scanner record</h6><Json value={original}/>
+        <h6>Retained component record and binding</h6><Json value={{sbom_artifact: identity.sbom_artifact, binding}}/>
+      </details>
+    </section>}
+    {resolution?.reasons?.length > 0 && <p className="risk-callout">Unresolved evidence: {resolution.reasons.map(humanize).join('; ')}.</p>}
+    {resolution && !derived.length && <p>No additional authoritative identity is eligible for VEX matching.</p>}
     {derived.map((candidate, index) => <article className="risk-evidence" key={index}>
       <h5>Derived identity {index + 1}</h5><p><code>{candidate.context?.purl || candidate.context?.product_id}</code></p>
       <p>Method: {humanize(candidate.relationship || 'not recorded')}. {candidate.eligible ? 'Eligible for exact VEX lookup; applicability still requires trusted, current evidence.' : 'Not eligible for VEX matching.'}</p>
@@ -116,7 +150,7 @@ function IdentityResolution({identity}: {identity: Row}) {
         <details><summary>Supporting evidence: {step.evidence_path || 'retained package record'}</summary><Json value={step.details || step}/></details>
       </div>)}
     </article>)}
-    {resolution.relationships?.length > 0 && <details><summary>Retained package relationships ({resolution.relationships.length})</summary><p>A recorded relationship alone does not establish an eligible vendor product identity.</p><Json value={resolution.relationships}/></details>}
+    {resolution?.relationships?.length > 0 && <details><summary>Retained package relationships ({resolution.relationships.length})</summary><p>A recorded relationship alone does not establish an eligible vendor product identity.</p><Json value={resolution.relationships}/></details>}
   </section>;
 }
 export function ObservationIntelligence({observation, assessmentId}: {observation: Row, assessmentId: number}) {
@@ -126,6 +160,7 @@ export function ObservationIntelligence({observation, assessmentId}: {observatio
     <p><strong>VEX: {vexLabels[vex.applicability_state] || vexLabels[vex.status] || humanize(vex.status || 'unknown')}</strong></p>
     {vex.status === 'fixed' && <p>A Fixed statement does not resolve the original scanner finding.</p>}
     {vex.reasons?.length > 0 && <ul>{vex.reasons.map((reason: string, index: number) => <li key={index}>{humanize(reason)}</li>)}</ul>}
+    <VexLookupSummary vex={vex}/>
     {observation.identity && <IdentityResolution identity={observation.identity}/>}
     {observation.identity ? <details><summary>Observed component identity and scanner evidence</summary><Json value={observation.identity}/></details> : <p>Component identity detail was not recorded in this assessment.</p>}
     <details><summary>VEX acceptance and rejection evidence ({statements.length + rejected.length} retained)</summary>

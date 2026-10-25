@@ -1,6 +1,10 @@
 """Bounded scanner identity preservation; never infer applicability equivalence."""
+import base64
+import hashlib
 import json
+from pathlib import Path
 import re
+import sys
 from urllib.parse import parse_qs, urlsplit
 
 IDENTITY_LIMITS = {
@@ -17,6 +21,11 @@ IDENTITY_LIMITS = {
     "scanner_source_type": 80, "scanner_source_name": 1000,
     "image_id": 180, "image_manifest_digest": 180,
     "image_architecture": 120, "image_os": 120,
+}
+BINDING_LIMITS = {
+    "sbom_digest": 80, "sbom_format": 80, "sbom_artifact": 65536,
+    "sbom_descriptor": 2048, "sbom_distro": 2048, "sbom_source": 4096,
+    "image_platform": 180,
 }
 PROPERTY_PREFIX = "cats:identity:"
 COMMENT_PREFIX = "CATS identity: "
@@ -159,3 +168,151 @@ def identity_properties(fields):
 
 def identity_comment(fields):
     return COMMENT_PREFIX + json.dumps(bounded(fields), sort_keys=True, separators=(",", ":"))
+
+
+DIGEST = re.compile(r'sha256:[0-9a-f]{64}')
+MANIFEST_TYPES = {'application/vnd.oci.image.manifest.v1+json',
+                  'application/vnd.docker.distribution.manifest.v2+json'}
+
+
+def _digest(raw):
+    return 'sha256:' + hashlib.sha256(raw).hexdigest()
+
+
+def _platform(config):
+    parts = [config.get('os'), config.get('architecture')]
+    if config.get('variant'):
+        parts.append(config['variant'])
+    if any(not isinstance(v, str) or not re.fullmatch(r'[a-z0-9_.-]+', v) for v in parts):
+        raise ValueError('Missing or invalid platform')
+    return '/'.join(parts)
+
+
+def image_identity(image, document, provenance=None):
+    try:
+        source = document.get('source', {})
+        metadata = source.get('metadata', {})
+        if source.get('type') == 'image' and metadata.get('manifest') and metadata.get('config'):
+            raw = base64.b64decode(metadata['manifest'], validate=True)
+            config_raw = base64.b64decode(metadata['config'], validate=True)
+            manifest, config = json.loads(raw), json.loads(config_raw)
+            digest = _digest(raw)
+            media = manifest.get('mediaType')
+            descriptor = manifest['config']
+            if (digest != metadata.get('manifestDigest') or media != metadata.get('mediaType')
+                    or descriptor.get('digest') != _digest(config_raw)
+                    or descriptor.get('size') != len(config_raw)
+                    or metadata.get('imageID') != _digest(config_raw)
+                    or (metadata.get('os') and metadata['os'] != config.get('os'))
+                    or (metadata.get('architecture') and metadata['architecture'] != config.get('architecture'))):
+                raise ValueError('Contradictory native OCI evidence')
+            platform = _platform(config)
+        else:
+            # Directory SBOMs use the exact image inspected before filesystem
+            # materialization. Older Docker engines omit Descriptor: no guessing.
+            if source.get('type') != 'directory' or not isinstance(provenance, dict):
+                return None
+            descriptor = provenance.get('descriptor') or {}
+            digest, media = descriptor.get('digest'), descriptor.get('mediaType')
+            if (not provenance.get('imageID') or not DIGEST.fullmatch(provenance['imageID'])
+                    or not any(isinstance(r, str) and r.endswith('@' + str(digest))
+                               for r in provenance.get('repoDigests', []))):
+                return None
+            platform = _platform(provenance)
+        if not isinstance(digest, str) or not DIGEST.fullmatch(digest) or media not in MANIFEST_TYPES:
+            return None
+        if '@' in image and image.rsplit('@', 1)[1] != digest:
+            return None
+        return {'image': image, 'digest': digest, 'platform': platform, 'media_type': media}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return None
+
+
+def bounded_json(value, limit):
+    """Retain an original structured value in full or omit it; never truncate."""
+    if not isinstance(value, dict):
+        return ""
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return encoded if len(encoded.encode("utf-8")) <= limit else ""
+
+
+def artifact_projection(artifact):
+    """Keep installed-package evidence, including missing/null field distinctions."""
+    if not isinstance(artifact, dict):
+        return ""
+    keys = ("id", "bom-ref", "SPDXID", "name", "version", "versionInfo", "purl", "type",
+            "language", "metadataType", "foundBy", "locations", "upstreams", "cpes", "externalRefs")
+    result = {key: artifact[key] for key in keys if key in artifact}
+    if "metadata" in artifact:
+        metadata = artifact["metadata"]
+        result["metadata"] = ({key: value for key, value in metadata.items() if key in PACKAGE_METADATA_FIELDS}
+                              if isinstance(metadata, dict) else metadata)
+    return bounded_json(result, BINDING_LIMITS["sbom_artifact"])
+
+
+def source_projection(source):
+    if not isinstance(source, dict):
+        return None
+    fields = ("userInput", "imageID", "manifestDigest", "repoDigests", "architecture", "os", "variant",
+              "labels", "annotations")
+    result = {key: source[key] for key in ("type", "name") if key in source}
+    for key in ("target", "metadata"):
+        if key in source:
+            value = source[key]
+            result[key] = ({field: value[field] for field in fields if field in value}
+                           if isinstance(value, dict) else value)
+    return result
+
+
+def document_binding(raw_bytes, document, image, provenance=None):
+    """Bind retained observations to these bytes and independently verified OCI identity."""
+    if not isinstance(document, dict):
+        return {}
+    if isinstance(document.get("artifacts"), list):
+        format_name = "syft-json"
+    elif isinstance(document.get("components"), list):
+        format_name = "cyclonedx-json"
+    elif isinstance(document.get("packages"), list):
+        format_name = "spdx-json"
+    else:
+        return {}
+    result = {"sbom_digest": _digest(raw_bytes), "sbom_format": format_name}
+    descriptor = document.get("descriptor")
+    if isinstance(descriptor, dict):
+        descriptor = {key: descriptor[key] for key in ("name", "version", "timestamp") if key in descriptor}
+    values = {"sbom_descriptor": descriptor, "sbom_distro": document.get("distro"),
+              "sbom_source": source_projection(document.get("source"))}
+    for key, value in values.items():
+        serialized = bounded_json(value, BINDING_LIMITS[key])
+        if serialized:
+            result[key] = serialized
+    verified = image_identity(image, document, provenance)
+    if verified:
+        result.update(image_digest=verified["digest"], image_manifest_digest=verified["digest"],
+                      image_platform=verified["platform"])
+    return result
+
+
+def binding_from_files(sbom_path, image, provenance_path=None, scan_binding_path=None, report_path=None):
+    try:
+        raw_bytes = Path(sbom_path).read_bytes()
+        document = json.loads(raw_bytes)
+        provenance = None
+        if provenance_path and Path(provenance_path).is_file():
+            provenance = json.loads(Path(provenance_path).read_bytes())
+        binding = document_binding(raw_bytes, document, image, provenance)
+        if scan_binding_path is not None:
+            recorded = json.loads(Path(scan_binding_path).read_bytes())
+            if (not isinstance(recorded, dict) or not report_path
+                    or recorded.get("scanner_report_digest") != _digest(Path(report_path).read_bytes())
+                    or recorded.get("image") != image
+                    or any(recorded.get(key) != binding.get(key) for key in
+                           ("sbom_digest", "sbom_format", "image_digest", "image_manifest_digest", "image_platform"))):
+                return {}
+        return binding
+    except (OSError, ValueError, UnicodeError):
+        return {}
+
+
+if __name__ == "__main__":
+    print(json.dumps(binding_from_files(*sys.argv[1:]), separators=(",", ":")))

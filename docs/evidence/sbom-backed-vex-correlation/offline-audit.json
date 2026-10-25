@@ -1,0 +1,519 @@
+{
+  "schema_version": 1,
+  "audit_kind": "offline_identity_only",
+  "measured_at": "2026-10-25T23:09:32.030105+00:00",
+  "baseline_ref": "22f35d50f4de6d834e3a0c9892dce6359343d461",
+  "manifest_sha256": "87490038d55da57609b6339756d7725888f8cbadd233e05b78432eacfcea8b30",
+  "raw_evidence_directory": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\10\\19\\01a1526b-954e-73b2-b46b-e7d15d435d2e\\container-vex-raw-evidence",
+  "comparison": "Current original observation_identity plus unchanged package resolver versus new observation_identities plus the same resolver, on identical raw-record reconstruction. This is not a historical code checkout or VEX corpus comparison.",
+  "environment": {
+    "python": "3.12.14",
+    "sqlite": "3.53.1",
+    "platform": "Windows-11-10.0.26300-SP0",
+    "database": "disposable in-memory SQLite",
+    "network": "blocked",
+    "resolver_version": "cats-package-identity/v2"
+  },
+  "source_sha256": {
+    "scripts/audit-sbom-correlation.py": "6ba033645d09ea5295e2d0e8ebd94397907eab19a25e80321cd45316f93f7d8a",
+    "portal/app/sbom_components.py": "735f403a4bb5f1fb46bbfc9883497fdf67db35a7fb5f2d616c8cbb61093dff49",
+    "portal/app/container_intelligence.py": "da247528274f5a795817ddc062e48c7334deb906933fa21669f3a50f500f642b",
+    "portal/app/package_identity_resolution.py": "dd89540b2e130664a6850836e7369b185bd25c2c1d8f5197a7918f2bbebb7ef0",
+    "scanning-main/scripts/sbom_identity.py": "e9f52c64b1a2e9dcafc7f3c8c0335b01466fb3e2d025e62155da65b3a991e3c7",
+    "scanning-main/scripts/extract-sbom-components.py": "c670618cb1a6ed0e8ac812a4075f8f02f39532414ffdfeb68ae68af7d47e0f52"
+  },
+  "inputs": [
+    {
+      "image_key": "ubuntu",
+      "capture_sha256": "ee8e0868134ad1b3d56034e1b338e5e4f0db5b1926fd1a58458fef8520b589ff",
+      "raw_files": [
+        {
+          "name": "ubuntu.syft.json",
+          "bytes": 2016220,
+          "sha256": "820a19648c801e03721cc3079ace1b0c7d9515ba60bc7bb225be771a2b2027e7"
+        },
+        {
+          "name": "ubuntu.grype.json",
+          "bytes": 561676,
+          "sha256": "ccb038c9b76c7da3da552a755b3dd1d8655147da6fd97e37eddc5c91509d393a"
+        },
+        {
+          "name": "ubuntu.image-inspect.json",
+          "bytes": 1136,
+          "sha256": "571dc707adc727643a43925be27d92557626a15314f89a0775f40b81b2c2e30d"
+        },
+        {
+          "name": "ubuntu.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "ubuntu.capture.json",
+          "bytes": 435,
+          "sha256": "6eab35cc6f74ac357ed4b231a91e55fd1ca295480c200542170c614d60e8cac3"
+        }
+      ]
+    },
+    {
+      "image_key": "debian-12-9",
+      "capture_sha256": "a71e99aeca7b7a62632cfa54bd48e461aabfe24f16e670253eee8b62c2c47931",
+      "raw_files": [
+        {
+          "name": "debian-12-9.syft.json",
+          "bytes": 2510982,
+          "sha256": "c0d24590de15294cb547c0da8dca350162dec9444a5e2812653dd7112e79dfbd"
+        },
+        {
+          "name": "debian-12-9.grype.json",
+          "bytes": 1212667,
+          "sha256": "06c2fc053003f9be10e3b19cbff42de00326a369cd636b32313af41ac137aa01"
+        },
+        {
+          "name": "debian-12-9.image-inspect.json",
+          "bytes": 1074,
+          "sha256": "d633246434c5e54820359a44f1862740e5e21fd84d0e110629a5917466307a4a"
+        },
+        {
+          "name": "debian-12-9.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "debian-12-9.capture.json",
+          "bytes": 487,
+          "sha256": "738b8cfc6faf298d0dbc93461e6164c7656219d6f2d62735a10ba5d87a438699"
+        }
+      ]
+    },
+    {
+      "image_key": "alpine-3-20-0",
+      "capture_sha256": "333327a10a7688ab63371ea8e621e648fb26e93d88aeb47702d43c2bebdfaf77",
+      "raw_files": [
+        {
+          "name": "alpine-3-20-0.syft.json",
+          "bytes": 91288,
+          "sha256": "0c51acf47eba7d6e6439f6b86a2d2027894c51de2320a25b1d57bd69986d973f"
+        },
+        {
+          "name": "alpine-3-20-0.grype.json",
+          "bytes": 306776,
+          "sha256": "7aef717da72801e9a0ff32eae6d81a824ade8a6cc669bc30d3b838da2d526021"
+        },
+        {
+          "name": "alpine-3-20-0.image-inspect.json",
+          "bytes": 1065,
+          "sha256": "114e889c9a798ea696f5010070d4812f4e01e4289e755bae3f4922dff3500742"
+        },
+        {
+          "name": "alpine-3-20-0.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "alpine-3-20-0.capture.json",
+          "bytes": 495,
+          "sha256": "263963363e1f414450f4feafb7a98f5630f267b3c13cb603c4cde4bbea5de40e"
+        }
+      ]
+    },
+    {
+      "image_key": "redhat-ubi",
+      "capture_sha256": "ea6a043e4dcb9414ac405723d246662c49c3a6724da93382767b2f9e96bdc69e",
+      "raw_files": [
+        {
+          "name": "redhat-ubi.syft.json",
+          "bytes": 7418058,
+          "sha256": "4ef227e11f3db2b17bd3bb1fb9ce59e9c14961778c880b160ee849ff2cf165fc"
+        },
+        {
+          "name": "redhat-ubi.grype.json",
+          "bytes": 3232528,
+          "sha256": "503a69f162ec7a9091e0020815523129672545a775ba2204d4b62402b001aa82"
+        },
+        {
+          "name": "redhat-ubi.image-inspect.json",
+          "bytes": 2951,
+          "sha256": "954397e8f39d0453471b5ed60ab3ed37aa8bca83510ba6afc4766da192ca09a8"
+        },
+        {
+          "name": "redhat-ubi.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "redhat-ubi.capture.json",
+          "bytes": 452,
+          "sha256": "7e79e192727ef8a3502ccdedb085aee6f08d4e5dbbfc0e30331e5a2ce9976cdf"
+        }
+      ]
+    },
+    {
+      "image_key": "suse",
+      "capture_sha256": "caa1e40351ce21a718f0239d046e7f6e65232c419bcab5bf2bbcd26c8bbf6f34",
+      "raw_files": [
+        {
+          "name": "suse.syft.json",
+          "bytes": 3422632,
+          "sha256": "d8f09a578655f8e44634f96e93f7cf0d40df051cdff2fde368682fb68bc260f3"
+        },
+        {
+          "name": "suse.grype.json",
+          "bytes": 2364236,
+          "sha256": "0dae8d9a344e93e5f9e0fddf3551131bef296d1904623835ef799aa13353a974"
+        },
+        {
+          "name": "suse.image-inspect.json",
+          "bytes": 3807,
+          "sha256": "0940c04ad1d075d1579e17ac5cf004da5c8e8389777ba219f8d085bbc803bb5c"
+        },
+        {
+          "name": "suse.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "suse.capture.json",
+          "bytes": 427,
+          "sha256": "7fd6d25d6b97d445211a33b3bfdfa644c9ac3394a50b51189af72a844b8268c5"
+        }
+      ]
+    },
+    {
+      "image_key": "python",
+      "capture_sha256": "453f917100d5a996bfb146b5c427558e6d8db3aa576486a354fce88a42a6fe15",
+      "raw_files": [
+        {
+          "name": "python.syft.json",
+          "bytes": 2970755,
+          "sha256": "9f49fe9a8893f686be719c2832c35fbc48d67a9cd916e8175076f968f1caa357"
+        },
+        {
+          "name": "python.grype.json",
+          "bytes": 1901733,
+          "sha256": "8db09a5ae1fc550b1b0416ce9c8d87f1fe5b063324355a7a2100b1d661d60109"
+        },
+        {
+          "name": "python.image-inspect.json",
+          "bytes": 1558,
+          "sha256": "b6a6baa73e7a100d57ab4d417c4318f2d8f0825d85a77d338f511162e6477b27"
+        },
+        {
+          "name": "python.scanner.log",
+          "bytes": 136,
+          "sha256": "f2d7372e8ef2e8e174d6ff75fc6983151c2c906eede56a51b7a6ce4a2c183253"
+        },
+        {
+          "name": "python.capture.json",
+          "bytes": 435,
+          "sha256": "e2536f086e08341f16c3415d5a54d8b715b290f63b51c3e701da0ea59167680b"
+        }
+      ]
+    },
+    {
+      "image_key": "node-image-catalogers",
+      "capture_sha256": "58f11865ae3c337e7b077a8b2b389d7a956b27f873669f7f22eb221b80d989c1",
+      "raw_files": [
+        {
+          "name": "node-image-catalogers.syft.json",
+          "bytes": 2963591,
+          "sha256": "87329d427fc52a0939dadd307965e063cca398ca85beca627e2149b72080eb04"
+        },
+        {
+          "name": "node-image-catalogers.grype.json",
+          "bytes": 1225000,
+          "sha256": "0a3ded854bde56138f9bdda8c81a0025a03a72ea669f9e94f880a3d69d171390"
+        },
+        {
+          "name": "node-image-catalogers.image-inspect.json",
+          "bytes": 1538,
+          "sha256": "c5d768174771fd14371353aa0acd95334a7899011aa81bd4fb6fb8519f791ca8"
+        },
+        {
+          "name": "node-image-catalogers.scanner.log",
+          "bytes": 263,
+          "sha256": "9e685622935d100db064240dd4ba07cd9233e39587366304ced2a5b6e37390b7"
+        },
+        {
+          "name": "node-image-catalogers.capture.json",
+          "bytes": 562,
+          "sha256": "475d0f46df520f45632093f0f893920e023c86fe3cbc263c48ef3af79cf78d46"
+        }
+      ]
+    }
+  ],
+  "real_scans": {
+    "raw_files_verified": 35,
+    "components_retained": 971,
+    "unique_cve_roots": 483,
+    "exact_raw_artifact_and_finding_joins": 1118,
+    "per_image": {
+      "ubuntu": {
+        "components": 101,
+        "observations": 71,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:820a19648c801e03721cc3079ace1b0c7d9515ba60bc7bb225be771a2b2027e7"
+      },
+      "debian-12-9": {
+        "components": 88,
+        "observations": 79,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:c0d24590de15294cb547c0da8dca350162dec9444a5e2812653dd7112e79dfbd"
+      },
+      "alpine-3-20-0": {
+        "components": 14,
+        "observations": 69,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:0c51acf47eba7d6e6439f6b86a2d2027894c51de2320a25b1d57bd69986d973f"
+      },
+      "redhat-ubi": {
+        "components": 206,
+        "observations": 291,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:4ef227e11f3db2b17bd3bb1fb9ce59e9c14961778c880b160ee849ff2cf165fc"
+      },
+      "suse": {
+        "components": 146,
+        "observations": 334,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:d8f09a578655f8e44634f96e93f7cf0d40df051cdff2fde368682fb68bc260f3"
+      },
+      "python": {
+        "components": 123,
+        "observations": 181,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:9f49fe9a8893f686be719c2832c35fbc48d67a9cd916e8175076f968f1caa357"
+      },
+      "node-image-catalogers": {
+        "components": 293,
+        "observations": 93,
+        "verified_image_binding_available": false,
+        "verified_manifest_digest": null,
+        "platform": null,
+        "sbom_digest": "sha256:87329d427fc52a0939dadd307965e063cca398ca85beca627e2149b72080eb04"
+      }
+    },
+    "baseline": {
+      "observations": 1118,
+      "sufficient_identity": 1118,
+      "unresolved_identity": 0,
+      "eligible_identity_candidates": 1713,
+      "eligible_exact_identity_candidates": 1118,
+      "eligible_derived_identity_candidates": 595,
+      "resolver_outcomes": {
+        "authoritatively_resolved_identity": 43,
+        "multiple_valid_candidate_identities": 276,
+        "no_verified_relationship": 549,
+        "unsupported_ecosystem": 250
+      }
+    },
+    "new": {
+      "observations": 1118,
+      "sufficient_identity": 1118,
+      "unresolved_identity": 0,
+      "eligible_identity_candidates": 1713,
+      "eligible_exact_identity_candidates": 1118,
+      "eligible_derived_identity_candidates": 595,
+      "resolver_outcomes": {
+        "authoritatively_resolved_identity": 43,
+        "multiple_valid_candidate_identities": 276,
+        "no_verified_relationship": 549,
+        "unsupported_ecosystem": 250
+      }
+    },
+    "identities_unchanged": 1118,
+    "resolver_results_unchanged": 1118,
+    "original_records_preserved": true,
+    "complete_identity_sql_statements": 0,
+    "complete_identity_sbom_lookups": 0
+  },
+  "controlled_perturbation": {
+    "description": "In-memory removal of top-level/scanner-artifact PURL and attached SBOM projection; exact artifact ID retained. Verified capture hash supplied as a controlled consumed-document assertion, not a recovered scan-time sidecar. Image manifest/platform accepted only by current scanner verifier.",
+    "before_sufficient_identity": 0,
+    "after": {
+      "observations": 1118,
+      "sufficient_identity": 0,
+      "unresolved_identity": 1118,
+      "eligible_identity_candidates": 0,
+      "eligible_exact_identity_candidates": 0,
+      "eligible_derived_identity_candidates": 0,
+      "resolver_outcomes": {
+        "insufficient_identity_evidence": 1118
+      }
+    },
+    "binding_statuses": {
+      "scope_missing": 1118
+    },
+    "binding_reasons": {
+      "sbom_observation_digest_missing": 1118
+    },
+    "matched_context_equals_real_original": 0,
+    "matched_candidate_sets_equal_real_original": 0,
+    "per_image": {
+      "ubuntu": {
+        "scope_missing": 71
+      },
+      "debian-12-9": {
+        "scope_missing": 79
+      },
+      "alpine-3-20-0": {
+        "scope_missing": 69
+      },
+      "redhat-ubi": {
+        "scope_missing": 291
+      },
+      "suse": {
+        "scope_missing": 334
+      },
+      "python": {
+        "scope_missing": 181
+      },
+      "node-image-catalogers": {
+        "scope_missing": 93
+      }
+    }
+  },
+  "synthetic_scope_microbenchmark": {
+    "description": "The same real package rows are assigned an artificial execution/image name, synthetic sha256 image-manifest digest and linux/amd64 scope in disposable SQLite. The actual SBOM byte digest and exact package tuples remain unchanged. This is a lookup-mechanism fixture, not verified real-image identity recovery or VEX coverage.",
+    "observations": 1118,
+    "binding_statuses": {
+      "matched": 1118
+    },
+    "binding_reasons": {},
+    "matched_context_equals_real_original": 1118,
+    "trusted_applicability_evaluated": false
+  },
+  "performance": {
+    "scope": "identity recovery only; excludes inventory ingest, package resolver, VEX/advisory evaluation and network; warmed same-process repeated runs on a shared host; repeated observations add load, not findings",
+    "lookup_batch": 40,
+    "maximum_rows_per_exact_key": 17,
+    "sqlite_lookup_plan": [
+      "SEARCH sbom_components USING INDEX ix_sbom_component_reference (execution_id=? AND image_key=? AND reference_key=?)"
+    ],
+    "workloads": [
+      {
+        "workload": "complete_original_1118",
+        "observations": 1118,
+        "distinct_scoped_component_references": 0,
+        "runs": [
+          {
+            "seconds": 0.019893,
+            "sql_statements": 0,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 1118
+          },
+          {
+            "seconds": 0.020042,
+            "sql_statements": 0,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 1118
+          },
+          {
+            "seconds": 0.019387,
+            "sql_statements": 0,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 1118
+          }
+        ],
+        "median_seconds": 0.019893
+      },
+      {
+        "workload": "controlled_lost_purl_1118",
+        "observations": 1118,
+        "distinct_scoped_component_references": 0,
+        "runs": [
+          {
+            "seconds": 0.033882,
+            "sql_statements": 2,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 0
+          },
+          {
+            "seconds": 0.034641,
+            "sql_statements": 2,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 0
+          },
+          {
+            "seconds": 0.097898,
+            "sql_statements": 2,
+            "sbom_lookup_statements": 0,
+            "resolved_identities": 0
+          }
+        ],
+        "median_seconds": 0.034641
+      },
+      {
+        "workload": "synthetic_scope_real_components_1118",
+        "observations": 1118,
+        "distinct_scoped_component_references": 190,
+        "runs": [
+          {
+            "seconds": 0.191949,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 1118
+          },
+          {
+            "seconds": 0.268363,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 1118
+          },
+          {
+            "seconds": 0.197218,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 1118
+          }
+        ],
+        "median_seconds": 0.197218
+      },
+      {
+        "workload": "synthetic_scope_real_components_repeated_10000",
+        "observations": 10000,
+        "distinct_scoped_component_references": 190,
+        "runs": [
+          {
+            "seconds": 1.780154,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 10000
+          },
+          {
+            "seconds": 1.823918,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 10000
+          },
+          {
+            "seconds": 1.972714,
+            "sql_statements": 7,
+            "sbom_lookup_statements": 5,
+            "resolved_identities": 10000
+          }
+        ],
+        "median_seconds": 1.823918
+      }
+    ]
+  },
+  "vex": {
+    "new_corpus_evaluation_performed": false,
+    "new_trusted_applicable_count": null,
+    "new_excluded_count": null,
+    "historical_trusted_applicable_count": 0,
+    "historical_source": "docs/evidence/authoritative-package-identity/README.md",
+    "limitation": "No imported PostgreSQL VEX corpus available. Identity candidates are not VEX statements. No synthetic VEX was inserted. Legacy captures lack the new scan-time consumed-SBOM sidecar; the perturbation is not production backfill evidence."
+  }
+}

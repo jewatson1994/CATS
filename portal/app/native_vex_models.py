@@ -64,9 +64,26 @@ def install_generation_triggers(connection):
     # Insert-only evidence revisions are already immutable at the database layer.
     global_tables = ('vex_sources', 'vex_documents', 'intelligence_package_installs',
                      'intelligence_package_state', 'portal_settings')
-    service_tables = ('findings', 'finding_observations', 'executions')
+    service_tables = ('findings', 'finding_observations', 'executions', 'sbom_components')
     from sqlalchemy import inspect
     existing = set(inspect(connection).get_table_names())
+    if {'executions', 'sbom_components'} <= existing:
+        # A payload replacement invalidates its old projection in the same
+        # transaction, including direct SQL writes. Never re-use stale SBOM rows
+        # after re-evaluation; an explicit reindex can reconstruct new rows.
+        name = 'sbom_execution_payload_changed'
+        body = 'DELETE FROM sbom_components WHERE execution_id = NEW.id;'
+        if dialect == 'sqlite':
+            connection.execute(text(f'DROP TRIGGER IF EXISTS {name}'))
+            connection.execute(text(f'CREATE TRIGGER {name} AFTER UPDATE OF raw_payload ON executions '
+                f'WHEN OLD.raw_payload IS NOT NEW.raw_payload BEGIN {body} END'))
+        else:
+            connection.execute(text(f'CREATE OR REPLACE FUNCTION {name}_fn() RETURNS trigger AS $$ '
+                f'BEGIN IF OLD.raw_payload::text IS DISTINCT FROM NEW.raw_payload::text THEN {body} END IF; '
+                'RETURN NULL; END; $$ LANGUAGE plpgsql'))
+            connection.execute(text(f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = '{name}' "
+                f"AND tgrelid = 'executions'::regclass) THEN CREATE TRIGGER {name} AFTER UPDATE OF raw_payload ON executions "
+                f"FOR EACH ROW EXECUTE FUNCTION {name}_fn(); END IF; END $$"))
     for table in (*global_tables, *service_tables):
         if table not in existing:
             continue
@@ -82,7 +99,9 @@ def install_generation_triggers(connection):
                 statements = []
                 for ref in refs:
                     expr = (f'(SELECT service_id FROM findings WHERE id = {ref}.finding_id)'
-                            if table == 'finding_observations' else f'{ref}.service_id')
+                            if table == 'finding_observations' else
+                            f'(SELECT service_id FROM executions WHERE id = {ref}.execution_id)'
+                            if table == 'sbom_components' else f'{ref}.service_id')
                     statements.append('INSERT INTO vex_disposition_services (service_id, generation) '
                         f'SELECT {expr}, 1 WHERE {expr} IS NOT NULL AND EXISTS (SELECT 1 FROM services WHERE id = {expr}) '
                         'ON CONFLICT (service_id) DO UPDATE SET generation = vex_disposition_services.generation + 1;')

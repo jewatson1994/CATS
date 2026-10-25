@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -39,6 +40,10 @@ def test_sbom_formats_serialize_one_inventory_with_metadata(tmp_path):
     manifest = json.loads((output / "manifest.json").read_text(encoding="utf-8"))
     assert {item["format"] for item in manifest["reports"]} == {"syft-json", "cyclonedx-json", "cyclonedx-xml", "spdx-json"}
     assert all(item["generator"] == "syft" for item in manifest["reports"])
+    source_digest = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+    assert all(item["source_sbom_digest"] == source_digest for item in manifest["reports"])
+    assert all(item["sha256"] == hashlib.sha256(Path(item["path"]).read_bytes()).hexdigest()
+               for item in manifest["reports"])
 
 
 def test_source_and_distribution_identity_survive_format_round_trips(tmp_path):
