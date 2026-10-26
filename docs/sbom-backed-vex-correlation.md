@@ -107,7 +107,7 @@ Those timings show added processing time with unchanged query counts. They were 
 
 ## Verification of this change
 
-Final verification on 2026-10-25 used the isolated branch and the project's existing Python environment:
+Initial verification on 2026-10-25 used the isolated branch and the project's existing Python environment:
 
 | Check | Result |
 | --- | --- |
@@ -119,7 +119,29 @@ Final verification on 2026-10-25 used the isolated branch and the project's exis
 
 Backend checks cover correctly bound recovery, complete-identity bypass, duplicate instances/versions, wrong image/platform/document/execution/service, missing scope, conflicting identities and distro namespaces, source/binary authority, rejection of dependency inheritance, generation invalidation, mixed observations, policy disabled/enabled, retained findings, and existing classification/risk/remediation/export consumers. They include ingestion transaction and duplicate-execution behavior, bounded indexed lookup, stale-document rejection, and publication fences. Frontend checks cover original versus recovered identity, unsuccessful binding outcomes, provenance, distinct CVE presence/candidate/applicability metrics, absent historical metrics, and native disposition review.
 
-The 22 skipped checks require `CATS_TEST_POSTGRES_URL` (nine native VEX boundary cases and thirteen risk/VEX integration cases). No PostgreSQL test database or available Docker Linux daemon was present, so this change has not been integration-tested against PostgreSQL here. The build retains existing warnings about `runtime/static/app.css` and mixed static/dynamic imports of `risk_intelligence`; it completed successfully. These checks are focused regression coverage, not a claim that every repository test or a deployed worker/scanner environment was exercised. Real retained evidence and identity-only performance measurements are reported separately below; no new publisher-backed VEX coverage is claimed.
+The initial 22 skips required `CATS_TEST_POSTGRES_URL` (nine native VEX boundary cases and thirteen risk/VEX integration cases); the PostgreSQL follow-up below closes that verification gap. The build retains existing warnings about `runtime/static/app.css` and mixed static/dynamic imports of `risk_intelligence`; it completed successfully. These checks are focused regression coverage, not a claim that every repository test or a deployed worker/scanner environment was exercised. Real retained evidence and identity-only performance measurements are reported separately below; no new publisher-backed VEX coverage is claimed.
+
+### PostgreSQL follow-up, 2026-10-26
+
+Started the installed Docker engine and an isolated local PostgreSQL **16.15** database (`postgres:16-alpine`) with psycopg **3.2.6**. The database port was bound only to `127.0.0.1`. Each integration case created a unique schema, installed the schema/triggers twice to verify restart compatibility, and dropped its own schema afterward. The tests use controlled fixtures, not production data or installed publisher coverage.
+
+| Check | Result |
+| --- | --- |
+| All 22 previously skipped cases, selected from `test_risk_vex_postgres.py` and `test_native_vex_boundaries.py` with `-k postgres` | **22 passed, 14 deselected in 50.11 seconds**, no skips |
+| Repeatable runner with the original cases plus nine new `test_sbom_postgres.py` cases | **31 passed, 14 deselected in 75.65 seconds**, no skips |
+| PowerShell runner syntax and final `git diff --check` | **Passed** |
+
+The nine new PostgreSQL cases cover component insert/update/delete/owner-move invalidation, replacement execution payloads purging old projections, bounded deduplicated recovery queries, retained identity feeding both native VEX and risk consumers, and publication fences after a committed component deletion on another database connection. The risk concurrency case keeps automatic exclusion disabled, exercising the independent identity-generation fence. Both concurrency cases reject publication and leave no assessment/evaluation record behind. No application failures were found, so no production-code changes were needed for this follow-up.
+
+[`scripts/test-sbom-postgres.ps1`](../scripts/test-sbom-postgres.ps1) makes this check repeatable. It requires a running Docker engine and a Python environment with `portal/requirements-dev.txt` installed. From a checkout with a local virtual environment:
+
+```powershell
+.\scripts\test-sbom-postgres.ps1 -Python .\.venv\Scripts\python.exe
+```
+
+For a worktree sharing another checkout's virtual environment, pass that interpreter's path instead. The runner creates a uniquely named container with a random password and a dynamic localhost port, waits for TCP readiness, sets `CATS_TEST_POSTGRES_URL`, and temporarily clears unrelated test/database settings. Prior environment values are restored afterward. It runs the 31 PostgreSQL cases, propagates pytest's exit status, and removes its container and anonymous database volume in cleanup. It does not use an existing application database.
+
+The final run deliberately inherited `PYTEST_ADDOPTS=--collect-only` and unreachable `CATS_TEST_DATABASE_URL`/`INTELLIGENCE_DATABASE_URL` values to confirm those settings could not redirect or bypass these tests. A separate deliberately failed container startup returned a failure and removed its partially created container. No per-test schemas remained after the initial 22-case run; temporary test databases were cleaned up. Non-PostgreSQL backend tests and the frontend were unchanged and were not repeated for this follow-up.
 
 ## Offline retained-scan audit
 
