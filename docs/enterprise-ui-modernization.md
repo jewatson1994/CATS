@@ -349,3 +349,39 @@ Menus: ![](enterprise-ui-modernization/phase-2/menus-after.png)
 Service sub-pages (Architecture, Artifacts, Dependencies, Deployment Validation, Activity) use slightly
 different headers from the main service workspace; Discovery's two-column form, Risk Policy internals,
 Validators and finding detail keep their existing layouts. These are good candidates for a phase 3.
+
+---
+
+# Phase 3: service views and remaining pages
+
+Branch: `feature/ui-modernization-phase-3`, built on phase 2. Presentation only, as before.
+
+| Area | Change |
+| --- | --- |
+| Service views | Architecture, Artifacts, Dependencies and Deployment Validation now use the same service header as Overview, Findings, Remediations and Activity: service name, compliance badge, version, owner, latest evidence and the Request approval, Export and Actions controls. Each view's own title, explanation and actions sit in a band under the tabs. The header data comes from the same `service_view` the Overview page uses, so the compliance badge is the real computed value on every view. |
+| Finding detail | Standard page header with an Active/Resolved badge and the Remediate action; remediation classification as a callout; risk cards with a severity badge and a "Known exploited" badge for KEV. |
+| Watchlist match | Standard header with a back link to the service's warnings and a "Watchlist match" badge. |
+| Discovery | Wider source column (340 px) that stays in view while reviewing, standard panel radius and spacing, dashed upload fields. |
+| Validators | Breadcrumb back to Settings · Integrations, the dedicated-VM notice as a standard warning callout, status badges for validators, clearer selected state. |
+| Risk Policy | Hard-coded greens and ambers replaced with theme tokens, so the tabs and notices follow every theme (checked in the light theme). |
+| Encoding fix | `discovery.tsx` on `main` (commit `22f35d5`) contained two Windows-1252 characters, which rendered as a replacement character and broke `test_internal_login_navigation_stays_in_current_tab`. Fixed in its own commit. |
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm build` | Pass |
+| `pnpm test` | 62 files, 424 tests passed |
+| Backend tests that read frontend sources | 19 passed (one was failing on `main` before the encoding fix) |
+| Browser | All six service views, finding detail, Discovery, Validators and Risk Policy rendered against demo data; light theme checked for menus, admin and service pages. |
+
+## Before and after
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-3/svc-deps-before.png) | ![](enterprise-ui-modernization/phase-3/svc-deps-after.png) |
+| ![](enterprise-ui-modernization/phase-3/svc-validation-before.png) | ![](enterprise-ui-modernization/phase-3/svc-validation-after.png) |
+| ![](enterprise-ui-modernization/phase-3/finding-before.png) | ![](enterprise-ui-modernization/phase-3/finding-after.png) |
+| ![](enterprise-ui-modernization/phase-3/validators-before.png) | ![](enterprise-ui-modernization/phase-3/validators-after.png) |
+
+Light theme: ![](enterprise-ui-modernization/phase-3/light-theme-after.png)

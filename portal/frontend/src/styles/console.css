@@ -213,3 +213,36 @@ details[open] > :is(.navigation-popover, .notification-popover, .menu-popover, .
 .section-intro-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .section-intro .architecture-verification { position: relative; }
 .section-intro .architecture-verification > p { position: absolute; right: 0; z-index: 5; width: 320px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-popover); font-size: var(--text-xs); }
+
+/* --------------------------------------------------------------- Discovery */
+.discovery-layout { grid-template-columns: 340px minmax(0, 1fr) !important; gap: var(--space-5) !important; }
+.discovery-layout > aside { position: sticky; top: 76px; }
+.discovery-workspace .panel { border-radius: var(--radius-lg) !important; padding: var(--space-5) !important; }
+.discovery-workspace .panel > h2 { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md) !important; font-weight: 600; border-bottom: 1px solid var(--border); }
+.discovery-progress { margin-bottom: var(--space-4) !important; padding: var(--space-4) var(--space-5) !important; }
+.discovery-intro { margin: 0 0 var(--space-4) !important; font-size: var(--text-sm); }
+.discovery-workspace input[type="file"] { width: 100%; border: 1px dashed var(--border-strong); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.discovery-metrics > div { border-radius: var(--radius-md); }
+.discovery-root { border-radius: var(--radius-md); border: 1px solid var(--border); }
+@media (max-width: 1000px) { .discovery-layout { grid-template-columns: 1fr !important; } .discovery-layout > aside { position: static; } }
+
+/* --------------------------------------------------------------- Validators */
+.breadcrumb-link { display: inline-flex; align-items: center; gap: 6px; margin-bottom: var(--space-3); color: var(--text-muted); font-size: var(--text-sm); text-decoration: none; }
+.breadcrumb-link:hover { color: var(--text); }
+.validators-workspace .callout.validator-notice { margin: 0 0 var(--space-4); }
+.validators-workspace .validator-layout { margin-top: 0 !important; }
+.validators-workspace .validator-choice { display: grid; gap: 4px; justify-items: start; width: 100%; padding: var(--space-3) !important; margin-top: var(--space-2); text-align: left; border-radius: var(--radius-md) !important; }
+.validators-workspace .validator-choice.selected { border-color: var(--accent) !important; box-shadow: inset 0 0 0 1px var(--accent); }
+.validators-workspace .validator-section { border-top: 1px solid var(--border); }
+.validators-workspace .validator-section h3 { font-size: var(--text-md) !important; }
+
+/* ------------------------------------------------------------- finding detail */
+.finding-metrics .metric-value { font-size: var(--text-xl) !important; }
+.finding-metrics .metric-value .badge, .finding-metrics .metric-value .severity-badge { font-size: var(--text-sm); }
+
+/* ------------------------------------------------------------- Risk Policy */
+/* Theme tokens replace hard-coded greens and ambers so every theme renders correctly. */
+.risk-callout { border-left-color: var(--warning) !important; background: color-mix(in srgb, var(--warning) 7%, var(--surface)) !important; border-radius: var(--radius-lg); }
+.risk-tabs button[aria-current] { background: color-mix(in srgb, var(--accent) 14%, transparent) !important; color: var(--text) !important; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)) !important; }
+.risk-warning { color: var(--warning) !important; }
+.risk-policy-page .risk-section, .risk-policy-page .risk-editor-section { border-color: var(--border) !important; }
