@@ -202,3 +202,14 @@ details[open] > :is(.navigation-popover, .notification-popover, .menu-popover, .
   .app-header .navigation-popover { min-width: min(300px, calc(100vw - 24px)) !important; max-width: calc(100vw - 24px); }
   .app-header .account-nav > .navigation-menu:last-of-type .navigation-popover { left: auto !important; right: 0 !important; }
 }
+
+/* ------------------------------------------------ service sub-page sections */
+/* Every service view shares the service header and tabs; the view's own title,
+   explanation and actions sit in this band directly under the tabs. */
+.section-intro { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3) var(--space-5); flex-wrap: wrap; margin: 0 0 var(--space-4); }
+.section-intro h2 { margin: 0; font-size: var(--text-xl); font-weight: 650; letter-spacing: -.01em; }
+.section-intro p { margin: 4px 0 0; max-width: 90ch; color: var(--text-muted); font-size: var(--text-sm); }
+.section-intro .page-header-title h2 { display: inline; }
+.section-intro-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.section-intro .architecture-verification { position: relative; }
+.section-intro .architecture-verification > p { position: absolute; right: 0; z-index: 5; width: 320px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-popover); font-size: var(--text-xs); }
