@@ -2,6 +2,7 @@
   "name": "cats-frontend",
   "private": true,
   "version": "1.0.0",
+  "license": "SEE LICENSE IN ../../LICENSE",
   "type": "module",
   "packageManager": "pnpm@11.19.0",
   "scripts": {

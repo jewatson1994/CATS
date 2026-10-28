@@ -63,6 +63,7 @@ RUN sh /tmp/install-backup-runtime.sh && rm /tmp/install-backup-runtime.sh
 COPY deploy/backup/backup.py /opt/backup/backup.py
 
 COPY portal/app ./app
+COPY LICENSE /app/LICENSE
 # Fail the connected image build if its offline intelligence payload is missing or altered.
 RUN /opt/cats-venv/bin/python -m app.embedded_intelligence --verify
 COPY portal/requirements.txt ./requirements.txt

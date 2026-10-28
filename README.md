@@ -8,6 +8,14 @@ Assess container services, retain the evidence, and manage remediation and secur
 
 The React interface provides service workspaces, scan results, remediation views, and administration. Docker builds compile the frontend automatically, so the UI shipped in an image comes from the checkout used for that build.
 
+## License
+
+CATS-authored code and documentation are available under the [MIT License with Commons Clause v1.0](LICENSE). This is a **source-available** license, not an OSI-approved open-source license. It permits use, modification, and redistribution subject to the full license terms, including the restriction on selling products or services whose value derives entirely or substantially from CATS. The restriction also covers qualifying paid hosting, consulting, and support services; ordinary internal use is permitted. See the [Commons Clause terms](https://commonsclause.com/) for the definition of "Sell".
+
+Third-party dependencies, bundled vulnerability/VEX datasets, and other separately licensed material retain their original licenses and notices. See the [included source inventory](#included-source-inventory) for the bundled intelligence sources and their terms.
+
+The root `LICENSE` is authoritative. `portal/LICENSE` and `cats-scanner/LICENSE` are identical copies for builds that use those subdirectories as their context; keep them synchronized when changing the license. Application and validator images carry it at `/app/LICENSE`, and the standalone scanner image carries it at `/opt/cats/LICENSE`.
+
 ## Workspaces and capabilities
 
 | Workspace | Purpose |

@@ -32,6 +32,7 @@ WORKDIR /app
 COPY portal/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY portal/app ./app
+COPY LICENSE /app/LICENSE
 COPY portal/validator_server.py portal/validator_admin_server.py portal/validator_appliance.py ./
 ENV PYTHONUNBUFFERED=1 CATS_VALIDATOR_STATE_DIR=/var/lib/cats-validator
 EXPOSE 8443 8444

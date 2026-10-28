@@ -19,6 +19,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY LICENSE /app/LICENSE
 # Fail the connected image build if its offline intelligence payload is missing or altered.
 RUN python -m app.embedded_intelligence --verify
 COPY validator_server.py ./validator_server.py

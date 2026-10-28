@@ -165,6 +165,7 @@ RUN set -eux; \
     copa --version
 
 COPY catscan-version /usr/local/bin/catscan-version
+COPY LICENSE /opt/cats/LICENSE
 RUN bash -c 'if LC_ALL=C od -An -t x1 /usr/local/bin/catscan-version | grep -w 0d >/dev/null; then echo "CR byte in catscan-version" >&2; exit 1; fi; bash -n /usr/local/bin/catscan-version'
 RUN chmod 0755 /usr/local/bin/catscan-version
 
