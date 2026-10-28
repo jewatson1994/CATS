@@ -20,6 +20,8 @@ Green follows compliance policy; a separate yellow caution triangle marks warnin
 
 Review pending exception, POA&M, and archive requests against evidence, justification, controls, expiry, and scope. Rejecting a request requires a reason. You cannot approve or reject your own request; route it to another authorized reviewer. Revisit active exceptions and revoke when no longer justified. Close active POA&Ms only with supporting evidence. Evidence removal is distinct from permanently deleting a service.
 
+A bulk POA&M, mitigation, or exception import appears as one notification and one request summary. Open it to inspect every imported line, then use that row's **Approve** or **Deny** action. Denial requires a reason. Decisions apply to individual rows, and the summary tracks pending, approved, and denied counts until review is complete. Individually submitted requests retain their separate notifications. The service POA&M view and exports include exceptions and mitigations with their lifecycle states.
+
 ## Configure policy
 
 In **General Policy → Workflow**, configure warning timing, exception limits, and **Cybersecurity warning policy**. Available warning conditions include Critical/High, KEV, Dependency Watchlist, open POA&M, failed Kind validation, and missing evidence. Save the intended configuration.

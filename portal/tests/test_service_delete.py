@@ -6,7 +6,7 @@ from test_portal import setup_function
 from app import main
 from app.auth import SYSTEM_ROLES
 from app.database import SessionLocal
-from app.models import Service, ServiceMetadata, InventoryRecord, OidcClaimMapping, Role, User, ServiceDeletionAudit
+from app.models import Service, ServiceMetadata, InventoryRecord, OidcClaimMapping, Role, User, ServiceDeletionAudit, WorkflowImportBatch, WorkflowRequest
 
 
 def test_delete_active_service_requires_exact_phrase_and_removes_owned_data(monkeypatch):
@@ -21,6 +21,11 @@ def test_delete_active_service_requires_exact_phrase_and_removes_owned_data(monk
         db.add_all([service, other]); db.flush()
         service_id, other_id = service.id, other.id
         db.add_all([ServiceMetadata(service_id=service_id, values={"private":"data"}), ServiceMetadata(service_id=other_id, values={"keep":True})])
+        batch = WorkflowImportBatch(service_id=service_id, requested_by_id=user.id, kind="poams", filename="plans.csv")
+        db.add(batch); db.flush()
+        batch_id = batch.id
+        db.add(WorkflowRequest(service_id=service_id, requested_by_id=user.id, request_type="poam",
+            justification="Imported plan", import_batch_id=batch_id, import_row_number=2))
         db.commit()
         for phrase in ["delete-test", "Delete Test", "delete delete-test", "delete Delete Test "]:
             with pytest.raises(HTTPException) as error:
@@ -31,5 +36,7 @@ def test_delete_active_service_requires_exact_phrase_and_removes_owned_data(monk
         assert response.status_code == 303
         assert db.get(Service, service_id) is None
         assert db.get(ServiceMetadata, service_id) is None
+        assert db.scalar(select(WorkflowImportBatch).where(WorkflowImportBatch.id == batch_id)) is None
+        assert db.scalar(select(WorkflowRequest).where(WorkflowRequest.service_id == service_id)) is None
         assert db.get(ServiceMetadata, other_id) is not None
         assert db.scalar(select(ServiceDeletionAudit).where(ServiceDeletionAudit.service_key == "delete-test")) is not None

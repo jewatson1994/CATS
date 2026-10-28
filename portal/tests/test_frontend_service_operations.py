@@ -4,6 +4,16 @@ from types import SimpleNamespace
 from app.frontend_service_operations import project_service_operations
 
 
+def test_artifact_image_patch_history_is_explicit_and_scoped():
+    context = {"image_inventory": [{"image": SimpleNamespace(id=9, image_reference="registry/patched"), "count": 0}],
+        "can_patch_images": True, "image_patch_history": {9: [{"original_image": "registry/original", "patched_at": "2026-10-25T12:00:00Z",
+            "job_id": "patch-1", "result_image": "registry/patched", "credentials": "secret"}], 10: [{"original_image": "foreign-secret"}]}}
+    data = project_service_operations("service_artifacts.html", context)
+    assert data["can_patch_images"] is True
+    assert data["image_inventory"][0]["image"]["patch_history"][0]["job_id"] == "patch-1"
+    assert "secret" not in str(data)
+
+
 def test_artifact_projection_excludes_retained_source_and_model_internals():
     artifact = SimpleNamespace(id=7, artifact_type="helm_chart", chart_name="chart", source_metadata={"chart_count": 2, "credentials": "do not expose", "versions": [{"version": "1.0", "secret": "hidden"}]}, secret="hidden")
     context = {"artifact_rows": [{"artifact": artifact, "semantic_type": "helm_chart", "source_label": "Upload", "revision": SimpleNamespace(checksum="safe", source_content="hidden"), "files": {"values.yaml": "credential: secret"}}], "original_files": {"source.yaml": "private"}, "image_inventory": [{"image": SimpleNamespace(id=9, image_reference="registry/image", secret="hidden"), "references": ["Pod/test"], "count": 1}]}

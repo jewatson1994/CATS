@@ -16,6 +16,12 @@ const chart = {semantic_type:'helm_chart',artifact:{id:11,chart_name:'Test Chart
 const response = (data:any) => ({ok:true,status:200,redirected:false,headers:new Headers({'content-type':'application/json'}),json:async () => data});
 
 describe('native service operations', () => {
+  it('offers Patch beside each active image and shows the retained patch marker', () => {
+    render(<Artifacts data={fixture({can_patch_images: true, can_image_workflow: false, image_inventory: [{image: {...image, image_digest: `sha256:${'b'.repeat(64)}`, patch_history: [{original_image: 'registry/original:v1', result_image: image.image_reference, patched_at: '2026-10-25T12:00:00Z', job_id: 'patch-1'}]}, count: 0, references: []}]})}/>);
+    expect(screen.getByRole('link', {name: 'Patch registry/image:tag'})).toHaveAttribute('href', '/patch-campaigns?service_id=sample&image_id=9');
+    expect(screen.getByLabelText('Patch history for registry/image:tag')).toBeInTheDocument();
+    expect(screen.queryByRole('button', {name: 'Replace image'})).not.toBeInTheDocument();
+  });
   it('lists retained scanned charts without offering persisted artifact mutations', () => {
     const retained = {...chart, retained_scan:true, file_count:48, artifact:{id:'scan:one:nginx/Chart.yaml',chart_name:'nginx',chart_version:'1.2.3',source_type:'scan',source_reference:'nginx'}, source_label:'Scan source'};
     render(<Artifacts data={fixture({artifact_rows:[retained],scan_chart_count:1,original_file_count:48,original_execution:{execution_key:'one'}})} />);

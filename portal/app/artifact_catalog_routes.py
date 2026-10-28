@@ -78,7 +78,7 @@ def recommendations(service_key: str, db=Depends(get_db), auth=Depends(require_u
         source, target = db.get(GlobalArtifact, row.source_artifact_id), db.get(GlobalArtifact, row.target_artifact_id)
         items.append({"id": row.id, "status": row.status, "amendment_proposal_id": proposals.get(row.id), "source_artifact": _artifact(source),
             "target_artifact": _artifact(target), "vulnerability_evidence": vulnerability_evidence(db, source_id=source.id, target_id=target.id), "eligibility": artifact_eligibility(db, target.id, service_id=service.id),
-            "can_adopt": _can_propose(auth, service) and row.status == "pending_verification" and has_current_source_image(db, service_id=service.id, artifact_id=source.id)})
+            "can_adopt": _can_propose(auth, service) and row.status == "pending_verification" and has_current_source_image(db, service_id=service.id, artifact_id=source.id, target_artifact_id=target.id)})
     return {"items": items, "can_adopt": _can_propose(auth, service)}
 
 
@@ -94,7 +94,7 @@ async def propose_selection(service_key: str, recommendation_id: int, request: R
         raise HTTPException(404, "Recommendation unavailable")
     if row.status not in {"pending_verification", "proposed"}:
         raise HTTPException(409, "Recommendation is no longer available for proposal")
-    if not has_current_source_image(db, service_id=service.id, artifact_id=row.source_artifact_id):
+    if not has_current_source_image(db, service_id=service.id, artifact_id=row.source_artifact_id, target_artifact_id=row.target_artifact_id):
         raise HTTPException(409, "The original artifact is no longer in this service inventory")
     from .release_revisions import propose_recommendation
     try:
@@ -151,7 +151,7 @@ def replacement_notifications(db, auth):
         query = query.where(Service.id.in_(allowed))
     result = []
     for row, service in db.execute(query.order_by(ArtifactRecommendation.id.desc()).limit(100)):
-        if _can_propose(auth, service) and has_current_source_image(db, service_id=service.id, artifact_id=row.source_artifact_id) and artifact_eligibility(db, row.target_artifact_id)["eligible"]:
+        if _can_propose(auth, service) and has_current_source_image(db, service_id=service.id, artifact_id=row.source_artifact_id, target_artifact_id=row.target_artifact_id) and artifact_eligibility(db, row.target_artifact_id)["eligible"]:
             result.append({"label": "Verified replacement available", "service": service.name,
                            "href": f"/services/{service.service_key}/artifact-recommendations"})
     return result

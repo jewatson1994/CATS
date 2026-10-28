@@ -29,7 +29,7 @@ def service(value):
 
 
 def entry(value, formatters):
-    result = fields(value, ("id", "item_type", "title", "description", "remediation", "ticket", "status", "service_version"))
+    result = fields(value, ("id", "item_type", "title", "description", "remediation", "ticket", "status", "service_version", "detail_url", "source_type", "exception_status"))
     result["service"] = service(field(value, "service"))
     result["finding"] = fields(field(value, "finding"), ("id", "cve", "severity")) if field(value, "finding") else None
     result["policy_finding"] = fields(field(value, "policy_finding"), ("id", "finding", "severity")) if field(value, "policy_finding") else None
@@ -78,6 +78,11 @@ def project_governance(data, name, context, can, formatters):
         data.update(fields(context, ("embedded", "can_create_poam", "status_filter", "sort_by", "page", "page_size", "page_count", "total_items", "pagination_base")))
         data["overdue_entry_ids"] = [scalar(item) for item in context.get("overdue_entry_ids", [])]
         data["entries"] = [entry(item, formatters) for item in context.get("entries", [])]
+        sid = data["service"]["id"]
+        may = lambda permission: bool(can(permission, sid)) if callable(can) else False
+        data["review_import_kinds"] = (["poams", "mitigations"] if may("poam.request") or may("poam.import") else [])
+        if may("exception.request"):
+            data["review_import_kinds"].append("exceptions")
     elif name == "poam_entry.html":
         data["entry"] = entry(context.get("entry"), formatters)
         data.update(fields(context, ("can_change", "is_overdue")))

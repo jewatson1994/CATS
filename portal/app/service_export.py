@@ -110,6 +110,7 @@ def build_service_workbook(
     latest_execution: Any = None,
     activity_events: Iterable[Any] = (),
     poam_histories: Iterable[Any] = (),
+    poam_entries: Iterable[Any] | None = None,
 ) -> Workbook:
     """Build a workbook from ORM state and the latest authoritative payload.
 
@@ -140,9 +141,13 @@ def build_service_workbook(
     summary.append(["Field", "Value"])
     groups = ", ".join(group.name for group in service.groups)
     latest_at = latest_execution.scanned_at if latest_execution else None
-    poams = list(service.poam_entries)
-    exceptions = [exception for finding in service.findings for exception in finding.exceptions]
-    exceptions += [exception for finding in service.policy_findings for exception in finding.exceptions]
+    from .poam_query import _exception_entry
+    poams = list(poam_entries) if poam_entries is not None else [
+        *service.poam_entries,
+        *[_exception_entry(record, "exception", now, service) for finding in service.findings for record in finding.exceptions],
+        *[_exception_entry(record, "policy_exception", now, service) for finding in service.policy_findings for record in finding.exceptions],
+    ]
+    exceptions = [entry for entry in poams if entry.item_type == "exception"]
     mitigations = [entry for entry in poams if _text(entry.item_type).lower() == "mitigation"]
     chart_records = [
         *_items(raw_overview.get("helm_components")),
@@ -314,9 +319,9 @@ def build_service_workbook(
     _sheet(workbook, "POA&Ms", ["Finding", "Type", "Severity", "Status", "Title", "Created", "Due Date", "Created By", "Approved By", "Approval Date", "Description", "Remediation", "Ticket"], poam_rows)
 
     exception_rows = []
-    for exception in sorted(exceptions, key=lambda item: item.created_at or now):
-        finding = getattr(exception, "finding", None) or getattr(exception, "policy_finding", None)
-        exception_rows.append([getattr(finding, "cve", None) or getattr(finding, "finding", "—"), "Configuration" if exception.policy_finding else "Vulnerability", getattr(finding, "severity", "—"), _status_for_exception(exception, now), _datetime(exception.expires_at), exception.approved_by, _datetime(exception.starts_at), _datetime(exception.revoked_at), exception.justification, exception.ticket])
+    for entry in sorted(exceptions, key=lambda item: item.created_at or now):
+        finding = entry.finding or entry.policy_finding
+        exception_rows.append([getattr(finding, "cve", None) or getattr(finding, "finding", "—"), "Configuration" if entry.policy_finding else "Vulnerability", getattr(finding, "severity", "—"), _status_for_poam(entry), _datetime(entry.due_date), entry.approved_by.display_name if entry.approved_by else "—", _datetime(entry.approved_at), _datetime(getattr(entry, "revoked_at", None)), entry.description, entry.ticket])
     _sheet(workbook, "Exceptions", ["Finding", "Type", "Severity", "Status", "Expiration", "Approved By", "Approval Date", "Revoked Date", "Reason / Justification", "Ticket"], exception_rows)
 
     mitigation_rows = []

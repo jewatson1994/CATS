@@ -169,9 +169,12 @@ def project_service_operations(template_name, context):
         data["scan_chart_count"] = len(scanned_charts)
         data["chart_count"] = (data.get("chart_count") or 0) + len(scanned_charts)
         data["image_inventory"] = []
+        data["can_patch_images"] = bool(context.get("can_patch_images"))
         for row in context.get("image_inventory", []):
             item = fields(row, ("count", "references"))
             item["image"] = fields(field(row, "image"), ("id", "image_reference", "image_digest", "scan_status", "last_scanned_at", "scan_error", "lifecycle_status"))
+            item["image"]["patch_history"] = [fields(entry, ("original_image", "patched_at", "job_id", "result_image"))
+                for entry in (context.get("image_patch_history") or {}).get(item["image"]["id"], [])]
             data["image_inventory"].append(item)
     elif template_name == "service_validation.html":
         data.update(fields(context, ("can_validate", "validation_unavailable_reason")))

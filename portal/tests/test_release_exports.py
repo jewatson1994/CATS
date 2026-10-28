@@ -71,7 +71,8 @@ def test_documentation_uses_all_export_data_and_configured_templates(source, tmp
     manifest = write_documentation(db, record, _auth(), path)
     with ZipFile(path) as archive:
         assert set(archive.namelist()) == {"ppsm.xlsx", "poam.xlsx", "asset_list.xlsx", "findings.xlsx",
-            "mitigations.xlsx", "sbom-components.json", "diagrams.zip"}
+            "mitigations.xlsx", "sbom-components.json", "diagrams.zip",
+            "raw-scanner-outputs.zip.unavailable.txt", "sboms.zip.unavailable.txt"}
         assert json.loads(archive.read("sbom-components.json"))["components"] == [{"name": "new-component"}]
         all_cells = []
         for name in ("ppsm.xlsx", "poam.xlsx", "asset_list.xlsx", "findings.xlsx", "mitigations.xlsx"):
@@ -112,7 +113,7 @@ def test_missing_evidence_is_explicit(source, tmp_path):
         execution.raw_payload = {}
     manifest = write_documentation(db, record, _auth(), tmp_path / "docs.zip")
     unavailable = {entry["name"] for entry in manifest["entries"] if entry["status"] == "unavailable"}
-    assert unavailable == {"diagrams.zip", "sbom-components.json"}
+    assert unavailable == {"diagrams.zip", "sbom-components.json", "raw-scanner-outputs.zip", "sboms.zip"}
 
 
 def test_byte_limit_preserves_existing_file_and_cleans_temporary(source, tmp_path, monkeypatch):

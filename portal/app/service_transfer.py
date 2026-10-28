@@ -115,9 +115,10 @@ def scrub(value, path="", excluded=None):
     return value
 
 
-def schema_signature(legacy=False, pre_service_versions=False):
+def schema_signature(legacy=False, pre_service_versions=False, pre_workflow_imports=False):
     columns = {name: [(c.name, str(c.type), c.nullable) for c in model.__table__.columns
                       if not (legacy and name == "services" and c.name == "assessment_status")
+                      and not (pre_workflow_imports and name == "workflow_requests" and c.name in {"import_batch_id", "import_row_number"})
                       and not (pre_service_versions and (name, c.name) in {
                           ("services", "current_version_id"), ("executions", "service_version_id")})]
                for name, model in TABLES.items() if not (pre_service_versions and name == "service_versions")}
@@ -219,6 +220,8 @@ def export_service(db, service, username):
                 row["artifact_path"] = None
             if name == "workflow_requests":
                 row["bulk_group_id"] = None
+                row["import_batch_id"] = None
+                row["import_row_number"] = None
             for field in ("source_reference", "artifact_reference"):
                 reference = row.get(field)
                 if reference and (reference.startswith(("/", "\\", "file:")) or re.match(r"^[A-Za-z]:", reference)):
@@ -320,17 +323,21 @@ def parse_service(data):
             if sum(x.file_size for x in members) > bundle_bytes():
                 raise ValueError("Bundle exceeds expanded-byte limit")
             manifest = load_json(archive.read("manifest.json"))
-            signatures = {schema_signature(), schema_signature(pre_service_versions=True)}
-            if manifest.get("schema_version") == 2:
-                signatures.update({schema_signature(legacy=True), schema_signature(legacy=True, pre_service_versions=True)})
+            signatures = {schema_signature(legacy=legacy, pre_service_versions=old_versions, pre_workflow_imports=old_imports): (old_versions, old_imports)
+                          for legacy in ([False, True] if manifest.get("schema_version") == 2 else [False])
+                          for old_versions in (False, True) for old_imports in (False, True)}
             if manifest["format"] != "cats-service-bundle" or manifest["schema_version"] not in {2, 3} or manifest["compatibility"]["relational_schema"] not in signatures:
                 raise ValueError("Unsupported bundle format/schema or incompatible CATS schema")
             body = archive.read("service.json")
             if manifest["files"] != {"service.json": {"bytes": len(body), "sha256": sha256(body).hexdigest()}}:
                 raise ValueError("Bundle integrity check failed")
         state = load_json(body)
-        if manifest["compatibility"]["relational_schema"] in {
-                schema_signature(pre_service_versions=True), schema_signature(legacy=True, pre_service_versions=True)}:
+        old_versions, old_imports = signatures[manifest["compatibility"]["relational_schema"]]
+        if old_imports:
+            for workflow in state["records"]["workflow_requests"]:
+                workflow["import_batch_id"] = None
+                workflow["import_row_number"] = None
+        if old_versions:
             # The source bytes were integrity-checked above. Project older
             # bundles into the additive version schema before validating them.
             state["records"]["service_versions"] = []
@@ -409,6 +416,8 @@ def validate_state(state, manifest):
         for row in rows:
             if "service_id" in row and row["service_id"] != sid:
                 raise ValueError("Cross-service record rejected")
+            if name == "workflow_requests" and (row["import_batch_id"] is not None or row["import_row_number"] is not None):
+                raise ValueError("Import batch references cannot be transferred")
             for c in TABLES[name].__table__.columns:
                 if c.foreign_keys and row[c.name] is not None:
                     parent = next(iter(c.foreign_keys)).column.table.name

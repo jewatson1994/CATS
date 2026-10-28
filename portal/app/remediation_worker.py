@@ -3,6 +3,13 @@
 Run with ``python -m app.remediation_worker``. Runtime validation is delegated
 by the retained validation workflow to the enrolled remote validator.
 """
+from .remediation_worker_config import configure
+
+# Database engines are created by the imports below. Configure their capacity
+# only for the actual worker process, never as a side effect of library imports.
+if __name__ == "__main__":
+    worker_count = configure()
+
 from sqlalchemy import select
 from .durable_jobs import JobError, run_worker
 from .remediation_jobs import KINDS
@@ -225,4 +232,5 @@ def maintenance():
 
 
 if __name__ == "__main__":
-    run_worker((*KINDS, "proposal_assessment", "oci_reassessment", "patch_campaign_item", "artifact_recommendations"), handle, maintenance=maintenance)
+    run_worker((*KINDS, "proposal_assessment", "oci_reassessment", "patch_campaign_item", "artifact_recommendations"), handle,
+               maintenance=maintenance, max_workers=worker_count)

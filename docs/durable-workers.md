@@ -220,7 +220,7 @@ volume before replacing that container.
 
 | Worker | Concurrent work | CPU | Memory | PIDs | Database pool |
 | --- | --- | --- | --- | --- | --- |
-| remediation-worker | 1 | 1 | 2 GiB | 256 | 2 main + 2 background; no overflow |
+| remediation-worker | `CATS_REMEDIATION_WORKERS` (default 1) | 1 | 2 GiB | 256 | 2 main + 2 background at one worker; otherwise `2*workers+2` background; no overflow |
 | export-worker | 1 shared export slot | 1 | 1 GiB | 128 | 2 main + 2 background; no overflow |
 | provisioning-worker | 1 per process; per-validator exclusion | 1 | 2 GiB | 256 | 2 main + 2 background; no overflow |
 
@@ -232,6 +232,56 @@ defaults to 200 and their leases to 120 seconds (`CATS_JOB_QUEUE_CAPACITY`,
 `CATS_JOB_LEASE_SECONDS`). Budget the existing scan/patch engines, Docker child
 workloads and database in addition to these processes. Do not scale provisioning
 workers without capacity planning; host-level Docker work shares the portal VM.
+
+### Concurrent scans and image patches
+
+The scan and remediation limits are separate. Raising `CATS_SCAN_CONCURRENCY`
+does not increase patch capacity. To allow five scans and five durable patch or
+remediation jobs in the existing containers, set these values in the deployment's
+`.env` after upgrading the application image and Compose file together:
+
+```dotenv
+CATS_SCAN_CONCURRENCY=5
+CATS_REMEDIATION_WORKERS=5
+CATS_CANDIDATE_VERIFICATION_CONCURRENCY=5
+```
+
+Recreate the affected services with
+`docker compose up -d --force-recreate --wait scan-worker patch-worker remediation-worker`.
+These are two independent ceilings, allowing up to ten jobs across those queues.
+The remediation limit includes campaign image patches, plans, verification,
+delivery and other remediation work; it is not five additional slots for each
+kind. A single legacy remediation job still processes its image list in order;
+independent campaign image jobs can use the concurrent slots. The worker claims
+only free slots, retains a separate lease for each active job, and finishes active
+handlers on graceful shutdown. Expired leases remain recoverable after forced
+termination.
+
+`CATS_REMEDIATION_WORKERS` accepts 1 through 32 and defaults to 1. Threads share
+the existing remediation container's CPU, memory and PID limits; those limits and
+the scan container limits are not multiplied or raised. Concurrent work shares
+those budgets, so available memory and CPU can reduce throughput. Existing patch
+engine and Docker child-workload resource settings are unchanged and must still
+be included in the host's total budget.
+
+The remediation process reserves 12 background database connections at five
+workers, plus its existing two main connections. Leave
+`CATS_REMEDIATION_DB_POOL_SIZE` blank for automatic sizing, or set an explicit
+value at least `2*workers+2` when concurrency exceeds one (minimum 2 at one).
+An undersized or invalid override fails startup. Overflow is disabled so the
+connection budget remains bounded. The direct worker launcher also validates
+`CATS_DB_BACKGROUND_POOL_SIZE` when supplied; the remediation-specific setting
+takes precedence. Other background services retain their existing pools.
+
+Compose defaults candidate verification capacity to `CATS_REMEDIATION_WORKERS`
+when supplied, or 2 when both concurrency settings are unset. An explicit smaller
+candidate limit can reject simultaneous verifications as busy; match or exceed
+the intended remediation capacity. For direct launches outside Compose, set the
+candidate limit explicitly on `app.patch_service`. `CATS_PUBLIC_WORKERS` controls
+the separate legacy/public patch request pool in the portal (default 2); it does
+not change durable remediation capacity. Set it separately if that route also
+needs five slots, and recreate `portal` to apply it. Existing saved/live settings
+are not changed by upgrading the code.
 
 ## Verification scope
 

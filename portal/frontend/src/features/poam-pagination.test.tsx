@@ -15,3 +15,14 @@ it('preserves filters and size on page links and resets page when filters change
   expect(screen.getByRole('link', {name: 'Overdue'})).toHaveAttribute('href',
     '/services/key?poam=true&status_filter=overdue&sort_by=due&page_size=25');
 });
+
+it('links exception rows to their source and preserves lifecycle states', () => {
+  render(<Service data={{service: {id: 7, service_key: 'key', name: 'Service', groups: []}, view: {},
+    entries: [{id: 'exception:vulnerability:19', item_type: 'exception', title: 'Accepted library risk',
+      description: 'An expired exception', remediation: 'Replace library', status: 'expired', detail_url: '/findings/19'}],
+    overdue_entry_ids: [], status_filter: 'all', sort_by: 'newest', page_count: 1}}/>);
+  expect(screen.getByRole('link', {name: 'Accepted library risk'})).toHaveAttribute('href', '/findings/19');
+  expect(screen.getByText('expired')).toBeInTheDocument();
+  expect(screen.queryByText('Cybersecurity review required')).not.toBeInTheDocument();
+  expect(screen.getByRole('link', {name: 'Expired'})).toHaveAttribute('href', '/poam/services/key?status_filter=expired&sort_by=newest&page_size=50');
+});

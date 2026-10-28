@@ -38,7 +38,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .service_exports import (format_sheet, _service_mitigations_book,
-                              _service_findings_book, _service_diagrams_bytes, _service_sbom_components)
+                              _service_findings_book, _service_diagrams_bytes, _service_sbom_components,
+                              _service_raw_scanner_bytes, _service_sboms_bytes)
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
@@ -126,6 +127,7 @@ from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
+from .service_image_patches import image_patch_history
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
 from .remediation_retention import cleanup_remediation_artifacts
 from .deployment_validation import (
@@ -246,6 +248,8 @@ with migration_transaction(engine) as connection:
         connection.execute(text("ALTER TABLE workflow_requests ADD COLUMN policy_finding_id INTEGER"))
     if "bulk_group_id" not in {column["name"] for column in inspect(connection).get_columns("workflow_requests") }:
         connection.execute(text("ALTER TABLE workflow_requests ADD COLUMN bulk_group_id INTEGER"))
+    from .review_imports import upgrade_workflow_imports
+    upgrade_workflow_imports(connection)
     if "scan_scope" not in {column["name"] for column in inspect(connection).get_columns("executions") }:
         connection.execute(text("ALTER TABLE executions ADD COLUMN scan_scope VARCHAR(20) DEFAULT 'service'"))
     image_columns = {column["name"] for column in inspect(connection).get_columns("service_images")}
@@ -459,6 +463,8 @@ app = FastAPI(title="Continuous Assessment & Tracking System", version="2.0.0", 
 app.include_router(validator_management.router)
 from .exchange_routes import router as exchange_router
 app.include_router(exchange_router)
+from .review_imports import router as review_import_router
+app.include_router(review_import_router)
 app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
@@ -1342,7 +1348,8 @@ def page_context(auth: AuthContext, **values):
         with SessionLocal() as nav_db:
             request_query = select(
                 WorkflowRequest.request_type, WorkflowRequest.service_id,
-                WorkflowRequest.requested_by_id, Service.name,
+                WorkflowRequest.requested_by_id, Service.name, WorkflowRequest.id,
+                WorkflowRequest.import_batch_id,
             ).join(Service, Service.id == WorkflowRequest.service_id).where(WorkflowRequest.status == "pending")
             if allowed_services is not None:
                 request_query = request_query.where(
@@ -1350,13 +1357,23 @@ def page_context(auth: AuthContext, **values):
                 )
             permission_by_type = {"exception": "exception.review", "poam": "poam.review", "poam_update": "poam.review", "poam_complete": "poam.review", "poam_reopen": "poam.review", "archive": "archive.review", "image_remove": "archive.review", "image_replace": "archive.review"}
             pending_items = nav_db.execute(request_query).all()
+            import_notifications = {}
             for item in pending_items:
                 if item.requested_by_id == auth.user.id:
                     continue
                 permission = permission_by_type.get(item.request_type, "exception.review")
                 if not auth.has(permission, item.service_id):
                     continue
-                actionable_notifications.append({"label": item.request_type.replace("_", " ").title(), "service": item.name or "Service"})
+                if item.import_batch_id:
+                    notification = import_notifications.get(item.import_batch_id)
+                    if notification is None:
+                        notification = {"label": "Imported entries awaiting review", "service": item.name or "Service",
+                                        "href": f"/requests?batch_id={item.import_batch_id}", "count": 0}
+                        import_notifications[item.import_batch_id] = notification
+                        actionable_notifications.append(notification)
+                    notification["count"] += 1
+                else:
+                    actionable_notifications.append({"label": item.request_type.replace("_", " ").title(), "service": item.name or "Service", "href": f"/requests#request-{item.id}"})
             access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
                                      "href": "/admin#access-requests"}
                                     for item in access_requests.list_pending_requests(nav_db, auth)]
@@ -3143,6 +3160,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         incoming_payload = payload.model_dump(mode="json")
         def evidence_identity(value: dict) -> dict:
             normalized = dict(value)
+            normalized.setdefault("evidence_documents", [])
+            normalized.setdefault("evidence_unavailable", [])
             service_value = normalized.get("service") if isinstance(normalized.get("service"), dict) else {}
             # Display metadata is authoritative on Service and can legitimately
             # change during staged -> active promotion. The stable service key
@@ -4960,7 +4979,11 @@ def _patch_job_update(job_id: str, **values):
                     associated_ref = str(result.get("immutable_destination") or result.get("destination_image") or result.get("patched_image") or "").strip()
                     service = db.get(Service, record.service_id)
                     if service and associated_ref:
-                        _ensure_service_image(db, service, associated_ref)
+                        # Campaigns replace working inventory only when their durable
+                        # job successfully finishes, under its cancellation lock.
+                        if not db.scalar(select(patch_campaigns.PatchCampaignItem.id).where(
+                                patch_campaigns.PatchCampaignItem.patch_execution_id == record.id).limit(1)):
+                            _ensure_service_image(db, service, associated_ref)
                         existing_audit = db.scalar(select(func.count(AuditEvent.id)).where(
                             AuditEvent.action == "patch.completed", AuditEvent.target_id == str(record.id)
                         ))
@@ -8129,6 +8152,7 @@ def service_detail(
         else:
             architecture_graph = build_architecture_graph({}, runtime_evidence=architecture_runtime, layouts=False)
         finding_counts = overview_finding_counts(db, service.id, configuration, now, view)
+        service_images = db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all()
         from .exchange_routes import history_version_choices
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
@@ -8137,7 +8161,9 @@ def service_detail(
             artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
             deployment_validation=architecture_runtime or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
-            service_images=db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all(),
+            service_images=service_images,
+            can_patch_images=patch_campaigns.can_patch(auth, service),
+            image_patch_history=image_patch_history(db, service.id, service_images),
             now=now, finding_type=finding_type, archive_pending=archive_pending,
             groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
@@ -8347,6 +8373,8 @@ def service_detail(
             original_execution=latest_execution, original_files=original_files,
             artifact_rows=artifact_rows, helm_file_count=helm_file_count, service_images=service_images,
             image_inventory=image_inventory,
+            can_patch_images=patch_campaigns.can_patch(auth, service),
+            image_patch_history=image_patch_history(db, service.id, service_images),
             repository_count=repository_count, chart_count=chart_count, manifest_count=manifest_count,
             can_edit=auth.has("service.edit", service.id),
             can_image_workflow=auth.has("service.edit", service.id),
@@ -8549,6 +8577,8 @@ def service_detail(
             deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=service.images,
+            can_patch_images=patch_campaigns.can_patch(auth, service),
+            image_patch_history=image_patch_history(db, service.id, service.images),
             now=now, finding_type=finding_type, archive_pending=archive_pending,
             groups=db.scalars(select(Group).order_by(Group.name)).all(),
         ))
@@ -9089,6 +9119,22 @@ def export_service_sbom_components(service_key: str, db: Session = Depends(get_d
         "Content-Disposition": f'attachment; filename="{service_key}-sbom-components.json"'})
 
 
+@app.get("/services/{service_key}/exports/raw-scanner-outputs.zip")
+@queued_export("raw-scanner-outputs")
+def export_service_raw_scanner_outputs(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return Response(_service_raw_scanner_bytes(service_key, db), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{service_key}-raw-scanner-outputs.zip"'})
+
+
+@app.get("/services/{service_key}/exports/sboms.zip")
+@queued_export("sboms")
+def export_service_sboms(service_key: str, db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.export", scoped=True))):
+    return Response(_service_sboms_bytes(service_key, db), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="{service_key}-sboms.zip"'})
+
+
 @app.get("/services/{service_key}/exports/{kind}.xlsx")
 @queued_export("purpose")
 def export_purpose_workbook(service_key: str, kind: str, db: Session = Depends(get_db),
@@ -9187,9 +9233,11 @@ def export_service(service_key: str, include_diagrams: bool = False, version: st
         .options(selectinload(PoamHistory.actor))
         .order_by(PoamHistory.created_at)
     ).all()
+    from .poam_query import poam_export_entries
     workbook = build_service_workbook(
         service, view, configuration, now, latest_execution,
         activity_events=service_audit, poam_histories=histories,
+        poam_entries=poam_export_entries(db, [service.id], now=now),
     )
     if not include_diagrams:
         return workbook_response(workbook, service_export_filename(service, now))
@@ -9481,12 +9529,8 @@ def poam_page(request: Request, db: Session = Depends(get_db), auth: AuthContext
     }
     if visible_ids:
         instant = utcnow()
-        summaries = db.execute(select(PoamEntry.service_id, func.count().label("total"),
-            func.sum(case((PoamEntry.status == "active", 1), else_=0)).label("active"),
-            func.sum(case((PoamEntry.status == "pending_approval", 1), else_=0)).label("pending"),
-            func.sum(case((and_(PoamEntry.status == "active", PoamEntry.due_date < instant), 1),
-                          else_=0)).label("overdue"))
-            .where(PoamEntry.service_id.in_(visible_ids)).group_by(PoamEntry.service_id)).mappings()
+        from .poam_query import poam_service_summaries
+        summaries = poam_service_summaries(db, visible_ids, instant)
         for summary in summaries:
             counts[summary["service_id"]] = {key: int(summary[key] or 0)
                 for key in ("total", "active", "pending", "overdue")}
@@ -9696,8 +9740,12 @@ def poam_workbook(entries: list[PoamEntry]) -> Workbook:
                       entry.title, entry.description,
                       entry.finding.cve if entry.finding else (entry.policy_finding.finding if entry.policy_finding else None),
                       entry.remediation, excel_datetime(entry.due_date), entry.status.replace("_", " ").title(),
-                      entry.ticket, entry.created_by.display_name,
+                      entry.ticket, entry.created_by.display_name if entry.created_by else None,
                       entry.approved_by.display_name if entry.approved_by else None, excel_datetime(entry.approved_at)])
+    from .exchange import literal
+    for row in sheet.iter_rows(min_row=2):
+        for cell in row:
+            literal(cell, cell.value)
     for column in ("H", "M"):
         for cell in sheet[column][1:]:
             cell.number_format = "yyyy-mm-dd hh:mm"
@@ -9709,20 +9757,15 @@ def scoped_poam_export_entries(db: Session, auth: AuthContext, service_id: int |
     allowed = auth.accessible_service_ids("service.export")
     if allowed == set():
         raise HTTPException(403, detail="Permission denied")
-    query = select(PoamEntry).options(selectinload(PoamEntry.service), selectinload(PoamEntry.finding), selectinload(PoamEntry.policy_finding),
-        selectinload(PoamEntry.created_by), selectinload(PoamEntry.approved_by)).order_by(PoamEntry.service_id, PoamEntry.created_at.desc())
-    if allowed is not None:
-        query = query.where(PoamEntry.service_id.in_(allowed))
+    from .poam_query import poam_export_entries
+    service_ids = set(allowed) if allowed is not None else None
     if service_id is not None:
-        query = query.where(PoamEntry.service_id == service_id)
+        service_ids = {service_id} if service_ids is None else service_ids & {service_id}
     if service_term:
-        matching = db.scalars(select(Service.id).where(or_(Service.name.ilike(f"%{service_term}%"), Service.service_key.ilike(f"%{service_term}%")))).all()
-        query = query.where(PoamEntry.service_id.in_(matching or [-1]))
-    if status_filter != "all":
-        query = query.where(PoamEntry.status == status_filter)
-    if due_overdue:
-        query = query.where(PoamEntry.status == "active", PoamEntry.due_date.is_not(None), PoamEntry.due_date < utcnow())
-    return db.scalars(query).all()
+        matching = set(db.scalars(select(Service.id).where(or_(Service.name.ilike(f"%{service_term}%"), Service.service_key.ilike(f"%{service_term}%")))).all())
+        service_ids = matching if service_ids is None else service_ids & matching
+    return poam_export_entries(db, service_ids, status_filter=status_filter, due_overdue=due_overdue)
+
 
 
 @app.get("/poam/export.xlsx")
@@ -10287,6 +10330,8 @@ def delete_service(
         db.execute(delete(PoamChangeRequest).where(PoamChangeRequest.poam_id.in_(poam_ids)))
         db.execute(delete(PoamHistory).where(PoamHistory.poam_id.in_(poam_ids)))
     db.execute(delete(WorkflowRequest).where(WorkflowRequest.service_id == service.id))
+    from .models import WorkflowImportBatch
+    db.execute(delete(WorkflowImportBatch).where(WorkflowImportBatch.service_id == service.id))
     db.execute(delete(PoamEntry).where(PoamEntry.service_id == service.id))
     if finding_ids:
         db.execute(delete(FindingObservation).where(FindingObservation.finding_id.in_(finding_ids)))
@@ -10334,17 +10379,20 @@ def delete_service(
 
 
 @app.get("/requests", response_class=HTMLResponse)
-def requests_page(request: Request, request_type: str = "all", db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+def requests_page(request: Request, request_type: str = "all", batch_id: int | None = None, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     allowed = auth.accessible_service_ids("service.view")
     query = select(WorkflowRequest).options(
         selectinload(WorkflowRequest.service), selectinload(WorkflowRequest.finding),
         selectinload(WorkflowRequest.finding).selectinload(Finding.exceptions),
         selectinload(WorkflowRequest.policy_finding).selectinload(PolicyFinding.exceptions),
         selectinload(WorkflowRequest.requested_by), selectinload(WorkflowRequest.reviewed_by),
-        selectinload(WorkflowRequest.service_image),
+        selectinload(WorkflowRequest.service_image), selectinload(WorkflowRequest.poam),
+        selectinload(WorkflowRequest.import_batch), selectinload(WorkflowRequest.bulk_group),
     ).order_by(WorkflowRequest.created_at.desc())
     if allowed is not None:
         query = query.where(WorkflowRequest.service_id.in_(allowed))
+    if batch_id is not None:
+        query = query.where(WorkflowRequest.import_batch_id == batch_id)
     if request_type == "poam":
         query = query.where(WorkflowRequest.request_type.like("poam%"))
     elif request_type in {"exception", "archive"}:
@@ -10352,6 +10400,10 @@ def requests_page(request: Request, request_type: str = "all", db: Session = Dep
     elif request_type != "all":
         raise HTTPException(422, detail="Unknown request filter")
     workflows = db.scalars(query).all()
+    if batch_id is not None and not workflows:
+        raise HTTPException(404, detail="Import batch not found")
+    from .review_imports import batch_summaries
+    import_batches = batch_summaries(workflows)
     now = utcnow()
     workflow_statuses = {}
     for item in workflows:
@@ -10367,7 +10419,9 @@ def requests_page(request: Request, request_type: str = "all", db: Session = Dep
                 display_status = "expired"
         workflow_statuses[item.id] = display_status
     return templates.TemplateResponse(request, "requests.html", page_context(
-        auth, workflows=workflows, workflow_statuses=workflow_statuses, request_type_filter=request_type,
+        auth, workflows=workflows if batch_id is not None else [item for item in workflows if not item.import_batch_id],
+        workflow_statuses=workflow_statuses, request_type_filter=request_type,
+        import_batches=import_batches, selected_import_batch=import_batches[0] if batch_id is not None else None,
     ))
 
 
@@ -10397,6 +10451,18 @@ def review_request(
         raise HTTPException(422, detail="A rejection reason is required")
     if decision == "approved" and workflow.bulk_group_id and apply_bulk != "yes":
         raise HTTPException(422, detail="Confirm the group-wide exception scope before approving")
+    if decision == "approved" and workflow.request_type == "exception" and workflow.import_batch_id:
+        source = db.get(PolicyFinding, workflow.policy_finding_id) if workflow.policy_finding_id else db.get(Finding, workflow.finding_id)
+        if not source or source.service_id != workflow.service_id or not source.active:
+            raise HTTPException(409, detail="Imported exception target is no longer active in this service")
+        if active_exception(source, utcnow()):
+            raise HTTPException(409, detail="An approved exception is already active for this finding; revoke or let it expire before approving another")
+        if not workflow.requested_expires_at or aware(workflow.requested_expires_at) <= utcnow():
+            raise HTTPException(409, detail="Requested exception expiration has passed; submit a new request")
+    claimed = db.execute(update(WorkflowRequest).where(WorkflowRequest.id == workflow.id,
+        WorkflowRequest.status == "pending").values(status=decision), execution_options={"synchronize_session": False})
+    if claimed.rowcount != 1:
+        raise HTTPException(409, detail="Request has already been reviewed")
     workflow.status = decision
     workflow.reviewed_by_id = auth.user.id
     workflow.review_reason = review_reason.strip() or None
@@ -10422,6 +10488,8 @@ def review_request(
                     setattr(poam, field, change.proposed.get(field))
                 raw_due = change.proposed.get("due_date")
                 poam.due_date = datetime.fromisoformat(raw_due) if raw_due else None
+                if "supplemental_fields" in change.proposed:
+                    poam.supplemental_fields = change.proposed["supplemental_fields"]
             elif change.change_type == "complete":
                 poam.status = "completed"
             elif change.change_type == "reopen":
@@ -10445,6 +10513,8 @@ def review_request(
             )
             if bulk_service_ids is not None:
                 query = query.where(PolicyFinding.service_id.in_(bulk_service_ids))
+            elif workflow.import_batch_id:
+                query = query.where(PolicyFinding.id == workflow.policy_finding_id, PolicyFinding.service_id == workflow.service_id)
             for target in db.scalars(query).all():
                 if not active_exception(target, utcnow()):
                     db.add(PolicyExceptionRecord(
@@ -10459,6 +10529,8 @@ def review_request(
             )
             if bulk_service_ids is not None:
                 query = query.where(Finding.service_id.in_(bulk_service_ids))
+            elif workflow.import_batch_id:
+                query = query.where(Finding.id == workflow.finding_id, Finding.service_id == workflow.service_id)
             for target in db.scalars(query).all():
                 if not active_exception(target, utcnow()):
                     db.add(ExceptionRecord(
@@ -10503,7 +10575,7 @@ def review_request(
     record_audit(db, auth, f"{workflow.request_type}.{decision}", "workflow_request", workflow.id,
                  service_id=workflow.service_id, review_reason=workflow.review_reason)
     db.commit()
-    return RedirectResponse("/requests", status_code=303)
+    return RedirectResponse(f"/requests?batch_id={workflow.import_batch_id}" if workflow.import_batch_id else "/requests", status_code=303)
 
 
 @app.get("/audit")
@@ -12162,6 +12234,9 @@ def delete_user_account(
         history.actor_user_id = None
     # Re-point non-null historical foreign keys to the administrator performing
     # the deletion; audit snapshots above preserve the original actor.
+    from .models import WorkflowImportBatch
+    for batch in db.scalars(select(WorkflowImportBatch).where(WorkflowImportBatch.requested_by_id == user.id)):
+        batch.requested_by_id = auth.user.id
     for workflow in db.scalars(select(WorkflowRequest).where(WorkflowRequest.requested_by_id == user.id)):
         workflow.requested_by_id = auth.user.id
     for workflow in db.scalars(select(WorkflowRequest).where(WorkflowRequest.reviewed_by_id == user.id)):

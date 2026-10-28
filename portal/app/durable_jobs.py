@@ -6,6 +6,7 @@ idempotent and check the current lease before publishing results.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 import logging
 import os
@@ -201,11 +202,16 @@ class JobContext:
             row = self._owned(db)
             cancelled = cancelled or row.cancel_requested
             retry = retry and not cancelled and row.attempts < row.max_attempts
-            row.status = "cancelled" if cancelled else "queued" if retry else "failed" if error else "completed"
-            row.stage = "Waiting to retry" if retry else row.status.capitalize()
+            status = "cancelled" if cancelled else "queued" if retry else "failed" if error else "completed"
+            row.stage = "Waiting to retry" if retry else status.capitalize()
             row.error = error
             if result is not None:
                 row.result = {**row.result, **result}
+            if status == "completed" and row.kind == "patch_campaign_item":
+                from .patch_campaigns import complete_inventory
+                # Inventory and completion commit together under the job lock.
+                row.result = {**row.result, **complete_inventory(db, row)}
+            row.status = status
             row.progress = 100 if row.status == "completed" else row.progress
             row.completed_at = None if retry else now()
             row.available_at = now() + timedelta(seconds=min(300, 5 * 2 ** row.attempts))
@@ -249,23 +255,47 @@ def execute(job, handler, session_factory=SessionLocal):
         thread.join(timeout=2)
 
 
-def run_worker(kinds, handler, *, maintenance=None):
-    """One active job per process; scale with explicit Compose resource budgets."""
+def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
+    """Claim only available execution slots; active jobs keep their own leases."""
+    if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 32:
+        raise ValueError("max_workers must be an integer from 1 to 32")
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     worker_id = os.getenv("HOSTNAME", "worker") + "-" + uuid.uuid4().hex[:8]
     last_maintenance = 0
-    while not stop.is_set():
-        try:
-            if maintenance and time.monotonic() - last_maintenance >= 60:
-                maintenance()
-                last_maintenance = time.monotonic()
-            job = claim(kinds, worker_id)
-            if job:
-                execute(job, handler)
-            else:
+    # The single-worker path retains its main-thread database routing. Other
+    # worker services keep that default and their existing connection budgets.
+    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="cats-job") as pool:
+        active = set()
+        while not stop.is_set():
+            try:
+                completed = {future for future in active if future.done()}
+                active -= completed
+                for future in completed:
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        logging.getLogger(__name__).error("worker_job_failure exception_type=%s", type(exc).__name__)
+                if maintenance and time.monotonic() - last_maintenance >= 60:
+                    # Failed reconciliation must neither busy-loop nor prevent
+                    # already queued work from running until the next interval.
+                    last_maintenance = time.monotonic()
+                    try:
+                        maintenance()
+                    except Exception as exc:
+                        logging.getLogger(__name__).error("worker_maintenance_failure exception_type=%s", type(exc).__name__)
+                if len(active) < max_workers and not stop.is_set():
+                    job = claim(kinds, worker_id)
+                    if job:
+                        if max_workers == 1:
+                            execute(job, handler)
+                        else:
+                            active.add(pool.submit(execute, job, handler))
+                        continue
                 stop.wait(2)
-        except Exception as exc:
-            logging.getLogger(__name__).error("worker_loop_failure exception_type=%s", type(exc).__name__)
-            stop.wait(5)
+            except Exception as exc:
+                logging.getLogger(__name__).error("worker_loop_failure exception_type=%s", type(exc).__name__)
+                stop.wait(5)
+        # Executor shutdown waits for active handlers; their heartbeat threads
+        # remain alive while they finish. No queued job is claimed on shutdown.

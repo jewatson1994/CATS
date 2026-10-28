@@ -588,6 +588,16 @@ class UserSession(Base):
     user: Mapped["User"] = relationship(back_populates="sessions")
 
 
+class WorkflowImportBatch(Base):
+    __tablename__ = "workflow_import_batches"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(30))
+    filename: Mapped[str] = mapped_column(String(240))
+    requested_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class WorkflowRequest(Base):
     __tablename__ = "workflow_requests"
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -597,6 +607,8 @@ class WorkflowRequest(Base):
     finding_id: Mapped[int | None] = mapped_column(ForeignKey("findings.id"), index=True)
     policy_finding_id: Mapped[int | None] = mapped_column(ForeignKey("policy_findings.id"), index=True)
     bulk_group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"), index=True)
+    import_batch_id: Mapped[int | None] = mapped_column(ForeignKey("workflow_import_batches.id"), index=True)
+    import_row_number: Mapped[int | None] = mapped_column(Integer)
     poam_id: Mapped[int | None] = mapped_column(ForeignKey("poam_entries.id"), index=True)
     service_image_id: Mapped[int | None] = mapped_column(ForeignKey("service_images.id"), index=True)
     replacement_reference: Mapped[str | None] = mapped_column(Text)
@@ -616,6 +628,7 @@ class WorkflowRequest(Base):
     poam: Mapped["PoamEntry | None"] = relationship(back_populates="workflows")
     bulk_group: Mapped["Group | None"] = relationship(foreign_keys=[bulk_group_id])
     service_image: Mapped["ServiceImage | None"] = relationship()
+    import_batch: Mapped["WorkflowImportBatch | None"] = relationship()
 
 
 class PoamEntry(Base):

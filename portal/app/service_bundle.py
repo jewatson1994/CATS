@@ -25,6 +25,10 @@ def portable_payload(raw):
     value = ExecutionPayload.model_validate(raw).model_dump(mode="json")
     value["helm_source_files"] = {}
     value["helm_values_files"] = []
+    # Original reports may contain free-form scanner snippets. Keep the legacy
+    # summary bundle's exclusion contract; authorized raw exports are separate.
+    value["evidence_documents"] = []
+    value["evidence_unavailable"] = []
     value["service"]["groups"] = []
     value["pipeline_url"] = None
     # Overview and free-form finding evidence can embed Kubernetes Secret

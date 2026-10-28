@@ -1,5 +1,7 @@
 """Shared builders for individual downloads, Export All and release delivery."""
 from io import BytesIO
+import json
+import os
 from zipfile import ZipFile, ZIP_DEFLATED
 
 from fastapi import HTTPException
@@ -121,6 +123,57 @@ def _service_sbom_components(service_key: str, db: Session):
         "execution_id": latest.execution_key, "components": latest.raw_payload["sbom_components"]}
 
 
+def _service_evidence_zip(service_key: str, db: Session, category: str):
+    """Download retained bytes from exactly the current version's assessment."""
+    from .release_exports import _BoundedFile
+    from .retained_documents import (EvidenceDocument, UnavailableDocument, SBOM_FORMATS,
+                                     SCANNER_FORMATS, decode_document, validate_documents)
+
+    if category not in {"scanner", "sbom"}:
+        raise ValueError("Unknown evidence export category")
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    latest = current_execution(db, service)
+    raw = (latest.raw_payload or {}) if latest else {}
+    try:
+        documents = [EvidenceDocument.model_validate(value) for value in raw.get("evidence_documents", [])]
+        unavailable = [UnavailableDocument.model_validate(value) for value in raw.get("evidence_unavailable", [])]
+        validate_documents(documents, unavailable)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(409, detail="Retained export evidence failed its integrity or size check") from exc
+    documents = [document for document in documents if document.category == category]
+    unavailable = [document.model_dump() for document in unavailable if document.category == category]
+    if not documents:
+        label = "original Grype/Trivy outputs" if category == "scanner" else "SBOM documents"
+        reason = (" " + unavailable[0]["reason"]) if unavailable else " Run a new scan to retain this evidence."
+        raise HTTPException(422, detail=f"No retained {label} are available for the current assessment.{reason}")
+    supported = SCANNER_FORMATS if category == "scanner" else SBOM_FORMATS
+    manifest = {"format": "cats-retained-evidence-v1", "service": service_key,
+                "execution_id": latest.execution_key, "category": category,
+                "supported_formats": list(supported), "entries": [], "unavailable": unavailable,
+                "missing_formats": [name for name in supported if not any(doc.format == name for doc in documents)]}
+    output = BytesIO()
+    limit = max(1, int(os.getenv("CATS_EXPORT_MAX_BYTES", str(256 * 1024 * 1024))))
+    with ZipFile(_BoundedFile(output, limit), "w", ZIP_DEFLATED) as archive:
+        for document in documents:
+            name = f"{document.format}/{document.name}"
+            archive.writestr(name, decode_document(document))
+            manifest["entries"].append({**document.model_dump(exclude={"content", "encoding"}),
+                "archive_name": name,
+                "provenance": "converted-from-syft" if document.derived_from_sha256 else "original"})
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+    return output.getvalue()
+
+
+def _service_raw_scanner_bytes(service_key: str, db: Session):
+    return _service_evidence_zip(service_key, db, "scanner")
+
+
+def _service_sboms_bytes(service_key: str, db: Session):
+    return _service_evidence_zip(service_key, db, "sbom")
+
+
 
 def write_all(output, service, db, auth, *, bundle_builder=None, max_bytes=None):
     """Write the same permission-scoped ZIP for downloads and retained releases."""
@@ -143,5 +196,7 @@ def write_all(output, service, db, auth, *, bundle_builder=None, max_bytes=None)
             export_service(db, service, auth.user.username))
     return write_export_archive(output, workbook_builders=workbooks,
         evidence_builders={"diagrams.zip": lambda: _service_diagrams_bytes(service.service_key, db),
-                           "sbom-components.json": lambda: _service_sbom_components(service.service_key, db)},
+                           "sbom-components.json": lambda: _service_sbom_components(service.service_key, db),
+                           "raw-scanner-outputs.zip": lambda: _service_raw_scanner_bytes(service.service_key, db),
+                           "sboms.zip": lambda: _service_sboms_bytes(service.service_key, db)},
         supplemental_entries=supplemental, max_bytes=max_bytes)

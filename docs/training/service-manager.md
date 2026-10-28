@@ -24,9 +24,15 @@ Check service versus group scope before submission. Group-wide exception request
 
 Keep POA&M progress and mitigation evidence current. Closure applies to an active POA&M. Request archiving when a service leaves use; restoration and deletion require other permissions.
 
+The service's **Remediations → POA&Ms** view combines POA&M entries, mitigations, and exceptions, including pending requests and expired or revoked exceptions. Its POA&M export uses the same complete service scope.
+
+To import existing records, select **Import for Cyber review** from the service remediation, POA&M, or exchange view. Choose POA&Ms, Mitigations, or Exceptions, then download the CSV template. Upload a UTF-8 CSV or an Excel workbook with one worksheet and the template's column headings. Exceptions must identify exactly one vulnerability finding ID or policy finding ID belonging to this service and supply a future expiration date. Review the preview, correct any reported errors, and submit. Each row becomes a pending entry; no imported row takes effect as an approval. The import creates one Cyber review request containing all rows. Requests entered individually still create separate notifications.
+
 ## Remediate and validate
 
 Remediation must be enabled in administration. Inspect the source-bound plan, use Automated or Guided handling, and resolve ambiguous image mappings explicitly. Confirm registry destination and delivery mode before execution.
+
+Use **Patch** beside an active container image on **Overview** or **Artifacts** to open a patch campaign with that image selected. Scan first if its immutable digest is missing. A successfully verified patch replaces the working inventory image and retains the original image and evidence. Select **✦ Patched** beside the replacement to see the original image, patch date and time, and retained results. Failed or cancelled patches leave the original active. Release adoption still requires the configured assessment and Cyber approval.
 
 Review candidate patch/post-scan evidence, publication, required signature verification, and runtime validation separately. Download-only delivery is not runtime verification. Delivery retries can reuse the remediation revision. Deploy through your organization's process, then scan and ingest authoritative evidence for the deployed version; candidate evidence does not silently replace original governance records.
 

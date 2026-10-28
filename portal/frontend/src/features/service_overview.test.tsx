@@ -48,6 +48,12 @@ it('shows immutable artifact matches with independent producer evidence and no w
   expect(section).toHaveTextContent('Failed');
   expect(section).toHaveTextContent('do not establish verification or lineage for the complete release');
 });
+it('shows per-image patch actions independently from removal permissions and keeps history beside the image', () => {
+  render(<Page data={fixture({can_patch_images: true, service_images: [{id: 8, image_reference: 'registry/app:v2', image_digest: `sha256:${'b'.repeat(64)}`, lifecycle_status: 'active', patch_history: [{original_image: 'registry/app:v1', result_image: 'registry/app:v2', patched_at: '2026-10-25T12:00:00Z', job_id: 'patch-1'}]}]})}/>);
+  expect(screen.getByRole('link', {name: 'Patch registry/app:v2'})).toHaveAttribute('href', '/patch-campaigns?service_id=sample&image_id=8');
+  expect(screen.getByLabelText('Patch history for registry/app:v2')).toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Request Removal'})).not.toBeInTheDocument();
+});
 it('scopes evidence polling to the selected release and aborts when leaving', async () => {
   vi.useFakeTimers();
   const fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
