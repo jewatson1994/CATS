@@ -192,15 +192,27 @@ def _version(service, execution):
 def _poam_rows(db, service):
     from .native_vex import excluded_finding_ids
     from .risk_profiles import utcnow
-    excluded = excluded_finding_ids(db, service.id, utcnow())
+    from .poam_query import poam_export_entries
+    now = utcnow()
+    excluded = excluded_finding_ids(db, service.id, now)
     rows = []
-    entries = db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id).order_by(PoamEntry.id)).all()
+    entries = poam_export_entries(db, [service.id], now=now)
+    finding_ids = {entry.finding_id for entry in entries if entry.finding_id}
+    latest_ids = select(func.max(FindingObservation.id)).where(
+        FindingObservation.finding_id.in_(finding_ids)).group_by(FindingObservation.finding_id)
+    observations = {item.finding_id: item for item in db.scalars(
+        select(FindingObservation).where(FindingObservation.id.in_(latest_ids))).all()} if finding_ids else {}
+    exceptions = {}
+    for entry in entries:
+        if entry.source_type in {'exception', 'policy_exception'}:
+            key = (entry.finding_id, entry.policy_finding_id)
+            previous = exceptions.get(key)
+            if previous is None or entry.source_id > previous.source_id:
+                exceptions[key] = entry
     for entry in entries:
         finding, policy = entry.finding, entry.policy_finding
-        observation = (db.scalar(select(FindingObservation).where(FindingObservation.finding_id == finding.id)
-            .order_by(FindingObservation.id.desc()).limit(1)) if finding else None)
-        exception = (max(finding.exceptions, key=lambda e: e.id, default=None) if finding else
-                     max(policy.exceptions, key=lambda e: e.id, default=None) if policy else None)
+        observation = observations.get(finding.id) if finding else None
+        exception = entry if entry.source_type != 'poam' else exceptions.get((entry.finding_id, entry.policy_finding_id))
         rows.append({
             "service": service.name, "service_id": service.service_key,
             "effective_disposition": "Resolved" if finding and not finding.active else "VEX Excluded" if finding and finding.id in excluded else "Existing Policy",
@@ -208,7 +220,7 @@ def _poam_rows(db, service):
             "finding_id": finding.cve if finding else policy.finding if policy else "",
             "finding_type": "Vulnerability" if finding else "Configuration" if policy else entry.item_type,
             "finding_title": policy.title if policy else entry.title,
-            "description": policy.description if policy else entry.description,
+            "description": entry.description if entry.item_type == "exception" else policy.description if policy else entry.description,
             "severity": finding.severity if finding else policy.severity if policy else "",
             "finding_status": ("Active" if finding.active else "Resolved") if finding else
                               ("Active" if policy.active else "Resolved") if policy else "",
@@ -221,9 +233,7 @@ def _poam_rows(db, service):
             "item_type": entry.item_type, "poam_title": entry.title, "poam_status": entry.status,
             "created_at": entry.created_at, "due_date": entry.due_date,
             "mitigation": entry.remediation,
-            "exception_status": ("Revoked" if exception.revoked_at else
-                                 "Expired" if exception.expires_at and exception.expires_at.replace(tzinfo=None) < datetime.utcnow() else
-                                 "Active") if exception else "None",
+            "exception_status": exception.exception_status if exception else "None",
             "scanner": policy.scanner if policy else (observation.evidence or {}).get("data_source", "") if observation else "",
             "assessment_status": service.assessment_status,
         })

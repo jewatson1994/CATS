@@ -1,0 +1,10 @@
+.image-patch-history { margin-top: .35rem; }
+.image-patch-history > summary { width: fit-content; cursor: pointer; font-size: .85rem; font-weight: 600; }
+.image-patch-history-content { margin-top: .6rem; padding: .75rem; border: 1px solid var(--border, #64748b); border-radius: .5rem; }
+.image-patch-history-content section + section { margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--border, #64748b); }
+.image-patch-history-content dl { margin: 0 0 .5rem; }
+.image-patch-history-content dt { font-weight: 600; margin-top: .4rem; }
+.image-patch-history-content dd { margin: .2rem 0 .5rem; }
+.image-patch-history-content code { overflow-wrap: anywhere; white-space: normal; }
+.image-patch-unavailable { display: inline-flex; flex-direction: column; gap: .25rem; max-width: 16rem; }
+.image-patch-unavailable small { font-size: .8rem; }

@@ -14,6 +14,12 @@ def project_remediations(data, name, context, can, formatters):
     data["return_to"] = data["next_path"]
     data["service"] = service(context.get("service") or _field(context.get("view", {}), "service"))
     sid = data["service"].get("id")
+    data["review_import_kinds"] = []
+    if sid is not None and callable(can):
+        if can("poam.request", sid) or can("poam.import", sid):
+            data["review_import_kinds"].extend(("poams", "mitigations"))
+        if can("exception.request", sid):
+            data["review_import_kinds"].append("exceptions")
     for key in ("poam.review", "exception.revoke", "remediation.execute", "service.export", "artifact.publish", "artifact.sign"):
         permission(key, sid)
     data["services"] = [service(item) for item in context.get("services", [])]
@@ -103,11 +109,15 @@ def project_remediations(data, name, context, can, formatters):
         data["job"] = job(context.get("job"), True)
         data["status_revision"] = context.get("status_revision")
     if name == "requests.html":
+        batch_fields = ("id", "name", "kind", "count", "pending", "approved", "rejected", "href")
+        data["import_batches"] = [_fields(item, batch_fields) for item in context.get("import_batches", [])]
+        data["selected_import_batch"] = _fields(context["selected_import_batch"], batch_fields) if context.get("selected_import_batch") else None
         data["workflows"] = []
         for item in context.get("workflows", []):
-            row = _fields(item, ("id", "request_type", "poam_id", "justification", "ticket", "review_reason"))
+            row = _fields(item, ("id", "request_type", "poam_id", "justification", "ticket", "review_reason", "import_batch_id", "import_row_number"))
             row["service"] = service(_field(item, "service"))
-            row["subject"] = _scalar(_field(_field(item, "finding"), "cve") or _field(_field(item, "policy_finding"), "finding"))
+            row["subject"] = _scalar(_field(_field(item, "poam"), "title") or _field(_field(item, "finding"), "cve") or _field(_field(item, "policy_finding"), "finding"))
+            row["requested_expires_at"] = timestamp(_field(item, "requested_expires_at"))
             row["bulk_group"] = _fields(_field(item, "bulk_group"), ("id", "name")) if _field(item, "bulk_group") else None
             row["requested_by"] = _scalar(_field(_field(item, "requested_by"), "display_name"))
             row["reviewed_by"] = _scalar(_field(_field(item, "reviewed_by"), "display_name"))

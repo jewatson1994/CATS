@@ -1,0 +1,13 @@
+.review-import-dialog { width: min(72rem, calc(100vw - 3rem)); max-width: 72rem; }
+.review-import-dialog form { display: grid; gap: var(--space-3); }
+.review-import-dialog button { margin-block: var(--space-2); }
+.review-import-dialog [role=status] { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+.review-import-dialog [role=status] p { flex-basis: 100%; }
+.review-import-preview { max-height: 26rem; overflow: auto; margin-block: var(--space-3); }
+.review-import-preview th, .review-import-preview td { min-width: 8rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-import-preview th:first-child { min-width: 3rem; }
+.import-batch-list { display: grid; gap: var(--space-3); }
+.import-batch-list article { border-bottom: 1px solid var(--border); padding-bottom: var(--space-3); }
+.import-row-review { display: grid; gap: var(--space-2); min-width: 16rem; }
+.import-row-review textarea { min-height: 4rem; }
+.import-row-review div { display: flex; flex-wrap: wrap; gap: var(--space-2); }

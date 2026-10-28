@@ -138,6 +138,8 @@ services:
     environment:
       CATS_PATCH_JOB_ROOT: /tmp/cats-patch-jobs
 
+      CATS_CANDIDATE_VERIFICATION_CONCURRENCY: ${CATS_CANDIDATE_VERIFICATION_CONCURRENCY:-${CATS_REMEDIATION_WORKERS:-2}}
+
       CATS_PATCH_WORKER_TOKEN: ${CATS_PATCH_WORKER_TOKEN:?Set CATS_PATCH_WORKER_TOKEN in .env}
 
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
@@ -327,6 +329,8 @@ services:
       # -------------------------------------------------------
 
       CATS_PATCH_WORKER_URL: http://patch-worker:8010
+
+      CATS_PUBLIC_WORKERS: ${CATS_PUBLIC_WORKERS:-2}
 
       CATS_PATCH_WORKER_TOKEN: ${CATS_PATCH_WORKER_TOKEN:?Set CATS_PATCH_WORKER_TOKEN in .env}
 
@@ -709,12 +713,16 @@ services:
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["python", "-m", "app.remediation_worker"]
-    environment: &background_environment
-      <<: *portal_environment
-      CATS_DB_POOL_SIZE: 2
-      CATS_DB_MAX_OVERFLOW: 0
-      CATS_DB_BACKGROUND_POOL_SIZE: 2
-      CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+    environment:
+      <<: &background_environment
+        <<: *portal_environment
+        CATS_DB_POOL_SIZE: 2
+        CATS_DB_MAX_OVERFLOW: 0
+        CATS_DB_BACKGROUND_POOL_SIZE: 2
+        CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+      CATS_REMEDIATION_WORKERS: ${CATS_REMEDIATION_WORKERS:-1}
+      # Blank selects the worker's bounded pool for its configured concurrency.
+      CATS_DB_BACKGROUND_POOL_SIZE: ${CATS_REMEDIATION_DB_POOL_SIZE:-}
     volumes: *portal_volumes
     cpus: ${CATS_REMEDIATION_CPUS:-1.0}
     mem_limit: ${CATS_REMEDIATION_MEMORY:-2g}
@@ -728,6 +736,7 @@ services:
   risk-worker:
     <<: *background_worker
     command: ["python", "-m", "app.risk_worker"]
+    environment: *background_environment
     cpus: ${CATS_RISK_CPUS:-1.0}
     mem_limit: ${CATS_RISK_MEMORY:-1g}
     pids_limit: 128

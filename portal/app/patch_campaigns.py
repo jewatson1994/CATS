@@ -137,7 +137,7 @@ def campaign_data(db, campaign, auth=None):
         items.append({"id": item.id, **item_controls(item, job, allowed), "image_id": item.image_id, "image_reference": item.image_reference,
             "status": job.status if job else "failed", "error": job.error if job else "Job unavailable",
             "job_id": patch.job_key if patch else None,
-            "result": {**{key: (job.result or {}).get(key) for key in ("patch_status", "signature_status", "immutable_destination", "reused")}, "vulnerability_evidence": vulnerability_evidence(db, patch_id=patch.id) if patch else None} if job else {}})
+            "result": {**{key: (job.result or {}).get(key) for key in ("patch_status", "signature_status", "immutable_destination", "reused", "inventory_updated", "inventory_message")}, "vulnerability_evidence": vulnerability_evidence(db, patch_id=patch.id) if patch else None} if job else {}})
     return {"id": campaign.id, "status": campaign_status([item["status"] for item in items]), "created_at": campaign.created_at.isoformat(), "items": items}
 
 
@@ -224,6 +224,79 @@ def item_action(campaign_id: int, item_id: int, action: str, request: Request,
         service_id=campaign.service_id, image_id=item.image_id, durable_job_id=job.id)
     db.commit()
     return campaign_data(db, campaign, auth)
+
+
+def complete_inventory(db, job):
+    """Replace only the selected working image in the job's success transaction.
+
+    Called while the durable job is locked, before it becomes completed. This
+    prevents cancellation or a failed job from partially adopting a result.
+    No release revision, scan evidence or approval is changed here.
+    """
+    from .service_image_patches import verified_lineage, image_digest
+    from .artifact_catalog import _get_or_add
+    def unchanged(message):
+        return {"inventory_updated": False, "inventory_message": message}
+    if job.cancel_requested or job.status != "running":
+        return unchanged("Working image unchanged: the patch job is not completing successfully.")
+    item = db.scalar(select(PatchCampaignItem).where(PatchCampaignItem.job_id == job.id))
+    campaign = db.get(PatchCampaign, item.campaign_id) if item else None
+    if (not item or not campaign or campaign.service_id != job.service_id
+            or campaign.requested_by_id != job.requested_by_id
+            or (job.payload or {}).get("campaign_id") != campaign.id
+            or (job.payload or {}).get("image_id") != item.image_id):
+        return unchanged("Working image unchanged: campaign ownership could not be verified.")
+    service = db.get(Service, campaign.service_id)
+    actor = db.get(User, campaign.requested_by_id)
+    auth = AuthContext(actor, None) if actor and actor.enabled else None
+    if not service or not auth or not can_patch(auth, service) or not auth.has("service.edit", service.id):
+        return unchanged("Patch retained; working image unchanged because current image edit permission is unavailable.")
+    patch = db.get(PatchExecution, item.patch_execution_id) if item.patch_execution_id else None
+    lineage = verified_lineage(db, patch, item.image_reference)
+    if not lineage:
+        return unchanged("Patch retained; working image unchanged because a verified, changed immutable output is unavailable.")
+    original_artifact, target = lineage
+    original = db.scalar(select(ServiceImage).where(ServiceImage.id == item.image_id,
+        ServiceImage.service_id == service.id).with_for_update())
+    if not original or image_digest(original) != original_artifact.digest:
+        return unchanged("Patch retained; the selected working image has changed.")
+    try:
+        if immutable_source(original) != item.image_reference:
+            return unchanged("Patch retained; the selected working image has changed.")
+    except ValueError:
+        return unchanged("Patch retained; the selected working image has changed.")
+    previous = job.result or {}
+    if previous.get("inventory_updated") is True and previous.get("inventory_image_id"):
+        replacement = db.get(ServiceImage, previous["inventory_image_id"])
+        if (replacement and replacement.service_id == service.id and replacement.replacement_of_id == original.id
+                and image_digest(replacement) == target.digest and original.lifecycle_status == "replaced"):
+            return {key: previous[key] for key in ("inventory_updated", "inventory_message", "inventory_image_id")}
+    if original.lifecycle_status != "active":
+        return unchanged("Patch retained; the selected working image is no longer active.")
+    reference = patch.summary["artifact_receipt"]["immutable_destination"].rsplit("@", 1)[0]
+    # A concurrent campaign may publish the same reusable output for another
+    # occurrence. Recover its unique-key winner without failing this patch job.
+    replacement = _get_or_add(db, ServiceImage, service_id=service.id,
+        image_reference=reference, image_digest=target.digest,
+        defaults={"lifecycle_status": "active", "requested_by_id": actor.id,
+                  "replacement_of_id": original.id})
+    replacement = db.scalar(select(ServiceImage).where(ServiceImage.id == replacement.id)
+        .with_for_update().execution_options(populate_existing=True))
+    if replacement.lifecycle_status != "active" or replacement.replacement_of_id not in (None, original.id):
+        return unchanged("Patch retained; its output already belongs to another image history.")
+    timestamp = durable_jobs.now()
+    replacement.replacement_of_id = original.id
+    replacement.lifecycle_reason = "Verified image patch " + patch.job_key
+    replacement.updated_at = timestamp
+    original.lifecycle_status = "replaced"
+    original.lifecycle_reason = "Replaced by verified image patch " + patch.job_key
+    original.updated_at = timestamp
+    db.flush()
+    record_audit(db, auth, "patch.campaign.image_replaced", "patch_campaign", campaign.id,
+        service_id=service.id, image_id=original.id, replacement_id=replacement.id,
+        patch_execution_id=patch.id, durable_job_id=job.id)
+    return {"inventory_updated": True, "inventory_image_id": replacement.id,
+        "inventory_message": "Working image replaced with the verified patch. Release approval is separate."}
 
 
 def handle(ctx, payload):

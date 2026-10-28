@@ -336,14 +336,21 @@ def associate_known_source_images(db, *, artifact_id):
     return assignments
 
 
-def has_current_source_image(db, *, service_id, artifact_id):
+def has_current_source_image(db, *, service_id, artifact_id, target_artifact_id=None):
     """Historical assignments alone cannot prove current service inventory."""
     artifact = _require(db, GlobalArtifact, artifact_id)
     images = db.scalars(select(ServiceImage).join(Service, Service.id == ServiceImage.service_id).where(
         ServiceImage.service_id == service_id, ServiceImage.image_digest == artifact.digest,
         ServiceImage.lifecycle_status == "active", Service.lifecycle_status == "active"))
-    return any("@" not in str(image.image_reference or "") or
-        image.image_reference.rsplit("@", 1)[1] == artifact.digest for image in images)
+    if any("@" not in str(image.image_reference or "") or
+            image.image_reference.rsplit("@", 1)[1] == artifact.digest for image in images):
+        return True
+    service = db.get(Service, service_id)
+    if target_artifact_id is not None and service and service.lifecycle_status == "active":
+        from .service_image_patches import has_campaign_replacement
+        return has_campaign_replacement(db, service_id=service_id,
+            source_artifact=artifact, target_artifact_id=target_artifact_id)
+    return False
 
 
 def generate_shared_recommendations(db, *, validation_run_id):
@@ -380,7 +387,7 @@ def generate_shared_recommendations(db, *, validation_run_id):
             ServiceArtifactAssignment.role == "source", Service.id != patch.service_id,
             Service.lifecycle_status == "active").distinct())
         for service in services:
-            if not has_current_source_image(db, service_id=service.id, artifact_id=source.id):
+            if not has_current_source_image(db, service_id=service.id, artifact_id=source.id, target_artifact_id=target.id):
                 continue
             key = (service.id, source.id, target.id)
             if key in seen:

@@ -2,12 +2,13 @@ import pytest
 from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import Session
 from app.database import Base
-from app.models import Service, PatchExecution, AuditEvent
+from app.models import Service, ServiceImage, PatchExecution, AuditEvent
 from app.artifact_catalog import GlobalArtifact, ArtifactPatchLineage
-from app import main
+from app import durable_jobs, main, patch_campaigns
 
 @pytest.mark.parametrize('mode', ['valid', 'missing', 'invalid'])
-def test_completed_worker_catalog_import_preserves_execution(monkeypatch, tmp_path, mode):
+@pytest.mark.parametrize('campaign_cancel_requested', [None, False, True])
+def test_completed_worker_catalog_import_preserves_execution(monkeypatch, tmp_path, mode, campaign_cancel_requested):
     engine = create_engine('sqlite://')
     Base.metadata.create_all(engine)
     monkeypatch.setattr(main, 'SessionLocal', lambda: Session(engine))
@@ -17,7 +18,20 @@ def test_completed_worker_catalog_import_preserves_execution(monkeypatch, tmp_pa
         service = Service(service_key='receipt', name='Receipt')
         db.add(service); db.flush()
         patch = PatchExecution(job_key='receipt-job', service_id=service.id, requested_by_id=1, source_mode='oci', output_mode='push', source_image='repo/source:tag')
-        db.add(patch); db.commit(); patch_id = patch.id
+        db.add(patch); db.flush(); patch_id = patch.id
+        if campaign_cancel_requested is not None:
+            original = ServiceImage(service_id=service.id, image_reference='repo/source:tag',
+                image_digest='sha256:' + 'a'*64)
+            campaign = patch_campaigns.PatchCampaign(service_id=service.id, requested_by_id=1,
+                destination_registry_id='destination', destination_prefix='')
+            job = durable_jobs.DurableJob(id='campaign-job', kind=patch_campaigns.KIND,
+                service_id=service.id, requested_by_id=1, status='running',
+                cancel_requested=campaign_cancel_requested)
+            db.add_all([original, campaign, job]); db.flush()
+            db.add(patch_campaigns.PatchCampaignItem(campaign_id=campaign.id, image_id=original.id,
+                image_reference='repo/source@sha256:' + 'a'*64, job_id=job.id, patch_execution_id=patch.id))
+            original_id = original.id
+        db.commit()
     receipt = {'status': 'complete', 'source_image': 'repo/source@sha256:' + 'a'*64,
         'immutable_destination': 'repo/output@sha256:' + 'b'*64, 'patch_status': 'PATCHED',
         'delivery_status': 'delivered', 'output_mode': 'push',
@@ -37,6 +51,14 @@ def test_completed_worker_catalog_import_preserves_execution(monkeypatch, tmp_pa
         assert db.scalar(select(func.count()).select_from(GlobalArtifact)) == (2 if mode == 'valid' else 0)
         assert db.scalar(select(func.count()).select_from(ArtifactPatchLineage)) == (1 if mode == 'valid' else 0)
         assert db.scalar(select(func.count()).select_from(AuditEvent).where(AuditEvent.action == 'artifact.catalog.import_skipped')) == (0 if mode == 'valid' else 1)
+        if campaign_cancel_requested is not None:
+            # Even a repeated successful worker callback retains only evidence.
+            # Inventory mutation belongs to the durable completion transaction.
+            assert db.scalar(select(func.count()).select_from(ServiceImage)) == 1
+            assert db.get(ServiceImage, original_id).lifecycle_status == 'active'
+            job = db.get(durable_jobs.DurableJob, 'campaign-job')
+            assert job.status == 'running' and job.cancel_requested is campaign_cancel_requested
+            assert job.result.get('inventory_updated') is not True
     engine.dispose()
 
 

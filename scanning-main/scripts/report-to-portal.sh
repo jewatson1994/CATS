@@ -287,6 +287,8 @@ python3 "$(dirname "$0")/extract-image-identities.py" sboms "$SERVICE_OVERVIEW_F
 cp "$SERVICE_OVERVIEW_FILE" service-overview.json
 SBOM_COMPONENTS_FILE="$REPORT_TMP_DIR/sbom-components.json"
 python3 "$(dirname "$0")/extract-sbom-components.py" sboms "$SBOM_COMPONENTS_FILE"
+EXPORT_EVIDENCE_FILE="$REPORT_TMP_DIR/export-evidence.json"
+python3 "$(dirname "$0")/retain-export-evidence.py" . "$EXPORT_EVIDENCE_FILE"
 
 jq -n \
   --arg execution_id "gitlab:${CI_PROJECT_ID}:pipeline:${CI_PIPELINE_ID}" \
@@ -303,6 +305,7 @@ jq -n \
   --argjson service_groups "$SERVICE_GROUPS" \
   --slurpfile service_overview "$SERVICE_OVERVIEW_FILE" \
   --slurpfile sbom_components "$SBOM_COMPONENTS_FILE" \
+  --slurpfile export_evidence "$EXPORT_EVIDENCE_FILE" \
   --arg raw_findings "$REPORT_RAW_FINDINGS" \
   --argjson skipped_images "$SKIPPED_IMAGES" \
   --argjson skipped_charts "$SKIPPED_CHARTS" \
@@ -331,6 +334,8 @@ jq -n \
     policy_findings: $policy_findings[0],
     sbom_components: ($sbom_components[0].components // []),
     sbom_images: ($sbom_components[0].images // []),
+    evidence_documents: ($export_evidence[0].evidence_documents // []),
+    evidence_unavailable: ($export_evidence[0].evidence_unavailable // []),
      service_overview: $service_overview[0]
   }' > portal-result.json
 

@@ -6,6 +6,37 @@ const images = [{id: 1, image_reference: 'registry/first:v1', image_digest: `sha
 const response = (value: unknown) => new Response(JSON.stringify(value), {headers: {'content-type': 'application/json'}});
 afterEach(() => {vi.unstubAllGlobals(); window.history.replaceState(null, '', '/');});
 function open() {window.history.replaceState(null, '', '/patch-campaigns?service_id=payments'); render(<Page data={data}/>);}
+it('preselects only the requested eligible service image and clears selection after submission', async () => {
+  const fetch = vi.fn().mockImplementation((url: string, options: RequestInit) => Promise.resolve(response(options?.method === 'POST' ? {id: 9} : url.includes('/api/patch-campaigns/') ? {id: 9, status: 'completed', items: []} : {images, campaigns: [], can_patch: true})));
+  vi.stubGlobal('fetch', fetch);
+  window.history.replaceState(null, '', '/patch-campaigns?service_id=payments&image_id=2');
+  render(<Page data={data}/>);
+  await screen.findByText('1 selected · Up to 20 images per campaign.');
+  expect(screen.getAllByRole('checkbox').map(input => (input as HTMLInputElement).checked)).toEqual([false, true, false]);
+  fireEvent.change(screen.getByLabelText('Destination registry'), {target: {value: 'main'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Start patch campaign'}));
+  await screen.findByText('0 selected · Up to 20 images per campaign.');
+  const post = fetch.mock.calls.find(call => call[1]?.method === 'POST');
+  expect(JSON.parse(post![1].body as string).image_ids).toEqual([2]);
+});
+
+it('does not select a stale, foreign, or ineligible image supplied in the link', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({images, campaigns: [], can_patch: true})));
+  window.history.replaceState(null, '', '/patch-campaigns?service_id=payments&image_id=999');
+  render(<Page data={data}/>);
+  await screen.findByText('The requested image is no longer active in this service. Select an available image.');
+  for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked();
+});
+
+it('does not carry the requested image into a different service', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(response({images, campaigns: [], can_patch: true}))));
+  window.history.replaceState(null, '', '/patch-campaigns?service_id=payments&image_id=2');
+  render(<Page data={{...data, services: [...data.services, {service_key: 'other', name: 'Other'}]}}/>);
+  await screen.findByText('1 selected · Up to 20 images per campaign.');
+  fireEvent.change(screen.getByLabelText('Service'), {target: {value: 'other'}});
+  await screen.findByText('0 selected · Up to 20 images per campaign.');
+  for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).not.toBeChecked();
+});
 it('bounds select-all and enforces permission before submission', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({images, campaigns: [], can_patch: true, max_images: 2})));
   open();

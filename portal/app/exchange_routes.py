@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from .auth import require_user, record_audit
 from .export_jobs import queued_export
 from .database import get_db
-from .models import Group, Service, Execution, ExportTemplate, ServiceMetadata, InventoryRecord, ExchangePreview, BundlePreview, PoamEntry, PoamHistory, ServiceTransferProvenance
+from .models import Group, Service, Execution, ExportTemplate, ServiceMetadata, InventoryRecord, ExchangePreview, BundlePreview, PoamEntry, PoamHistory, PoamChangeRequest, WorkflowRequest, ServiceTransferProvenance
 from .exchange import META, FIELDS, builtins, validate_template, versions, selected_evidence, context_and_rows, missing_fields, workbook, parse_workbook
 from .exchange_ui import metadata_groups, export_preview
 
@@ -335,6 +335,7 @@ def preview_import(service_key: str, template: str, request: Request, version: s
     preview["conflicts"] = [item["key"] for item in preview["rows"] if item["key"] in existing]
     preview["new"] = len(preview["rows"]) - len(preview["conflicts"])
     preview["baseline"] = state_hash(context, rows)
+    preview["filename"] = (upload.filename or "POAM import.xlsx").replace("\\", "/").rsplit("/", 1)[-1][:240]
     token = secrets.token_hex(24)
     db.add(ExchangePreview(token=token, service_id=service.id, user_id=auth.user.id, version=version, dataset=dataset, payload=preview, expires_at=datetime.now(timezone.utc) + timedelta(minutes=30)))
     db.commit()
@@ -365,13 +366,35 @@ def confirm_import(service_key: str, token: str, csrf_token: str = Form(), confl
     if claimed.rowcount != 1:
         raise HTTPException(409, detail="Preview already consumed")
     count = 0
+    batch = None
     try:
-        for row in payload["rows"]:
+        for row_number, row in enumerate(payload["rows"], payload.get("header_row", 1) + 1):
             if row["key"] in payload["conflicts"] and conflict_action == "skip":
                 continue
             values = row["values"]
             if preview.dataset == "poam":
+                from .review_imports import add_poam_request, create_batch
+                if batch is None:
+                    batch = create_batch(db, service.id, auth.user.id, "poams", payload.get("filename", "POAM import.xlsx"))
                 item = db.scalar(select(PoamEntry).where(PoamEntry.service_id == service.id, PoamEntry.service_version == preview.version, PoamEntry.exchange_key == row["key"]))
+                if item and db.scalar(select(WorkflowRequest.id).where(WorkflowRequest.poam_id == item.id, WorkflowRequest.status == "pending")):
+                    raise HTTPException(409, detail=f"Row {row_number}: this POA&M already has a pending request; finish its review before importing an update")
+                proposed = {
+                    "title": str(values.get("finding.identifier") or "")[:240],
+                    "description": str(values.get("finding.description") or ""),
+                    "remediation": str(values.get("finding.mitigation") or values.get("finding.recommendation") or ""),
+                    "due_date": str(values["finding.due_date"]) if values.get("finding.due_date") else None,
+                    "ticket": item.ticket if item else None,
+                    "supplemental_fields": {k: v for k, v in values.items() if k not in {"finding.identifier", "finding.description", "finding.mitigation", "finding.status"}},
+                }
+                if item and item.status in {"active", "completed"}:
+                    workflow = add_poam_request(db, auth, item, batch, row_number, request_type="poam_update",
+                        justification=f"{proposed['title']}\n{proposed['description']}\nRemediation: {proposed['remediation']}")
+                    workflow.requested_expires_at = datetime.fromisoformat(proposed["due_date"]) if proposed["due_date"] else None
+                    db.flush()
+                    db.add(PoamChangeRequest(workflow_id=workflow.id, poam_id=item.id, change_type="update", proposed=proposed))
+                    count += 1
+                    continue
                 if item is None:
                     item = PoamEntry(service_id=service.id, service_version=preview.version, exchange_key=row["key"], item_type="Imported", created_by_id=auth.user.id, status="pending_approval")
                     db.add(item)
@@ -379,16 +402,11 @@ def confirm_import(service_key: str, token: str, csrf_token: str = Form(), confl
                 item.status = "pending_approval"
                 item.approved_by_id = None
                 item.approved_at = None
-                item.title = str(values.get("finding.identifier") or "")[:240]
-                item.description = str(values.get("finding.description") or "")
-                item.remediation = str(values.get("finding.mitigation") or values.get("finding.recommendation") or "")
-                item.supplemental_fields = {k: v for k, v in values.items() if k not in {"finding.identifier", "finding.description", "finding.mitigation", "finding.status"}}
-                if values.get("finding.due_date"):
-                    item.due_date = datetime.fromisoformat(str(values["finding.due_date"]))
-                else:
-                    item.due_date = None
+                for field in ("title", "description", "remediation", "supplemental_fields"):
+                    setattr(item, field, proposed[field])
+                item.due_date = datetime.fromisoformat(proposed["due_date"]) if proposed["due_date"] else None
                 db.flush()
-                db.add(PoamHistory(poam_id=item.id, actor_user_id=auth.user.id, action="imported", detail={"version": preview.version}))
+                add_poam_request(db, auth, item, batch, row_number)
             else:
                 item = db.scalar(select(InventoryRecord).where(InventoryRecord.service_id == service.id, InventoryRecord.version == preview.version, InventoryRecord.dataset == preview.dataset, InventoryRecord.record_key == row["key"]))
                 if item is None:
@@ -403,7 +421,7 @@ def confirm_import(service_key: str, token: str, csrf_token: str = Form(), confl
     except Exception:
         db.rollback()
         raise
-    return RedirectResponse(f"/services/{service_key}/exchange?version={quote(preview.version, safe='')}", status_code=303)
+    return RedirectResponse(f"/requests?batch_id={batch.id}" if batch else f"/services/{service_key}/exchange?version={quote(preview.version, safe='')}", status_code=303)
 
 
 @router.post("/services/{service_key}/exchange/metadata")

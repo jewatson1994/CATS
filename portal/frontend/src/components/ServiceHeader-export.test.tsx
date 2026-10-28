@@ -11,7 +11,8 @@ it('offers one ZIP for All and keeps the individual downloads', () => {
   fireEvent.click(screen.getByText('Export'));
   expect(screen.getByRole('link', {name: /All Individual exports/})).toHaveAttribute('href', '/services/demo/exports/all.zip');
   for (const [label, path] of [['PPSM', 'ppsm.xlsx'], ['POA&M', 'poam.xlsx'], ['Asset List', 'asset_list.xlsx'],
-    ['Diagrams', 'diagrams.zip'], ['Mitigations', 'mitigations.xlsx'], ['Findings', 'findings.xlsx'], ['SBOM components', 'sbom.json']]) {
+    ['Diagrams', 'diagrams.zip'], ['Mitigations', 'mitigations.xlsx'], ['Findings', 'findings.xlsx'],
+    ['SBOM components', 'sbom.json'], ['Raw Scans', 'raw-scanner-outputs.zip'], ['SBOMs', 'sboms.zip']]) {
     expect(screen.getByRole('link', {name: label})).toHaveAttribute('href', `/services/demo/exports/${path}`);
   }
   expect(screen.getByRole('link', {name: 'Portable Service Bundle'})).toHaveAttribute('href', '/services/demo/bundle.zip');

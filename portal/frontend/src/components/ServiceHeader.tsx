@@ -42,6 +42,7 @@ function ServiceExportMenu({root, includeBundle}: {root: string; includeBundle: 
     ['poam.xlsx', 'POA&M', 'XLSX'], ['mitigations.xlsx', 'Mitigations', 'XLSX'],
     ['asset_list.xlsx', 'Asset List', 'XLSX'], ['findings.xlsx', 'Findings', 'XLSX'],
     ['sbom.json', 'SBOM components', 'JSON'],
+    ['raw-scanner-outputs.zip', 'Raw Scans', 'ZIP'], ['sboms.zip', 'SBOMs', 'ZIP'],
   ];
   return <details ref={menu} className="actions-menu service-export-menu">
     <summary className="secondary-button">Export<Icon name="chevron"/></summary>

@@ -82,7 +82,7 @@ def source_metadata(raw: dict, image: str, digest: str, timestamp: str) -> dict:
     }
 
 
-def cdx_document(raw: dict, image: str, digest: str, spec_version: str, timestamp: str) -> dict:
+def cdx_document(raw: dict, image: str, digest: str, spec_version: str, timestamp: str, timestamp_source="") -> dict:
     descriptor = raw.get("descriptor") if isinstance(raw.get("descriptor"), dict) else {}
     generator_version = text(descriptor.get("version"), "unknown")
     source = image or text((raw.get("source") or {}).get("name") if isinstance(raw.get("source"), dict) else "", "unknown")
@@ -111,7 +111,9 @@ def cdx_document(raw: dict, image: str, digest: str, spec_version: str, timestam
         "metadata": {
             "timestamp": timestamp,
             "tools": [{"vendor": "Anchore", "name": text(descriptor.get("name"), "Syft"), "version": generator_version}],
-            "properties": [{"name": "cats:source", "value": source}, {"name": "cats:digest", "value": digest or ""}] + identity_properties(document_identity(raw)),
+            "properties": [{"name": "cats:source", "value": source}, {"name": "cats:digest", "value": digest or ""}]
+                + ([{"name": "cats:serialization:timestamp-source", "value": timestamp_source}] if timestamp_source else [])
+                + identity_properties(document_identity(raw)),
         },
         "components": components,
     }
@@ -151,7 +153,7 @@ def cdx_xml(document: dict) -> bytes:
     return ET.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def spdx_document(raw: dict, image: str, digest: str, timestamp: str) -> dict:
+def spdx_document(raw: dict, image: str, digest: str, timestamp: str, timestamp_source="") -> dict:
     descriptor = raw.get("descriptor") if isinstance(raw.get("descriptor"), dict) else {}
     source = image or text((raw.get("source") or {}).get("name") if isinstance(raw.get("source"), dict) else "", "unknown")
     namespace = f"https://cats.example.invalid/spdx/{hashlib.sha256((source + '|' + digest).encode()).hexdigest()}"
@@ -177,7 +179,9 @@ def spdx_document(raw: dict, image: str, digest: str, timestamp: str) -> dict:
         "name": source,
         "documentNamespace": namespace,
         "creationInfo": {"created": timestamp, "creators": [f"Tool: {text(descriptor.get('name'), 'Syft')} {text(descriptor.get('version'), 'unknown')}"]},
-        "documentComment": f"CATS source={source}; digest={digest or 'unknown'}\n" + identity_comment(document_identity(raw)),
+        "documentComment": f"CATS source={source}; digest={digest or 'unknown'}\n"
+            + (f"Serialization timestamp source: {timestamp_source}\n" if timestamp_source else "")
+            + identity_comment(document_identity(raw)),
         "packages": packages,
     }
 
@@ -189,17 +193,10 @@ def update_manifest(path: Path, entries: list[dict]) -> None:
     path.write_text(json.dumps({"schema_version": "cats.sbom/v1", "reports": list(current.values())}, indent=2) + "\n", encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", required=True)
-    parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--image", default="")
-    parser.add_argument("--digest", default="")
-    parser.add_argument("--formats", default="syft-json")
-    parser.add_argument("--cyclonedx-spec-version", default="1.5")
-    args = parser.parse_args()
-    input_path = Path(args.input)
-    output_dir = Path(args.output_dir)
+def serialize_formats(input_path: Path, output_dir: Path, *, image="", digest="",
+                      formats="syft-json", cyclonedx_spec_version="1.5", timestamp=None,
+                      timestamp_source="") -> list[dict]:
+    """Serialize a retained inventory without rescanning its source image."""
     output_dir.mkdir(parents=True, exist_ok=True)
     raw = json.loads(input_path.read_text(encoding="utf-8"))
     provenance_path = input_path.with_suffix(".provenance")
@@ -212,10 +209,10 @@ def main() -> int:
                 raw.setdefault("metadata", {}).setdefault("properties", []).extend(identity_properties(identity))
         except (OSError, ValueError, UnicodeError):
             pass
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    formats = requested_formats(args.formats)
+    timestamp = timestamp or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    formats = requested_formats(formats)
     base = input_path.stem
-    metadata = source_metadata(raw, args.image, args.digest, timestamp)
+    metadata = source_metadata(raw, image, digest, timestamp)
     entries = []
     for format_name in formats:
         if format_name == "syft-json":
@@ -223,18 +220,32 @@ def main() -> int:
             spec_version = metadata["spec_version"]
         elif format_name == "cyclonedx-json":
             target = output_dir / f"{base}.cyclonedx.json"
-            target.write_text(json.dumps(cdx_document(raw, args.image, args.digest, args.cyclonedx_spec_version, timestamp), indent=2) + "\n", encoding="utf-8")
-            spec_version = args.cyclonedx_spec_version
+            target.write_text(json.dumps(cdx_document(raw, image, digest, cyclonedx_spec_version, timestamp, timestamp_source), indent=2) + "\n", encoding="utf-8")
+            spec_version = cyclonedx_spec_version
         elif format_name == "cyclonedx-xml":
             target = output_dir / f"{base}.cyclonedx.xml"
-            target.write_bytes(cdx_xml(cdx_document(raw, args.image, args.digest, args.cyclonedx_spec_version, timestamp)))
-            spec_version = args.cyclonedx_spec_version
+            target.write_bytes(cdx_xml(cdx_document(raw, image, digest, cyclonedx_spec_version, timestamp, timestamp_source)))
+            spec_version = cyclonedx_spec_version
         else:
             target = output_dir / f"{base}.spdx.json"
-            target.write_text(json.dumps(spdx_document(raw, args.image, args.digest, timestamp), indent=2) + "\n", encoding="utf-8")
+            target.write_text(json.dumps(spdx_document(raw, image, digest, timestamp, timestamp_source), indent=2) + "\n", encoding="utf-8")
             spec_version = "SPDX-2.3"
         entries.append({**metadata, "format": format_name, "spec_version": spec_version, "path": target.as_posix(), "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
     update_manifest(output_dir / "manifest.json", entries)
+    return entries
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--image", default="")
+    parser.add_argument("--digest", default="")
+    parser.add_argument("--formats", default="syft-json")
+    parser.add_argument("--cyclonedx-spec-version", default="1.5")
+    args = parser.parse_args()
+    serialize_formats(Path(args.input), Path(args.output_dir), image=args.image, digest=args.digest,
+                      formats=args.formats, cyclonedx_spec_version=args.cyclonedx_spec_version)
     return 0
 
 

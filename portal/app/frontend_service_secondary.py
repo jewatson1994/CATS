@@ -47,6 +47,7 @@ def project_secondary(data, name, context, can=None, formatters=None):
             counts = {key: int(precomputed.get(key) or 0) for key in counts}
         data["finding_counts"] = counts
         data["architecture_polling"] = bool(context.get("architecture_polling"))
+        data["can_patch_images"] = bool(context.get("can_patch_images"))
         data["overview_data"] = overview(context.get("overview_data", {}))
         data["latest_execution"] = _fields(context.get("latest_execution"), ("id", "complete"))
         data["artifact_provenance"] = rows(context.get("artifact_provenance", []), (
@@ -55,6 +56,9 @@ def project_secondary(data, name, context, can=None, formatters=None):
             "signature", "verification_artifact_digest", "evidence_scope"))
         data["service_images"] = [_fields(image, ("id", "image_reference", "image_digest", "lifecycle_status", "replacement_of_id"))
                                   for image in context.get("service_images", [])]
+        for image in data["service_images"]:
+            image["patch_history"] = rows((context.get("image_patch_history") or {}).get(image["id"], []),
+                ("original_image", "patched_at", "job_id", "result_image"))
         data["architecture_verification"] = _fields(context.get("architecture_verification", {}), ("state", "label", "expected", "observed", "missing"))
         data["architecture_graph"] = {"summary": _fields(_field(context.get("architecture_graph", {}), "summary", {}),
                                                         ("declared", "differences", "relationships", "unresolved"))}

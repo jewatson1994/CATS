@@ -211,6 +211,33 @@ class TransferCoreTests(unittest.TestCase):
         self.assertIsNone(poam.finding_id)
         self.assertEqual(poam.supplemental_fields["imported_finding_references"]["finding_id"], finding.id)
 
+    def test_import_review_workflows_are_not_portable_even_from_legacy_bundles(self):
+        finding = m.Finding(service_id=self.service.id, cve="CVE-2025-1111", severity="High",
+                            first_seen=self.now, episode_started=self.now, last_seen=self.now)
+        batch = m.WorkflowImportBatch(service_id=self.service.id, requested_by_id=self.user.id,
+            kind="exceptions", filename="exceptions.csv")
+        self.db.add_all([finding, batch]); self.db.flush()
+        workflow = m.WorkflowRequest(service_id=self.service.id, finding_id=finding.id,
+            request_type="exception", justification="Pending imported request", requested_by_id=self.user.id,
+            requested_expires_at=self.now + timedelta(days=30), import_batch_id=batch.id, import_row_number=2)
+        self.db.add(workflow); self.db.flush()
+        manifest, state = self.exported()
+        self.assertEqual(state["records"]["workflow_requests"], [])
+        self.assertEqual(state["records"]["poam_change_requests"], [])
+        legacy_state = {"records": t.snapshot(self.db, self.service)}
+        # Old schema 2 bundles can contain workflows; restore projects them away.
+        restored = t.restore_service(self.db, legacy_state, "legacy-workflows", self.user.id)
+        self.assertIsNone(self.db.scalar(select(m.WorkflowRequest).where(m.WorkflowRequest.service_id == restored.id)))
+        self.assertIsNone(self.db.scalar(select(m.WorkflowImportBatch).where(m.WorkflowImportBatch.service_id == restored.id)))
+        manifest["compatibility"]["relational_schema"] = t.schema_signature(pre_workflow_imports=True)
+        body = t.encode(state)
+        manifest["files"] = {"service.json": {"bytes": len(body), "sha256": t.sha256(body).hexdigest()}}
+        output = BytesIO()
+        with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", t.encode(manifest))
+            archive.writestr("service.json", body)
+        self.assertEqual(t.parse_service(output.getvalue())[1]["records"]["workflow_requests"], [])
+
     def test_original_sources_retained_without_execution_or_embedded_secrets(self):
         self.execution.raw_payload = {**self.execution.raw_payload, "helm_source_files": {
             "service.yaml": "services:\n  chart:\n    enabled: false\n    password: |\n      TOP_SECRET\n    values: {token: OTHER_SECRET, replicas: 2}\n",

@@ -3,6 +3,7 @@ import os
 from pathlib import PurePosixPath
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from .retained_documents import EvidenceDocument, UnavailableDocument, validate_documents
 
 
 class ServicePayload(BaseModel):
@@ -84,6 +85,8 @@ class ExecutionPayload(BaseModel):
     policy_findings: list[PolicyFindingPayload] = Field(default_factory=list)
     sbom_components: list[dict[str, str]] = Field(default_factory=list, max_length=50000)
     sbom_images: list[str] = Field(default_factory=list, max_length=5000)
+    evidence_documents: list[EvidenceDocument] = Field(default_factory=list, max_length=2048)
+    evidence_unavailable: list[UnavailableDocument] = Field(default_factory=list, max_length=2048)
     # Optional normalized architecture metadata produced by Helm/configuration scans.
     service_overview: dict = Field(default_factory=dict)
     # Source files are optional because CI/API producers may submit evidence
@@ -95,6 +98,11 @@ class ExecutionPayload(BaseModel):
     # using non-default values must declare them so runtime validation deploys
     # the exact configuration that static analysis rendered.
     helm_values_files: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_retained_documents(self):
+        validate_documents(self.evidence_documents, self.evidence_unavailable)
+        return self
 
     @field_validator("sbom_components")
     @classmethod

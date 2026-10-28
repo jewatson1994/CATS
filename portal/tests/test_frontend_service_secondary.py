@@ -38,6 +38,18 @@ def test_activity_projects_actor_display_and_known_detail_only():
     assert "secret" not in json.dumps(result)
 
 
+def test_image_patch_history_projection_is_scoped_and_explicit():
+    context = {"service_images": [SimpleNamespace(id=7, image_reference="registry/patched")],
+               "can_patch_images": True,
+               "image_patch_history": {7: [{"original_image": "registry/original", "patched_at": "2026-10-25T12:00:00Z",
+                    "job_id": "patch-1", "result_image": "registry/patched", "credentials": "secret"}],
+                    8: [{"original_image": "foreign-secret"}]}}
+    result = project_secondary({}, "service_overview.html", context)
+    assert result["can_patch_images"] is True
+    assert result["service_images"][0]["patch_history"][0]["original_image"] == "registry/original"
+    assert "secret" not in json.dumps(result)
+
+
 def test_artifact_provenance_projects_independent_evidence_without_arbitrary_metadata():
     context = {"artifact_provenance": [{"artifact_kind": "image", "digest": "sha256:" + "a" * 64,
         "source_version": "1.5", "revision_number": 1, "post_remediation_scan": "PASS",
