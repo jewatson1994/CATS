@@ -4,6 +4,7 @@ import {ErrorBoundary} from './components/ErrorBoundary';
 // Design-system layer: bundled after /static/app.css so it is the final presentation layer.
 import './styles/design-system.css';
 import './styles/enterprise.css';
+import './styles/console.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('CATS root element is missing.');

@@ -154,6 +154,28 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
     <p>Please try again.</p><a href={data.home_url || '/'}>Return to CATS</a></section>,
 };
 
+/** Readable browser tab titles: page name, then the service it concerns, then CATS. */
+const pageNames: Record<string, string> = {
+  dashboard: 'Services', home: 'Overview', login: 'Sign in', password: 'Change password', appearance: 'Appearance',
+  cybersecurity: 'Cybersecurity dashboard', cyber_approvals: 'Approvals', approved_releases: 'Approved Releases',
+  approved_release_destinations: 'Release Destinations', patch_campaigns: 'Patch campaigns', artifact_catalog: 'Artifact catalog',
+  artifact_recommendations: 'Recommendations', discovery: 'Discovery', patch: 'Patch', patch_results: 'Patch results',
+  public_results: 'Scan results', service: 'Findings', service_simplified: 'Findings', finding: 'Finding', watchlist_match: 'Watchlist match',
+  poam: 'POA&M', poam_service: 'POA&M', poam_entry: 'POA&M entry', service_overview: 'Overview', service_activity: 'Activity',
+  service_history: 'Version history', service_dependencies: 'Dependencies', service_artifacts: 'Artifacts', service_validation: 'Deployment Validation',
+  service_definitions: 'Service definitions', exchange: 'Data exchange', purpose_export_template: 'Export template', jobs: 'Jobs',
+  remediations: 'Remediations', service_remediations: 'Remediations', remediation_report: 'Remediation results', requests: 'Requests',
+  service_architecture: 'Architecture', risk_intelligence: 'Risk Policy', admin: 'Accounts and roles', staging: 'Service staging',
+  configuration: 'Settings', validators: 'Validators', audit: 'Audit Policy', general_policy: 'General Policy', evidence_policy: 'Evidence Policy',
+  workflow_policy: 'Workflow Policy', compliance: 'Vulnerability Policy', compliance_frameworks: 'Hardening Policy',
+  dependency_watchlist: 'Dependency Watchlist', request_error: 'Request could not be completed', boozled: 'Something went wrong',
+};
+export function documentTitle(page: string, data: PageData = {}): string {
+  const name = page === 'self_service' ? (data.mode === 'sbom' ? 'SBOM' : 'Scan') : pageNames[page] || page.replaceAll('_', ' ');
+  const service = data.view?.service?.name || data.service?.name;
+  return [name, service, 'CATS'].filter(Boolean).join(' · ');
+}
+
 export function readBootstrap(): PageEnvelope | null {
   const node = document.getElementById('cats-bootstrap');
   if (!node?.textContent) return null;
@@ -377,7 +399,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
   // An uncached navigation keeps the previous page on screen (inert, dimmed)
   // until the new one arrives, instead of blanking the workspace.
   const previous = !current && !failed && view ? view : null;
-  const pageTitle = current ? `${current.page.replaceAll('_', ' ')} · CATS` : 'CATS';
+  const pageTitle = current ? documentTitle(current.page, current.data) : 'CATS';
   useEffect(() => {document.title = pageTitle;}, [pageTitle]);
   const shown = current ? view : previous;
   const Page = shown ? pages[shown.envelope.page] : null;

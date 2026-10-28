@@ -68,7 +68,9 @@ it('groups secondary destinations into labelled sections and supports arrow-key 
   const menu = more.parentElement!;
   expect(within(menu).getAllByRole('group').map(group => group.getAttribute('aria-label'))).toEqual(['Governance', 'Inventory', 'Operations']);
   const links = within(menu).getAllByRole('link');
-  expect(links.map(link => link.textContent)).toEqual(['Remediate', 'Requests', 'Artifact catalog', 'SBOM', 'Jobs']);
+  // Each link keeps the destination as its accessible name and carries a short description.
+  expect(links.map(link => link.querySelector('.menu-item-label')?.textContent)).toEqual(['Remediate', 'Requests', 'Artifact catalog', 'SBOM', 'Jobs']);
+  expect(within(menu).getByRole('link', {name: 'Jobs'})).toHaveAccessibleDescription('Scans, exports and background work');
   links[0].focus();
   fireEvent.keyDown(links[0], {key: 'ArrowDown'});
   expect(links[1]).toHaveFocus();

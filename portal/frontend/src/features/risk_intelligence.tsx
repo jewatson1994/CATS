@@ -1,3 +1,4 @@
+import {EmptyState} from '../components/ui';
 import {useEffect, useState, type FormEvent, type ReactNode} from 'react';
 import {requestJson, type PageData} from '../api';
 import './risk_intelligence.css';
@@ -166,7 +167,11 @@ export function Page({data}:{data:PageData}) {
   const caps=capabilities.value,group=caps?.groups?.find((g:Row)=>String(g.id)===groupId);
   return <div className="risk-policy-page"><Heading title="Risk Policy" description="Manage risk profiles and review assessments for each service's owning group."/><AdminTabs data={data} selected="risk"/>
     <div className="risk-intelligence"><p className="risk-callout"><strong>Informational only.</strong> Risk Profiles and human decisions do not change compliance, remediation, publication or runtime enforcement.</p>
-    {!caps?<p role="status">{capabilities.error||'Loading permissions…'}</p>:<><section className="risk-section risk-group-picker"><Field label="Owning group"><select value={group?.id||''} onChange={e=>setGroupId(e.target.value)}><option value="">Choose a group</option>{caps.groups.map((g:Row)=><option key={g.id} value={g.id}>{g.name}</option>)}</select></Field><p>Only groups you can manage are listed. Each service has one owning group.</p></section>{group?<GroupRisk key={group.id} data={data} group={group} caps={caps}/>:<p>{caps.groups.length?'Choose a group to manage its risk policy.':'You do not have permission to manage risk policy for any group.'}</p>}</>}
+    {!caps?<p role="status">{capabilities.error||'Loading permissions…'}</p>:<><section className="risk-section risk-group-picker" aria-label="Group scope"><div className="risk-scope-bar"><Field label="Owning group"><select value={group?.id||''} onChange={e=>setGroupId(e.target.value)}><option value="">Choose a group</option>{caps.groups.map((g:Row)=><option key={g.id} value={g.id}>{g.name}</option>)}</select></Field>
+      <p className="risk-scope-help">Only groups you can manage are listed. Each service has one owning group.</p>
+      {group && <span className="risk-scope-current">Editing <strong>{group.name}</strong></span>}</div>
+      {caps.groups.length > 1 && caps.groups.length <= 12 && <div className="risk-group-chips" role="group" aria-label="Quick group selection">{caps.groups.map((g:Row)=><button type="button" key={g.id} className="risk-group-chip" aria-pressed={String(g.id)===groupId} onClick={()=>setGroupId(String(g.id))}>{g.name}</button>)}</div>}</section>
+    {group?<GroupRisk key={group.id} data={data} group={group} caps={caps}/>:<EmptyState title={caps.groups.length?'Choose a group to manage its risk policy.':'You do not have permission to manage risk policy for any group.'}>{caps.groups.length ? 'Risk profiles, service assessments and decisions are managed per owning group.' : undefined}</EmptyState>}</>}
     </div></div>;
 }
 

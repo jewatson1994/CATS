@@ -292,3 +292,115 @@ not visually verified.
 5. **Exceptions ordering:** accept `sort`/`direction` on the Exceptions tab (currently created-at only).
 6. **Server-side layout preferences** if users need their column layouts across browsers (today they are
    local per browser, by design).
+
+---
+
+# Phase 2: menus and remaining pages
+
+Branch: `feature/ui-modernization-phase-2`, based on `main` at `22f35d5`. Same rules as phase 1: presentation
+only. Every form keeps its method, action, field names and field order; every link keeps its destination;
+every permission check is unchanged.
+
+## What changed
+
+| Area | Change |
+| --- | --- |
+| Header menus | Cybersecurity and More items show an icon and a one-line description. The destination stays the link's accessible name; the description is its accessible description. Popovers share one style and a short entrance animation (off with reduced motion). The More menu right-aligns on narrow screens so it never runs off-screen. |
+| Account menu | Icon rows for Appearance, Change password, About and Sign out. The theme picker expands inline as swatches instead of a 720 px flyout. |
+| Notifications and in-page menus | Notification items show a status dot with the service beneath. Service Actions, Export and version menus use the same row style; destructive actions are separated and red. |
+| Administration | One grouped console sidebar (Access, Platform, Policy, Delivery) on every admin page, replacing tab strips that differed from page to page. Policy pages keep their own permission flags. Save and error messages are callouts. Below 1000 px the sidebar becomes a scrollable strip. |
+| Account pages | Change password and Appearance share an Account sidebar. Without a session the password page keeps the focused sign-in card. |
+| Scan, SBOM, Patch | Standard page header; form split into labelled sections (images, Helm charts, Docker Compose, service definition, ingest); a side panel explaining the workflow steps with links to related pages. The back link to the public overview appears only when signed out. |
+| Cybersecurity dashboard | Thousands separators (164,372), left-aligned cards with a "View details" cue, tighter charts and consistent panel styling. |
+| Artifact catalog | Toolbar-style search, two-column card grid, identity blocks and service chips. |
+| POA&M overview | Totals row (entries, active, pending, overdue) and the shared data grid with muted zeros and an overdue row marker. |
+| Browser tab titles | Readable titles such as "Scan · CATS", "Hardening Policy · CATS" and "Dependencies · Payments Service · CATS" instead of internal page keys ("self service · CATS"). |
+
+New files: `components/WorkspaceGuide.tsx`, `features/account_shared.tsx`, `styles/console.css`, and tests in
+`features/admin_shared.test.tsx` (plus additions to `App.test.tsx` and `components/Shell.test.tsx`).
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm build` | Pass |
+| `pnpm test` | 62 files, 424 tests passed |
+| Browser (Chromium, demo data) | No horizontal page overflow on Settings, Scan, Patch, POA&M and Change password at 1920, 1366, 1024, 768 and 480 px; the More menu fits the viewport at every size. |
+
+The admin console layout uses the CSS `:has()` selector. Browsers without it (Firefox before 121) show the
+navigation stacked above the content instead of beside it; nothing is lost.
+
+## Before and after
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-2/configuration-before.png) | ![](enterprise-ui-modernization/phase-2/configuration-after.png) |
+| ![](enterprise-ui-modernization/phase-2/scan-before.png) | ![](enterprise-ui-modernization/phase-2/scan-after.png) |
+| ![](enterprise-ui-modernization/phase-2/patch-before.png) | ![](enterprise-ui-modernization/phase-2/patch-after.png) |
+| ![](enterprise-ui-modernization/phase-2/cybersecurity-before.png) | ![](enterprise-ui-modernization/phase-2/cybersecurity-after.png) |
+| ![](enterprise-ui-modernization/phase-2/poam-before.png) | ![](enterprise-ui-modernization/phase-2/poam-after.png) |
+| ![](enterprise-ui-modernization/phase-2/password-before.png) | ![](enterprise-ui-modernization/phase-2/password-after.png) |
+
+Menus: ![](enterprise-ui-modernization/phase-2/menus-after.png)
+![](enterprise-ui-modernization/phase-2/account-menu-after.png)
+
+## Still not modernized
+
+Addressed in phase 3 below.
+
+---
+
+# Phase 3: service views and remaining pages
+
+Branch: `feature/ui-modernization-phase-3`, built on phase 2. Presentation only, as before.
+
+| Area | Change |
+| --- | --- |
+| Service views | Architecture, Artifacts, Dependencies and Deployment Validation now use the same service header as Overview, Findings, Remediations and Activity: service name, compliance badge, version, owner, latest evidence and the Request approval, Export and Actions controls. Each view's own title, explanation and actions sit in a band under the tabs. The header data comes from the same `service_view` the Overview page uses, so the compliance badge is the real computed value on every view. |
+| Finding detail | Standard page header with an Active/Resolved badge and the Remediate action; remediation classification as a callout; risk cards with a severity badge and a "Known exploited" badge for KEV. |
+| Watchlist match | Standard header with a back link to the service's warnings and a "Watchlist match" badge. |
+| Discovery | Wider source column (340 px) that stays in view while reviewing, standard panel radius and spacing, dashed upload fields. |
+| Validators | Breadcrumb back to Settings · Integrations, the dedicated-VM notice as a standard warning callout, status badges for validators, clearer selected state. |
+| Risk Policy | Hard-coded greens and ambers replaced with theme tokens, so the tabs and notices follow every theme (checked in the light theme). |
+| Encoding fix | `discovery.tsx` on `main` (commit `22f35d5`) contained two Windows-1252 characters, which rendered as a replacement character and broke `test_internal_login_navigation_stays_in_current_tab`. Fixed in its own commit. |
+
+## Verification
+
+| Check | Result |
+| --- | --- |
+| `pnpm typecheck`, `pnpm lint`, `pnpm build` | Pass |
+| `pnpm test` | 62 files, 424 tests passed |
+| Backend tests that read frontend sources | 19 passed (one was failing on `main` before the encoding fix) |
+| Browser | All six service views, finding detail, Discovery, Validators and Risk Policy rendered against demo data; light theme checked for menus, admin and service pages. |
+
+## Before and after
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-3/svc-deps-before.png) | ![](enterprise-ui-modernization/phase-3/svc-deps-after.png) |
+| ![](enterprise-ui-modernization/phase-3/svc-validation-before.png) | ![](enterprise-ui-modernization/phase-3/svc-validation-after.png) |
+| ![](enterprise-ui-modernization/phase-3/finding-before.png) | ![](enterprise-ui-modernization/phase-3/finding-after.png) |
+| ![](enterprise-ui-modernization/phase-3/validators-before.png) | ![](enterprise-ui-modernization/phase-3/validators-after.png) |
+
+Light theme: ![](enterprise-ui-modernization/phase-3/light-theme-after.png)
+
+## Final polish (phase 3, continued)
+
+| Area | Change |
+| --- | --- |
+| Tables in Settings and policy pages | Every hand-built table inside the admin console (OIDC claim mappings, OCI registries, trusted CA certificates, OS package mirrors, vulnerability due-date and EPSS rules, Dependency Watchlist entries, release destinations, upstream registries and mappings) shares one bordered style: header band, compact rows, compact in-row fields and buttons, row actions on one line. These tables stay hand-built rather than using the data grid because their rows contain editable fields and forms. |
+| Empty lists | OCI registries, registry destinations and upstream registries/mappings show "None configured" rows instead of bare column headers. |
+| Status cells | Watchlist entries, OIDC claim mappings and OCI registries show standard status badges (same text as before). |
+| Risk Policy group picker | A scope bar with the Owning group field, an "Editing <group>" indicator and one-click group chips (up to 12 groups); a proper empty state before a group is chosen. The Risk Profiles / Assessments switch is a segmented control (it previously looked inverted). |
+| Remediation report | Standard page header (back link, status badge, the Retry or Review-a-new-plan action as a button), elapsed time as "7m 36s" instead of "456s", a current-state badge, changed files as cards with change counts, and images as cards showing original → candidate with the classification badge. All wording is unchanged. |
+
+Verification: typecheck, lint and build pass; 62 files and 426 frontend tests pass (new tests cover the group quick picks and elapsed formatting); 19 backend tests that read frontend sources pass. The remediation report was checked in the browser with fixture data from the existing tests, because the demo database has no remediation jobs.
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-3/table-cfg-integrations-before.png) | ![](enterprise-ui-modernization/phase-3/table-cfg-integrations-after.png) |
+| ![](enterprise-ui-modernization/phase-3/table-vuln-before.png) | ![](enterprise-ui-modernization/phase-3/table-vuln-after.png) |
+| ![](enterprise-ui-modernization/phase-3/report-before.png) | ![](enterprise-ui-modernization/phase-3/report-after.png) |
+
+Risk Policy picker: ![](enterprise-ui-modernization/phase-3/risk-picker-after.png)
+Report images and artifacts: ![](enterprise-ui-modernization/phase-3/report-images-after.png)

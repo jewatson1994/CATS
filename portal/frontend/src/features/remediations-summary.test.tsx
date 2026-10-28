@@ -30,3 +30,10 @@ it('collects manager resource quantities without offering a null proposal', asyn
   fireEvent.change(screen.getByLabelText('Resource quantity'),{target:{value:'100m'}});
   expect(JSON.parse((container.querySelector('[name="decisions"]') as HTMLInputElement).value)['1']).toEqual({action:'custom',value:'100m'});
 });
+
+it('formats remediation elapsed time for reading', async () => {
+  const {formatElapsed} = await import('./remediations');
+  expect(formatElapsed(42)).toBe('42s');
+  expect(formatElapsed(456)).toBe('7m 36s');
+  expect(formatElapsed(3725)).toBe('1h 2m');
+});

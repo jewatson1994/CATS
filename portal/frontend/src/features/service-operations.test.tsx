@@ -16,10 +16,16 @@ const chart = {semantic_type:'helm_chart',artifact:{id:11,chart_name:'Test Chart
 const response = (data:any) => ({ok:true,status:200,redirected:false,headers:new Headers({'content-type':'application/json'}),json:async () => data});
 
 describe('native service operations', () => {
-  it('offers Patch beside each active image and shows the retained patch marker', () => {
+  it('keeps service exports and image patch history available together on Artifacts', () => {
     render(<Artifacts data={fixture({can_patch_images: true, can_image_workflow: false, image_inventory: [{image: {...image, image_digest: `sha256:${'b'.repeat(64)}`, patch_history: [{original_image: 'registry/original:v1', result_image: image.image_reference, patched_at: '2026-10-25T12:00:00Z', job_id: 'patch-1'}]}, count: 0, references: []}]})}/>);
+    expect(screen.getByRole('heading', {level: 1, name: 'Sample'})).toBeInTheDocument();
+    expect(screen.getByRole('link', {name: 'Artifacts'})).toHaveAttribute('aria-current', 'page');
+    fireEvent.click(screen.getByText('Export'));
+    expect(screen.getByRole('link', {name: 'SBOM components'})).toHaveAttribute('href', '/services/sample/exports/sbom.json');
     expect(screen.getByRole('link', {name: 'Patch registry/image:tag'})).toHaveAttribute('href', '/patch-campaigns?service_id=sample&image_id=9');
-    expect(screen.getByLabelText('Patch history for registry/image:tag')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('Patch history for registry/image:tag'));
+    expect(screen.getByText('registry/original:v1')).toBeVisible();
+    expect(screen.getByRole('link', {name: 'View patch results'})).toHaveAttribute('href', '/api/public/patch-jobs/patch-1/results');
     expect(screen.queryByRole('button', {name: 'Replace image'})).not.toBeInTheDocument();
   });
   it('lists retained scanned charts without offering persisted artifact mutations', () => {
