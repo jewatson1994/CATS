@@ -246,3 +246,73 @@ details[open] > :is(.navigation-popover, .notification-popover, .menu-popover, .
 .risk-tabs button[aria-current] { background: color-mix(in srgb, var(--accent) 14%, transparent) !important; color: var(--text) !important; border-color: color-mix(in srgb, var(--accent) 45%, var(--border)) !important; }
 .risk-warning { color: var(--warning) !important; }
 .risk-policy-page .risk-section, .risk-policy-page .risk-editor-section { border-color: var(--border) !important; }
+
+/* ---------------------------------------------------------- remediation report */
+.remediation-report .page-header { margin-bottom: var(--space-4); }
+.report-state { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-3) 0 var(--space-4) !important; font-size: var(--text-sm); }
+.report-images { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+.report-image { display: grid; gap: 6px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.report-image-refs { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-2); }
+.report-image-refs code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); }
+.report-image-arrow { color: var(--text-muted); }
+.report-image-status { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; font-size: var(--text-xs); }
+.report-image p { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
+.report-artifact + .report-artifact { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.report-artifact h3 { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+.report-artifact h3 code { overflow-wrap: anywhere; }
+.report-artifact h3 .count-pill { margin-left: auto; }
+.report-artifact ul { margin: 0; padding-left: calc(16px + var(--space-2) + 14px); color: var(--text-muted); font-size: var(--text-sm); }
+.remediation-report .report-disclosure > summary, .remediation-report details.panel > summary { font-weight: 600; }
+@media (max-width: 760px) { .report-image-refs { grid-template-columns: 1fr; } .report-image-arrow { transform: rotate(90deg); justify-self: start; } }
+.risk-policy-page .risk-group-picker { display: grid !important; grid-template-columns: 1fr !important; gap: var(--space-3) !important; padding: var(--space-4) var(--space-5) !important;
+  border: 1px solid var(--border) !important; border-radius: var(--radius-lg); background: var(--surface) !important; }
+.risk-scope-bar { display: flex; align-items: flex-end; gap: var(--space-3) var(--space-5); flex-wrap: wrap; }
+.risk-scope-bar .risk-field { display: grid; gap: 6px; min-width: 260px; flex: 0 1 360px; color: var(--text-muted); font-size: var(--text-xs); font-weight: 600; }
+.risk-scope-bar .risk-field select { width: 100%; color: var(--text); font-weight: 400; }
+.risk-scope-help { flex: 1 1 260px; margin: 0 0 8px !important; color: var(--text-muted); font-size: var(--text-sm); }
+.risk-scope-current { margin: 0 0 6px auto; padding: 4px 10px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: var(--text-xs); white-space: nowrap; }
+.risk-group-chips { display: flex; flex-wrap: wrap; gap: 6px; padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.risk-policy-page button.risk-group-chip { min-height: 28px !important; padding: 0 12px !important; border: 1px solid var(--border-strong) !important; border-radius: var(--radius-pill) !important;
+  background: var(--surface) !important; color: var(--text) !important; font-size: var(--text-xs) !important; font-weight: 500 !important; }
+.risk-policy-page button.risk-group-chip:hover { border-color: var(--accent) !important; }
+.risk-policy-page button.risk-group-chip[aria-pressed="true"] { border-color: var(--accent) !important; background: color-mix(in srgb, var(--accent) 14%, transparent) !important; font-weight: 600 !important; }
+.risk-policy-page .empty-state { border: 1px dashed var(--border); border-radius: var(--radius-lg); }
+.risk-policy-page .risk-tabs { display: inline-flex !important; gap: 2px !important; padding: 3px !important; margin: var(--space-4) 0 !important; border: 1px solid var(--border) !important; border-radius: var(--radius-lg); background: var(--surface-raised); }
+.risk-policy-page .risk-tabs button { min-height: 30px !important; padding: 0 var(--space-3) !important; border: 0 !important; border-radius: var(--radius-md) !important;
+  background: transparent !important; color: var(--text-muted) !important; font-weight: 500 !important; box-shadow: none !important; filter: none !important; }
+.risk-policy-page .risk-tabs button:hover { color: var(--text) !important; }
+.risk-policy-page .risk-tabs button[aria-current], .risk-policy-page .risk-tabs button[aria-selected="true"], .risk-policy-page .risk-tabs button[aria-pressed="true"] {
+  background: var(--surface) !important; color: var(--text) !important; box-shadow: 0 0 0 1px var(--border) !important; font-weight: 600 !important; }
+
+/* -------------------------------------------- tables inside the admin console */
+/* One bordered, compact table style for every hand-built table in Settings, the
+   policy pages and other admin pages (the shared data grid keeps its own style). */
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) {
+  width: 100%; border-collapse: separate !important; border-spacing: 0; margin: var(--space-2) 0 var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); font-size: var(--text-sm);
+}
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) th {
+  padding: 8px 12px !important; background: var(--surface-raised) !important; border-bottom: 1px solid var(--border) !important;
+  color: var(--text-muted); font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; text-align: left; white-space: nowrap;
+}
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) thead th:first-child { border-top-left-radius: var(--radius-md); }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) thead th:last-child { border-top-right-radius: var(--radius-md); }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td {
+  padding: 8px 12px !important; border-bottom: 1px solid var(--border) !important; vertical-align: middle; white-space: normal; overflow-wrap: anywhere;
+}
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) tbody tr:last-child td { border-bottom: 0 !important; }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) tbody tr:hover > td { background: color-mix(in srgb, var(--surface-raised) 55%, transparent); }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td code { font-size: var(--text-xs); }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td :is(input:not([type="checkbox"]):not([type="radio"]), select) { min-height: 30px !important; min-width: 0 !important; width: 100%; max-width: 260px; padding: 3px 8px !important; }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td button, :is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td .secondary-button {
+  min-height: 28px !important; padding: 0 10px !important; font-size: var(--text-xs) !important; }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td details > summary { color: var(--accent); font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td.empty, :is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td.table-empty,
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td[colspan] { padding: var(--space-5) !important; color: var(--text-muted); text-align: center; font-size: var(--text-sm); }
+:is(div, section, main):has(> .admin-sidenav) .table-wrap { border-radius: var(--radius-md); }
+:is(div, section, main):has(> .admin-sidenav) .table-wrap > table { margin: 0; }
+/* Row-action pairs stay on one line */
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td:last-child { white-space: nowrap; }
+:is(div, section, main):has(> .admin-sidenav) table:not(.dg-table) td:last-child > * + * { margin-left: 6px; }
+.cell-note { display: block; margin-top: 3px; color: var(--text-muted); font-size: var(--text-xs); }

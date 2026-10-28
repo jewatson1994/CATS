@@ -346,9 +346,7 @@ Menus: ![](enterprise-ui-modernization/phase-2/menus-after.png)
 
 ## Still not modernized
 
-Service sub-pages (Architecture, Artifacts, Dependencies, Deployment Validation, Activity) use slightly
-different headers from the main service workspace; Discovery's two-column form, Risk Policy internals,
-Validators and finding detail keep their existing layouts. These are good candidates for a phase 3.
+Addressed in phase 3 below.
 
 ---
 
@@ -385,3 +383,24 @@ Branch: `feature/ui-modernization-phase-3`, built on phase 2. Presentation only,
 | ![](enterprise-ui-modernization/phase-3/validators-before.png) | ![](enterprise-ui-modernization/phase-3/validators-after.png) |
 
 Light theme: ![](enterprise-ui-modernization/phase-3/light-theme-after.png)
+
+## Final polish (phase 3, continued)
+
+| Area | Change |
+| --- | --- |
+| Tables in Settings and policy pages | Every hand-built table inside the admin console (OIDC claim mappings, OCI registries, trusted CA certificates, OS package mirrors, vulnerability due-date and EPSS rules, Dependency Watchlist entries, release destinations, upstream registries and mappings) shares one bordered style: header band, compact rows, compact in-row fields and buttons, row actions on one line. These tables stay hand-built rather than using the data grid because their rows contain editable fields and forms. |
+| Empty lists | OCI registries, registry destinations and upstream registries/mappings show "None configured" rows instead of bare column headers. |
+| Status cells | Watchlist entries, OIDC claim mappings and OCI registries show standard status badges (same text as before). |
+| Risk Policy group picker | A scope bar with the Owning group field, an "Editing <group>" indicator and one-click group chips (up to 12 groups); a proper empty state before a group is chosen. The Risk Profiles / Assessments switch is a segmented control (it previously looked inverted). |
+| Remediation report | Standard page header (back link, status badge, the Retry or Review-a-new-plan action as a button), elapsed time as "7m 36s" instead of "456s", a current-state badge, changed files as cards with change counts, and images as cards showing original → candidate with the classification badge. All wording is unchanged. |
+
+Verification: typecheck, lint and build pass; 62 files and 426 frontend tests pass (new tests cover the group quick picks and elapsed formatting); 19 backend tests that read frontend sources pass. The remediation report was checked in the browser with fixture data from the existing tests, because the demo database has no remediation jobs.
+
+| Before | After |
+| --- | --- |
+| ![](enterprise-ui-modernization/phase-3/table-cfg-integrations-before.png) | ![](enterprise-ui-modernization/phase-3/table-cfg-integrations-after.png) |
+| ![](enterprise-ui-modernization/phase-3/table-vuln-before.png) | ![](enterprise-ui-modernization/phase-3/table-vuln-after.png) |
+| ![](enterprise-ui-modernization/phase-3/report-before.png) | ![](enterprise-ui-modernization/phase-3/report-after.png) |
+
+Risk Policy picker: ![](enterprise-ui-modernization/phase-3/risk-picker-after.png)
+Report images and artifacts: ![](enterprise-ui-modernization/phase-3/report-images-after.png)

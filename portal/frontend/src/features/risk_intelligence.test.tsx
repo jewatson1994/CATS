@@ -170,3 +170,14 @@ it('blocks saving unordered thresholds and allows correction', async () => {
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(screen.getByRole('button',{name:'Save new version'})).toBeEnabled();
 });
+it('offers quick group picks that select the same group as the Owning group field', async () => {
+  setup(); await selectService();
+  const picks = screen.getByRole('group', {name: 'Quick group selection'});
+  const buttons = within(picks).getAllByRole('button');
+  expect(buttons.length).toBeGreaterThan(1);
+  expect(buttons.filter(button => button.getAttribute('aria-pressed') === 'true')).toHaveLength(1);
+  fireEvent.click(buttons[1]);
+  await waitFor(()=>expect(requestJson).toHaveBeenCalledWith('/api/risk/profiles?group_id=2', expect.anything()));
+  expect(screen.getByLabelText('Owning group')).toHaveValue('2');
+  expect(buttons[1]).toHaveAttribute('aria-pressed', 'true');
+});
