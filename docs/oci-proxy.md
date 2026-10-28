@@ -1,17 +1,19 @@
 # OCI compliance proxy
 
-The optional CATS OCI facade serves approved artifacts from configured upstream registries. It is a read-only Distribution API endpoint, not a second registry or an upload destination. Upstream Harbor remains the source of content. CATS owns authorization, current policy decisions, and the local verified-content cache.
+The CATS OCI facade is included in the main Compose stack and serves approved artifacts from configured upstream registries. It is a read-only Distribution API endpoint, not a second registry or an upload destination. Upstream Harbor remains the source of content. CATS owns authorization, current policy decisions, and the local verified-content cache.
 
 ## Deployment
 
-Build the CATS image containing this feature, retain the normal PostgreSQL service, and add the optional overlay:
+Build or load the CATS image containing this feature and configure the normal deployment environment. Both `compose.yaml` and `templates/compose.main.yaml` include `oci-proxy` by default. From the repository root, start the main stack normally:
 
 ```sh
-docker compose -f compose.yaml -f compose.oci-proxy.yml config
-docker compose -f compose.yaml -f compose.oci-proxy.yml up -d oci-proxy
+docker compose config --quiet
+docker compose up -d --wait
 ```
 
-The proxy uses the same database and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named cache volume survives restarts. It has no Docker socket, privileged execution, or registry storage backend. The application listens on port 5000; the overlay publishes it only on host loopback. Terminate HTTPS at a trusted reverse proxy and forward only over the trusted local/container network. Configure clients to trust that HTTPS certificate. Do not send machine credentials over a public HTTP connection.
+For the main deployment template, use the ordinary [template startup commands](../templates/README.md#main-cats). No overlay is required. `compose.oci-proxy.yml` remains a no-op compatibility file so existing commands that include it continue to work with the main Compose file.
+
+The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named `oci_proxy_cache` volume survives restarts and service recreation. It has no Docker socket, privileged execution, or registry storage backend. The application listens on port 5000; Compose publishes it only on host loopback at `127.0.0.1:5000` by default (`CATS_OCI_PORT` changes the host port). Terminate HTTPS at a trusted reverse proxy and forward only over the trusted local/container network. Configure clients to trust that HTTPS certificate. Do not send machine credentials over a public HTTP connection.
 
 Configure an upstream HTTPS registry origin and its read-only upstream credentials through the CATS administration interface. Add private CA PEM certificates when needed. Delegated token service origins and blob redirect origins require explicit allowlisting. Keep the allowlists narrow: token services receive upstream credentials. Redirects to another origin lose Authorization headers; signed CDN URLs can still work. No insecure TLS bypass exists.
 
@@ -29,7 +31,7 @@ Cache configuration:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `CATS_OCI_CACHE_DIR` | `/var/cache/cats-oci` in overlay | Persistent content directory |
+| `CATS_OCI_CACHE_DIR` | `/var/cache/cats-oci` in the main stack | Persistent content directory |
 | `CATS_OCI_CACHE_MAX_BYTES` | 10737418240 | Total cached content quota (10 GiB) |
 | `CATS_OCI_MAX_BLOB_BYTES` | 4294967296 | Maximum individual blob (4 GiB) |
 | `CATS_OCI_PORT` | 5000 | Loopback host port |
@@ -51,12 +53,13 @@ Run these checks against a staging Harbor instance and a staging CATS database b
 
 ## Rollback
 
-Stop and remove only the optional proxy service:
+To take the proxy out of service immediately, stop it:
 
 ```sh
-docker compose -f compose.yaml -f compose.oci-proxy.yml stop oci-proxy
-docker compose -f compose.yaml -f compose.oci-proxy.yml rm -f oci-proxy
+docker compose stop oci-proxy
 ```
+
+When using the deployment template, include your existing `--env-file` and `-f templates/compose.main.yaml` arguments. Stopping or removing the container does not disable this default service: a later normal `docker compose up` starts it again. Keep it stopped during the rollback and account for it in subsequent deployment commands.
 
 Remove its reverse-proxy route and revoke its machine credentials. Preserve the cache volume for investigation or later reuse; deleting it is optional and only removes reproducible upstream content. The normal portal, workers, database, and Harbor remain in place. Do not use `docker compose down -v` as a proxy rollback because it can remove unrelated persisted services and data. Reverting clients to direct Harbor access requires an explicit access-policy decision; do not automatically bypass compliance enforcement.
 

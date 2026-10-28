@@ -4,7 +4,7 @@ These templates deploy the current runtime and its separate validator sandbox. R
 
 ## Main CATS
 
-The main template runs PostgreSQL, portal, the private portal-control listener, patch-worker, scan-worker, remediation-worker, export-worker, and provisioning-worker under the project name `cats`. All CATS services use the same already-built image; this template does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
+The main template runs PostgreSQL, portal, the private portal-control listener, oci-proxy, patch-worker, scan-worker, remediation-worker, export-worker, and provisioning-worker under the project name `cats`. All CATS services use the same already-built image; this template does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
 
 ```powershell
 Copy-Item templates/main.env.example C:/secure/cats.env
@@ -27,8 +27,10 @@ The portal defaults to HTTP port 8080. For shared deployments, configure your ap
 
 ```sh
 docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet
-docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --force-recreate --wait portal portal-control oci-proxy scan-worker patch-worker remediation-worker export-worker provisioning-worker
 ```
+
+The read-only OCI compliance proxy starts with the main stack. It shares the portal image, database, and encryption key, and retains verified content in the `oci_proxy_cache` volume. Its endpoint is bound to `127.0.0.1:5000` by default; change `CATS_OCI_PORT` if needed and use a trusted HTTPS reverse proxy for consumer access. Configure upstream registries and scoped machine credentials before use. No overlay is needed; the legacy `compose.oci-proxy.yml` is a no-op compatibility file. See [OCI proxy operations](../docs/oci-proxy.md) for policy behavior, cache limits, acceptance checks, and rollback.
 
 The three new workers share common Compose settings through YAML anchors and wait for portal health before starting. PostgreSQL stores their durable jobs; no message broker or additional published ports are needed. Preserve `validator_payloads`, `validator_data` (managed-validator state and preparation cache), and `export_jobs` (generated downloads). `validator_staged_release` is an empty fallback volume when no legacy release directory is selected. See the [upgrade guide](../docs/durable-workers.md#upgrade-an-existing-installation) before replacing a deployment that kept validator state only inside the portal container.
 

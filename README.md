@@ -63,7 +63,7 @@ Assignments can be global, group-scoped, or service-scoped, and permissions comb
 
 ## Install and start
 
-The main stack contains **portal**, **portal-control**, **scan-worker**, **patch-worker**, **remediation-worker**, **risk-worker**, **export-worker**, **provisioning-worker**, **discovery-worker**, and **PostgreSQL**. Portal and all workers, including Discovery, use the same `CATS_IMAGE`. Discovery runs with a dedicated non-root identity and renderer sandbox. `--discovery-offline-output <directory>` exports that same image and sandbox files for disconnected deployment. An optional administrator-managed mirror supplies exact-version, checksum-verified charts and Git/OCI snapshots without public-network fallback. Its approved worker-only sandbox profile is included at `deploy/discovery-seccomp.json`; hosts still require qualification before use. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
+The main stack contains **portal**, **portal-control**, **oci-proxy**, **scan-worker**, **patch-worker**, **remediation-worker**, **risk-worker**, **export-worker**, **provisioning-worker**, **discovery-worker**, and **PostgreSQL**. Portal, the OCI proxy, and all workers, including Discovery, use the same `CATS_IMAGE`. Discovery runs with a dedicated non-root identity and renderer sandbox. `--discovery-offline-output <directory>` exports that same image and sandbox files for disconnected deployment. An optional administrator-managed mirror supplies exact-version, checksum-verified charts and Git/OCI snapshots without public-network fallback. Its approved worker-only sandbox profile is included at `deploy/discovery-seccomp.json`; hosts still require qualification before use. Local accounts are the default; an external OIDC provider is optional. CATS does not deploy Keycloak or another identity provider.
 
 You need Docker Engine or Docker Desktop running Linux containers, Docker Compose v2, and a built CATS image. Run the following from the repository root.
 
@@ -93,11 +93,11 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | Setting | Meaning |
 | --- | --- |
-| `CATS_IMAGE` | Image used by portal, portal-control, and existing workers, for example `cats:1.3`. |
-| `CATS_IMAGE` | Shared portal and worker image, including Discovery; defaults to `cats:local`. See the [build and security requirements](docs/universal-deployment-discovery.md#offline-build-and-operation). |
+| `CATS_IMAGE` | Shared portal, OCI proxy, and worker image, including Discovery; defaults to `cats:local`. See the [build and security requirements](docs/universal-deployment-discovery.md#offline-build-and-operation). |
 | `CATS_SCAN_WORKER_TOKEN` | Unique random token of at least 32 characters shared with the private control listener; replace the example placeholder. |
 | `CATS_SCAN_REGISTRY_AUTH_SOURCE` | Existing registry-auth directory; defaults to `./scan-registry-auth`. |
 | `CATS_PORT` | Browser-facing port; defaults to `8080`. |
+| `CATS_OCI_PORT` | OCI proxy port on host loopback; defaults to `5000`. |
 | `CATS_BOOTSTRAP_USERNAME` / `CATS_BOOTSTRAP_PASSWORD` | Initial local administrator credentials. |
 | `CATS_CONFIG_ENCRYPTION_KEY` | Stable key for stored secrets; retain it across upgrades. |
 | `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` | Optional legacy staged-release directory. Leave blank for automatic preparation when Provision is clicked. |
@@ -140,11 +140,13 @@ docker compose ps
 
 Open **http://localhost:8080** (or your configured port) and sign in with your local account. The project name is `cats`, so root and main-template deployments refer to the same stack.
 
+The read-only OCI compliance proxy also starts with this command, using the portal's database and encryption key. It binds to `127.0.0.1:5000` by default and keeps verified content in the persistent `oci_proxy_cache` volume. Use a trusted HTTPS reverse proxy for consumer access and configure upstream registries and scoped machine credentials before use. Both main Compose files include the service; no overlay is required. See [OCI proxy operations](docs/oci-proxy.md) for setup, cache controls, and rollback.
+
 ```sh
-docker compose logs -f portal portal-control scan-worker patch-worker remediation-worker risk-worker export-worker provisioning-worker
+docker compose logs -f portal portal-control oci-proxy scan-worker patch-worker remediation-worker risk-worker export-worker provisioning-worker
 ```
 
-For upgrades, update the image and Compose file together, select the new `CATS_IMAGE`, and run `docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker risk-worker export-worker provisioning-worker`. This preserves named volumes. Keep `validator_payloads`, `validator_data` (managed-validator state/cache), and `export_jobs` (generated downloads). Follow the [worker upgrade guide](docs/durable-workers.md#upgrade-an-existing-installation) if an older installation kept validator state only inside the portal container. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
+For upgrades, update the image and Compose file together, select the new `CATS_IMAGE`, and run `docker compose up -d --force-recreate --wait portal portal-control oci-proxy scan-worker patch-worker remediation-worker risk-worker export-worker provisioning-worker`. This preserves named volumes. Keep `validator_payloads`, `validator_data` (managed-validator state/cache), `export_jobs` (generated downloads), and `oci_proxy_cache` (verified OCI content). Follow the [worker upgrade guide](docs/durable-workers.md#upgrade-an-existing-installation) if an older installation kept validator state only inside the portal container. `docker compose down` stops the stack; adding `--volumes` deletes persistent data.
 
 The remediation, risk, export, and provisioning workers reuse common Compose settings, wait for portal health, and process jobs stored in PostgreSQL. No message broker or additional published ports are required. Remediation, export, and provisioning progress appears in **Jobs**; completed exports provide a download link there.
 
