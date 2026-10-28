@@ -24,17 +24,20 @@ This integration serves retained remediation candidates. There is no new standal
 
 ## Configuration and boundaries
 
-Set these in the main deployment environment; both shipped Compose files forward them to `portal` and `portal-control`:
+Set these in the main deployment environment; both shipped Compose files forward them through the shared environment to `portal`, `portal-control`, and `remediation-worker`, which executes Cyber release publication:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `CATS_RELEASE_DOC_MAX_BYTES` | `268435456` | Positive byte limit for the Export All documentation archive and its uncompressed generated content. OCI transport allows another 2 MiB for release metadata, signatures and its empty config. |
 | `CATS_BUNDLE_MAX_BYTES` | `104857600` | Combined expanded manifest and payload limit, and compressed-size limit, for portable service/evidence bundles. There is no separate 64 KiB manifest cap. |
 | `CATS_OCI_TOKEN_REALMS` | empty | Comma-separated HTTPS origins allowed to receive the destination credentials when obtaining a registry bearer token. The registry's own origin is always allowed. |
+| `CATS_OCI_BLOB_REDIRECT_ORIGINS` | empty | Comma-separated HTTPS origins allowed for cross-origin publication blob GET/HEAD redirects. Registry credentials are never forwarded to another origin. Same-origin reads and HTTP 307/308 writes are supported automatically. |
 
 For example, a registry at `https://registry.example` with a separate token service at `https://auth.registry.example/token` needs `CATS_OCI_TOKEN_REALMS=https://auth.registry.example`. This grants trust to that **origin**, including its port, rather than only the example path. Add only operator-approved token services. Empty is the safest default for registries that authenticate on their own origin.
 
-OCI publication uses the approved service destination or administrator-approved remediation destination, its encrypted credentials, and its additive CA trust. Documents are stored in the **same repository** as their immutable subject (`registry/repository@sha256:...`). The helper reads only the supplied `DOCKER_CONFIG/config.json`; it does not invoke credential helpers or fall back to a user's Docker configuration. HTTPS verification remains enabled. Cross-origin upload locations and redirects are rejected. A registry that redirects blob reads to another host therefore needs a separately reviewed transport change before it can pass this helper's retrieval verification.
+OCI publication uses the approved service destination or administrator-approved remediation destination, its encrypted credentials, and its additive CA trust. Documents are stored in the **same repository** as their immutable subject (`registry/repository@sha256:...`). The helper reads only the supplied `DOCKER_CONFIG/config.json`; it does not invoke credential helpers or fall back to a user's Docker configuration. HTTPS verification remains enabled. Cross-origin upload locations, writes, and manifest redirects are rejected.
+
+For a registry that redirects blob downloads to object storage, set `CATS_OCI_BLOB_REDIRECT_ORIGINS` to the storage service's approved HTTPS origin, for example `https://registry-storage.example`. This applies to both source retrieval and destination verification during publication. Use origins only, including any non-default port; do not include paths, queries, credentials, or signed URLs. The redirected storage service must accept the request without registry credentials, typically through a signed URL issued by the registry. Configure CA trust separately when needed. `CATS_OCI_TOKEN_REALMS` and the OCI proxy's upstream allowlists do not authorize publication blob redirects. Recreate `remediation-worker`, `portal`, and `portal-control` after changing these environment settings, then retry the failed publication.
 
 The private signing key and password remain in encrypted configuration. Only the public key is exported. The public-key fingerprint is SHA-256 over DER SubjectPublicKeyInfo, recorded with the `sha256:` prefix. Obtain the expected fingerprint through a trusted administrative channel; trusting a key solely because it accompanies a signature does not authenticate the publisher.
 

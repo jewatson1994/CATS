@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 import logging
 from sqlalchemy import inspect, text
+from .schema_migrations import create_index_if_missing
 
 
 @contextmanager
@@ -16,6 +17,11 @@ def migration_transaction(engine):
                 connection.begin()
                 if connection.dialect.name == "postgresql":
                     connection.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 485018035649})
+                    # A real upgrade must fail and roll back promptly if active
+                    # traffic prevents DDL, rather than queue page requests for
+                    # minutes behind its pending table lock. Serialization above
+                    # may wait without holding any application table locks.
+                    connection.execute(text("SET LOCAL lock_timeout = '5s'"))
             yield connection
             connection.commit()
         except BaseException:
@@ -41,7 +47,8 @@ def upgrade_connection(connection):
     tables = set(inspect(connection).get_table_names())
     for table in ("bundle_previews", "exchange_previews"):
         if table in tables:
-            connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_{table}_expiry_token ON {table} (expires_at, token)"))
+            create_index_if_missing(connection, table, f"ix_{table}_expiry_token",
+                f"CREATE INDEX IF NOT EXISTS ix_{table}_expiry_token ON {table} (expires_at, token)")
     if "service_id" not in columns:
         return
     duplicates = connection.execute(text(
@@ -52,8 +59,8 @@ def upgrade_connection(connection):
         # Historical evidence is never deleted or merged by a startup migration.
         logging.getLogger(__name__).warning("Duplicate POAM exchange identities exist; unique index deferred until administrator reconciliation")
     else:
-        connection.execute(text(
+        create_index_if_missing(connection, "poam_entries", "ux_poam_exchange_identity",
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_poam_exchange_identity "
             "ON poam_entries (service_id, COALESCE(service_version, ''), exchange_key) "
             "WHERE exchange_key IS NOT NULL"
-        ))
+        )

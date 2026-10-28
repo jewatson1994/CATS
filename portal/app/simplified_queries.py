@@ -9,6 +9,7 @@ from datetime import timedelta
 from sqlalchemy import case, event, func, literal, select, true, update, inspect, and_
 from sqlalchemy.orm import aliased, Session
 from .models import Finding, FindingObservation, ExceptionRecord, PolicyFinding
+from .schema_migrations import create_index_if_missing
 
 
 def observation_metadata(values):
@@ -98,7 +99,8 @@ def upgrade_projection(connection):
             connection.execute(update(FindingObservation).where(FindingObservation.id == row['id'])
                 .values(**observation_metadata(row)))
     from sqlalchemy import text
-    connection.execute(text('CREATE INDEX IF NOT EXISTS ix_obs_finding_execution_id ON finding_observations (finding_id, execution_id, id)'))
+    create_index_if_missing(connection, 'finding_observations', 'ix_obs_finding_execution_id',
+        'CREATE INDEX IF NOT EXISTS ix_obs_finding_execution_id ON finding_observations (finding_id, execution_id, id)')
 
 
 # Parity switch (PostgreSQL only); the scalar-subquery join is the reference form.

@@ -49,6 +49,9 @@ def failure_diagnostic(exc, stage):
     reason = exc.reason if isinstance(exc, URLError) else exc
     if isinstance(exc, PublicationValidationError):
         detail["cause"] = str(exc)
+    elif isinstance(exc, release_oci._RedirectError):
+        detail["http_status"] = int(exc.status)
+        detail["cause"] = exc.cause
     elif isinstance(exc, release_oci._RegistryError):
         detail["http_status"] = int(exc.status)
         detail["cause"] = {
@@ -57,6 +60,8 @@ def failure_diagnostic(exc, stage):
             404: "The registry image, manifest or repository was not found.",
             429: "The registry rate limit was exceeded. Retry later.",
         }.get(exc.status, "The registry rejected the request.")
+        if exc.status in (301, 302, 303, 307, 308):
+            detail["cause"] = "The registry returned a redirect that could not be followed. Check registry and storage redirect configuration."
     elif isinstance(reason, ssl.SSLError):
         detail["cause"] = "TLS verification or negotiation failed. Check the registry certificate and trusted CA."
     elif isinstance(exc, PermissionError):

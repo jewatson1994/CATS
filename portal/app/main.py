@@ -64,6 +64,7 @@ install_sqlalchemy_diagnostics(engine, SessionLocal.class_)
 install_sqlalchemy_diagnostics(background_engine, SessionLocal.class_)
 install_execution_summary_hooks(SessionLocal.class_)
 from .simplified_queries import upgrade_projection
+from .schema_migrations import create_index_if_missing
 from . import dependency_queries
 from .helm_sources import normalize_chart_reference, oci_pull_arguments
 from .helm_archives import extract_chart, compressed_limit
@@ -334,24 +335,24 @@ with migration_transaction(engine) as connection:
                                {"revision_id": revision_id, "run_id": legacy["id"]})
     # Composite indexes match the summary dashboard's bulk filters and latest-
     # execution lookup. They are idempotent and safe for existing deployments.
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS ix_findings_service_active ON findings (service_id, active)",
-        "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active ON policy_findings (service_id, active)",
-        "CREATE INDEX IF NOT EXISTS ix_executions_service_scanned ON executions (service_id, scanned_at)",
-        "CREATE INDEX IF NOT EXISTS ix_poam_service_status_due ON poam_entries (service_id, status, due_date)",
-        "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_id_id ON finding_observations (finding_id, id)",
+    for table, name, statement in (
+        ("findings", "ix_findings_service_active", "CREATE INDEX IF NOT EXISTS ix_findings_service_active ON findings (service_id, active)"),
+        ("policy_findings", "ix_policy_findings_service_active", "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active ON policy_findings (service_id, active)"),
+        ("executions", "ix_executions_service_scanned", "CREATE INDEX IF NOT EXISTS ix_executions_service_scanned ON executions (service_id, scanned_at)"),
+        ("poam_entries", "ix_poam_service_status_due", "CREATE INDEX IF NOT EXISTS ix_poam_service_status_due ON poam_entries (service_id, status, due_date)"),
+        ("finding_observations", "ix_finding_observations_finding_id_id", "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_id_id ON finding_observations (finding_id, id)"),
         # One (finding_id, execution_id, id) index is sufficient: keep the model's
         # ix_obs_finding_execution_id and drop the identical legacy duplicate,
         # which only doubled observation write and storage cost.
-        "CREATE INDEX IF NOT EXISTS ix_obs_finding_execution_id ON finding_observations (finding_id, execution_id, id)",
-        "DROP INDEX IF EXISTS ix_finding_observations_finding_execution_id",
-        "CREATE INDEX IF NOT EXISTS ix_findings_service_active_order ON findings (service_id, active, episode_started, cve, id)",
-        "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active_order ON policy_findings (service_id, active, episode_started, finding, id)",
-        "CREATE INDEX IF NOT EXISTS ix_deployment_validation_artifact_revision ON deployment_validation_runs (artifact_revision_id)",
-        "CREATE INDEX IF NOT EXISTS ix_exceptions_finding_active ON exceptions (finding_id, revoked_at, starts_at, expires_at)",
-        "CREATE INDEX IF NOT EXISTS ix_policy_exceptions_finding_active ON policy_exceptions (policy_finding_id, revoked_at, starts_at, expires_at)",
+        ("finding_observations", "ix_obs_finding_execution_id", "CREATE INDEX IF NOT EXISTS ix_obs_finding_execution_id ON finding_observations (finding_id, execution_id, id)"),
+        ("findings", "ix_findings_service_active_order", "CREATE INDEX IF NOT EXISTS ix_findings_service_active_order ON findings (service_id, active, episode_started, cve, id)"),
+        ("policy_findings", "ix_policy_findings_service_active_order", "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active_order ON policy_findings (service_id, active, episode_started, finding, id)"),
+        ("deployment_validation_runs", "ix_deployment_validation_artifact_revision", "CREATE INDEX IF NOT EXISTS ix_deployment_validation_artifact_revision ON deployment_validation_runs (artifact_revision_id)"),
+        ("exceptions", "ix_exceptions_finding_active", "CREATE INDEX IF NOT EXISTS ix_exceptions_finding_active ON exceptions (finding_id, revoked_at, starts_at, expires_at)"),
+        ("policy_exceptions", "ix_policy_exceptions_finding_active", "CREATE INDEX IF NOT EXISTS ix_policy_exceptions_finding_active ON policy_exceptions (policy_finding_id, revoked_at, starts_at, expires_at)"),
     ):
-        connection.execute(text(statement))
+        create_index_if_missing(connection, table, name, statement)
+    connection.execute(text("DROP INDEX IF EXISTS ix_finding_observations_finding_execution_id"))
 seed_auth()
 
 

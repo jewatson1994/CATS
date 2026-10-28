@@ -64,8 +64,11 @@ def _reference(value):
 
 
 def _origin(url):
+    if any(ord(character) < 32 or ord(character) == 127 for character in url):
+        raise ValueError("Registry URLs must not contain control characters")
     parts = urlsplit(url)
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
+    if (parts.scheme != "https" or not parts.hostname or parts.username is not None
+            or parts.password is not None or parts.fragment or parts.port == 0):
         raise ValueError("Registry URLs must use credential-free HTTPS")
     return parts.scheme, parts.hostname.lower(), parts.port or 443
 
@@ -79,6 +82,23 @@ class _RegistryError(ValueError):
     def __init__(self, status):
         self.status = status
         super().__init__(f"Registry rejected documentation operation (HTTP {status})")
+
+
+class _RedirectError(_RegistryError):
+    """Fixed diagnostics only: a Location can contain a signed storage credential."""
+
+    _CAUSES = {
+        "missing_location": "The registry redirect did not include a destination. Check the registry or reverse proxy configuration.",
+        "invalid_location": "The registry redirect has an invalid or unsafe destination. Redirects require credential-free HTTPS.",
+        "unapproved_origin": "The registry redirect leaves an approved origin. For trusted blob storage, configure CATS_OCI_BLOB_REDIRECT_ORIGINS; other operations must stay on their original origin.",
+        "unsafe_method": "The registry redirect would change an upload method. Configure the registry or reverse proxy to use HTTP 307 or 308 for uploads.",
+        "limit": "The registry exceeded the redirect limit. Check the registry or reverse proxy for a redirect loop.",
+    }
+
+    def __init__(self, status, reason):
+        super().__init__(status)
+        self.cause = self._CAUSES[reason]
+        self.args = (self.cause,)
 
 
 class _Client:
@@ -99,6 +119,13 @@ class _Client:
         for realm in env.get("CATS_OCI_TOKEN_REALMS", "").split(","):
             if realm.strip():
                 self.auth_origins.add(_origin(realm.strip()))
+        self.blob_redirect_origins = set()
+        for origin in env.get("CATS_OCI_BLOB_REDIRECT_ORIGINS", "").split(","):
+            if origin.strip():
+                parts = urlsplit(origin.strip())
+                if parts.path not in ("", "/") or parts.query:
+                    raise ValueError("Blob redirect origins must be HTTPS origins without paths or queries")
+                self.blob_redirect_origins.add(_origin(origin.strip()))
         config_dir = env.get("DOCKER_CONFIG")
         if config_dir:
             config = json.loads((Path(config_dir) / "config.json").read_text(encoding="utf-8"))
@@ -113,12 +140,54 @@ class _Client:
                     self.basic = "Basic " + credential
                     break
 
-    def _open(self, request, limit):
-        with self.opener.open(request, timeout=45) as response:
-            data = response.read(limit + 1)
-            if len(data) > limit:
-                raise ValueError("Registry response exceeds documentation size limit")
-            return response.status, response.headers, data
+    def _open(self, request, limit, *, blob_redirects=False):
+        original_origin = _origin(request.full_url)
+        crossed_origin = False
+        for redirects in range(6):
+            try:
+                with self.opener.open(request, timeout=45) as response:
+                    data = response.read(limit + 1)
+                    if len(data) > limit:
+                        raise ValueError("Registry response exceeds documentation size limit")
+                    # Upload sessions can return a relative Location after a redirect.
+                    # Resolve it against the URL that actually answered the request.
+                    if response.headers.get("Location"):
+                        response.headers.replace_header("Location", urljoin(request.full_url, response.headers["Location"]))
+                    return response.status, response.headers, data
+            except urllib.error.HTTPError as exc:
+                status = exc.code
+                if status not in (301, 302, 303, 307, 308):
+                    if crossed_origin:
+                        # Storage cannot trigger an exchange of registry credentials.
+                        exc.close()
+                        raise _RegistryError(status) from None
+                    raise
+                location = exc.headers.get("Location", "")
+                exc.close()
+                if not location.strip():
+                    raise _RedirectError(status, "missing_location") from None
+                if redirects == 5:
+                    raise _RedirectError(status, "limit") from None
+                if request.get_method() not in ("GET", "HEAD") and status not in (307, 308):
+                    raise _RedirectError(status, "unsafe_method") from None
+                try:
+                    if any(ord(character) < 32 or ord(character) == 127 for character in location):
+                        raise ValueError("Invalid redirect")
+                    target = urljoin(request.full_url, location)
+                    target_origin = _origin(target)
+                except ValueError:
+                    raise _RedirectError(status, "invalid_location") from None
+                if target_origin != original_origin and not (
+                        blob_redirects and target_origin in self.blob_redirect_origins):
+                    raise _RedirectError(status, "unapproved_origin") from None
+                # urllib adds routing/proxy headers while opening a request.
+                # Recompute these: the next host may use a different proxy.
+                headers = {key: value for key, value in request.header_items()
+                           if key.lower() not in ("host", "proxy-authorization")}
+                if target_origin != _origin(request.full_url):
+                    crossed_origin = True
+                    headers = {key: value for key, value in headers.items() if key.lower() != "authorization"}
+                request = urllib.request.Request(target, data=request.data, headers=headers, method=request.get_method())
 
     def _authenticate(self, challenge):
         scheme, _, parameters = challenge.partition(" ")
@@ -140,7 +209,9 @@ class _Client:
         try:
             _, _, data = self._open(urllib.request.Request(url, headers=headers), 1024 * 1024)
         except urllib.error.HTTPError as exc:
-            raise _RegistryError(exc.code) from None
+            status = exc.code
+            exc.close()
+            raise _RegistryError(status) from None
         document = json.loads(data)
         token = document.get("token") or document.get("access_token")
         if not isinstance(token, str) or not token or "\r" in token or "\n" in token:
@@ -155,18 +226,25 @@ class _Client:
                    "application/vnd.docker.distribution.manifest.list.v2+json"))}
         if media_type:
             headers["Content-Type"] = media_type
+        blob_prefix = urlsplit(self.api).path + "/blobs/"
+        path = urlsplit(url).path
+        blob_redirects = (method in ("GET", "HEAD") and body is None
+                          and path.startswith(blob_prefix) and bool(_DIGEST.fullmatch(path[len(blob_prefix):])))
         for attempt in range(2):
             authorization = self.token or self.basic
             if authorization:
                 headers["Authorization"] = authorization
             request = urllib.request.Request(url, data=body, headers=headers, method=method)
             try:
-                return self._open(request, limit)
+                return self._open(request, limit, blob_redirects=blob_redirects)
             except urllib.error.HTTPError as exc:
-                if exc.code == 401 and not attempt:
-                    self._authenticate(exc.headers.get("WWW-Authenticate", ""))
+                status = exc.code
+                challenge = exc.headers.get("WWW-Authenticate", "")
+                exc.close()
+                if status == 401 and not attempt:
+                    self._authenticate(challenge)
                     continue
-                raise _RegistryError(exc.code) from None
+                raise _RegistryError(status) from None
         raise ValueError("Registry authentication failed")
 
     def manifest(self, digest):

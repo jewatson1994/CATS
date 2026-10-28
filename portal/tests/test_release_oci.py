@@ -1,6 +1,7 @@
 """Exercise the distribution protocol against a disposable, authenticated TLS registry."""
 import base64
 from datetime import datetime, timedelta, timezone
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import ipaddress
 import json
@@ -56,7 +57,10 @@ def registry(tmp_path):
     state = SimpleNamespace(blobs={}, manifests={subject_digest: subject_bytes}, tags={}, referrers=True,
                             reject_subject=False, corrupt_blob=False, requests=[], bearer=False,
                             token_realm=None, upload_location=None, corrupt_manifest=False,
-                            fail_manifest=False, auth=auth, subject_digest=subject_digest)
+                            fail_manifest=False, auth=auth, subject_digest=subject_digest,
+                            redirects={}, same_origin_redirect=None, blob_redirect=False,
+                            storage_requests=[], storage_hosts=[], storage_redirects={}, storage_body=None,
+                            storage_challenge=False, storage_corrupt_blob=False)
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -76,6 +80,17 @@ def registry(tmp_path):
             path = parsed.path
             authorization = self.headers.get("Authorization")
             state.requests.append((self.command, self.path, authorization))
+            redirect = state.redirects.get((self.command, path))
+            if redirect:
+                status, location = redirect
+                headers = {"Location": location} if location is not None else {}
+                self.respond(status, b"private redirect debug information", **headers)
+                return
+            if state.same_origin_redirect and path.startswith("/v2/"):
+                self.respond(state.same_origin_redirect, Location="/redirected" + self.path)
+                return
+            if path.startswith("/redirected/"):
+                path = path[len("/redirected"):]
             if path == "/token":
                 if authorization != auth:
                     self.respond(403)
@@ -104,6 +119,8 @@ def registry(tmp_path):
                 digest = path.rsplit("/", 1)[1]
                 if digest not in state.blobs:
                     self.respond(404)
+                elif state.blob_redirect and self.command in ("GET", "HEAD"):
+                    self.respond(307, Location=state.storage_base + "/objects/" + digest + state.storage_query)
                 else:
                     content = state.blobs[digest]
                     if state.corrupt_blob and self.command == "GET":
@@ -146,25 +163,55 @@ def registry(tmp_path):
 
         do_GET = do_HEAD = do_POST = do_PUT = route
 
+    class StorageHandler(Handler):
+        def route(self):
+            parsed = urlsplit(self.path)
+            state.storage_requests.append((self.command, self.path, self.headers.get("Authorization")))
+            state.storage_hosts.append(self.headers.get("Host"))
+            redirect = state.storage_redirects.get((self.command, parsed.path))
+            if redirect:
+                status, location = redirect
+                self.respond(status, Location=location)
+            elif state.storage_challenge:
+                self.respond(401, WWW_Authenticate=f'Bearer realm="{state.base}/token",service="test"')
+            else:
+                digest = parsed.path.rsplit("/", 1)[1]
+                content = state.storage_body if state.storage_body is not None else state.blobs.get(digest)
+                if content is None:
+                    self.respond(404)
+                    return
+                if state.storage_corrupt_blob:
+                    content = b"!" * len(content)
+                self.respond(200, content)
+
+        do_GET = do_HEAD = do_POST = do_PUT = route
+
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    storage = ThreadingHTTPServer(("127.0.0.1", 0), StorageHandler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain(cert_path, key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
+    storage.socket = context.wrap_socket(storage.socket, server_side=True)
     state.host = f"127.0.0.1:{server.server_port}"
     state.base = "https://" + state.host
+    state.storage_base = f"https://127.0.0.1:{storage.server_port}"
+    state.storage_query = "?signature=opaque%2Bsignature%2Fvalue%3D&key=a%26b"
     state.subject = state.host + "/approved/release@" + subject_digest
     config = tmp_path / "docker"
     config.mkdir()
     (config / "config.json").write_text(json.dumps({"auths": {state.host: {"auth": auth[6:]}}}))
     state.env = {"SSL_CERT_FILE": str(cert_path), "DOCKER_CONFIG": str(config)}
-    thread = Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
-    thread.start()
+    threads = [Thread(target=lambda item=item: item.serve_forever(poll_interval=0.01), daemon=True)
+               for item in (server, storage)]
+    for thread in threads:
+        thread.start()
     try:
         yield state
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        for item, thread in zip((server, storage), threads):
+            item.shutdown()
+            item.server_close()
+            thread.join(timeout=5)
 
 
 def test_export_all_with_large_manifest_can_be_attached_and_retrieved(registry, files, source):
@@ -241,6 +288,262 @@ def test_bearer_authentication_uses_only_approved_repository_scope(registry, fil
     assert any(path.startswith("/token?") for _, path, _ in registry.requests)
 
 
+@pytest.mark.parametrize("status", [307, 308])
+def test_same_origin_redirects_preserve_publication_methods_bodies_and_auth(registry, files, status):
+    registry.same_origin_redirect = status
+    result = oci.publish_documentation(files, registry.subject, registry.env)
+    assert result["status"] == "published", result
+    assert oci.verify_documentation(result["reference"], registry.subject, registry.env)["status"] == "verified"
+    redirected = [(method, path, auth) for method, path, auth in registry.requests
+                  if path.startswith("/redirected/")]
+    assert {method for method, _, _ in redirected} == {"GET", "HEAD", "POST", "PUT"}
+    assert all(auth == registry.auth for _, _, auth in registry.requests)
+    for row in result["files"]:
+        name = row["annotations"]["org.opencontainers.image.title"]
+        assert registry.blobs[row["digest"]] == files[name].read_bytes()
+
+
+def test_upload_location_is_relative_to_redirected_post_response(registry):
+    path = "/v2/approved/release/blobs/uploads/"
+    registry.redirects[("POST", path)] = (307, "/redirected" + path)
+    registry.upload_location = "test?state=preserved"
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    content = b"upload body survives the redirect"
+    descriptor = client.upload(content, "application/octet-stream")
+    assert registry.blobs[descriptor["digest"]] == content
+    put_paths = [path for method, path, _ in registry.requests if method == "PUT"]
+    assert len(put_paths) == 1
+    assert put_paths[0].startswith("/redirected/v2/approved/release/blobs/uploads/test?")
+
+
+@pytest.mark.parametrize("status", [301, 302, 303])
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+def test_safe_read_redirects_preserve_method(registry, status, method):
+    source = "/v2/approved/release/manifests/" + registry.subject_digest
+    registry.redirects[(method, source)] = (status, "/redirected" + source)
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    response, _, content = client.request(method, registry.base + source)
+    assert response == 200
+    assert content == (registry.manifests[registry.subject_digest] if method == "GET" else b"")
+    assert [row[0] for row in registry.requests] == [method, method]
+
+
+@pytest.mark.parametrize("bearer", [False, True])
+def test_approved_blob_storage_redirect_preserves_query_and_strips_auth(registry, files, bearer):
+    registry.bearer = bearer
+    registry.blob_redirect = True
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS":
+           f" https://unused.invalid , {registry.storage_base} "}
+    result = oci.publish_documentation(files, registry.subject, env)
+    assert result["status"] == "published", result
+    assert oci.verify_documentation(result["reference"], registry.subject, env)["status"] == "verified"
+    # Existing blob HEAD checks follow the same storage policy as verification GETs.
+    client = oci._Client(registry.host, "approved/release", env)
+    assert client.upload(b"{}", "application/vnd.oci.empty.v1+json")["digest"] == oci._digest(b"{}")
+    assert {method for method, _, _ in registry.storage_requests} == {"GET", "HEAD"}
+    assert all(auth is None for _, _, auth in registry.storage_requests)
+    assert set(registry.storage_hosts) == {urlsplit(registry.storage_base).netloc}
+    assert all(path.endswith(registry.storage_query) for _, path, _ in registry.storage_requests)
+    expected_auth = "Bearer isolated-token" if bearer else registry.auth
+    assert any(auth == expected_auth for _, path, auth in registry.requests if "/blobs/" in path)
+
+
+@pytest.mark.parametrize("target_kind", ["unapproved", "http", "userinfo", "fragment"])
+def test_unsafe_blob_redirect_targets_are_rejected_before_contact(registry, target_kind):
+    digest = oci._digest(b"blob")
+    source = "/v2/approved/release/blobs/" + digest
+    target = registry.storage_base + "/objects/" + digest + "?secret=signed-storage-secret"
+    if target_kind == "http":
+        target = target.replace("https://", "http://", 1)
+    elif target_kind == "userinfo":
+        target = target.replace("https://", "https://user:secret-password@", 1)
+    elif target_kind == "fragment":
+        target += "#private-fragment"
+    env = dict(registry.env)
+    if target_kind != "unapproved":
+        env["CATS_OCI_BLOB_REDIRECT_ORIGINS"] = registry.storage_base
+    registry.redirects[("GET", source)] = (307, target)
+    client = oci._Client(registry.host, "approved/release", env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request("GET", registry.base + source)
+    assert error.value.status == 307
+    assert not registry.storage_requests
+    assert len(registry.requests) == 1
+    assert all(secret not in str(error.value) for secret in
+               ("secret-password", "signed-storage-secret", "private-fragment", "debug information", target))
+
+
+@pytest.mark.parametrize("path", ["manifests/{digest}", "referrers/{digest}",
+                                  "blobs/uploads/", "blobs/not-a-digest"])
+def test_approved_storage_origin_cannot_receive_non_blob_reads(registry, path):
+    source = "/v2/approved/release/" + path.format(digest=registry.subject_digest)
+    registry.redirects[("GET", source)] = (307, registry.storage_base + "/objects/blob")
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    client = oci._Client(registry.host, "approved/release", env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request("GET", registry.base + source)
+    assert error.value.status == 307
+    assert not registry.storage_requests
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD", "POST", "PUT"])
+def test_cross_origin_redirect_never_forwards_request_bodies(registry, method):
+    source = "/v2/approved/release/blobs/" + oci._digest(b"blob")
+    registry.redirects[(method, source)] = (307, registry.storage_base + "/objects/blob")
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    client = oci._Client(registry.host, "approved/release", env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request(method, registry.base + source, body=b"private upload content")
+    assert error.value.status == 307
+    assert not registry.storage_requests
+
+
+@pytest.mark.parametrize("status", [301, 302, 303])
+@pytest.mark.parametrize("method", ["POST", "PUT"])
+def test_method_changing_redirects_reject_writes(registry, status, method):
+    source = "/v2/approved/release/blobs/uploads/"
+    registry.redirects[(method, source)] = (status, "/redirected" + source)
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request(method, registry.base + source, body=b"private upload content")
+    assert error.value.status == status
+    assert len(registry.requests) == 1
+    assert not registry.blobs
+
+
+@pytest.mark.parametrize("location", [None, "/redirect-loop"])
+def test_missing_location_and_redirect_loop_are_bounded(registry, location):
+    registry.redirects[("GET", "/redirect-loop")] = (307, location)
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request("GET", registry.base + "/redirect-loop")
+    assert error.value.status == 307
+    assert len(registry.requests) <= 6
+    assert "debug information" not in str(error.value)
+
+
+@pytest.mark.parametrize("redirect_count", [5, 6])
+def test_redirect_chain_allows_five_hops_and_rejects_six(registry, redirect_count):
+    source = "/v2/approved/release/manifests/" + registry.subject_digest
+    paths = [source, *[f"/hop/{index}" for index in range(1, redirect_count)], "/redirected" + source]
+    for start, target in zip(paths, paths[1:]):
+        registry.redirects[("GET", start)] = (307, target)
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    if redirect_count == 5:
+        assert client.request("GET", registry.base + source)[2] == registry.manifests[registry.subject_digest]
+    else:
+        with pytest.raises(oci._RegistryError) as error:
+            client.request("GET", registry.base + source)
+        assert error.value.status == 307
+    assert len(registry.requests) == 6
+
+
+@pytest.mark.parametrize("redirect_back", [False, True])
+def test_storage_cannot_trigger_registry_authentication(registry, redirect_back):
+    digest = oci._digest(b"blob")
+    source = "/v2/approved/release/blobs/" + digest
+    target = "/objects/" + digest
+    registry.redirects[("GET", source)] = (307, registry.storage_base + target)
+    if redirect_back:
+        registry.storage_redirects[("GET", target)] = (307, registry.base + "/redirected" + source)
+    else:
+        registry.storage_challenge = True
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    client = oci._Client(registry.host, "approved/release", env)
+    with pytest.raises(oci._RegistryError) as error:
+        client.request("GET", registry.base + source)
+    assert error.value.status == 401
+    assert all(auth is None for _, _, auth in registry.storage_requests)
+    assert not any(path.startswith("/token") for _, path, _ in registry.requests)
+    if redirect_back:
+        assert registry.requests[-1] == ("GET", "/redirected" + source, None)
+
+
+def test_redirected_blob_digest_verification_preserves_unverified_publication(registry, files):
+    registry.blob_redirect = True
+    registry.storage_corrupt_blob = True
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    result = oci.publish_documentation(files, registry.subject, env)
+    assert result["status"] == "failed"
+    assert result["publication_status"] == "published"
+    assert result["verification_status"] == "failed"
+    assert result["digest"] in registry.manifests
+    registry.storage_corrupt_blob = False
+    assert oci.verify_documentation(result["reference"], registry.subject, env)["status"] == "verified"
+
+
+def test_redirected_blob_keeps_response_size_limit(registry):
+    content = b"expected blob"
+    digest = oci._digest(content)
+    registry.blobs[digest] = content
+    registry.blob_redirect = True
+    registry.storage_body = content + b"extra bytes"
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    client = oci._Client(registry.host, "approved/release", env)
+    with pytest.raises(ValueError, match="size limit"):
+        client.request("GET", client.api + "/blobs/" + digest, limit=len(content))
+    assert len(registry.storage_requests) == 1
+
+
+def test_cyber_release_graph_retains_and_verifies_redirected_content(registry, tmp_path):
+    from app import cyber_release_publication as publication
+
+    registry.blobs[oci._digest(b"{}")] = b"{}"
+    registry.same_origin_redirect = 307
+    registry.blob_redirect = True
+    env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
+    client = oci._Client(registry.host, "approved/release", env)
+    transport = publication._Transport(tmp_path / "offline-layout", env)
+    descriptor = transport.graph(client, registry.subject_digest, target=client)
+    assert descriptor["digest"] == registry.subject_digest
+    for digest, content in ((registry.subject_digest, registry.manifests[registry.subject_digest]),
+                            (oci._digest(b"{}"), b"{}")):
+        assert (transport.blobs / digest[7:]).read_bytes() == content
+    assert any(method == "PUT" and path.startswith("/redirected/v2/approved/release/manifests/")
+               for method, path, _ in registry.requests)
+    assert {method for method, _, _ in registry.storage_requests} == {"GET", "HEAD"}
+    assert all(auth is None for _, _, auth in registry.storage_requests)
+
+
+def test_redirect_discards_host_and_proxy_credentials_added_by_urllib(monkeypatch):
+    content = b"storage bytes"
+    digest = oci._digest(content)
+    client = oci._Client("registry.example", "approved/release",
+                         {"CATS_OCI_BLOB_REDIRECT_ORIGINS": "https://storage.example"})
+    client.basic = "Basic registry-credential"
+    captured = []
+
+    class Response:
+        status = 200
+        headers = Message()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, limit):
+            return content[:limit]
+
+    def open_request(request, timeout):
+        captured.append({key.lower(): value for key, value in request.header_items()})
+        if len(captured) == 1:
+            # HTTP/proxy handlers modify the Request before raising a redirect.
+            request.add_unredirected_header("Host", "registry.example")
+            request.add_unredirected_header("Proxy-Authorization", "Basic private-proxy-credential")
+            headers = Message()
+            headers["Location"] = "https://storage.example/objects/" + digest
+            raise oci.urllib.error.HTTPError(request.full_url, 307, "Redirect", headers, BytesIO())
+        return Response()
+
+    monkeypatch.setattr(client.opener, "open", open_request)
+    assert client.request("GET", client.api + "/blobs/" + digest)[2] == content
+    assert captured[0]["authorization"] == client.basic
+    assert len(captured) == 2
+    assert not {"authorization", "proxy-authorization", "host"}.intersection(captured[1])
+
+
 def test_unapproved_bearer_realm_does_not_receive_credentials(registry, files):
     registry.bearer = True
     registry.token_realm = "https://unapproved.invalid/token"
@@ -250,12 +553,17 @@ def test_unapproved_bearer_realm_does_not_receive_credentials(registry, files):
     assert "secret-password" not in json.dumps(result)
 
 
-def test_cross_host_upload_location_is_rejected(registry, files):
-    registry.upload_location = "https://unapproved.invalid/receive-secret"
-    result = oci.publish_documentation(files, registry.subject, registry.env)
+@pytest.mark.parametrize("allowlisted", [False, True])
+def test_cross_host_upload_location_is_rejected(registry, files, allowlisted):
+    registry.upload_location = registry.storage_base + "/receive-secret"
+    env = dict(registry.env)
+    if allowlisted:
+        env["CATS_OCI_BLOB_REDIRECT_ORIGINS"] = registry.storage_base
+    result = oci.publish_documentation(files, registry.subject, env)
     assert result["status"] == "failed"
     assert not registry.blobs
     assert not registry.tags
+    assert not registry.storage_requests
 
 
 def test_tampered_blob_preserves_published_identity_as_unverified(registry, files):

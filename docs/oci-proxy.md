@@ -17,6 +17,8 @@ The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY`
 
 Configure an upstream HTTPS registry origin and its read-only upstream credentials through the CATS administration interface. Add private CA PEM certificates when needed. Delegated token service origins and blob redirect origins require explicit allowlisting. Keep the allowlists narrow: token services receive upstream credentials. Redirects to another origin lose Authorization headers; signed CDN URLs can still work. No insecure TLS bypass exists.
 
+Cyber release publication runs in `remediation-worker` and has a separate redirect policy. If its source registry or destination redirects blob GET/HEAD requests to object storage, configure `CATS_OCI_BLOB_REDIRECT_ORIGINS` in the deployment environment and recreate the worker. Same-origin redirects need no setting; registry credentials are never forwarded cross-origin, and cross-origin writes and manifest redirects remain blocked. The upstream allowlists above and `CATS_OCI_TOKEN_REALMS` do not grant this permission. See [publication configuration](signed-release-documentation.md#configuration-and-boundaries).
+
 Issue separate scoped machine credentials for consumers. Use those credentials with `docker login`, Helm registry login, or an equivalent OCI client against the CATS hostname. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials.
 
 ## Content and policy behavior
@@ -50,6 +52,24 @@ Run these checks against a staging Harbor instance and a staging CATS database b
 6. Change policy or introduce overdue findings for the approved digest. Verify subsequent GET and HEAD requests fail closed despite a populated cache.
 7. Verify subject-bound referrers and pagination; no unrelated or disallowed artifact may appear. Attempt write/delete operations and verify rejection.
 8. Interrupt a large download and restart the proxy. Verify no partial blob is served, subsequent download succeeds, and cache use stays within the configured content quota.
+
+## Startup database locks
+
+The proxy initializes the shared schema before opening its HTTP listener. Older
+images recreated installed triggers and repeated index/default DDL during every
+startup. An open portal transaction could block that DDL, with Services, the Cyber
+dashboard, and Administration then waiting behind it. A healthy portal container
+does not rule out this database lock chain.
+
+If PostgreSQL activity shows proxy startup waiting on schema DDL and blocking page
+queries, stop `oci-proxy` to release its migration transaction. Keep it stopped
+until an image containing the startup migration fix is deployed; a normal
+`docker compose up` will start the old image again. Updated images retain existing
+triggers, defaults, and indexes. Actual schema changes have a five-second lock
+timeout after acquiring the migration advisory lock. A timeout rolls back the
+whole migration and fails startup, rather than serving with a partially upgraded
+schema. If it recurs, inspect long-running/open transactions and schedule the
+upgrade during a quiet period before restarting the affected service.
 
 ## Rollback
 

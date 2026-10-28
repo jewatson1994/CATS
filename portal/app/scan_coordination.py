@@ -11,6 +11,7 @@ from fastapi import HTTPException
 from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, select, update, func, text, inspect, delete
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base, SessionLocal
+from .schema_migrations import create_index_if_missing
 
 
 def now():
@@ -291,7 +292,8 @@ def upgrade_connection(connection):
     if "finished_at" not in columns:
         connection.execute(text("UPDATE scan_jobs SET finished_at = CURRENT_TIMESTAMP WHERE status IN ('complete','incomplete','error','cancelled')"))
     for name in additions:
-        connection.execute(text(f"CREATE INDEX IF NOT EXISTS ix_scan_jobs_{name} ON scan_jobs ({name})"))
+        create_index_if_missing(connection, "scan_jobs", f"ix_scan_jobs_{name}",
+            f"CREATE INDEX IF NOT EXISTS ix_scan_jobs_{name} ON scan_jobs ({name})")
 
 
 def admin_remove_job(key):

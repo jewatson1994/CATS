@@ -1,12 +1,14 @@
 """Preserve legacy ownership data; prohibit introducing further ambiguity."""
 import logging
 from sqlalchemy import text
+from .schema_migrations import create_index_if_missing
 
 
 def upgrade_connection(connection):
     conflicts = connection.execute(text("SELECT service_id FROM service_groups GROUP BY service_id HAVING COUNT(*) > 1")).scalars().all()
     if not conflicts:
-        connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_service_owning_group_index ON service_groups(service_id)"))
+        create_index_if_missing(connection, "service_groups", "uq_service_owning_group_index",
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_service_owning_group_index ON service_groups(service_id)")
     else:
         logging.getLogger(__name__).warning("Service ownership needs explicit administrator reconciliation for service IDs %s; existing memberships preserved", conflicts)
     # Triggers protect pre-migration databases containing conflicts too. Once
@@ -37,5 +39,10 @@ def upgrade_connection(connection):
                 END IF;
                 RETURN NEW;
             END; $$ LANGUAGE plpgsql"""))
-        connection.execute(text("DROP TRIGGER IF EXISTS cats_service_owner ON service_groups"))
-        connection.execute(text("CREATE TRIGGER cats_service_owner BEFORE INSERT OR UPDATE ON service_groups FOR EACH ROW EXECUTE FUNCTION cats_check_service_owner()"))
+        connection.execute(text("""DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                WHERE tgname = 'cats_service_owner' AND tgrelid = 'service_groups'::regclass) THEN
+                CREATE TRIGGER cats_service_owner BEFORE INSERT OR UPDATE ON service_groups
+                    FOR EACH ROW EXECUTE FUNCTION cats_check_service_owner();
+            END IF;
+        END $$"""))

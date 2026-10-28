@@ -15,7 +15,8 @@ def upgrade_connection(connection):
                 connection.execute(text(f'ALTER TABLE validator_provisioning_attempts ADD COLUMN {name} {definition}'))
     if "managed_validators" not in inspect(connection).get_table_names():
         return
-    columns = {c["name"] for c in inspect(connection).get_columns("managed_validators")}
+    column_info = {c["name"]: c for c in inspect(connection).get_columns("managed_validators")}
+    columns = set(column_info)
     additions = {
         "ssh_username": "VARCHAR(64) DEFAULT 'ubuntu' NOT NULL",
         "fingerprint": "VARCHAR(120)",
@@ -43,7 +44,10 @@ def upgrade_connection(connection):
     legacy = {name: default for name, default in legacy.items() if name in columns}
     if connection.dialect.name == "postgresql":
         for name, default in legacy.items():
-            connection.execute(text(f"ALTER TABLE managed_validators ALTER COLUMN {name} SET DEFAULT {default}"))
+            # Even an unchanged SET DEFAULT takes an ACCESS EXCLUSIVE lock.
+            # Keep installed (including administrator-customized) defaults.
+            if column_info[name].get("default") is None:
+                connection.execute(text(f"ALTER TABLE managed_validators ALTER COLUMN {name} SET DEFAULT {default}"))
     elif connection.dialect.name == "sqlite" and legacy:
         existing = {c["name"]: c for c in inspect(connection).get_columns("managed_validators")}
         if all(existing[name].get("default") is not None for name in legacy):

@@ -82,6 +82,7 @@ def test_summary_startup_upgrade_and_indexes_are_idempotent_for_existing_sqlite(
     import ast
     from pathlib import Path
     from sqlalchemy import inspect, text
+    from app.schema_migrations import create_index_if_missing
     tree = ast.parse((Path(__file__).parents[1] / "app/main.py").read_text(encoding="utf-8-sig"))
     migration = next(node for node in tree.body if isinstance(node, ast.With)
                      and isinstance(node.items[0].context_expr, ast.Call)
@@ -97,7 +98,8 @@ def test_summary_startup_upgrade_and_indexes_are_idempotent_for_existing_sqlite(
         connection.execute(text("CREATE TABLE executions (id INTEGER PRIMARY KEY, service_id INTEGER, scanned_at TIMESTAMP, raw_payload JSON)"))
         connection.execute(text("INSERT INTO executions (id, raw_payload) VALUES (7, :payload)"), {"payload": '{"evidence":42}'})
         for _ in range(2):
-            exec(code, {"Base": Base, "connection": connection, "inspect": inspect, "text": text, "portal_tables": portal_tables})
+            exec(code, {"Base": Base, "connection": connection, "inspect": inspect, "text": text,
+                        "portal_tables": portal_tables, "create_index_if_missing": create_index_if_missing})
         columns = {column["name"]: column for column in inspect(connection).get_columns("executions")}
         assert columns["payload_digest"]["nullable"]
         assert "execution_summaries" in inspect(connection).get_table_names()

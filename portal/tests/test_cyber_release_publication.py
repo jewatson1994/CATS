@@ -419,6 +419,12 @@ def test_publication_rejects_legacy_approval_without_registry_writes(environment
 
 @pytest.mark.parametrize('exception,expected', [
     (release_oci._RegistryError(403), 'Registry access was denied'),
+    (release_oci._RegistryError(307), 'redirect that could not be followed'),
+    (release_oci._RedirectError(307, 'unapproved_origin'), 'CATS_OCI_BLOB_REDIRECT_ORIGINS'),
+    (release_oci._RedirectError(308, 'limit'), 'redirect loop'),
+    (release_oci._RedirectError(307, 'missing_location'), 'did not include a destination'),
+    (release_oci._RedirectError(307, 'invalid_location'), 'credential-free HTTPS'),
+    (release_oci._RedirectError(302, 'unsafe_method'), 'HTTP 307 or 308 for uploads'),
     (PermissionError('secret /private/key.pem'), 'mount ownership'),
     (subprocess.CalledProcessError(7, ['tool', 'secret'], stderr=b'secret'), 'tool exited'),
     (ValueError('secret'), 'Unexpected publication error'),
@@ -436,7 +442,7 @@ def test_publication_failure_retains_safe_stage_and_cause(environment, monkeypat
     assert expected in receipt['diagnostic']['cause']
     assert 'secret' not in json.dumps(receipt)
     if isinstance(exception, release_oci._RegistryError):
-        assert receipt['diagnostic']['http_status'] == 403
+        assert receipt['diagnostic']['http_status'] == exception.status
     if isinstance(exception, subprocess.CalledProcessError):
         assert receipt['diagnostic']['exit_code'] == 7
 

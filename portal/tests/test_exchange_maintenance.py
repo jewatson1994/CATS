@@ -57,9 +57,10 @@ def test_postgres_lock_is_transaction_scoped_and_precedes_schema_work():
     with migration_transaction(engine) as acquired:
         assert acquired is connection
         connection.begin.assert_called_once()
-        statement, parameters = connection.execute.call_args.args
+        statement, parameters = connection.execute.call_args_list[0].args
         assert str(statement) == "SELECT pg_advisory_xact_lock(:key)"
         assert isinstance(parameters["key"], int)
+        assert str(connection.execute.call_args_list[1].args[0]) == "SET LOCAL lock_timeout = '5s'"
         connection.commit.assert_not_called()
     connection.commit.assert_called_once()
 

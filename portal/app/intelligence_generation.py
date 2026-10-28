@@ -41,8 +41,17 @@ def install_generation_triggers(connection):
         END $$"""))
     for name in sorted((database.INTELLIGENCE_TABLE_NAMES - {"intelligence_generation"}) & names):
         if dialect == "postgresql":
-            connection.execute(text(f'DROP TRIGGER IF EXISTS cats_generation_touch ON "{name}"'))
-            connection.execute(text(f'CREATE TRIGGER cats_generation_touch BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON "{name}" FOR EACH STATEMENT EXECUTE FUNCTION cats_intelligence_generation_touch()'))
+            # Metadata after_create also runs when create_all creates no tables.
+            # Replacing an installed trigger would lock live evidence tables on
+            # every worker start; updating its function above needs no table DDL.
+            connection.execute(text(f"""DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_trigger
+                    WHERE tgname = 'cats_generation_touch' AND tgrelid = '"{name}"'::regclass)
+                THEN CREATE TRIGGER cats_generation_touch
+                    BEFORE INSERT OR UPDATE OR DELETE OR TRUNCATE ON "{name}"
+                    FOR EACH STATEMENT EXECUTE FUNCTION cats_intelligence_generation_touch();
+                END IF;
+            END $$"""))
         elif dialect == "sqlite":
             for operation in ("INSERT", "UPDATE", "DELETE"):
                 connection.execute(text(f'CREATE TRIGGER IF NOT EXISTS cats_generation_{name}_{operation.lower()} BEFORE {operation} ON "{name}" BEGIN UPDATE intelligence_generation SET token = lower(hex(randomblob(16))) WHERE id = 1; END'))

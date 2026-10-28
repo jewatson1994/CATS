@@ -15,6 +15,7 @@ from sqlalchemy import inspect, select, text, update
 
 from .auth import record_audit, require_user
 from .database import get_db
+from .schema_migrations import create_index_if_missing
 from .exchange_limits import workbook_bytes, workbook_columns, workbook_expanded_bytes, workbook_members, workbook_rows
 from .models import ExchangePreview, Finding, PolicyFinding, PoamEntry, PoamHistory, Service, WorkflowImportBatch, WorkflowRequest
 
@@ -31,7 +32,8 @@ def upgrade_workflow_imports(connection):
     for name in ("import_batch_id", "import_row_number"):
         if name not in columns:
             connection.execute(text(f"ALTER TABLE workflow_requests ADD COLUMN {name} INTEGER"))
-    connection.execute(text("CREATE INDEX IF NOT EXISTS ix_workflow_requests_import_batch_id ON workflow_requests (import_batch_id)"))
+    create_index_if_missing(connection, "workflow_requests", "ix_workflow_requests_import_batch_id",
+        "CREATE INDEX IF NOT EXISTS ix_workflow_requests_import_batch_id ON workflow_requests (import_batch_id)")
 
 
 def permitted(auth, kind, service_id):
