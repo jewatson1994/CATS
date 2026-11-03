@@ -139,7 +139,7 @@ def _package_chart(package):
         raise ValueError('Expected a single top-level chart.')
     return charts[0].parent
 
-def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None, check_cancelled=None):
+def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None, check_cancelled=None, *, gitlab_archive=False):
     options = options or {}
     if not isinstance(options, dict):
         raise DiscoveryError('Options must be a mapping.')
@@ -432,6 +432,13 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 raise DiscoveryError('Discovery scratch storage is full; increase available disk space.') from None
             raise DiscoveryError('Discovery source could not be read or staged.') from None
         base = Path(staged['root'])
+        if gitlab_archive:
+            # GitLab wraps the checkout in a revision-specific directory. Paths
+            # selected in the portal and recorded in inventory are repo-relative.
+            entries = list(base.iterdir()) if base.is_dir() else []
+            if len(entries) != 1 or not entries[0].is_dir():
+                raise DiscoveryError('The GitLab archive did not contain a repository directory.')
+            base = entries[0]
         if supplemental_inputs:
             from .discovery_supplements import apply_supplements
             try:
@@ -832,7 +839,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
 
         top_directories = {Path(p).parts[0] for p in files}
         upload_root = base
-        if len(top_directories) == 1 and (base / next(iter(top_directories))).is_dir():
+        if not gitlab_archive and len(top_directories) == 1 and (base / next(iter(top_directories))).is_dir():
             # GitLab source archives wrap the checkout in a revision-named directory.
             upload_root = base / next(iter(top_directories))
         referenced_charts = set(mapping.values())
@@ -895,7 +902,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if adapter.tool == 'helm':
                     if metadata and files == [path] and len(nodes_by_id) == nodes_before_render and not parsed[path][0].get('dependencies'):
                         issue('chart_metadata_only', rid, path)
-                        result['diagnostics'][-1]['message'] = 'Only Chart.yaml was supplied. Upload the chart package or a GitLab source archive containing values.yaml and the templates, or upload the service-definition values.yaml on its own.'
+                        result['diagnostics'][-1]['message'] = 'Only Chart.yaml was supplied. Enter the GitLab repository URL, upload a chart package or source archive containing values.yaml and the templates, or upload the service-definition values.yaml on its own.'
         for path in compose_files:
             rid = root(path, 'compose')
             selection = [path]

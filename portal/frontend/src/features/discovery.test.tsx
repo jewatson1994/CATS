@@ -1,6 +1,6 @@
 import {afterEach, expect, it, vi} from 'vitest';
 
-import {fireEvent, render, screen, waitFor} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 
 import {Page, isPartial} from './discovery';
 
@@ -9,6 +9,131 @@ const catalog = {groups: [{id: 1, name: 'Platform'}], services: [{id: 2, name: '
 const inventory = {roots: [{id: 'root', path: 'deploy/chart', technology: 'helm', completeness: 'partial'}], nodes: [{id: 'node', root_id: 'root', name: 'api', kind: 'deployment', state: 'resolved', provenance: {path: 'templates/api.yaml'}}], images: [{reference: 'nginx:1', root_id: 'root'}], diagnostics: [{message: 'Missing values'}], completeness: 'partial'};
 
 afterEach(() => vi.unstubAllGlobals());
+
+it('loads grouped GitLab revisions and submits the selected tag even when a branch has the same name', async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/gitlab/refs')) return Response.json({branches: ['release'], tags: ['release'], truncated: true});
+    if (init?.method === 'POST') return Response.json({job_id: 'new'});
+    if (url.endsWith('/new')) return Response.json({job: {id: 'new', status: 'completed'}, inventory: {...inventory, gitlab_source: {
+      repository_url: 'https://gitlab.example.com/team/project', requested_ref: 'release', ref_kind: 'tag', commit_sha: '9'.repeat(40),
+    }}});
+    return Response.json({...catalog, jobs: []});
+  });
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{csrf_token: 'csrf'}}/>);
+  await screen.findByRole('option', {name: 'Platform'});
+  fireEvent.change(screen.getByLabelText('Owning group'), {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Source type'), {target: {value: 'gitlab'}});
+  const repository = 'https://gitlab.example.com/team/project';
+  fireEvent.change(screen.getByLabelText('GitLab repository URL'), {target: {value: repository}});
+  const token = screen.getByLabelText('Access token (optional)');
+  fireEvent.change(token, {target: {value: 'private-token'}});
+  const manual = screen.getByLabelText('Branch or tag (optional)');
+  fireEvent.change(manual, {target: {value: 'rel'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Load branches and tags'}));
+  const picker = await screen.findByLabelText('Available branches and tags');
+  const lookup = fetch.mock.calls.find(([url]) => url.endsWith('/gitlab/refs'))![1]!;
+  expect(lookup.method).toBe('POST');
+  expect(JSON.parse(String(lookup.body))).toEqual({group_id: 1, repository_url: repository, git_token: 'private-token', csrf_token: 'csrf', search: 'rel'});
+  expect(token).toHaveValue('private-token');
+  expect(within(picker).getByRole('group', {name: 'Tags'})).toBeInTheDocument();
+  expect(within(picker).getByRole('group', {name: 'Branches'})).toBeInTheDocument();
+  expect(screen.getByText(/More results are available/)).toBeVisible();
+  fireEvent.change(picker, {target: {value: 'branch/release'}});
+  expect(manual).toHaveValue('release');
+  const form = screen.getByRole('button', {name: 'Start discovery'}).closest('form')!;
+  expect(new FormData(form).get('git_ref_kind')).toBe('branch');
+  fireEvent.change(manual, {target: {value: 'manual/ref'}});
+  expect(new FormData(form).has('git_ref_kind')).toBe(false);
+  fireEvent.change(picker, {target: {value: 'tag/release'}});
+  fireEvent.click(screen.getByRole('checkbox', {name: /I confirm the repository files/}));
+  fireEvent.click(screen.getByRole('button', {name: 'Start discovery'}));
+  await screen.findByText('nginx:1');
+  expect(screen.getByText('release', {selector: 'code'}).parentElement).toHaveTextContent('Tag release');
+  const submit = fetch.mock.calls.find(([url, init]) => url.endsWith('/api/discovery') && init?.method === 'POST')![1]!;
+  expect((submit.body as FormData).get('git_ref_kind')).toBe('tag');
+  expect((submit.body as FormData).get('git_ref')).toBe('release');
+  expect(token).toHaveValue('');
+  expect(picker).not.toBeInTheDocument();
+});
+
+it('discards stale GitLab choices after project, credential or group changes and keeps manual entry on lookup failure', async () => {
+  const pending: ((value: Response) => void)[] = [];
+  vi.stubGlobal('fetch', async (url: string) => url.endsWith('/gitlab/refs')
+    ? new Promise<Response>(resolve => pending.push(resolve))
+    : Response.json({...catalog, jobs: [], groups: [...catalog.groups, {id: 2, name: 'Research'}]}));
+  render(<Page data={{csrf_token: 'csrf'}}/>);
+  await screen.findByRole('option', {name: 'Platform'});
+  const group = screen.getByLabelText('Owning group');
+  fireEvent.change(group, {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Source type'), {target: {value: 'gitlab'}});
+  const url = screen.getByLabelText('GitLab repository URL');
+  const load = () => fireEvent.click(screen.getByRole('button', {name: 'Load branches and tags'}));
+  const result = (name: string) => Response.json({branches: [name], tags: [], truncated: false});
+  fireEvent.change(url, {target: {value: 'https://gitlab.example.com/team/one'}});
+  load();
+  fireEvent.change(url, {target: {value: 'https://gitlab.example.com/team/two'}});
+  load();
+  await act(async () => { pending[1](result('current')); pending[0](result('stale')); });
+  expect(screen.getByRole('option', {name: 'current'})).toBeInTheDocument();
+  expect(screen.queryByRole('option', {name: 'stale'})).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Access token (optional)'), {target: {value: 'new-token'}});
+  expect(screen.queryByLabelText('Available branches and tags')).not.toBeInTheDocument();
+  load();
+  await act(async () => pending[2](result('private')));
+  expect(screen.getByRole('option', {name: 'private'})).toBeInTheDocument();
+  fireEvent.change(group, {target: {value: '2'}});
+  expect(screen.queryByLabelText('Available branches and tags')).not.toBeInTheDocument();
+  load();
+  await act(async () => pending[3](Response.json({detail: 'GitLab denied access.'}, {status: 403})));
+  expect(screen.getByRole('alert')).toHaveTextContent('GitLab denied access.');
+  fireEvent.change(screen.getByLabelText('Branch or tag (optional)'), {target: {value: 'manual'}});
+  expect(screen.getByLabelText('Branch or tag (optional)')).toHaveValue('manual');
+});
+
+it.each([
+  {mode: 'private', ref: 'release/v2', token: 'test-read-token'},
+  {mode: 'public', ref: '', token: ''},
+])('submits a $mode GitLab repository and shows its resolved commit', async ({ref, token}) => {
+  const repository = 'https://gitlab.example.com/team/platform/payments';
+  const source = {repository_url: repository, requested_ref: ref, commit_sha: '01'.repeat(20)};
+  let finishFetch!: (response: Response) => void;
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') return new Promise<Response>(resolve => {finishFetch = resolve;});
+    if (url.endsWith('/new')) return Response.json({job: {id: 'new', group_id: 1, status: 'completed', gitlab_source: source}, inventory});
+    return Response.json({...catalog, jobs: []});
+  });
+  vi.stubGlobal('fetch', fetch);
+  render(<Page data={{csrf_token: 'csrf'}}/>);
+  await screen.findByRole('option', {name: 'Platform'});
+  fireEvent.change(screen.getByLabelText('Owning group'), {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Source type'), {target: {value: 'gitlab'}});
+  fireEvent.change(screen.getByLabelText('GitLab repository URL'), {target: {value: repository}});
+  const tokenInput = screen.getByLabelText('Access token (optional)');
+  expect(tokenInput).toHaveAttribute('type', 'password');
+  if (ref) fireEvent.change(screen.getByLabelText('Branch or tag (optional)'), {target: {value: ref}});
+  if (token) fireEvent.change(tokenInput, {target: {value: token}});
+
+  const start = screen.getByRole('button', {name: 'Start discovery'});
+  fireEvent.click(start);
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('checkbox', {name: /I confirm the repository files/}));
+  fireEvent.click(start);
+  expect(screen.getByRole('button', {name: 'Fetching repository…'})).toBeDisabled();
+  expect(tokenInput).toHaveValue('');
+
+  const posts = fetch.mock.calls.filter(([, init]) => init?.method === 'POST');
+  expect(posts).toHaveLength(1);
+  expect(new URL(posts[0][0]).pathname).toBe('/api/discovery');
+  expect(Object.fromEntries((posts[0][1]?.body as FormData).entries())).toEqual({
+    input_kind: 'gitlab', group_id: '1', repository_url: repository, git_ref: ref, git_token: token,
+    acknowledge_non_secret: 'true', csrf_token: 'csrf', options: JSON.stringify({environment: '', values_files: []}),
+  });
+  finishFetch(Response.json({job_id: 'new'}));
+  expect(await screen.findByText(source.commit_sha)).toBeVisible();
+  expect(screen.getByText(repository)).toBeVisible();
+  expect(screen.getByText(ref || 'Default branch', {selector: 'code'})).toBeVisible();
+});
 
 it('shows a product chart identity with its source path and identifies unresolved children', async () => {
   const product = {...inventory,

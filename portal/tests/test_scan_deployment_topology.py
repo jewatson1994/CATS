@@ -26,7 +26,9 @@ def test_internal_control_listener_and_network_connectivity(deployment):
     assert control["command"][-1] == "8001"
     assert worker["environment"]["CATS_SCAN_PORTAL_URL"] == "http://portal-control:8001"
     assert worker["depends_on"]["portal-control"]["condition"] == "service_healthy"
-    assert control["environment"] == portal["environment"]
+    public_only = {"CATS_DISCOVERY_GITLAB_SOURCES", "CATS_DISCOVERY_GITLAB_CA_FILE"}
+    assert control["environment"] == {key: value for key, value in portal["environment"].items()
+                                      if key not in public_only}
     assert control["volumes"] == portal["volumes"]
     assert portal["ports"] == ["${CATS_PORT:-8080}:8000"]
 

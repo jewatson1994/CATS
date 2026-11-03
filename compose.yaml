@@ -285,7 +285,7 @@ services:
     image: ${CATS_IMAGE:-cats:local}
     networks: [default, scan_control]
 
-    environment: &portal_environment
+    x-shared-environment: &portal_environment
       <<: *intelligence_environment
 
       # -------------------------------------------------------
@@ -595,6 +595,10 @@ services:
 
       CATS_OIDC_AUTO_PROVISION_GROUPS: ${CATS_OIDC_AUTO_PROVISION_GROUPS:-false}
 
+    environment:
+      <<: *portal_environment
+      CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
+      CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
 
     # ---------------------------------------------------------
     # Volumes

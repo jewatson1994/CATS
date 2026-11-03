@@ -250,9 +250,11 @@ def test_flux_chain_from_catalog_child_keeps_images_and_controller_edges_in_each
 
 
 @pytest.mark.parametrize('packaged', [False, True], ids=['directory', 'tgz'])
-def test_gitlab_archive_resolves_bundled_chart_and_repository_values_offline(tmp_path, packaged):
+@pytest.mark.parametrize('gitlab_import', [False, True], ids=['upload', 'gitlab-link'])
+def test_gitlab_archive_resolves_bundled_chart_and_repository_values_offline(tmp_path, packaged, gitlab_import):
     archive_path = tmp_path / 'suite.zip'
     product_dir = 'suite-42e301/deploy/product'
+    expected_prefix = '' if gitlab_import else 'suite-42e301/'
     catalog = '''services:
   web:
     sourceType: helm
@@ -283,16 +285,16 @@ def test_gitlab_archive_resolves_bundled_chart_and_repository_values_offline(tmp
         if metadata['name'] == 'frontend':
             assert args[3] == '-f'
             values = Path(args[4])
-            assert values.relative_to(cwd).as_posix() == 'suite-42e301/environment/site.yaml'
+            assert values.relative_to(cwd).as_posix() == expected_prefix + 'environment/site.yaml'
             assert yaml.safe_load(values.read_text()) == {'environment': 'site'}
         return render_static_pod(tool, args, cwd)
 
     resolver = approved_charts(tmp_path, [])
     with patch.object(resolver, 'resolve', wraps=resolver.resolve) as fetch:
-        result = run_discovery(archive_path, runner=offline_render, artifact_resolver=resolver)
+        result = run_discovery(archive_path, runner=offline_render, artifact_resolver=resolver, gitlab_archive=gitlab_import)
     fetch.assert_not_called()
     assert result['completeness'] == 'complete', result['diagnostics']
-    root = next(r for r in result['roots'] if r['path'] == product_dir and r['technology'] == 'helm')
+    root = next(r for r in result['roots'] if r['path'] == expected_prefix + 'deploy/product' and r['technology'] == 'helm')
     assert [(i['reference'], i['root_id']) for i in result['images']] == [('web:site', root['id'])]
     assert [p['integrity'] for p in result.get('artifact_provenance', [])] == (['source-archive'] if packaged else [])
 

@@ -74,7 +74,7 @@ def handle(ctx, payload):
         raise JobError('Invalid discovery source identity')
     source = upload_root() / token / payload.get('filename', 'source.zip')
     if source.parent.resolve() != (upload_root() / token).resolve() or not source.is_file() or source.is_symlink() or not source.resolve().is_relative_to(upload_root().resolve()):
-        raise JobError('Discovery source expired or unavailable; upload it again.')
+        raise JobError('Discovery source expired or unavailable. Submit the source again.')
     ctx.stage('Detecting deployment sources', 5)
     def progress(*args, **kwargs):
         ctx.check()
@@ -112,7 +112,9 @@ def handle(ctx, payload):
             if plaintext.name == 'chart-reference.txt':
                 selected.update(reference=plaintext.read_text().strip(), reference_kind='chart')
                 input_path = None
-            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress, artifact_resolver=artifact_resolver, supplemental_inputs=supplements, check_cancelled=ctx.check)
+            inventory = run_discovery(input_path, options=selected, runner=runner, progress=progress,
+                artifact_resolver=artifact_resolver, supplemental_inputs=supplements, check_cancelled=ctx.check,
+                gitlab_archive='gitlab_source' in payload)
     except (OSError, MemoryError) as exc:
         import errno
         if isinstance(exc, MemoryError) or getattr(exc, 'errno', None) == errno.ENOMEM:
@@ -130,6 +132,8 @@ def handle(ctx, payload):
         inventory.setdefault('metrics', {}).update(render_cache_hits=runner.hits, render_cache_misses=runner.misses, dependency_scoped_renders=runner.scoped_renders)
     if payload.get('supplements'):
         inventory['supplemental_sources'] = payload['supplements']
+    if 'gitlab_source' in payload:
+        inventory['gitlab_source'] = payload['gitlab_source']
     inventory['selection'] = selected
     inventory['archive_hash'] = payload['source_hash']
     ctx.check()

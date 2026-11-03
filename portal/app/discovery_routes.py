@@ -7,19 +7,23 @@ import json
 import os
 from pathlib import Path
 import re
+import threading
 import uuid
 from starlette.datastructures import UploadFile
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from .auth import AuthContext, require_user, record_audit
 from .database import get_db
-from .models import Service, Group, ServiceGroup
+from .models import Service, Group, ServiceGroup, PortalSetting
+from . import discovery_gitlab as gitlab
 from .durable_jobs import DurableJob, submit
 from .discovery_models import DiscoveryInventory, DiscoveryConfirmation, DiscoveryScan
 from .discovery_worker import upload_root
 from .discovery_sources import encrypted_writer, storage_key, SourceStorageError
 
 router = APIRouter(prefix='/api/discovery', tags=['Discovery'])
+_GITLAB_REQUEST_SLOTS = threading.BoundedSemaphore(4)
 
 
 def upload_resource_diagnostics(endpoint):
@@ -56,11 +60,37 @@ def get_job(db, auth, job_id, lock=False):
     return job
 
 def job_view(job):
-    return {key: getattr(job, key) for key in ('id', 'status', 'stage', 'progress', 'result', 'error', 'created_at', 'completed_at') } | {'group_id': job.payload['group_id']}
+    view = {key: getattr(job, key) for key in ('id', 'status', 'stage', 'progress', 'result', 'error', 'created_at', 'completed_at') } | {'group_id': job.payload['group_id']}
+    if 'gitlab_source' in job.payload:
+        view['gitlab_source'] = job.payload['gitlab_source']
+    return view
 
 def csrf(auth, supplied):
     if not isinstance(supplied, str) or not hmac.compare_digest(supplied, auth.csrf_token):
         raise HTTPException(403, 'Invalid CSRF token')
+
+def gitlab_trust(db):
+    configured_ca = db.scalar(select(PortalSetting.value).where(
+        PortalSetting.group_id.is_(None), PortalSetting.key == 'trusted_ca_certificates'))
+    try:
+        trusted = json.loads(configured_ca or '[]')
+        if not isinstance(trusted, list) or not all(isinstance(row, dict) for row in trusted):
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise HTTPException(503, 'The configured trusted CA certificates could not be read') from None
+    # Release the database connection while waiting for GitLab.
+    db.rollback()
+    return trusted
+
+async def gitlab_request(operation, *args, **kwargs):
+    if not _GITLAB_REQUEST_SLOTS.acquire(blocking=False):
+        raise HTTPException(503, 'GitLab requests are busy. Try again shortly.', headers={'Retry-After': '5'})
+    try:
+        return await run_in_threadpool(operation, *args, **kwargs)
+    except gitlab.GitLabSourceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from None
+    finally:
+        _GITLAB_REQUEST_SLOTS.release()
 
 async def body(request, auth):
     raw = bytearray()
@@ -116,6 +146,13 @@ def listing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     services = [{'id': s.id, 'service_key': s.service_key, 'name': s.name, 'group_id': g} for s,g in db.execute(select(Service, ServiceGroup.group_id).join(ServiceGroup)) if g in ids and auth.has('scan.ingest', s.id)]
     return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids][:100], 'groups': [{'id':g.id,'name':g.name,'can_stage':can_stage(db,auth,g.id)} for g in groups], 'services': services}
 
+@router.post('/gitlab/refs')
+async def gitlab_refs(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+    data = await body(request, auth)
+    group_scope(db, auth, data.get('group_id'))
+    return await gitlab_request(gitlab.list_gitlab_refs, data.get('repository_url'),
+        token=data.get('git_token') or None, search=data.get('search', ''), trusted_ca_certificates=gitlab_trust(db))
+
 @router.post('')
 @upload_resource_diagnostics
 async def create(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -131,7 +168,7 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
         if maximum and received > limit: raise HTTPException(413, 'Discovery upload exceeds size limit')
         return message
     request._receive = bounded_receive
-    form = await request.form(max_files=1, max_fields=8, max_part_size=65536)
+    form = await request.form(max_files=1, max_fields=9, max_part_size=65536)
     try:
         csrf(auth, form.get('csrf_token', request.headers.get('X-CSRF-Token', '')))
         try: group_id = int(form.get('group_id', ''))
@@ -140,9 +177,26 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
         try: selected = options(json.loads(str(form.get('options', '{}'))))
         except (ValueError, TypeError): raise HTTPException(422, 'Invalid discovery options') from None
         upload, reference = form.get('upload'), str(form.get('reference', '')).strip()
-        if bool(upload) == bool(reference): raise HTTPException(422, 'Provide one upload or one artifact reference')
+        repository_url = form.get('repository_url', '')
+        if sum(map(bool, (upload, reference, repository_url))) != 1:
+            raise HTTPException(422, 'Choose one file, OCI reference, or GitLab repository URL')
+        source_kind = 'gitlab' if repository_url else 'upload' if upload else 'reference'
+        if form.get('input_kind', source_kind) != source_kind:
+            raise HTTPException(422, 'The selected source does not match the supplied input')
+        if not repository_url and any(key in form for key in ('git_token', 'git_ref', 'git_ref_kind')):
+            raise HTTPException(422, 'GitLab credentials and revisions require a GitLab repository URL')
         if upload and not isinstance(upload, UploadFile):
             raise HTTPException(422, 'Upload must be a file')
+        if repository_url:
+            if form.get('acknowledge_non_secret') != 'true':
+                raise HTTPException(422, 'Confirm that the repository contents are suitable for Discovery')
+            try:
+                repository_url = gitlab.validate_gitlab_project(repository_url)
+                git_ref = gitlab.validate_gitlab_ref(form.get('git_ref', ''))
+                git_ref_kind = form.get('git_ref_kind', '')
+            except gitlab.GitLabSourceError as exc:
+                raise HTTPException(exc.status_code, str(exc)) from None
+            trusted_ca_certificates = gitlab_trust(db)
         try:
             storage_key()
         except SourceStorageError:
@@ -152,15 +206,23 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
         folder.mkdir(parents=True, mode=0o750)
         if os.name == 'posix':
             os.chown(folder, -1, int(os.getenv('CATS_DISCOVERY_GID', '10003')))
-        filename = 'images.txt'
+        filename = 'repository.zip' if repository_url else 'images.txt'
         if upload:
             filename = Path(str(upload.filename or 'source.zip').replace('\\','/')).name
             if not re.fullmatch(r'[A-Za-z0-9_.-]{1,180}', filename): filename = 'source.zip'
         target = folder / filename
         digest, size = hashlib.sha256(), 0
+        gitlab_source = None
         try:
             with encrypted_writer(target, source_id) as stream:
-                if reference:
+                if repository_url:
+                    commit_sha, source_hash = await gitlab_request(gitlab.fetch_gitlab_archive,
+                        repository_url, git_ref, stream, token=form.get('git_token') or None,
+                        trusted_ca_certificates=trusted_ca_certificates, ref_kind=git_ref_kind)
+                    gitlab_source = {'repository_url': repository_url, 'requested_ref': git_ref, 'commit_sha': commit_sha}
+                    if git_ref_kind:
+                        gitlab_source['ref_kind'] = git_ref_kind
+                elif reference:
                     if len(reference)>1024 or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:/@+-]*', reference) or '@' in reference.split('/')[0]:
                         raise HTTPException(422, 'Provide an image reference without credentials')
                     data = (reference+'\n').encode()
@@ -180,7 +242,13 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
             if target.name != filename:
                 target.rename(folder / filename)
                 target = folder / filename
-            job = submit(db, kind='discovery', payload={'source_id': source_id, 'filename': filename, 'source_hash': digest.hexdigest(), 'group_id': group_id, 'options': selected}, requested_by_id=auth.user.id, commit=False)
+            payload = {'source_id': source_id, 'filename': filename, 'group_id': group_id, 'options': selected}
+            if gitlab_source:
+                group_scope(db, auth, group_id)
+                payload.update(source_hash=source_hash, gitlab_source=gitlab_source)
+            else:
+                payload['source_hash'] = digest.hexdigest()
+            job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id, commit=False)
             record_audit(db, auth, 'discovery.submitted', 'discovery', job.id, group_id=group_id)
             db.commit()
             return {'job_id': job.id}
@@ -214,7 +282,7 @@ async def retry(job_id: str, request: Request, auth: AuthContext = Depends(requi
     data = await body(request, auth)
     old = get_job(db, auth, job_id, True)
     if old.result.get('source_expired') or not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
-        raise HTTPException(410, 'Discovery source expired; upload it again')
+        raise HTTPException(410, 'Discovery source expired. Submit the source again.')
     if old.status in ('queued','running'): raise HTTPException(409, 'Discovery is still running')
     payload = {**old.payload, 'previous_job_id': old.id}
     if 'options' in data: payload['options'] = options(data['options'])
@@ -232,7 +300,7 @@ async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(
         raise HTTPException(409, 'Discovery must finish before supplying dependencies')
     chain = old.payload.get('supplements', [])
     if not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
-        raise HTTPException(410, 'Discovery source expired; upload it again')
+        raise HTTPException(410, 'Discovery source expired. Submit the source again.')
     maximum = discovery_limit('UPLOAD_BYTES')
     receive, received = request._receive, 0
     async def bounded_receive():

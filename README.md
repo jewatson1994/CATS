@@ -22,7 +22,7 @@ The root `LICENSE` is authoritative. `portal/LICENSE` and `cats-scanner/LICENSE`
 | --- | --- |
 | Services | Filter the Service Security Matrix; switch Active, Staged, or Archived, choose page size, and inspect versioned service evidence. |
 | Jobs | Inspect durable scans, remediation plans/executions, exports, and administrator provisioning operations. |
-| Discovery | Upload deployment archives, review a group-owned versioned architecture/image inventory, confirm service boundaries, and explicitly send it to Scan. See the [Discovery guide](docs/universal-deployment-discovery.md) for supported local inputs and native-renderer deployment requirements. |
+| Discovery | Upload deployment archives or import an approved GitLab repository at a branch, tag or commit. Review the group's inventory, confirm service boundaries, and choose when to send it to Scan. [Discovery workflow and GitLab setup](docs/discovery-workflow.md) |
 | Scan | Assess images, Docker image archives, Docker Compose applications, and Helm inputs without creating a persistent service. |
 | SBOM | Generate Syft JSON, CycloneDX JSON/XML, and SPDX JSON from a shared inventory. |
 | Findings and governance | Review vulnerabilities and configuration issues; manage exceptions, mitigations, POA&Ms, and approvals. |

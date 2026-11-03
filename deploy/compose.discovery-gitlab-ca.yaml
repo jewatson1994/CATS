@@ -1,0 +1,12 @@
+# Optional additional TLS trust for GitLab repository imports.
+services:
+  portal:
+    environment:
+      CATS_DISCOVERY_GITLAB_CA_FILE: /etc/cats/gitlab-ca.pem
+    volumes:
+      - type: bind
+        source: ${CATS_DISCOVERY_GITLAB_CA_FILE:?Set the absolute host path to the GitLab PEM CA bundle}
+        target: /etc/cats/gitlab-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false

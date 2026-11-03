@@ -2,7 +2,7 @@
 
 Open **Discovery** next to Scan. Discovery inspects deployment configuration and preserves evidence; starting discovery does not start a vulnerability scan.
 
-1. Select an owning group and upload a deployment file or repository source archive. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists. For a project hosted in Git, upload the checkout or source archive for the intended revision. Discovery does not clone a pasted Git URL. You can also submit an OCI image reference or an OCI chart reference with an exact version.
+1. Select an owning group and choose a source. You can upload a deployment file or repository archive, import an approved GitLab project, or enter an OCI image or versioned chart reference. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists.
 2. Optionally name the environment and enter relative values-file paths, one per line in override order. Use non-secret configuration. Later files override earlier files.
 3. Review each deployment root, its components, image references, completeness and diagnostics. Expand **Source evidence** to inspect provenance or **Complete inventory and relationships** for the full graph. Discovery treats inputs as untrusted and does not execute application scripts, build images or deploy workloads.
 4. Select the roots belonging to one service. Choose an existing service, or **Stage a new service** if your group staging authority permits it. New services receive exactly the selected owning group. Only services in the owning group for which you have scan permission appear. Explicitly acknowledge a partial inventory after reviewing its gaps. Blocked or invalid inventories cannot be confirmed.
@@ -11,6 +11,30 @@ Open **Discovery** next to Scan. Discovery inspects deployment configuration and
 Running work can be cancelled. Retry or **Rediscover as new version** preserves prior evidence. Under **Compare immutable versions**, select an earlier completed discovery from the same group to inspect added, removed and changed component IDs. Comparison reports inventory changes, not vulnerability changes.
 
 If discovery is incomplete, review diagnostics and candidate environment paths. In **Resolution assistance**, adjust non-secret options (including ordered files or a `source_map` from Flux source identity to an uploaded directory), then retry as a new version. This reruns discovery and preserves earlier evidence. To add missing source files, submit a corrected archive. Administrators can also supply exact-version, SHA-256-verified archives through the optional [offline mirror](universal-deployment-discovery.md#follow-up-implementation-2026-10-20). The page never silently treats an unknown or partial result as a complete deployment.
+
+## Import a GitLab repository
+
+Choose **GitLab repository** and enter the project's HTTPS URL, such as `https://gitlab.example.com/platform/payments`. Leave **Access token** blank for a public project. For a private project, use a read-only GitLab token with the `read_api` scope and access to that project. Submit the token through an HTTPS connection to the portal. [GitLab access token scopes](https://docs.gitlab.com/security/tokens/access_token_scopes/)
+
+Choose **Load branches and tags** to browse available refs and filter them by name. You can also enter a branch, tag or commit SHA directly, or leave the ref blank to use the default branch.
+
+The portal resolves the ref to a commit and downloads that commit's archive into encrypted Discovery storage. The archive excludes the contents of separately hosted Git submodules. You can see the resolved commit under **GitLab source**. Specify values files relative to the repository root, for example `deploy/values-prod.yaml`. The token is used only for the current project's ref lookup and import. Retrying the job reuses its retained snapshot. To pick up new commits on a branch, submit the project again. Other Git hosts and disconnected installations can use a source archive.
+
+### Allow projects in Compose
+
+GitLab imports are disabled until an administrator sets `CATS_DISCOVERY_GITLAB_SOURCES` in the deployment's environment file. An exact project URL approves one project, including a project in a subgroup. An exact instance origin approves all projects on that instance that the submitted credentials or anonymous access can read. Separate entries with commas or whitespace, or use a JSON array. This example approves one public project and a whole internal instance.
+
+```dotenv
+CATS_DISCOVERY_GITLAB_SOURCES=https://gitlab.com/gitlab-org/charts/gitlab,https://gitlab.example.com
+```
+
+Recreate the public portal after editing the setting. For the root stack run `docker compose up -d --no-deps --force-recreate portal`. For the main deployment template run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate portal`. The portal needs direct HTTPS access to the GitLab API. For private Helm dependencies found inside the snapshot, the Discovery worker uses its existing approved sources, scoped OCI registry credentials and configured chart mirrors.
+
+The portal uses system trust and certificates saved under **Administration → Trusted CA certificates**. For an internal GitLab instance, upload the issuing CA's public PEM certificate there. Alternatively, to supply the CA through Compose, set `CATS_DISCOVERY_GITLAB_CA_FILE` to the absolute host path of the PEM CA bundle. Include the supplied override when creating the portal and on subsequent Compose updates. It mounts the file read-only into the portal. For the main deployment template, substitute `--env-file /secure/cats.env -f templates/compose.main.yaml` for `-f compose.yaml`.
+
+```sh
+docker compose -f compose.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d --no-deps --force-recreate portal
+```
 
 ## Helm charts declared in values.yaml
 

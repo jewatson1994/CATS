@@ -2,8 +2,10 @@
 from contextlib import nullcontext
 import hashlib
 import base64
+import io
 import json
 import sys
+import zipfile
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -17,10 +19,10 @@ from sqlalchemy.pool import StaticPool
 from app import discovery_routes as routes, discovery_worker as worker
 from app.auth import AuthContext, require_user
 from app.database import Base
-from app.models import Service, Group, ServiceGroup
+from app.models import AuditEvent, Service, Group, ServiceGroup
 from app.models import utcnow
 from app.discovery_models import DiscoveryInventory, DiscoveryConfirmation
-from app.durable_jobs import DurableJob, JobError
+from app.durable_jobs import DurableJob, JobError, claim, execute
 from app.discovery_sources import encrypted_writer, decrypted_source, SourceStorageError
 
 
@@ -206,6 +208,157 @@ def test_upload_and_reference_admission_are_group_scoped(api):
     assert client.post('/api/discovery',data={'group_id':'1','reference':'nginx:1.2'}).status_code == 403
 
 
+@pytest.fixture
+def gitlab_form(monkeypatch):
+    project = 'https://gitlab.example.test/team/project'
+    monkeypatch.setenv('CATS_DISCOVERY_GITLAB_SOURCES', project)
+    return {'group_id': '1', 'csrf_token': 'csrf', 'input_kind': 'gitlab',
+            'repository_url': project, 'git_ref': 'release/v2', 'git_token': 'private-read-api-test-token',
+            'acknowledge_non_secret': 'true'}
+
+
+def test_browse_gitlab_refs_is_group_scoped_and_does_not_create_a_job(api, gitlab_form, monkeypatch):
+    client, db, _ = api
+    choices = {'branches': ['release/main'], 'tags': ['release/v2'], 'truncated': False}
+    data = {'group_id': 1, 'repository_url': gitlab_form['repository_url'],
+            'git_token': gitlab_form['git_token'], 'search': 'release'}
+    calls = []
+
+    def list_refs(url, *, token, trusted_ca_certificates, search):
+        calls.append((url, token, search))
+        return choices
+
+    monkeypatch.setattr(routes.gitlab, 'list_gitlab_refs', list_refs)
+    assert client.post('/api/discovery/gitlab/refs', json=data).status_code == 403
+    assert post(client, '/gitlab/refs', {**data, 'group_id': 2}).status_code == 403
+    assert not calls
+    response = post(client, '/gitlab/refs', data)
+    assert response.status_code == 200 and response.json() == choices
+    assert calls == [(data['repository_url'], data['git_token'], 'release')]
+    assert db.scalar(select(DurableJob.id)) is None
+    assert list(worker.upload_root().iterdir()) == []
+
+
+def test_gitlab_busy_error_leaves_no_partial_archive(api, gitlab_form, monkeypatch):
+    client, db, _ = api
+    monkeypatch.setattr(routes, '_GITLAB_REQUEST_SLOTS', SimpleNamespace(acquire=lambda blocking: False))
+    response = client.post('/api/discovery', data=gitlab_form)
+    assert response.status_code == 503 and response.headers['Retry-After'] == '5'
+    assert db.scalar(select(DurableJob.id)) is None
+    assert list(worker.upload_root().iterdir()) == []
+
+
+@pytest.mark.parametrize(('changed', 'with_upload', 'status'), [
+    ({'group_id': '2'}, False, 403),
+    ({'csrf_token': ''}, False, 403),
+    ({'acknowledge_non_secret': ''}, False, 422),
+    ({'reference': 'example/app:1'}, False, 422),
+    ({}, True, 422),
+    ({'repository_url': '', 'reference': 'example/app:1', 'input_kind': 'reference'}, False, 422),
+    ({'repository_url': 'https://gitlab.example.test/team/another'}, False, 403),
+])
+def test_gitlab_admission_checks_before_fetch(api, gitlab_form, monkeypatch, changed, with_upload, status):
+    client, db, _ = api
+    monkeypatch.setattr(routes.gitlab, 'fetch_gitlab_archive', lambda *args, **kwargs: pytest.fail('Unexpected download'))
+    files = {'upload': ('images.txt', b'nginx:1')} if with_upload else None
+    response = client.post('/api/discovery', data={**gitlab_form, **changed}, files=files)
+    assert response.status_code == status, response.text
+    assert gitlab_form['git_token'] not in response.text
+    assert db.scalar(select(DurableJob.id)) is None
+    assert list(worker.upload_root().iterdir()) == []
+
+
+def test_gitlab_failed_fetch_removes_partial_source(api, gitlab_form, monkeypatch):
+    client, db, _ = api
+
+    def fail_fetch(url, ref, stream, **kwargs):
+        stream.write(b'incomplete archive')
+        raise routes.gitlab.GitLabSourceError('GitLab returned an incomplete response.')
+
+    monkeypatch.setattr(routes.gitlab, 'fetch_gitlab_archive', fail_fetch)
+    response = client.post('/api/discovery', data=gitlab_form)
+    assert response.status_code == 502, response.text
+    assert gitlab_form['git_token'] not in response.text
+    assert list(worker.upload_root().iterdir()) == []
+    assert db.scalar(select(DurableJob.id)) is None
+    assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == 'discovery.submitted')) is None
+
+
+def test_gitlab_archive_discovery_and_retry_replay_without_credentials(api, gitlab_form, monkeypatch):
+    client, db, _ = api
+    sha = 'a1' * 20
+    wrapper = 'project-' + sha
+    selected = {'values_files': ['overrides/values-prod.yaml']}
+    expected = {'repository_url': gitlab_form['repository_url'], 'requested_ref': gitlab_form['git_ref'],
+                'ref_kind': 'tag', 'commit_sha': sha}
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, 'w') as files:
+        files.writestr(f'{wrapper}/manifests/pod.yaml', 'apiVersion: v1\nkind: Pod\nmetadata: {name: web}\nspec: {containers: [{name: app, image: nginx:1.27}]}')
+        files.writestr(f'{wrapper}/overrides/values-prod.yaml', 'replicas: 3')
+    archive_bytes = archive.getvalue()
+    digest = hashlib.sha256(archive_bytes).hexdigest()
+    downloads = []
+
+    def serve(request, timeout):
+        assert request.get_header('Private-token') == gitlab_form['git_token']
+        downloads.append(request.full_url)
+        if len(downloads) == 1:
+            assert request.full_url.endswith('/repository/tags/release%2Fv2')
+            body = json.dumps({'name': 'release/v2', 'commit': {'id': sha}}).encode()
+        else:
+            assert len(downloads) == 2 and request.full_url.endswith('/archive.zip?sha=' + sha)
+            body = archive_bytes
+        response = io.BytesIO(body)
+        response.status = 200
+        response.headers = {'Content-Length': str(len(body))}
+        return response
+
+    monkeypatch.setattr(routes.gitlab.request, 'build_opener', lambda *args: SimpleNamespace(open=serve))
+    response = client.post('/api/discovery', data={**gitlab_form, 'git_ref_kind': 'tag', 'options': json.dumps(selected)})
+    assert response.status_code == 200, response.text
+    first_id = response.json()['job_id']
+    first = db.get(DurableJob, first_id)
+    source_id = first.payload['source_id']
+    stored = worker.upload_root() / source_id / first.payload['filename']
+    assert b'nginx:1.27' not in stored.read_bytes()
+    with decrypted_source(stored, source_id, digest) as plain:
+        assert plain.read_bytes() == archive_bytes
+    assert client.get('/api/discovery/' + first_id).json()['job']['gitlab_source'] == expected
+
+    session_factory = lambda: Session(db.get_bind())
+
+    def finish_and_check(job_id):
+        queued = claim(['discovery'], 'test-worker', session_factory)
+        assert queued.id == job_id
+        execute(queued, worker.handle, session_factory)
+        db.expire_all()
+        detail = client.get('/api/discovery/' + job_id).json()
+        assert detail['job']['status'] == 'completed', detail['job']['error']
+        inventory = detail['inventory']
+        assert detail['job']['gitlab_source'] == inventory['gitlab_source'] == expected
+        assert inventory['archive_hash'] == digest
+        assert [image['reference'] for image in inventory['images']] == ['nginx:1.27']
+        assert inventory['candidate_values_files'] == selected['values_files']
+        assert inventory['selection']['values_files'] == selected['values_files']
+        payload = db.get(DurableJob, job_id).payload
+        assert payload['source_id'] == source_id and payload['source_hash'] == digest
+        assert gitlab_form['git_token'] not in json.dumps([payload, detail])
+
+    finish_and_check(first_id)
+    monkeypatch.delenv('CATS_DISCOVERY_GITLAB_SOURCES')
+    retry = post(client, '/' + first_id + '/retry')
+    assert retry.status_code == 200, retry.text
+    next_id = retry.json()['job_id']
+    assert next_id != first_id
+    finish_and_check(next_id)
+    assert len(downloads) == 2
+    assert gitlab_form['git_token'] not in client.get('/api/discovery').text
+    events = db.scalars(select(AuditEvent)).all()
+    assert any(event.action == 'discovery.submitted' for event in events)
+    for event in events:
+        assert gitlab_form['git_token'] not in json.dumps([event.action, event.target_type, event.target_id, event.detail])
+
+
 def test_expired_retry_requires_reupload(api):
     client,db,_=api
     job(db)
@@ -250,8 +403,9 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
              'group_id':1,'options':{}}
     stages=[]
     checkpoints=[]
-    def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None):
+    def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None,gitlab_archive=False):
         assert runner is discovery_renderer.isolated_runner
+        assert gitlab_archive is False
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})
         return {'completeness':'complete','roots':[],'nodes':[],'images':[],'metrics':{'images':1}}

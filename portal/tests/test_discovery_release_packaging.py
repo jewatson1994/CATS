@@ -91,3 +91,26 @@ def test_discovery_large_input_deployment_settings(filename):
     settings = (root / example).read_text().splitlines()
     for suffix in ("UPLOAD_BYTES", "FILE_BYTES", "EXTRACTED_BYTES", "FILES", "RENDERED_BYTES"):
         assert "CATS_DISCOVERY_MAX_" + suffix + "=0" in settings
+
+
+@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+def test_gitlab_import_settings_apply_only_to_public_portal(filename):
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    services = yaml.safe_load((root / filename).read_text())["services"]
+    for setting in ("CATS_DISCOVERY_GITLAB_SOURCES", "CATS_DISCOVERY_GITLAB_CA_FILE"):
+        assert services["portal"]["environment"][setting] == "${" + setting + ":-}"
+        assert all(setting not in (service.get("environment") or {})
+                   for name, service in services.items() if name != "portal")
+
+
+def test_optional_gitlab_ca_is_a_read_only_portal_mount():
+    import yaml
+    root = Path(__file__).resolve().parents[2]
+    overlay = yaml.safe_load((root / "deploy/compose.discovery-gitlab-ca.yaml").read_text())["services"]
+    assert set(overlay) == {"portal"}
+    mount, = overlay["portal"]["volumes"]
+    assert mount["type"] == "bind"
+    assert mount["source"].startswith("${CATS_DISCOVERY_GITLAB_CA_FILE:?")
+    assert mount["target"] == overlay["portal"]["environment"]["CATS_DISCOVERY_GITLAB_CA_FILE"]
+    assert mount["read_only"] and not mount["bind"]["create_host_path"]
