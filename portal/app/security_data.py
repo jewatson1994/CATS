@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import ssl
 import subprocess
 import tempfile
 import tarfile
+from typing import BinaryIO
 import urllib.parse
 import urllib.request
 import uuid
@@ -21,6 +25,7 @@ from .scan_intelligence import publish_generation
 
 SOURCE_KEYS = {"kev", "epss", "grype", "trivy"}
 MAX_UPLOAD = 1024 * 1024 * 1024
+MAX_GRYPE_LISTING = 1024 * 1024
 
 
 def _validate_feed(key: str, data: bytes) -> str:
@@ -80,12 +85,45 @@ def _run(command: list[str], env: dict[str, str]) -> str:
 def _check_sqlite(path: Path) -> None:
     if not path.is_file() or path.stat().st_size == 0:
         raise ValueError("Candidate database file is missing or empty")
-    with sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True) as connection:
+    with closing(sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)) as connection:
         if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
             raise ValueError("Candidate database integrity check failed")
 
 
-def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: str | None) -> str:
+def _parse_grype_listing(raw: bytes) -> dict:
+    if len(raw) > MAX_GRYPE_LISTING:
+        raise ValueError("Grype latest.json exceeds size limit")
+    try:
+        listing = json.loads(raw.decode("utf-8-sig"))
+    except (ValueError, RecursionError) as exc:
+        raise ValueError("Grype latest.json is invalid JSON") from exc
+    fields = ("schemaVersion", "built", "path")
+    if (not isinstance(listing, dict) or not all(isinstance(listing.get(field), str) and listing[field] for field in fields)
+            or not re.fullmatch(r"v?6\.[0-9]+\.[0-9]+", listing["schemaVersion"])):
+        raise ValueError("Grype latest.json must describe a v6 database archive")
+    checksum = listing.get("checksum")
+    if not isinstance(checksum, str) or not re.fullmatch(r"sha256:[0-9a-fA-F]{64}", checksum):
+        raise ValueError("Grype latest.json must contain a SHA-256 archive checksum")
+    return listing
+
+
+def _stage_grype_archive(archive: Path, stream: BinaryIO, listing: dict | None) -> None:
+    digest = hashlib.sha256() if listing is not None else None
+    total = 0
+    with archive.open("xb") as output:
+        while chunk := stream.read(1024 * 1024):
+            total += len(chunk)
+            if total > MAX_UPLOAD:
+                raise ValueError("Grype database archive exceeds size limit")
+            output.write(chunk)
+            if digest is not None:
+                digest.update(chunk)
+    if listing is not None and listing["checksum"].lower() != "sha256:" + digest.hexdigest():
+        raise ValueError("Grype archive SHA-256 checksum does not match latest.json")
+
+
+def _refresh_scanner(key: str, source: str, uploaded: bytes | BinaryIO | None, ca_bundle: str | None,
+                     grype_listing: bytes | None) -> str:
     if key == "grype":
         destination = Path(os.getenv("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
         destination.mkdir(parents=True, exist_ok=True)
@@ -96,12 +134,24 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: s
             stage = Path(temporary) / "db"
             stage.mkdir()
             archive = Path(temporary) / "candidate.tar.zst"
+            listing = _parse_grype_listing(grype_listing) if grype_listing is not None else None
             if uploaded is not None:
-                archive.write_bytes(uploaded)
+                stream = io.BytesIO(uploaded) if isinstance(uploaded, bytes) else uploaded
+                _stage_grype_archive(archive, stream, listing)
             else:
-                archive.write_bytes(_download(source, ca_bundle))
+                if urllib.parse.urlsplit(source).path.rsplit("/", 1)[-1] == "latest.json":
+                    with _open_source(source, ca_bundle) as response:
+                        listing = _parse_grype_listing(response.read(MAX_GRYPE_LISTING + 1))
+                    # Grype v6 mirrors publish the named archive beside the listing.
+                    filename = listing["path"]
+                    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:+-]*\.tar\.zst", filename):
+                        raise ValueError("Grype latest.json must name a .tar.zst file in the same mirror directory")
+                    source = source.rsplit("/", 1)[0] + "/" + filename
+                with _open_source(source, ca_bundle) as response:
+                    _stage_grype_archive(archive, response, listing)
             env = dict(os.environ, GRYPE_DB_CACHE_DIR=str(stage), GRYPE_DB_AUTO_UPDATE="false",
-                       GRYPE_DB_REQUIRE_UPDATE_CHECK="false", GRYPE_DB_VALIDATE_AGE="false")
+                       GRYPE_DB_REQUIRE_UPDATE_CHECK="false", GRYPE_DB_VALIDATE_AGE="false",
+                       GRYPE_CHECK_FOR_APP_UPDATE="false")
             _run([binary, "db", "import", str(archive)], env)
             status = _run([binary, "db", "status", "-o", "json"], env)
             databases = list(stage.rglob("vulnerability.db"))
@@ -115,6 +165,13 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | None, ca_bundle: s
                 version = str(metadata.get("built") or metadata.get("schemaVersion") or "Imported Grype database")[:240]
             except (ValueError, TypeError) as exc:
                 raise ValueError("Grype candidate metadata is invalid") from exc
+            if listing is not None:
+                if (listing["schemaVersion"].removeprefix("v") != str(metadata.get("schemaVersion")).removeprefix("v")
+                        or listing["built"] != metadata.get("built")):
+                    raise ValueError("Grype latest.json schema or build time does not match the imported database")
+                # Reports read this fixed location from the pinned generation.
+                with (stage / "latest.json").open("x", encoding="utf-8") as output:
+                    json.dump(listing, output, allow_nan=False)
             publish_generation(stage, destination, key, metadata)
         return version
     if key == "trivy":
@@ -189,7 +246,7 @@ def _extract_trivy_database(data: bytes, stage: Path) -> None:
         raise ValueError("Trivy DB archive is incomplete")
 
 
-def _download(source: str, ca_bundle: str | None) -> bytes:
+def _open_source(source: str, ca_bundle: str | None) -> BinaryIO:
     parsed = urllib.parse.urlparse(source)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
         raise ValueError("Configured source must be an HTTP(S) URL")
@@ -205,20 +262,29 @@ def _download(source: str, ca_bundle: str | None) -> bytes:
         def redirect_request(self, request, fp, code, msg, headers, newurl):
             raise ValueError("Configured source redirected; configure the final endpoint explicitly")
     opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect)
-    with opener.open(request, timeout=30) as response:
+    return opener.open(request, timeout=30)
+
+
+def _download(source: str, ca_bundle: str | None) -> bytes:
+    with _open_source(source, ca_bundle) as response:
         data = response.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
         raise ValueError("Security data download exceeds size limit")
     return data
 
 
-def refresh(key: str, source: str, uploaded: bytes | None = None, ca_bundle: str | None = None) -> str:
+def refresh(key: str, source: str, uploaded: bytes | BinaryIO | None = None, ca_bundle: str | None = None,
+            grype_listing: bytes | None = None) -> str:
     if key not in SOURCE_KEYS:
         raise ValueError("Unknown security data source")
-    if uploaded is not None and len(uploaded) > MAX_UPLOAD:
+    if grype_listing is not None and (key != "grype" or uploaded is None):
+        raise ValueError("Grype latest.json requires an uploaded Grype database archive")
+    if uploaded is not None and not isinstance(uploaded, bytes) and key != "grype":
+        raise ValueError("Only Grype database archives support streamed uploads")
+    if isinstance(uploaded, bytes) and len(uploaded) > MAX_UPLOAD:
         raise ValueError("Security data upload exceeds size limit")
     if key in {"grype", "trivy"}:
-        return _refresh_scanner(key, source, uploaded, ca_bundle)
+        return _refresh_scanner(key, source, uploaded, ca_bundle, grype_listing)
     data = uploaded if uploaded is not None else _download(source, ca_bundle)
     version = _validate_feed(key, data)
     policy_dir = Path(os.getenv("CATS_POLICY_DATA_DIR", "/app/policy"))

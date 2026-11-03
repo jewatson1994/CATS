@@ -125,9 +125,8 @@ features may still require their own container-runtime access.
 
 ## Security data sources
 
-Configure each source under **Configuration → Security Data Sources**. KEV uses
-the CISA JSON feed format; EPSS uses CSV or gzip CSV. Grype accepts a native
-database archive through `grype db import`, including offline upload. Trivy
+Configure each source under **Settings → Data → Security Data Sources**. KEV uses
+the CISA JSON feed format and EPSS uses CSV or gzip CSV. Trivy
 refreshes from an explicitly configured OCI DB repository using its native
 download command. Trivy offline upload is not offered because the repository
 does not define a safe portable upload format for its native DB. KEV and EPSS
@@ -136,6 +135,21 @@ CA bundle. Redirects are rejected, so an internal source cannot silently fall
 back to another host. Source URLs cannot include credentials, query strings,
 or fragments. Configure an internal mirror with endpoint-level authentication
 instead of a signed URL.
+
+To refresh Grype from a mirror, serve the v6 `latest.json` and the archive it
+names in the same directory on the mirror. Open **Grype DB → Configure and upload offline data**.
+Enter the mirror’s v6 listing URL (for example, `https://mirror.example/grype/v6/latest.json`)
+in **Configured source** and select **Save source**. Select **Refresh** on the
+Grype DB card. CATS downloads the archive named in the listing, verifies its
+SHA-256 checksum, then imports it. To pin a specific archive, save its direct
+`.tar.zst` URL in the same field.
+
+To update Grype offline, open **Grype DB → Configure and upload offline data**.
+Select the `.tar.zst` database archive. You can upload it alone or add the matching
+`latest.json` from the same release. Select **Upload offline data**. When you
+include the listing, CATS checks the archive against its checksum before running
+`grype db import`. A mismatch leaves the installed database in place. Check
+**Status** and **Installed** on the Grype DB card for the result.
 
 Candidates are checked before activation. Feed files use atomic replacement;
 scanner databases are imported/downloaded into staging, checked, then swapped

@@ -408,6 +408,55 @@ def test_security_data_upload_is_authorized_and_audited(tmp_path, monkeypatch):
     assert denied.status_code == 403
 
 
+def test_settings_grype_upload_accepts_archive_and_optional_listing(monkeypatch):
+    from app.models import SecurityDataSource
+
+    uploads = []
+
+    def capture(key, source, archive, ca_bundle, *, grype_listing):
+        uploads.append((key, archive.read(), grype_listing))
+        return "2026-11-02"
+
+    monkeypatch.setattr("app.main.refresh_security_data", capture)
+    client = new_client()
+    url = "/admin/configuration/security-data/grype"
+    form = {"csrf_token": csrf(client), "action": "upload"}
+    archive = ("vulnerability-db.tar.zst", b"archive", "application/octet-stream")
+    listing = ("latest.json", b"{}", "application/json")
+    for files in ({"file": archive, "grype_listing": listing}, {"file": archive}):
+        assert client.post(url, data=form, files=files, follow_redirects=False).status_code == 303
+    response = client.post(url, data=form, files={"grype_listing": listing})
+    assert response.status_code == 422 and "archive" in response.text
+    assert uploads == [("grype", b"archive", b"{}"), ("grype", b"archive", None)]
+    with SessionLocal() as db:
+        record = db.get(SecurityDataSource, "grype")
+        assert (record.status, record.installed_version) == ("READY", "2026-11-02")
+
+
+def test_settings_grype_refresh_uses_saved_mirror(monkeypatch):
+    from app.models import SecurityDataSource
+
+    calls = []
+
+    def capture(key, source, archive, ca_bundle, *, grype_listing):
+        calls.append((key, source, archive, grype_listing))
+        return "2026-11-02"
+
+    monkeypatch.setattr("app.main.refresh_security_data", capture)
+    client = new_client()
+    url = "/admin/configuration/security-data/grype"
+    source = "https://mirror.example/databases/v6/latest.json"
+    token = csrf(client)
+    for form in ({"action": "save", "source": source}, {"action": "refresh"}):
+        response = client.post(url, data={"csrf_token": token, **form}, follow_redirects=False)
+        assert response.status_code == 303
+
+    assert calls == [("grype", source, None, None)]
+    with SessionLocal() as db:
+        record = db.get(SecurityDataSource, "grype")
+        assert (record.source, record.status, record.installed_version) == (source, "READY", "2026-11-02")
+
+
 def page_envelope(response):
     """Inspect the initial React page, including POST validation errors."""
     match = re.search(r'<script\b[^>]*\bid="cats-bootstrap"[^>]*>(.*?)</script>', response.text, re.S)

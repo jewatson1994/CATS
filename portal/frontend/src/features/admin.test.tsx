@@ -63,6 +63,30 @@ describe('native administration workflows', () => {
     expect(container.querySelector('input[name="next_path"]')).toHaveValue('/admin/staging?saved=1');
     expect(screen.getByRole('button', {name: 'Stage service'}).closest('form')).toHaveAttribute('action', '/admin/services/stage');
   });
+  it('refreshes a saved Grype mirror source separately from offline uploads', () => {
+    window.history.replaceState({}, '', '/admin/configuration#data');
+    const source = 'https://mirror.example/grype/v6/latest.json';
+    const {container} = render(<Settings data={{...permissions, security_data_sources: {grype: {source}}}}/>);
+    const card = screen.getByRole('heading', {name: 'Grype DB'}).parentElement!;
+    fireEvent.click(card.querySelector('summary')!);
+    const configured = within(card).getByLabelText('Configured source');
+    expect(configured).toHaveValue(source);
+    expect(configured).toHaveAccessibleDescription(/SHA-256 checksum/);
+    const refresh = within(card).getByRole('button', {name: 'Refresh'}).closest('form')!;
+    expect(refresh.querySelector('[name="source"]')).toHaveValue(source);
+    const archive = screen.getByLabelText('Grype database archive');
+    const listing = screen.getByLabelText('Matching latest.json (optional)');
+    const form = archive.closest('form')!;
+    expect(archive).toBeRequired();
+    expect(archive).toHaveAttribute('name', 'file');
+    expect(listing).not.toBeRequired();
+    expect(listing).toHaveAttribute('name', 'grype_listing');
+    expect(listing.closest('form')).toBe(form);
+    expect(form).toHaveAttribute('enctype', 'multipart/form-data');
+    expect(form).toHaveAttribute('action', '/admin/configuration/security-data/grype');
+    expect(within(form).getByRole('button', {name: 'Upload offline data'})).toHaveValue('upload');
+    expect(container.querySelectorAll('[name="grype_listing"]')).toHaveLength(1);
+  });
   it('renders audit scope, formatted dates and older/collapse links', () => {
     render(<Audit data={{...permissions, configuration: {audit_retention_days: 30, log_level: 'WARNING'}, groups: [{id: 4, name: 'Team'}], selected_group_id: 4,
       shown_count: 20, retained_count: 70, page: 2, page_count: 4, pagination_base: '/admin/audit?group_id=4&page_size=20', events: [{id: 1, created_at: 'Display date', actor: 'jane', action: 'user.created', target_type: 'user', target_id: 2, detail: {username: 'pat'}}]}}/>);

@@ -94,7 +94,8 @@ from .models import (
     OidcClaimMapping,
     SecurityDataSource,
 )
-from .security_data import SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD
+from .security_data import (MAX_GRYPE_LISTING, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD,
+                            SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
 from .validator_client import validate as validate_remote_artifact, health as validator_health
 from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
@@ -11461,10 +11462,14 @@ def save_validator_configuration(
 @app.post("/admin/configuration/security-data/{source_key}")
 async def manage_security_data_source(source_key: str, csrf_token: str = Form(), action: str = Form(),
     source: str = Form(default=""), file: UploadFile | None = File(default=None),
+    grype_listing: UploadFile | None = File(default=None),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
     check_csrf(auth, csrf_token)
     if source_key not in SECURITY_DATA_KEYS or action not in {"save", "refresh", "upload"}:
         raise HTTPException(422, detail="Unknown security data action")
+    has_listing = grype_listing is not None and bool(grype_listing.filename)
+    if has_listing and (source_key != "grype" or action != "upload"):
+        raise HTTPException(422, detail="Use latest.json with a manual Grype database upload")
     record = db.get(SecurityDataSource, source_key)
     if record is None:
         record = SecurityDataSource(key=source_key)
@@ -11489,14 +11494,22 @@ async def manage_security_data_source(source_key: str, csrf_token: str = Form(),
     else:
         if action == "refresh" and not record.source:
             raise HTTPException(422, detail="Configure a source before refreshing")
-        if action == "upload" and file is None:
+        if action == "upload" and (file is None or not file.filename):
+            if source_key == "grype":
+                raise HTTPException(422, detail="Select the Grype database archive (.tar.zst) to upload")
             raise HTTPException(422, detail="Upload a database or feed file")
-        data = await file.read(MAX_SECURITY_DATA_UPLOAD + 1) if file else None
         record.last_attempt_at = utcnow()
         record_audit(db, auth, f"security_data.{action}_requested", "security_data_source", source_key)
         try:
-            version = refresh_security_data(source_key, record.source or "", data,
-                configured_ca_bundle(get_global_configuration(db)))
+            ca_bundle = configured_ca_bundle(get_global_configuration(db))
+            if source_key == "grype":
+                listing = await grype_listing.read(MAX_GRYPE_LISTING + 1) if has_listing else None
+                archive = file.file if action == "upload" else None
+                version = await asyncio.to_thread(refresh_security_data, source_key, record.source or "",
+                    archive, ca_bundle, grype_listing=listing)
+            else:
+                data = await file.read(MAX_SECURITY_DATA_UPLOAD + 1) if file else None
+                version = refresh_security_data(source_key, record.source or "", data, ca_bundle)
         except Exception as exc:
             record.status = "FAILED"
             record.failure_reason = f"{type(exc).__name__}: {redact(exc)}"[:1000]
