@@ -23,7 +23,13 @@ import uuid
 from .scan_intelligence import publish_generation
 
 
-SOURCE_KEYS = {"kev", "epss", "grype", "trivy"}
+DEFAULT_SOURCES = {
+    "kev": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+    "epss": "https://epss.empiricalsecurity.com/epss_scores-current.csv.gz",
+    "grype": "https://grype.anchore.io/databases/v6/latest.json",
+    "trivy": "ghcr.io/aquasecurity/trivy-db",
+}
+SOURCE_KEYS = set(DEFAULT_SOURCES)
 MAX_UPLOAD = 1024 * 1024 * 1024
 MAX_GRYPE_LISTING = 1024 * 1024
 
@@ -44,7 +50,7 @@ def _validate_feed(key: str, data: bytes) -> str:
     raise ValueError("Unknown intelligence feed")
 
 
-def _activate_file(destination: Path, data: bytes) -> None:
+def _activate_file(destination: Path, data: bytes, before_activate=None) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=destination.parent, prefix=".cats-update-", delete=False) as stream:
         staged = Path(stream.name)
@@ -52,6 +58,8 @@ def _activate_file(destination: Path, data: bytes) -> None:
         stream.flush()
         os.fsync(stream.fileno())
     try:
+        if before_activate:
+            before_activate()
         os.replace(staged, destination)
     finally:
         staged.unlink(missing_ok=True)
@@ -123,7 +131,7 @@ def _stage_grype_archive(archive: Path, stream: BinaryIO, listing: dict | None) 
 
 
 def _refresh_scanner(key: str, source: str, uploaded: bytes | BinaryIO | None, ca_bundle: str | None,
-                     grype_listing: bytes | None) -> str:
+                     grype_listing: bytes | None, before_activate) -> str:
     if key == "grype":
         destination = Path(os.getenv("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
         destination.mkdir(parents=True, exist_ok=True)
@@ -172,7 +180,7 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | BinaryIO | None, c
                 # Reports read this fixed location from the pinned generation.
                 with (stage / "latest.json").open("x", encoding="utf-8") as output:
                     json.dump(listing, output, allow_nan=False)
-            publish_generation(stage, destination, key, metadata)
+            publish_generation(stage, destination, key, metadata, before_activate=before_activate)
         return version
     if key == "trivy":
         destination = Path(os.getenv("TRIVY_CACHE_DIR", "/opt/catscan/trivy-cache"))
@@ -185,7 +193,7 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | BinaryIO | None, c
             stage.mkdir()
             from .trusted_ca import write_additive_bundle
             bundle = write_additive_bundle(Path(temporary) / "ca.pem", [{"pem": ca_bundle}]) if ca_bundle else None
-            environment = dict(os.environ, TRIVY_SKIP_CHECK_UPDATE="true")
+            environment = dict(os.environ, TRIVY_SKIP_CHECK_UPDATE="true", TRIVY_SKIP_DB_UPDATE="false")
             if bundle:
                 environment["SSL_CERT_FILE"] = str(bundle)
             if uploaded is not None:
@@ -213,7 +221,7 @@ def _refresh_scanner(key: str, source: str, uploaded: bytes | BinaryIO | None, c
                 raise ValueError("Trivy candidate metadata is invalid") from exc
             if not isinstance(metadata, dict) or not metadata.get("Version") or not metadata.get("UpdatedAt"):
                 raise ValueError("Trivy candidate metadata is incomplete")
-            publish_generation(stage, destination, key, metadata)
+            publish_generation(stage, destination, key, metadata, before_activate=before_activate)
         return version
     raise ValueError("Unknown scanner database")
 
@@ -246,6 +254,15 @@ def _extract_trivy_database(data: bytes, stage: Path) -> None:
         raise ValueError("Trivy DB archive is incomplete")
 
 
+class _FeedRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        # FIRST's stable link points to the day's gzip on the same HTTPS host.
+        if (request.full_url == DEFAULT_SOURCES["epss"]
+                and re.fullmatch(r"https://epss\.empiricalsecurity\.com/epss_scores-\d{4}-\d{2}-\d{2}\.csv\.gz", newurl)):
+            return super().redirect_request(request, fp, code, msg, headers, newurl)
+        raise ValueError("Configured source redirected; configure the final endpoint explicitly")
+
+
 def _open_source(source: str, ca_bundle: str | None) -> BinaryIO:
     parsed = urllib.parse.urlparse(source)
     if parsed.scheme not in {"https", "http"} or not parsed.netloc:
@@ -258,10 +275,7 @@ def _open_source(source: str, ca_bundle: str | None) -> BinaryIO:
     if ca_bundle:
         context.load_verify_locations(cadata=ca_bundle)
     request = urllib.request.Request(source, headers={"User-Agent": "CATS-security-data/1"})
-    class NoRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, request, fp, code, msg, headers, newurl):
-            raise ValueError("Configured source redirected; configure the final endpoint explicitly")
-    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), NoRedirect)
+    opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), _FeedRedirect)
     return opener.open(request, timeout=30)
 
 
@@ -274,7 +288,7 @@ def _download(source: str, ca_bundle: str | None) -> bytes:
 
 
 def refresh(key: str, source: str, uploaded: bytes | BinaryIO | None = None, ca_bundle: str | None = None,
-            grype_listing: bytes | None = None) -> str:
+            grype_listing: bytes | None = None, *, before_activate=None) -> str:
     if key not in SOURCE_KEYS:
         raise ValueError("Unknown security data source")
     if grype_listing is not None and (key != "grype" or uploaded is None):
@@ -284,11 +298,11 @@ def refresh(key: str, source: str, uploaded: bytes | BinaryIO | None = None, ca_
     if isinstance(uploaded, bytes) and len(uploaded) > MAX_UPLOAD:
         raise ValueError("Security data upload exceeds size limit")
     if key in {"grype", "trivy"}:
-        return _refresh_scanner(key, source, uploaded, ca_bundle, grype_listing)
+        return _refresh_scanner(key, source, uploaded, ca_bundle, grype_listing, before_activate)
     data = uploaded if uploaded is not None else _download(source, ca_bundle)
     version = _validate_feed(key, data)
     policy_dir = Path(os.getenv("CATS_POLICY_DATA_DIR", "/app/policy"))
-    _activate_file(policy_dir / ("kev.json" if key == "kev" else "epss.csv"), data)
+    _activate_file(policy_dir / ("kev.json" if key == "kev" else "epss.csv"), data, before_activate)
     from .policy_data import kev_cves, epss_scores
     kev_cves.cache_clear()
     epss_scores.cache_clear()

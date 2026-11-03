@@ -119,7 +119,7 @@ def severity_options(db, service_id, configuration, now, *, classified=False):
     if stored is not None:
         values = set(stored)  # the same raw-visible set, stored with the classification
     else:
-        eligible, _, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
+        eligible, _, needs_observations = _risk_finding_expressions(db, configurations, now, finding_exception)
         values = set(db.execute(_with_latest_observation(select(Finding.severity).distinct().where(
             Finding.service_id == service_id,
             or_(Finding.active.is_(False), ~finding_exception, eligible)), service_id, needs_observations)).scalars())
@@ -170,7 +170,7 @@ def noncompliant_page(db, service_id, configuration, now, evidence, *, finding_t
             _joined_text(FC.cve, literal("Overdue fixable vulnerability"), literal("CVE")).label("text")).where(
             FC.service_id == service_id, FC.active.is_(True), stored_noncompliant, ~excepted)
     else:
-        _, noncompliant, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
+        _, noncompliant, needs_observations = _risk_finding_expressions(db, configurations, now, finding_exception)
         cve_text = _joined_text(Finding.cve, literal("Overdue fixable vulnerability"), literal("CVE"))
         cve_rows = _with_latest_observation(select(
             literal(0).label("kind"), Finding.id.label("id"), func.lower(Finding.cve).label("sort_item"),
@@ -274,7 +274,7 @@ def warning_page(db, service_id, configuration, now, service_key, other_items, *
     from .service_counts import _due_window_expression
     finding_exception, _ = _exception_predicates(now)
     configurations = {service_id: configuration}
-    eligible, _, needs_observations = _risk_finding_expressions(configurations, now, finding_exception)
+    eligible, _, needs_observations = _risk_finding_expressions(db, configurations, now, finding_exception)
     warning_days = max(1, int(configuration.get("warning_days", "14")))
     cutoff = now + timedelta(days=warning_days)
     active_exception = and_(ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),

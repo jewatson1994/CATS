@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, case, false, func, or_, select, true
 
 from .frontend_portfolio import cybersecurity_data
-from .sql_sets import catalog_subset, member_of
+from .sql_sets import member_of
 from .models import (DependencyWatchlistMatch, DeploymentValidationRun, ExceptionRecord, ExecutionSummary,
                      Execution, Finding, FindingObservation, PoamEntry, PolicyExceptionRecord,
                      PolicyFinding, Service, ServiceImage, utcnow)
@@ -83,7 +83,7 @@ def compute_rows(db, services, configs, configuration, now):
     catalog_kev = m.kev_cves()
     # The same coalescing as before; each key's cast no longer raises on
     # evidence that is not a boolean/number literal (see risk_sql).
-    from .risk_sql import evidence_key_boolean, evidence_key_float
+    from .risk_sql import current_epss_match, current_kev, evidence_key_boolean, evidence_key_float, scoped_epss
     evidence_kev = func.coalesce(evidence_key_boolean(FindingObservation.evidence, "kev"),
                                  evidence_key_boolean(FindingObservation.evidence, "known_exploited"), False)
     evidence_epss = func.coalesce(evidence_key_float(FindingObservation.evidence, "epss"),
@@ -98,9 +98,9 @@ def compute_rows(db, services, configs, configuration, now):
         # is a single extraction already, and the lateral has its own cost.
         evidence_values = select(evidence_epss.label("epss")).correlate(FindingObservation).offset(0).lateral("evidence_values")
         evidence_epss = evidence_values.c.epss
-    kev = or_(member_of(Finding.cve, catalog_kev) if catalog_kev else false(), evidence_kev)
-    catalog_epss = m.epss_scores()
-    epss = evidence_epss
+    cve_key = func.upper(func.trim(Finding.cve))
+    kev = current_kev(cve_key, catalog_kev, evidence_kev)
+    catalog_epss = scoped_epss(db, configs, m.epss_scores())
     noncompliant_parts, warning_parts = [], []
     def raw_overdue(cfg, when):
         default_days = max(1, int(cfg.get("overdue_days", "90")))
@@ -135,8 +135,8 @@ def compute_rows(db, services, configs, configuration, now):
             for rule in rules:
                 level = str(rule.get("severity", "Any")).lower()
                 threshold = float(rule.get("threshold", 1))
-                catalog_match = catalog_subset(catalog_epss, ("epss>=", threshold), lambda score, threshold=threshold: score >= threshold)
-                score_match = or_(epss >= threshold, and_(epss.is_(None), member_of(Finding.cve, catalog_match) if catalog_match else threshold <= 0))
+                scan_match = func.coalesce(evidence_epss, 0) >= threshold
+                score_match = current_epss_match(cve_key, catalog_epss, threshold, scan_match)
                 match = and_(score_match, (func.lower(Finding.severity) == level if level != "any" else True))
                 eligible.append(match)
                 if bool(rule.get("noncompliant", True)):

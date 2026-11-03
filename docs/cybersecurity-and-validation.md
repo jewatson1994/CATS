@@ -125,16 +125,25 @@ features may still require their own container-runtime access.
 
 ## Security data sources
 
-Configure each source under **Settings → Data → Security Data Sources**. KEV uses
-the CISA JSON feed format and EPSS uses CSV or gzip CSV. Trivy
-refreshes from an explicitly configured OCI DB repository using its native
-download command. Trivy offline upload is not offered because the repository
-does not define a safe portable upload format for its native DB. KEV and EPSS
-also accept offline uploads. Private HTTPS sources use the configured trusted
-CA bundle. Redirects are rejected, so an internal source cannot silently fall
-back to another host. Source URLs cannot include credentials, query strings,
-or fragments. Configure an internal mirror with endpoint-level authentication
-instead of a signed URL.
+Under **Settings → Data → Security Data Sources**, **Refresh all four sources daily**
+is enabled by default. The Compose `security-data-worker` checks each source once
+per UTC day. With a blank source, CATS uses CISA's KEV feed, FIRST's daily EPSS
+scores, Anchore's Grype v6 listing, or Aqua's Trivy DB repository. A saved mirror
+takes precedence for both daily and manual refreshes. Failed downloads or
+validation leave the installed data available. Each card shows the last attempt,
+last success, installed version and any failure.
+
+For an offline deployment, clear the daily refresh checkbox and save. Manual
+refresh and offline uploads remain available. KEV accepts CISA JSON and EPSS
+accepts CSV or gzip CSV. For Trivy, save the mirror's OCI database repository
+and select **Refresh**. Private HTTPS sources use the configured trusted CA
+bundle. The FIRST public feed can redirect to its dated file on the same host.
+Configure other HTTP sources with their final URL, without credentials, query
+strings or fragments.
+
+Current finding views use the installed KEV catalog and available EPSS scores
+when evaluating existing findings. A new scanner database takes effect on the
+next scan. Original scan evidence and approved snapshots retain their recorded values.
 
 To refresh Grype from a mirror, serve the v6 `latest.json` and the archive it
 names in the same directory on the mirror. Open **Grype DB → Configure and upload offline data**.
@@ -151,12 +160,12 @@ include the listing, CATS checks the archive against its checksum before running
 `grype db import`. A mismatch leaves the installed database in place. Check
 **Status** and **Installed** on the Grype DB card for the result.
 
-Candidates are checked before activation. Feed files use atomic replacement;
-scanner databases are imported/downloaded into staging, checked, then swapped
-with rollback of the previous directory on activation failure. The Compose
-deployment mounts persistent volumes for the policy feeds and scanner caches.
-Only global configuration administrators can change sources or refresh data;
-attempts, successes, and failures are audited without credentials.
+CATS validates each update before activating it. It replaces the KEV and EPSS
+files atomically and switches Grype and Trivy to a validated database version.
+Scans already running keep their own copy. Both Compose configurations persist
+the feeds and scanner databases.
+Global configuration administrators manage sources, manual updates and the
+daily refresh preference. CATS audits update attempts and outcomes.
 
 ## Current validation limits
 

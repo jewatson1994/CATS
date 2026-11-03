@@ -1,8 +1,7 @@
 """Atomic offline database publication and attempt-scoped scanner snapshots.
 
-The pointer is replaced only after a complete, hashed generation exists. Published
-generations are never modified or removed by an import; active scans can therefore
-continue reading their pinned generation while later attempts see a new pointer.
+The pointer is replaced only after a complete, hashed generation exists. Scans
+use private snapshots. Daily refreshes retain the current and recent databases.
 """
 from __future__ import annotations
 
@@ -70,7 +69,7 @@ def _atomic_json(path: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def publish_generation(staged: Path, destination: Path, scanner: str, metadata: dict) -> dict:
+def publish_generation(staged: Path, destination: Path, scanner: str, metadata: dict, *, before_activate=None) -> dict:
     """Publish a validated database without replacing the mounted volume root."""
     if scanner not in DEFAULT_SOURCES:
         raise ValueError("Unknown scanner database")
@@ -89,7 +88,11 @@ def publish_generation(staged: Path, destination: Path, scanner: str, metadata: 
                     "version": metadata.get("schemaVersion", metadata.get("Version", metadata.get("version"))),
                     "built_at": metadata.get("built", metadata.get("Built", metadata.get("UpdatedAt"))),
                     "metadata": metadata, "files": files}
+        if before_activate:
+            manifest["scheduled"] = True
         _atomic_json(candidate / "manifest.json", manifest)
+        if before_activate:
+            before_activate()
         # Antivirus/indexing on Windows can briefly retain a handle after the
         # manifest closes. Retry that transient sharing failure only; publication
         # still requires a successful same-directory atomic rename.
@@ -118,8 +121,9 @@ def _read_json(path: Path) -> dict:
     return value
 
 
-def _select(source: Path, scanner: str) -> tuple[Path, dict]:
-    pointer = _read_json(source / POINTER)
+def _select(source: Path, scanner: str, pointer: dict | None = None) -> tuple[Path, dict]:
+    if pointer is None:
+        pointer = _read_json(source / POINTER)
     generation = str(pointer.get("generation", ""))
     if not re.fullmatch(r"[0-9a-f]{32}", generation):
         raise ValueError("Invalid scanner database generation")
@@ -133,6 +137,48 @@ def _select(source: Path, scanner: str) -> tuple[Path, dict]:
             or pointer.get("identity") != manifest.get("identity")):
         raise ValueError("Scanner database generation identity mismatch")
     return directory / "data", manifest
+
+
+def prune_scheduled(source: Path) -> None:
+    """Keep the three newest daily databases and every manual import."""
+    active = _read_json(source / POINTER)["generation"]
+    scheduled = []
+    for directory in (source / GENERATIONS).iterdir():
+        if directory.is_symlink():
+            continue
+        if re.fullmatch(r"\.retired-[0-9a-f]{32}", directory.name):
+            shutil.rmtree(directory)
+            continue
+        if not re.fullmatch(r"[0-9a-f]{32}", directory.name):
+            continue
+        manifest = _read_json(directory / "manifest.json")
+        if manifest.get("scheduled") and manifest.get("generation") == directory.name:
+            scheduled.append((manifest["published_at"], directory))
+    for _, directory in sorted(scheduled, reverse=True)[3:]:
+        if directory.name != active:
+            retired = directory.with_name(".retired-" + directory.name)
+            directory.rename(retired)
+            shutil.rmtree(retired)
+
+
+def _copy_current(source: Path, scanner: str, cache: Path) -> dict:
+    # Retirement can overlap a reader suspended between selection and copy.
+    # Re-pin to the current generation only if the selected one was retired.
+    for attempt in range(2):
+        pointer = _read_json(source / POINTER)
+        generation = str(pointer.get("generation", ""))
+        try:
+            selected, manifest = _select(source, scanner, pointer)
+            shutil.copytree(selected, cache, symlinks=True)
+            if _files(cache) != manifest["files"]:
+                raise ValueError(f"{scanner} database generation integrity mismatch")
+            return manifest
+        except (FileNotFoundError, shutil.Error, ValueError):
+            if (attempt or not re.fullmatch(r"[0-9a-f]{32}", generation) or (source / GENERATIONS / generation).exists()
+                    or _read_json(source / POINTER)["generation"] == generation):
+                raise
+            if cache.exists():
+                shutil.rmtree(cache)
 
 
 def pin_databases(environment: dict, workspace: Path) -> dict:
@@ -152,10 +198,7 @@ def pin_databases(environment: dict, workspace: Path) -> dict:
         cache.parent.mkdir(parents=True, exist_ok=True)
         manifest = None
         if (source / POINTER).exists():
-            selected, manifest = _select(source, scanner)
-            shutil.copytree(selected, cache, symlinks=True)
-            if _files(cache) != manifest["files"]:
-                raise ValueError(f"{scanner} database generation integrity mismatch")
+            manifest = _copy_current(source, scanner, cache)
         else:
             cache.mkdir()
             if source.exists():

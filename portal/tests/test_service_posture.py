@@ -369,6 +369,10 @@ def test_poam_due_exactly_now_sets_a_boundary_just_after():
 
 
 def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(monkeypatch):
+    # Hold workers during fixture ingestion so PostgreSQL cannot warm a row
+    # between clearing the projections and measuring the cold dashboard.
+    scheduled = []
+    monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds=service_posture.KINDS: scheduled.append(set(ids)))
     client = new_client()
     for index in range(4):
         ingest(client, f"prep-{index}", ["CVE-2024-9400"])
@@ -376,8 +380,7 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
         db.execute(update(ServicePosture).values(services_row=None, cyber_row=None)); db.commit()
     monkeypatch.setenv("CATS_POSTURE_SYNC_LIMIT", "1")
     monkeypatch.setattr(service_posture, "background_enabled", lambda bind: True)
-    scheduled = []
-    monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds=service_posture.KINDS: scheduled.append(set(ids)))
+    scheduled.clear()
     body = client.get("/api/dashboard/services?page_size=200").json()
     assert body["posture_preparing"] == 4 and body["posture_refreshing"] is True
     assert len(body["views"]) == 0  # no invented rows while background work is pending

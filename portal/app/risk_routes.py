@@ -448,7 +448,7 @@ def native_vex_preview(after: int = 0, auth: AuthContext = Depends(require_user)
         configuration = configurations[item.id]
         exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
             ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-        eligible, noncompliant, needs_observations = _risk_finding_expressions({item.id: configuration}, now, exception, native_disposition=False)
+        eligible, noncompliant, needs_observations = _risk_finding_expressions(db, {item.id: configuration}, now, exception, native_disposition=False)
         excluded = finding_excluded(Finding.id, now, preview=True) & ~exception
         # Existing exception/resolution semantics remain in the canonical expressions.
         base = select(func.count()).select_from(Finding).where(Finding.service_id == item.id, Finding.active.is_(True))

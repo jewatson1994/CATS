@@ -13,7 +13,7 @@ from .dependency_view import dependency_rows
 from .execution_summaries import payload_digest
 from .models import DependencyProjection, DependencyProjectionRow
 
-PROJECTION_VERSION = 1
+PROJECTION_VERSION = 2
 
 
 def dependency_version(db, execution):
@@ -374,11 +374,14 @@ def build_projection(binding, execution_id, token, risk_metadata):
             execution = cache.get(Execution, execution_id)
             if execution is None:
                 return False
+            # Capture the catalog before computing rows. A refresh during the
+            # build must cause the next request to rebuild under the new catalog.
+            catalog_token = getattr(risk_metadata, "cache_token", lambda: None)()
             changed = persist_current_projection(cache, execution, risk_metadata, expected_token=token)
             row = cache.get(DependencyProjection, execution_id)
             if changed and row is not None and row.status == "ready" and row.build_token == token:
                 # Keep both the exact evidence fingerprint and cheap request revision.
-                row.build_token = _requested_fingerprint(execution, risk_metadata)
+                row.build_token = payload_digest([PROJECTION_VERSION, execution.payload_digest, catalog_token])
             return changed
     except Exception as exc:
         with Session(bind=binding) as cache, cache.begin():

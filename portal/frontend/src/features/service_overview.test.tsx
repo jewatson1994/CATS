@@ -1,5 +1,5 @@
 import {afterEach, expect, it, vi} from 'vitest';
-import {cleanup, render, screen} from '@testing-library/react';
+import {cleanup, fireEvent, render, screen} from '@testing-library/react';
 import {Page} from './service_overview';
 import type {PageData} from '../api';
 
@@ -9,6 +9,18 @@ const fixture = (extra: Partial<PageData> = {}): PageData => ({
   overview_data: {}, deployment_validation: {status: 'QUEUED', static_scan_complete: true},
   architecture_verification: {state: 'VERIFIED', label: 'Verified'},
   can: {'service.export': {'1': true}}, ...extra,
+});
+it('lets a service manager choose a weekly overnight schedule and shows the saved local time', () => {
+  render(<Page data={fixture({can_schedule_scans: true, csrf_token: 'token', scan_schedule: {
+    cadence: 'daily', weekday: 4, timezone: 'America/New_York', next_run_at: '2026-11-07T02:00:00Z',
+  }})}/>);
+  expect(screen.getByText(/Next scheduled start/)).toHaveTextContent(/9:00\s?PM/i);
+  fireEvent.click(screen.getByText('Edit scan schedule'));
+  fireEvent.change(screen.getByLabelText('Frequency'), {target: {value: 'weekly'}});
+  expect(screen.getByLabelText('Night beginning on')).toHaveValue('4');
+  const form = screen.getByRole('button', {name: 'Save schedule'}).closest('form')!;
+  expect(form).toHaveAttribute('action', '/services/sample/scan-schedule');
+  expect(Object.fromEntries(new FormData(form))).toMatchObject({timezone: 'America/New_York', weekday: '4', csrf_token: 'token'});
 });
 it('renders separate static and runtime statuses, scoped exports and stale evidence notice', () => {
   render(<Page data={fixture({evidence_notice: 'stale'})}/>);

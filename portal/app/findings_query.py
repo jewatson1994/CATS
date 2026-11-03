@@ -362,7 +362,7 @@ def prepare_simplified_candidates(db, service, now, configuration, latest_execut
     exception = select(ExceptionRecord.id).where(
         ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),
         ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-    eligible, noncompliant, _ = _risk_finding_expressions({service.id: configuration}, now, exception)
+    eligible, noncompliant, _ = _risk_finding_expressions(db, {service.id: configuration}, now, exception)
     latest_ids = (select(FindingObservation.finding_id,
         func.max(FindingObservation.id).label('id')).join(Finding,
         Finding.id == FindingObservation.finding_id).where(Finding.service_id == service.id)

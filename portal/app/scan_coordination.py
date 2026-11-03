@@ -161,6 +161,16 @@ def claim(worker_id):
         if row is None:
             db.commit()
             return None
+        if row.payload.get("schedule_context"):
+            from .service_scan_schedule import claim_error
+            reason = claim_error(db, row, now())
+            if reason:
+                finished = now()
+                db.execute(update(ScanJob).where(ScanJob.id == row.id, ScanJob.status == "queued").values(
+                    status="cancelled", finished_at=finished, payload={**row.payload, "status": "cancelled",
+                    "phase": "cancelled", "error": reason, "finished_at": finished.isoformat()}))
+                db.commit()
+                return None
         attempt_id, token = secrets.token_hex(16), secrets.token_urlsafe(32)
         # The conditional update also fences SQLite tests and concurrent callers.
         changed = db.execute(update(ScanJob).where(ScanJob.id == row.id, ScanJob.status == "queued")

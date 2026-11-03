@@ -119,7 +119,7 @@ def service_of(db, service_id):
 def live_sets(db, service_id, configuration, now):
     exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),
                                                  ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-    eligible, noncompliant, _ = main._risk_finding_expressions({service_id: configuration}, now, exception)
+    eligible, noncompliant, _ = main._risk_finding_expressions(db, {service_id: configuration}, now, exception)
     latest = select(FindingObservation.finding_id, func.max(FindingObservation.id).label("latest_id")).group_by(
         FindingObservation.finding_id).subquery()
     base = select(Finding.id).outerjoin(latest, latest.c.finding_id == Finding.id).outerjoin(
@@ -198,7 +198,7 @@ def test_three_valued_results_are_stored_as_the_live_expressions_evaluate(monkey
         assert fc.ensure_current(db, service_id, configuration, now)
         # The live expression's own value, whatever it is on this dialect.
         exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id).exists()
-        _, live_rule, _ = main._risk_finding_expressions({service_id: configuration}, now, exception, overdue=sqlalchemy_true())
+        _, live_rule, _ = main._risk_finding_expressions(db, {service_id: configuration}, now, exception, overdue=sqlalchemy_true())
         expected = db.scalar(select(live_rule).select_from(Finding).outerjoin(
             FindingObservation, FindingObservation.finding_id == Finding.id).where(Finding.id == orphan_id))
         assert db.scalar(select(FindingClassification.noncompliant_rule).where(FindingClassification.finding_id == orphan_id)) == expected

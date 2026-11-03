@@ -1,7 +1,51 @@
 """Database-native Python-compatible JSON risk value precedence and coercion."""
-from sqlalchemy import Boolean, Float
+import json
+
+from sqlalchemy import Boolean, Float, JSON, and_, case, cast, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.functions import FunctionElement
+
+from .sql_sets import INLINE_LIMIT, member_of
+
+
+def scoped_epss(db, configurations, scores, finding_ids=None):
+    """Bind one score table shared by all threshold rules in a query."""
+    services = [sid for sid, cfg in configurations.items()
+                if cfg.get("epss_enabled") == "true" and cfg.get("compliance_mode") != "raw"]
+    if not services or not scores:
+        return None
+    if len(scores) > INLINE_LIMIT:
+        from .models import Finding
+        # The (service_id, cve) index supplies candidate keys without loading observations.
+        keys = select(Finding.cve).distinct().where(member_of(Finding.service_id, services, numeric=True))
+        if finding_ids is not None:
+            keys = keys.where(member_of(Finding.id, finding_ids, numeric=True))
+        identifiers = (cve.strip().upper() for cve in db.scalars(keys))
+        scores = {key: scores[key] for key in identifiers if key in scores}
+        if not scores:
+            return None
+    payload = literal(json.dumps(dict(scores), separators=(",", ":")))
+    if db.get_bind().dialect.name == "postgresql":
+        pairs = func.json_each_text(cast(payload, JSON)).table_valued("key", "value")
+    else:
+        pairs = func.json_each(payload).table_valued("key", "value")
+    return select(pairs.c.key.label("cve"), cast(pairs.c.value, Float).label("score")).cte()
+
+
+def current_kev(cve_key, catalog, scan_match):
+    """A loaded CISA catalog covers every CVE, including removals."""
+    if not catalog:
+        return scan_match
+    return case((cve_key.like("CVE-%"), member_of(cve_key, catalog)), else_=scan_match)
+
+
+def current_epss_match(cve_key, catalog, threshold, scan_match):
+    """Use an exact catalog score first, including scores below the threshold."""
+    if catalog is None:
+        return scan_match
+    covered = select(catalog.c.cve)
+    return or_(cve_key.in_(covered.where(catalog.c.score >= threshold)),
+               and_(scan_match, cve_key.not_in(covered)))
 
 
 class EvidencePresent(FunctionElement):

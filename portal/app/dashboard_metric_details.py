@@ -1,9 +1,9 @@
 """Bounded contributors to the permission-scoped Cybersecurity metric cards."""
 from fastapi import HTTPException
-from sqlalchemy import and_, case, false, func, literal, or_, select, union_all
+from sqlalchemy import and_, case, func, literal, or_, select, union_all
 
 from .models import DependencyWatchlistMatch, Execution, Finding, FindingObservation, PoamEntry, utcnow
-from .risk_sql import evidence_key_boolean
+from .risk_sql import current_kev, evidence_key_boolean
 from .sql_sets import member_of
 
 
@@ -71,7 +71,7 @@ def metric_details(db, auth, metric):
     observation_join = and_(observations.c.finding_id == Finding.id)
     severity = func.lower(Finding.severity)
     catalog = m.kev_cves()
-    kev = or_(member_of(Finding.cve, catalog) if catalog else false(), func.coalesce(
+    kev = current_kev(func.upper(func.trim(Finding.cve)), catalog, func.coalesce(
         evidence_key_boolean(FindingObservation.evidence, "kev"),
         evidence_key_boolean(FindingObservation.evidence, "known_exploited"), False))
     if metric in FINDING_METRICS or metric == "attention":

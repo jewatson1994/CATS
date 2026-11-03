@@ -180,7 +180,7 @@ def live_candidates(db, service, latest, now, configuration, *, state='active', 
     exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
         ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
         ExceptionRecord.expires_at > now).exists()
-    eligible, noncompliant, needs = _risk_finding_expressions({service.id: configuration}, now, exception)
+    eligible, noncompliant, needs = _risk_finding_expressions(db, {service.id: configuration}, now, exception)
     clauses = [Finding.service_id == service.id]
     if state == 'resolved': clauses.append(Finding.active.is_(False))
     elif state == 'exceptions': clauses.extend((Finding.active.is_(True), eligible, exception))

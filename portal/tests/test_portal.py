@@ -457,6 +457,55 @@ def test_settings_grype_refresh_uses_saved_mirror(monkeypatch):
         assert (record.source, record.status, record.installed_version) == (source, "READY", "2026-11-02")
 
 
+def test_daily_refresh_settings_and_manual_public_default(monkeypatch):
+    from app.security_data import DEFAULT_SOURCES
+
+    client = new_client()
+    page = page_data(client.get("/admin/configuration"))
+    assert page["configuration"]["security_data_auto_refresh"] == "true"
+    assert page["security_data_sources"]["kev"]["default_source"] == DEFAULT_SOURCES["kev"]
+    token = csrf(client)
+    route = "/admin/configuration/security-data/automatic"
+    assert client.post(route, data={"csrf_token": token}, follow_redirects=False).status_code == 303
+    assert page_data(client.get("/admin/configuration"))["configuration"]["security_data_auto_refresh"] == "false"
+    urls = []
+    def refresh(key, source, upload, bundle):
+        urls.append(source)
+        return "test feed"
+    monkeypatch.setattr("app.main.refresh_security_data", refresh)
+    assert client.post("/admin/configuration/security-data/kev", data={"action": "refresh", "csrf_token": token},
+                       follow_redirects=False).status_code == 303
+    assert urls == [DEFAULT_SOURCES["kev"]]
+    assert client.post(route, data={"enabled": "true", "csrf_token": "invalid"}).status_code == 403
+    add_user("refresh-viewer", "Assessor")
+    viewer = new_client("refresh-viewer")
+    assert viewer.post(route, data={"csrf_token": csrf(viewer), "enabled": "true"}).status_code == 403
+
+
+def test_service_manager_can_schedule_only_scoped_scans():
+    admin = new_client()
+    assert ingest(admin).status_code == 201
+    assert ingest(admin, execution="other-run", service_id="private-service").status_code == 201
+    with SessionLocal() as db:
+        service_id = db.scalar(select(Service.id).where(Service.service_key == "payments-service"))
+    add_user("scan-planner", "Service Manager", service_id=service_id)
+    manager = new_client("scan-planner")
+    route = "/services/payments-service/scan-schedule"
+    form = {"csrf_token": csrf(manager), "cadence": "weekly", "timezone": "America/New_York", "weekday": "4"}
+    response = manager.post(route, data=form)
+    assert response.status_code == 200
+    state = page_data(response)
+    assert state["can_schedule_scans"] and state["schedule_saved"]
+    schedule = state["scan_schedule"]
+    assert (schedule["cadence"], schedule["timezone"], schedule["weekday"]) == ("weekly", "America/New_York", 4)
+    assert schedule["next_run_at"]
+    assert manager.post("/services/private-service/scan-schedule", data=form).status_code == 403
+    assert manager.post(route, data={**form, "csrf_token": "invalid"}).status_code == 403
+    assert manager.post(route, data={**form, "timezone": "not-a-timezone"}).status_code == 422
+    # A global administrator can turn off the schedule even without scan ingestion rights.
+    assert page_data(admin.post(route, data={"csrf_token": csrf(admin), "cadence": "off"}))["scan_schedule"]["cadence"] == "off"
+
+
 def page_envelope(response):
     """Inspect the initial React page, including POST validation errors."""
     match = re.search(r'<script\b[^>]*\bid="cats-bootstrap"[^>]*>(.*?)</script>', response.text, re.S)

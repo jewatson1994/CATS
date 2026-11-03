@@ -192,7 +192,7 @@ def test_revision_catalog_warm_reads_avoid_all_finding_rows_and_nested_evidence_
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     def risk(cve):
-        return False, .2
+        return None, .2
     risk.cache_token = lambda: "catalog-revision-1"
     with Session(engine) as db:
         execution, _ = fixture(db)
@@ -281,7 +281,7 @@ def test_production_catalog_token_changes_on_refresh_and_snapshots_are_immutable
     policy_data.epss_scores.cache_clear()
     try:
         token = policy_data.risk_metadata.cache_token()
-        assert policy_data.risk_metadata("CVE-test") == (False, .1)
+        assert policy_data.risk_metadata("CVE-test") == (None, .1)
         assert token == policy_data.risk_metadata.cache_token()
         (tmp_path / "kev.json").write_text('{"vulnerabilities": [{"cveID": "CVE-test"}]}')
         (tmp_path / "epss.csv").write_text("cve,epss\nCVE-test,0.9\n")

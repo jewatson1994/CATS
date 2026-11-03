@@ -11,7 +11,7 @@ from .models import (Execution, Finding, FindingObservation, Group, PolicyFindin
                      ServiceArchiveEvent, ServiceGroup, ServiceVersion)
 
 
-def excepted_selectors(service_id, configuration, now, classified):
+def excepted_selectors(db, service_id, configuration, now, classified):
     """SQL id selectors for the Exceptions state, matching ``service_view``:
 
     * ``excepted``: active, risk-eligible findings with a current exception;
@@ -26,7 +26,7 @@ def excepted_selectors(service_id, configuration, now, classified):
     else:
         from .main import _risk_finding_expressions
         exception = select(ExceptionRecord.id).where(*_current(ExceptionRecord, ExceptionRecord.finding_id, Finding.id, now)).exists()
-        eligible, _, needs_observations = _risk_finding_expressions({service_id: configuration}, now, exception)
+        eligible, _, needs_observations = _risk_finding_expressions(db, {service_id: configuration}, now, exception)
         excepted = select(Finding.id).where(Finding.service_id == service_id, Finding.active.is_(True), eligible, exception)
         if needs_observations:
             from sqlalchemy import func
@@ -54,7 +54,7 @@ def prepare_raw_page(db, service, now, configuration, service_view, summary_view
     from .finding_classification import ensure_current
     # The currency check reads the latest execution itself.
     classified = ensure_current(db, service.id, configuration, now)
-    selectors = excepted_selectors(service.id, configuration, now, classified) if state == "exceptions" else {}
+    selectors = excepted_selectors(db, service.id, configuration, now, classified) if state == "exceptions" else {}
     result = get_raw_finding_page(db, service.id, selectors, now, state=state,
         finding_type=finding_type, severities=severities, query=query,
         resource=resource, page=page, page_size=page_size, raw_selector=state != "exceptions",

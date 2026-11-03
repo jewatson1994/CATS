@@ -101,7 +101,7 @@ def test_database_expressions_match_original_service_view(overrides):
             models.ExceptionRecord.finding_id == models.Finding.id,
             models.ExceptionRecord.revoked_at.is_(None), models.ExceptionRecord.starts_at <= NOW,
             models.ExceptionRecord.expires_at > NOW).exists()
-        eligible, noncompliant, observations = namespace["_risk_finding_expressions"]({service.id: cfg}, NOW, exception)
+        eligible, noncompliant, observations = namespace["_risk_finding_expressions"](db, {service.id: cfg}, NOW, exception)
         latest = sa.select(models.FindingObservation.finding_id,
             sa.func.max(models.FindingObservation.id).label("latest_id")).group_by(models.FindingObservation.finding_id).subquery()
         query = sa.select(models.Finding.id, eligible.label("eligible"),
@@ -138,3 +138,31 @@ def test_postgresql_compilation_guards_casts_and_preserves_json_key_presence():
     assert "? 'epss'" in score_sql and "WHEN s ~" in score_sql
     assert "AS numeric" in score_sql and "abs(n)" in score_sql
     assert "? 'kev'" in truth_sql and "jsonb_array_length" in truth_sql
+
+
+def test_multiple_thresholds_bind_one_service_scoped_score_table_on_large_feeds():
+    from types import SimpleNamespace
+    from app.risk_sql import current_epss_match, scoped_epss
+
+    engine = sa.create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    catalog = {f"CVE-2026-{index:06}": .5 for index in range(400_000)}
+    configs = {1: {"epss_enabled": "true"}, 2: {"compliance_mode": "raw"}}
+    with Session(engine) as db:
+        for sid in configs:
+            db.add(models.Service(id=sid, service_key=str(sid), name=str(sid)))
+            db.add(models.Finding(service_id=sid, cve=f"CVE-2026-{sid:06}", severity="Low",
+                first_seen=NOW, last_seen=NOW, episode_started=NOW))
+        db.commit()
+        pg = sa.create_mock_engine("postgresql://", lambda *args: None)
+        for binding in (engine, pg):
+            scoped = scoped_epss(SimpleNamespace(scalars=db.scalars, get_bind=lambda: binding), configs, catalog)
+            matches = [current_epss_match(models.Finding.cve, scoped, threshold, sa.true())
+                       for threshold in (0, .5, .9)]
+            query = sa.select(*matches).where(models.Finding.service_id == 1)
+            compiled = query.compile(dialect=binding.dialect)
+            payload, = [v for v in compiled.params.values() if isinstance(v, str)]
+            assert json.loads(payload) == {"CVE-2026-000001": .5}
+            assert str(compiled).count("json_each") == 1
+            if binding is engine:
+                assert db.execute(query).one() == (True, True, False)

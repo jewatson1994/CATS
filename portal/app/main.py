@@ -95,13 +95,14 @@ from .models import (
     SecurityDataSource,
 )
 from .security_data import (MAX_GRYPE_LISTING, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD,
-                            SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
+                            DEFAULT_SOURCES, SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
+from . import daily_security_data, service_scan_schedule
 from .validator_client import validate as validate_remote_artifact, health as validator_health
 from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
 from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
-from .policy_data import epss_scores, intelligence_status, kev_cves, risk_metadata
+from .policy_data import epss_scores, intelligence_status, kev_cves, observation_risk, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
 from .export_jobs import queued_export
@@ -1440,6 +1441,7 @@ CONFIG_DEFAULTS = {
     "validator_configuration": "{}",
     "cyber_warning_policy": '{"critical_high":true,"kev":true,"watchlist":true,"poam":true,"kind":true,"missing_evidence":true}',
     "remediation_enabled": "false",
+    "security_data_auto_refresh": "true",
 }
 
 # These settings describe the CATS runtime itself.  They are intentionally
@@ -1451,7 +1453,7 @@ GLOBAL_CONFIGURATION_KEYS = {
     "oidc_configuration", "oci_registries", "image_signing",
     "validator_configuration",
     "cyber_warning_policy",
-    "remediation_enabled",
+    "remediation_enabled", "security_data_auto_refresh",
 }
 
 DISPLAY_TIMEZONE_FALLBACKS = (
@@ -1873,12 +1875,8 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     for finding in active_all:
         observation = max(finding.observations, key=lambda item: item.id, default=None)
         evidence = observation.evidence if observation else {}
-        catalog_kev, catalog_epss = risk_metadata(finding.cve)
-        kev = bool(evidence.get("kev", evidence.get("known_exploited", catalog_kev))) or catalog_kev
-        try:
-            epss = float(evidence.get("epss", evidence.get("epss_score", catalog_epss or 0)) or 0)
-        except (TypeError, ValueError):
-            epss = 0
+        kev, epss = observation_risk(evidence, risk_metadata(finding.cve))
+        epss = epss if epss is not None else 0
         risk_metadata_by_finding[finding.id] = {"kev": kev, "epss": epss}
         if compliance_mode != "raw" and configuration.get("kev_enabled") == "true" and kev:
             risk_eligible.add(finding.id)
@@ -2176,12 +2174,8 @@ def service_overview_rows_detailed(
             risk_findings.update(row.id for row in active_findings if row.id in severity_matches and now >= due_dates[row.id] and row.id not in exception_ids)
         for row in active_findings:
             evidence = latest_observation_by_finding.get(row.id, {})
-            catalog_kev, catalog_epss = risk_metadata(row.cve)
-            kev = bool(evidence.get("kev", evidence.get("known_exploited", catalog_kev))) or catalog_kev
-            try:
-                epss = float(evidence.get("epss", evidence.get("epss_score", catalog_epss or 0)) or 0)
-            except (TypeError, ValueError):
-                epss = 0
+            kev, epss = observation_risk(evidence, risk_metadata(row.cve))
+            epss = epss if epss is not None else 0
             if compliance_mode != "raw" and cfg.get("kev_enabled") == "true" and kev:
                 risk_eligible.add(row.id)
                 if cfg.get("kev_noncompliant") == "true" and now >= due_dates[row.id] and row.id not in exception_ids:
@@ -2351,12 +2345,14 @@ def _hardening_overdue_expression(configurations: dict[int, dict[str, str]], now
 
 
 def _risk_finding_expressions(
+    db: Session,
     configurations: dict[int, dict[str, str]],
     now: datetime,
     finding_exception,
     *,
     overdue=None,
     native_disposition=True,
+    finding_ids=None,
 ):
     """Build database expressions for risk-based finding summaries.
 
@@ -2367,22 +2363,20 @@ def _risk_finding_expressions(
     predicates; observation evidence remains JSON-native in PostgreSQL and
     SQLite.
 
-    Services sharing an effective configuration share one predicate, and every
-    catalog or service-id set is bound as a single JSON value (``member_of``),
-    so statement size and bind counts stay constant as services and catalogs
-    grow.  The catalogs remain the live in-memory intelligence snapshot.
+    Services sharing an effective configuration share one predicate. All EPSS
+    rules read one table of catalog scores scoped to these services' findings.
 
     ``overdue`` replaces the overdue predicate (for example ``true()``: "would
     be non-compliant once overdue"); every other rule is unchanged.
     """
     override = overdue
-    from .risk_sql import evidence_score, evidence_truth, key_present
-    from .sql_sets import catalog_subset, member_of
+    from .risk_sql import current_epss_match, current_kev, evidence_score, evidence_truth, scoped_epss
+    from .sql_sets import member_of
     eligible_parts = []
     noncompliant_parts = []
     needs_observations = False
     catalog_kev = kev_cves()
-    catalog_epss = epss_scores()
+    catalog_epss = scoped_epss(db, configurations, epss_scores(), finding_ids)
     severity_rank = {"unknown": 0, "negligible": 1, "low": 2, "medium": 3, "high": 4, "critical": 5}
     severity_value = func.lower(Finding.severity)
     severity_order = case(*((severity_value == name, rank) for name, rank in severity_rank.items()), else_=0)
@@ -2409,15 +2403,10 @@ def _risk_finding_expressions(
             noncompliant.append(and_(match, overdue))
         if cfg.get("kev_enabled") == "true":
             needs_observations = True
-            kev_match = []
-            if catalog_kev:
-                kev_match.append(member_of(cve_key, catalog_kev))
-            kev_match.append(evidence_truth(evidence))
-            if kev_match:
-                match = or_(*kev_match)
-                eligible.append(match)
-                if cfg.get("kev_noncompliant") == "true":
-                    noncompliant.append(and_(match, overdue))
+            match = current_kev(cve_key, catalog_kev, evidence_truth(evidence))
+            eligible.append(match)
+            if cfg.get("kev_noncompliant") == "true":
+                noncompliant.append(and_(match, overdue))
         try:
             epss_rules = json.loads(cfg.get("epss_rules", "[]"))
         except (TypeError, ValueError):
@@ -2434,14 +2423,8 @@ def _risk_finding_expressions(
                     threshold = 1.0
                 severity = str(rule.get("severity", "Any")).lower()
                 severity_match = true() if severity == "any" else severity_value == severity
-                catalog_match = catalog_subset(catalog_epss, ("epss>=", threshold), lambda score: score >= threshold)
-                has_score = or_(key_present(evidence, "epss"), key_present(evidence, "epss_score"))
-                explicit_match = func.coalesce(evidence_score(evidence) >= threshold, false())
-                catalog_matches = member_of(cve_key, catalog_match) if catalog_match else false()
-                if threshold <= 0:
-                    nonzero_catalog = catalog_subset(catalog_epss, ("epss<", threshold), lambda score: score < threshold)
-                    catalog_matches = ~member_of(cve_key, nonzero_catalog) if nonzero_catalog else true()
-                score_match = or_(and_(has_score, explicit_match), and_(~func.coalesce(has_score, false()), catalog_matches))
+                scan_match = func.coalesce(evidence_score(evidence) >= threshold, false())
+                score_match = current_epss_match(cve_key, catalog_epss, threshold, scan_match)
                 match = and_(severity_match, score_match, ~prior_match)
                 eligible.append(match)
                 if bool(rule.get("noncompliant", True)):
@@ -2518,7 +2501,7 @@ def service_overview_rows_aggregated(
             ExceptionRecord.expires_at > now,
         ).exists()
         finding_eligible, finding_noncompliant, needs_observations = _risk_finding_expressions(
-            {service_id: configurations[service_id] for service_id in live_ids}, now, finding_exception)
+            db, {service_id: configurations[service_id] for service_id in live_ids}, now, finding_exception)
         finding_query = select(
             Finding.service_id,
             func.sum(case((finding_eligible, 1), else_=0)).label("total"),
@@ -3986,7 +3969,7 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None) -> str:
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     compose_uploads = compose_uploads or []
@@ -4028,12 +4011,14 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
             current = identity_db.get(ServiceVersion, selected.current_version_id) if selected.current_version_id else None
             if not ingest_service_version:
                 ingest_service_version = current.version if current else (selected.manual_version or "Unversioned")
-    job_id = uuid.uuid4().hex
+    job_id = schedule_context["job_id"] if schedule_context else uuid.uuid4().hex
     from .scan_access import admission_policy
     security = admission_policy(owner_user_id, service_db_id)
     skipped_charts = list(definition_skipped or [])
     payload = {"job_id": job_id, "job_kind": job_kind, "status": "preparing", "phase": "prepare", "summary": {}, "skipped_charts": skipped_charts, "ingest_service_id": ingest_service_id or "", "ingest_service_version": ingest_service_version, "ingest_scope": ingest_scope, "image_list": "\n".join(lines), "chart_url": "\n".join(chart_urls), "chart_names": [name for _, name in chart_archives], "archive_names": [name for _, name in chart_archives] + ([image_archive[1]] if image_archive else []) + [name for _, name in compose_uploads], "compose_enabled": bool(compose_uploads), "compose_files": compose_files, "compose_profiles": compose_profiles, "compose_preview": compose_preview, "sbom_formats": requested_sbom_formats, "cyclonedx_spec_version": cyclonedx_spec_version, "definition_context": definition_context or {}, "definition_component": definition_component or {}, "definition_components": definition_components or [], "owner_user_id": owner_user_id, "definition_summary": definition_summary or {}, "created_at": utcnow().isoformat(), "input_digest": ""}
     payload["proposal_context"] = proposal_context or {}
+    if schedule_context:
+        payload["schedule_context"] = schedule_context
     payload.update(security)
     if owner_user_id is None:
         if not capability_token:
@@ -4722,6 +4707,8 @@ def ingest_public_scan(
         job = PUBLIC_JOBS[job_id]
     if job.get("proposal_context"):
         raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
+    if job.get("schedule_context") and job.get("ingest_service_id") != service_id:
+        raise HTTPException(409, "A scheduled scan belongs to its configured service")
     if job.get("compose_preview"):
         raise HTTPException(status_code=409, detail="Compose previews cannot be ingested; start a scan first")
     result_path = PUBLIC_JOB_ROOT / job_id / "output" / "portal-result.json"
@@ -4800,6 +4787,11 @@ def ingest_public_scan(
         if selected_scope != "service" and data.get("scan_scope") == "service" and image_only_job and len(set(job_input_images)) == 1 and not data.get("skipped_images") and not data.get("skipped_charts"):
             data["scan_scope"] = "image"
             data["scope_image"] = job_input_images[0]
+        if job.get("schedule_context"):
+            # Registry inventory covers only part of a service's artifacts. Retain
+            # findings without resolving unseen CVEs or configuration findings.
+            data["scan_scope"], data["complete"] = "evidence", False
+            data.pop("scope_image", None)
         data["service"] = {
             **data.get("service", {}),
             "id": service.service_key,
@@ -8009,7 +8001,7 @@ def service_detail(
         current_exception = select(ExceptionRecord.id).where(
             ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),
             ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-        eligible, _, needs_observations = _risk_finding_expressions({service.id: configuration}, now, current_exception)
+        eligible, _, needs_observations = _risk_finding_expressions(db, {service.id: configuration}, now, current_exception)
         severity_query = select(Finding.severity).where(Finding.service_id == service.id,
             or_(Finding.active.is_(False), ~current_exception, eligible))
         if needs_observations:
@@ -8159,6 +8151,7 @@ def service_detail(
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
             finding_counts=finding_counts,
+            scan_schedule=service_scan_schedule.schedule_view(db, service, configuration["display_timezone"]),
             architecture_polling=bool(latest_validation and not latest_validation.get("terminal")),
             artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
             deployment_validation=architecture_runtime or latest_validation,
@@ -8579,6 +8572,7 @@ def service_detail(
             deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=service.images,
+            scan_schedule=service_scan_schedule.schedule_view(db, service, configuration["display_timezone"]),
             can_patch_images=patch_campaigns.can_patch(auth, service),
             image_patch_history=image_patch_history(db, service.id, service.images),
             now=now, finding_type=finding_type, archive_pending=archive_pending,
@@ -10209,6 +10203,21 @@ def _service_image_for_action(db: Session, service_key: str, image_id: int) -> t
     return service, image
 
 
+@app.post("/services/{service_key}/scan-schedule")
+def save_service_scan_schedule(service_key: str, csrf_token: str = Form(), cadence: str = Form(),
+    timezone: str = Form("UTC"), weekday: int = Form(0), db: Session = Depends(get_db),
+    auth: AuthContext = Depends(require_permission("service.edit", scoped=True))):
+    check_csrf(auth, csrf_token)
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if not service:
+        raise HTTPException(404, detail="Service was not found")
+    service_scan_schedule.configure_schedule(db, service, auth, cadence, timezone, weekday)
+    record_audit(db, auth, "service.scan_schedule_changed", "service", service.id,
+                 service_id=service.id, cadence=cadence, timezone=timezone, weekday=weekday)
+    db.commit()
+    return RedirectResponse(f"/services/{service_key}?overview=true&schedule_saved=1#scan-schedule", status_code=303)
+
+
 @app.post("/services/{service_key}/images/{image_id}/remove")
 def request_image_removal(
     service_key: str, image_id: int, reason: str = Form(min_length=3), csrf_token: str = Form(),
@@ -10323,7 +10332,7 @@ def delete_service(
     db.execute(delete(BundlePreview).where(BundlePreview.target_key == service.service_key))
     if remediation_ids:
         db.execute(delete(DeliveryAttempt).where(DeliveryAttempt.remediation_id.in_(remediation_ids)))
-    for model in (DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture):
+    for model in (DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture, service_scan_schedule.ServiceScanSchedule):
         db.execute(delete(model).where(model.service_id == service.id))
     finding_ids = list(db.scalars(select(Finding.id).where(Finding.service_id == service.id)))
     policy_finding_ids = list(db.scalars(select(PolicyFinding.id).where(PolicyFinding.service_id == service.id)))
@@ -10935,6 +10944,7 @@ def configuration_page(request: Request, edit_os_id: str = "", db: Session = Dep
         oidc_groups=db.scalars(select(Group).order_by(Group.name)).all(),
         oidc_services=db.scalars(select(Service).order_by(Service.name)).all(),
         security_data_sources={row.key: row for row in db.scalars(select(SecurityDataSource))},
+        security_data_defaults=DEFAULT_SOURCES,
         intelligence_status=intelligence_status(),
         purpose_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
                             "customized": purpose_template_for(db, kind)[1]} for kind in PURPOSE_CATALOG],
@@ -11459,8 +11469,18 @@ def save_validator_configuration(
     return RedirectResponse("/admin/configuration?validator_result=" + urllib.parse.quote(message), status_code=303)
 
 
+@app.post("/admin/configuration/security-data/automatic")
+def save_security_data_automatic_refresh(csrf_token: str = Form(), enabled: bool = Form(False),
+    db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    _set_config_value(db, auth, "security_data_auto_refresh", "true" if enabled else "false", None)
+    record_audit(db, auth, "security_data.automatic_refresh_changed", "portal", "global", enabled=enabled)
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1#data", status_code=303)
+
+
 @app.post("/admin/configuration/security-data/{source_key}")
-async def manage_security_data_source(source_key: str, csrf_token: str = Form(), action: str = Form(),
+def manage_security_data_source(source_key: str, csrf_token: str = Form(), action: str = Form(),
     source: str = Form(default=""), file: UploadFile | None = File(default=None),
     grype_listing: UploadFile | None = File(default=None),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
@@ -11470,10 +11490,7 @@ async def manage_security_data_source(source_key: str, csrf_token: str = Form(),
     has_listing = grype_listing is not None and bool(grype_listing.filename)
     if has_listing and (source_key != "grype" or action != "upload"):
         raise HTTPException(422, detail="Use latest.json with a manual Grype database upload")
-    record = db.get(SecurityDataSource, source_key)
-    if record is None:
-        record = SecurityDataSource(key=source_key)
-        db.add(record)
+    record = daily_security_data.lock_source(db, source_key)
     if action == "save":
         value = source.strip()
         if len(value) > 2000:
@@ -11487,43 +11504,23 @@ async def manage_security_data_source(source_key: str, csrf_token: str = Form(),
         if source_key == "trivy" and value and (value.startswith("-") or any(character.isspace() for character in value)):
             raise HTTPException(422, detail="Trivy source must be one OCI repository reference")
         record.source = value
-        record.status = "CONFIGURED" if value else "UNCONFIGURED"
+        record.status = "READY" if record.last_success_at else "CONFIGURED" if value else "NEVER_UPDATED"
         record.failure_reason = None
         record_audit(db, auth, "security_data.source_changed", "security_data_source", source_key,
                      source=value)
     else:
-        if action == "refresh" and not record.source:
-            raise HTTPException(422, detail="Configure a source before refreshing")
         if action == "upload" and (file is None or not file.filename):
             if source_key == "grype":
                 raise HTTPException(422, detail="Select the Grype database archive (.tar.zst) to upload")
             raise HTTPException(422, detail="Upload a database or feed file")
-        record.last_attempt_at = utcnow()
-        record_audit(db, auth, f"security_data.{action}_requested", "security_data_source", source_key)
-        try:
-            ca_bundle = configured_ca_bundle(get_global_configuration(db))
-            if source_key == "grype":
-                listing = await grype_listing.read(MAX_GRYPE_LISTING + 1) if has_listing else None
-                archive = file.file if action == "upload" else None
-                version = await asyncio.to_thread(refresh_security_data, source_key, record.source or "",
-                    archive, ca_bundle, grype_listing=listing)
-            else:
-                data = await file.read(MAX_SECURITY_DATA_UPLOAD + 1) if file else None
-                version = refresh_security_data(source_key, record.source or "", data, ca_bundle)
-        except Exception as exc:
-            record.status = "FAILED"
-            record.failure_reason = f"{type(exc).__name__}: {redact(exc)}"[:1000]
-            record_audit(db, auth, "security_data.update_failed", "security_data_source", source_key,
-                         reason=record.failure_reason)
-        else:
-            record.installed_version = version
-            record.installed_at = record.last_success_at = utcnow()
-            record.status = "READY"
-            record.failure_reason = None
-            record_audit(db, auth, "security_data.updated", "security_data_source", source_key,
-                         version=version)
+        upload = None
+        if action == "upload":
+            upload = file.file if source_key == "grype" else file.file.read(MAX_SECURITY_DATA_UPLOAD + 1)
+        listing = grype_listing.file.read(MAX_GRYPE_LISTING + 1) if has_listing else None
+        daily_security_data.refresh_source(db, record, auth=auth, upload=upload, grype_listing=listing,
+                                          refresh=refresh_security_data)
     db.commit()
-    return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+    return RedirectResponse("/admin/configuration?saved=1#data", status_code=303)
 
 
 @app.post("/admin/configuration/oidc-test")

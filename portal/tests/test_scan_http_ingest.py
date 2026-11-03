@@ -4,15 +4,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from test_scan_worker_coordination import database
-from app import main, scan_control, scan_protocol, scan_worker
-from app.models import Execution, Finding, Group, Service
+from app import main, scan_control, scan_coordination, scan_protocol, scan_worker, service_scan_schedule
+from app.auth import AuthContext
+from app.models import Execution, Finding, Group, Role, Service, ServiceImage, User, UserRoleAssignment
 
 
-def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, monkeypatch, tmp_path):
+@pytest.mark.parametrize("scheduled", [False, True])
+def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, monkeypatch, tmp_path, scheduled):
     monkeypatch.setattr(main, 'SessionLocal', database)
     monkeypatch.setattr(scan_protocol, 'SessionLocal', database)
     monkeypatch.setattr(main, 'PUBLIC_JOB_ROOT', tmp_path / 'portal')
@@ -31,7 +34,29 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
                           groups=[Group(name='HTTP worker owners')])
         db.add(service); db.commit()
         service_id = service.id
-    job_id = main._start_public_scan('registry.invalid/app:1', ingest_service_id='http-worker-service', owner_user_id=17)
+        if scheduled:
+            clock = datetime(2026, 11, 2, 21, tzinfo=timezone.utc)
+            class WorkerClock(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    return clock.astimezone(tz)
+            monkeypatch.setattr(scan_worker, "datetime", WorkerClock)
+            monkeypatch.setattr(scan_coordination, "now", lambda: clock)
+            monkeypatch.setattr(service_scan_schedule, "SessionLocal", database)
+            owner = User(id=17, username="scan-owner", display_name="Scan owner")
+            role = Role(name="Scan owner", permissions=["scan.ingest", "service.edit"])
+            db.add_all([owner, role, ServiceImage(service_id=service.id, image_reference="registry.invalid/app:1")])
+            db.flush()
+            db.add(UserRoleAssignment(role_id=role.id, user_id=owner.id, service_id=service.id))
+            db.flush()
+            service_scan_schedule.configure_schedule(db, service, AuthContext(owner, None), "daily", "UTC", 0, clock=clock)
+            db.commit()
+    if scheduled:
+        service_scan_schedule.dispatch_due(clock=clock)
+        with database() as db:
+            job_id = db.get(service_scan_schedule.ServiceScanSchedule, service_id).last_job_id
+    else:
+        job_id = main._start_public_scan('registry.invalid/app:1', ingest_service_id='http-worker-service', owner_user_id=17)
     headers = {'Authorization': 'Bearer ' + token, 'X-Worker-ID': 'integration-worker'}
     browser = TestClient(main.app)
     control = TestClient(scan_control.app)
@@ -76,6 +101,8 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
         execution = db.scalar(select(Execution).where(Execution.execution_key == 'public:' + job_id))
         assert execution is not None
         assert execution.service_id == service_id
+        if scheduled:
+            assert execution.scan_scope == "evidence" and not execution.complete
         assert db.scalar(select(Finding).where(Finding.service_id == service_id, Finding.cve == 'CVE-2026-1212')) is not None
         first_execution_id = execution.id
     # A coordinator replay cannot duplicate the real service execution.

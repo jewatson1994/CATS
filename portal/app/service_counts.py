@@ -58,7 +58,7 @@ def overview_finding_counts(db, service_id: int, configuration: dict, now: datet
     active_exception = and_(ExceptionRecord.finding_id == Finding.id, ExceptionRecord.revoked_at.is_(None),
                             ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now)
     exception = select(ExceptionRecord.id).where(active_exception).exists()
-    eligible, noncompliant, needs_observations = _risk_finding_expressions(configurations, now, exception)
+    eligible, noncompliant, needs_observations = _risk_finding_expressions(db, configurations, now, exception)
 
     def with_observations(query):
         if not needs_observations:

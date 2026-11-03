@@ -67,6 +67,9 @@ describe('native administration workflows', () => {
     window.history.replaceState({}, '', '/admin/configuration#data');
     const source = 'https://mirror.example/grype/v6/latest.json';
     const {container} = render(<Settings data={{...permissions, security_data_sources: {grype: {source}}}}/>);
+    const daily = screen.getByRole('checkbox', {name: 'Refresh all four sources daily'});
+    expect(daily).toBeChecked();
+    expect(daily.closest('form')).toHaveAttribute('action', '/admin/configuration/security-data/automatic');
     const card = screen.getByRole('heading', {name: 'Grype DB'}).parentElement!;
     fireEvent.click(card.querySelector('summary')!);
     const configured = within(card).getByLabelText('Configured source');

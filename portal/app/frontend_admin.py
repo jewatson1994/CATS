@@ -63,7 +63,7 @@ def project_admin(data, name, context, can=None, formatters=None):
                 "detail": {key: value for key, value in safe_detail.items() if value not in ([], {})}})
     elif name == "configuration.html":
         data["configuration"] = _fields(context.get("configuration", {}),
-            ("display_timezone", "date_format", "time_format", "identity_mode", "remediation_enabled"))
+            ("display_timezone", "date_format", "time_format", "identity_mode", "remediation_enabled", "security_data_auto_refresh"))
         for key in ("timezones", "package_managers"):
             data[key] = strings(context.get(key, []))
         for key in ("date_formats", "time_formats"):
@@ -94,6 +94,7 @@ def project_admin(data, name, context, can=None, formatters=None):
         for key in ("kev", "epss", "grype", "trivy"):
             row = context.get("security_data_sources", {}).get(key)
             projected = _fields(row, ("source", "status", "installed_version", "failure_reason"))
+            projected["default_source"] = _field(context.get("security_data_defaults", {}), key)
             for field in ("last_attempt_at", "last_success_at"):
                 projected[field] = _formatted(_field(row, field), formatters.get("cats_date"))
             data["security_data_sources"][key] = projected

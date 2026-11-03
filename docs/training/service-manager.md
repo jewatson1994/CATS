@@ -43,6 +43,22 @@ See [service remediation](../remediation.md) and [pipeline details](../../portal
 Select a training ingestion target, draft a justified exception request, and identify the independent reviewer. Explain what evidence is needed after remediation to establish successful deployment.
 
 
+### Schedule overnight image scans
+
+For recurring image scans, open the service's **Overview → Scheduled scans →
+Edit scan schedule**. Choose **Nightly** or **Weekly**, select the opening night
+for a weekly schedule, then set the time zone and save. Scheduling requires
+service editing and scan ingestion permissions for that service. The initial
+time zone comes from the portal's display settings.
+
+CATS queues the service's active image references between 9 p.m. and 5 a.m.
+in the selected time zone, subject to the existing scan limits. For example,
+a Friday schedule includes early Saturday morning. A job still waiting at
+5 a.m. misses that window. A running job can finish afterward. The overview
+shows the next scheduled start and last scheduling activity. Choose **Off**
+to stop future runs. Scheduled image scans add findings to the service while
+preserving findings outside the scan's coverage.
+
 ### Choose assessment scope when ingesting a public scan
 
 Automatic scope treats a scan containing one image and no charts as an image-only update. It preserves other service images and does not promote a different service version. Choose **Full service assessment** only when the submitted inputs cover the entire service; this also supports services consisting of one image. A newer full-service assessment can become current and resolve findings that are absent from the scan. Select the intended Service Version before starting.

@@ -40,7 +40,7 @@ def test_published_feed_with_model_metadata_loads_every_record(catalog_dir):
     status = policy_data.intelligence_status()["epss"]
     assert status["state"] == "LOADED" and status["records"] == 2 and status["rejected"] == 0
     assert status["metadata"] == {"model_version": "v2026.06.15", "score_date": "2026-06-29T12:00:29Z"}
-    assert policy_data.risk_metadata("cve-2026-0001") == (False, 0.97)
+    assert policy_data.risk_metadata("cve-2026-0001") == (None, 0.97)
 
 
 def test_bundled_catalog_is_not_empty():
@@ -138,3 +138,61 @@ def test_kev_metadata_and_validation(catalog_dir):
     assert policy_data.intelligence_status()["kev"]["metadata"]["catalog_version"] == "2026.06.25"
     with pytest.raises(ValueError):
         security_data.refresh("kev", "", b'{"vulnerabilities": [{"name": "missing id"}]}')
+
+
+def test_existing_finding_and_cached_classification_follow_catalog_refresh(catalog_dir):
+    from datetime import datetime, timedelta, timezone
+    from sqlalchemy.orm import Session
+    from app import dashboard_portfolio, finding_classification, main
+    from app.database import engine
+    from app.dependency_view import dependency_rows
+    from app.models import Execution, Finding, FindingClassification, FindingObservation, Service
+    from test_portal import setup_function
+
+    now = datetime.now(timezone.utc)
+    cve = "CVE-2026-0001"
+    evidence = {"epss": .93, "known_exploited": True}
+    cfg = {**main.CONFIG_DEFAULTS, "compliance_mode": "risk_based", "minimum_severity": "None",
+           "epss_enabled": "true", "epss_threshold": "0.9", "epss_rules": "[]",
+           "kev_enabled": "true", "kev_noncompliant": "true"}
+    setup_function()
+    with Session(engine) as db:
+        service = Service(service_key="refresh", name="Refresh")
+        db.add(service)
+        db.flush()
+        execution = Execution(service_id=service.id, execution_key="one-scan", scanned_at=now,
+            complete=True, raw_payload={"sbom_components": [{"image": "app", "name": "lib", "version": "1"}]})
+        finding = Finding(service_id=service.id, cve=cve, severity="Low", first_seen=now,
+            last_seen=now, episode_started=now - timedelta(days=150))
+        db.add_all((execution, finding))
+        db.flush()
+        obs = FindingObservation(finding_id=finding.id, execution_id=execution.id, image="app",
+            package="lib", installed_version="1", evidence=dict(evidence))
+        db.add(obs)
+        db.commit()
+        assert policy_data.observation_risk(evidence, policy_data.risk_metadata(cve)) == (True, .93)
+
+        def check(kev, score, eligible):
+            view = main.service_view(service, now, cfg)
+            assert view["risk_metadata"][finding.id] == {"kev": kev, "epss": score}
+            assert (finding.id in view["risk_findings"]) is eligible
+            row, = dependency_rows(execution, [], [finding], policy_data.risk_metadata)
+            assert (row["kev"], row["epss"]) == (kev, score)
+            count = dashboard_portfolio.compute_rows(db, [service], {service.id: cfg}, cfg, now)[service.id]
+            assert (count["kev"], count["noncompliant"]) == (int(kev), int(eligible))
+            assert finding_classification.refresh(engine, service.id, now, configuration=cfg)
+            db.expire_all()
+            assert db.get(FindingClassification, finding.id).eligible is eligible
+            assert obs.evidence == evidence
+
+        security_data.refresh("kev", "", b'{"vulnerabilities":[{"cveID":"CVE-2026-9999"}]}')
+        security_data.refresh("epss", "", b"cve,epss\nCVE-2026-0001,0\n")
+        check(False, 0, False)
+        frozen = policy_data.review_intelligence_snapshot([cve], "first-review")
+        security_data.refresh("kev", "", b'{"vulnerabilities":[{"cveID":"CVE-2026-0001"}]}')
+        security_data.refresh("epss", "", FIRST_FEED.encode())
+        check(True, .97, True)
+        assert frozen["findings"][cve] == {"kev": False, "epss": 0}
+        # FIRST only scores identifiers present in its feed. CISA covers all CVEs.
+        assert policy_data.observation_risk(evidence, policy_data.risk_metadata("CVE-2026-9999")) == (False, .93)
+        assert policy_data.observation_risk(evidence, policy_data.risk_metadata("GHSA-abc")) == (True, .93)

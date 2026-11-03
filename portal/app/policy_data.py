@@ -152,7 +152,7 @@ class _Cached:
     name: str
     loader: object
     empty: object
-    lock: threading.Lock = field(default_factory=threading.Lock)
+    lock: threading.RLock = field(default_factory=threading.RLock)
     signature: tuple | None = None
     checked: float = 0.0
     value: object = None
@@ -160,8 +160,9 @@ class _Cached:
 
     def get(self):
         now = time.monotonic()
-        if self.value is not None and now - self.checked < STAT_INTERVAL_SECONDS:
-            return self.value
+        value = self.value
+        if value is not None and now - self.checked < STAT_INTERVAL_SECONDS:
+            return value
         with self.lock:
             path = _data_file(self.name)
             try:
@@ -196,6 +197,10 @@ class _Cached:
         with self.lock:
             self.value, self.signature, self.checked, self.status = None, None, 0.0, {}
 
+    def snapshot(self):
+        with self.lock:
+            return self.get(), self.status
+
 
 _EMPTY_EPSS = EpssCatalog(MappingProxyType({}), MappingProxyType({}), MappingProxyType({}), 0, 0)
 _EMPTY_KEV = KevCatalog(frozenset(), MappingProxyType({}), 0)
@@ -221,26 +226,38 @@ epss_scores.cache_clear = _epss.cache_clear
 
 def intelligence_status() -> dict[str, dict]:
     """Loaded-catalog state for administrators; never reports an empty load as success."""
-    _kev.get(), _epss.get()
-    return {"kev": dict(_kev.status), "epss": dict(_epss.status)}
+    return {"kev": dict(_kev.snapshot()[1]), "epss": dict(_epss.snapshot()[1])}
 
 
-def risk_metadata(cve: str) -> tuple[bool, float | None]:
-    key = cve.upper()
-    return key in kev_cves(), epss_scores().get(key)
+def risk_metadata(cve: str) -> tuple[bool | None, float | None]:
+    key = cve.strip().upper()
+    kev = kev_cves()
+    membership = key in kev if kev and key.startswith("CVE-") else None
+    return membership, epss_scores().get(key)
+
+
+def observation_risk(evidence, catalog):
+    """Apply live catalog coverage, falling back to the retained scan evidence."""
+    kev, score = catalog
+    if kev is None:
+        kev = bool(evidence.get("kev", evidence.get("known_exploited")))
+    if score is None:
+        value = evidence.get("epss", evidence.get("epss_score"))
+        try:
+            score = float(value) if value is not None else None
+        except (TypeError, ValueError):
+            score = None
+    return kev, score
 
 
 def review_intelligence_snapshot(identifiers, captured_at: str) -> dict:
     """Freeze review-time lookups with the exact catalogs used, without host details."""
     catalogs, feeds = {}, {}
     for name, cache in (("kev", _kev), ("epss", _epss)):
-        cache.get()
-        # A refresh in another thread cannot separate the values from their metadata.
-        with cache.lock:
-            catalog, status = cache.value, cache.status
-            catalogs[name] = catalog
-            feeds[name] = {"state": status.get("state", "MISSING"),
-                           "records": catalog.records, "metadata": dict(catalog.metadata)}
+        catalog, status = cache.snapshot()
+        catalogs[name] = catalog
+        feeds[name] = {"state": status.get("state", "MISSING"),
+                       "records": catalog.records, "metadata": dict(catalog.metadata)}
     lookups = {}
     for identifier in identifiers:
         key = str(identifier).upper()
@@ -254,22 +271,28 @@ def review_intelligence_snapshot(identifiers, captured_at: str) -> dict:
 
 
 _catalog_snapshot = None
-_catalog_token = None
+_catalog_token_lock = threading.Lock()
 
 
 def risk_catalog_token():
     """Stable content token, computed once per immutable catalog snapshot."""
-    global _catalog_snapshot, _catalog_token
+    global _catalog_snapshot
     kev, epss = kev_cves(), epss_scores()
-    if _catalog_snapshot is None or _catalog_snapshot[0] is not kev or _catalog_snapshot[1] is not epss:
+    snapshot = _catalog_snapshot
+    if snapshot is not None and snapshot[0] is kev and snapshot[1] is epss:
+        return snapshot[2]
+    with _catalog_token_lock:
+        snapshot = _catalog_snapshot
+        if snapshot is not None and snapshot[0] is kev and snapshot[1] is epss:
+            return snapshot[2]
         digest = sha256()
         for cve in sorted(kev):
             digest.update(json.dumps(["kev", cve]).encode())
         for cve, score in sorted(epss.items()):
             digest.update(json.dumps(["epss", cve, score]).encode())
-        _catalog_snapshot = (kev, epss)
-        _catalog_token = digest.hexdigest()
-    return _catalog_token
+        token = digest.hexdigest()
+        _catalog_snapshot = (kev, epss, token)
+        return token
 
 
 risk_metadata.cache_token = risk_catalog_token

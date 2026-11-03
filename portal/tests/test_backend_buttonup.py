@@ -72,6 +72,9 @@ def test_catalog_subset_is_memoized_per_catalog_snapshot():
 def test_services_dashboard_scales_to_1000_services_with_large_catalogs(monkeypatch, risk):
     from app import main
     from app.models import PortalSetting
+    # Exercise the completed computation on PostgreSQL as well as SQLite.
+    # A normal cold PostgreSQL request queues this many missing posture rows.
+    monkeypatch.setenv("CATS_POSTURE_SYNC_LIMIT", "1000")
     client = new_client()
     with SessionLocal() as db:
         now = datetime.now(timezone.utc)

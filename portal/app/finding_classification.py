@@ -65,7 +65,7 @@ from .models import (Execution, ExceptionRecord, Finding, FindingClassification,
 from .sql_sets import member_of
 
 logger = logging.getLogger("cats.classification")
-ALGORITHM_VERSION = 2
+ALGORITHM_VERSION = 3
 LOCK_KEY = 0x43464331  # "CFC1"
 _PENDING = "cats_classification_marks"
 _TOUCHED = "cats_classification_touched"
@@ -196,7 +196,7 @@ def _classification_select(db, service_id, configuration, now, latest_id, findin
     exception = select(ExceptionRecord.id).where(
         ExceptionRecord.finding_id == F.id, ExceptionRecord.revoked_at.is_(None),
         ExceptionRecord.starts_at <= now, ExceptionRecord.expires_at > now).exists()
-    eligible, rule, _ = m._risk_finding_expressions({service_id: configuration}, now, exception, overdue=true(), native_disposition=False)
+    eligible, rule, _ = m._risk_finding_expressions(db, {service_id: configuration}, now, exception, overdue=true(), native_disposition=False, finding_ids=finding_ids)
     defaults = observation_metadata({})
     evidence = O.evidence
     if postgresql:

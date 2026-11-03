@@ -779,6 +779,26 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  security-data-worker:
+    <<: *background_worker
+    command: ["python", "-m", "app.daily_security_data"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CATS_DB_POOL_SIZE: 2
+      CATS_DB_MAX_OVERFLOW: 0
+      CATS_DB_BACKGROUND_POOL_SIZE: 2
+      CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+      CATS_JOB_QUEUE_CAPACITY: ${CATS_JOB_QUEUE_CAPACITY:-200}
+      CATS_JOB_LEASE_SECONDS: ${CATS_JOB_LEASE_SECONDS:-120}
+    volumes:
+      - security_policy_data:/app/policy
+      - security_grype_db:/opt/catscan/grype-db
+      - security_trivy_db:/opt/catscan/trivy-cache
+    cpus: 1
+    mem_limit: 2g
+    pids_limit: 128
+
   risk-worker:
     <<: *background_worker
     command: ["python", "-m", "app.risk_worker"]

@@ -1,4 +1,5 @@
 """Evidence-backed software supply-chain inventory for one immutable scan."""
+from .policy_data import observation_risk
 
 SEVERITY = {"unknown": 0, "negligible": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 
@@ -12,7 +13,7 @@ def component_origin(component):
             "golang": "Go module"}.get(ecosystem, "Unknown")
 
 
-def dependency_rows(execution, matches, findings, risk_metadata=lambda cve: (False, None)):
+def dependency_rows(execution, matches, findings, risk_metadata=lambda cve: (None, None)):
     if execution is None:
         return []
     components = (execution.raw_payload or {}).get("sbom_components") or []
@@ -23,15 +24,10 @@ def dependency_rows(execution, matches, findings, risk_metadata=lambda cve: (Fal
             if observation.execution_id == execution.id:
                 key = (observation.package or "", observation.installed_version or "", observation.image or "")
                 evidence = observation.evidence or {}
-                catalog_kev, catalog_epss = risk_metadata(finding.cve)
-                score = evidence.get("epss", evidence.get("epss_score", catalog_epss))
-                try:
-                    score = float(score) if score is not None else None
-                except (TypeError, ValueError):
-                    score = None
+                kev, score = observation_risk(evidence, risk_metadata(finding.cve))
                 by_observation.setdefault(key, []).append({
                     "cve": finding.cve, "severity": finding.severity,
-                    "kev": bool(evidence.get("kev", evidence.get("known_exploited", catalog_kev))) or catalog_kev,
+                    "kev": kev,
                     "epss": score, "fixed_version": observation.fixed_version or "",
                     "scanner": str(evidence.get("scanner") or evidence.get("source") or "Unknown"),
                 })

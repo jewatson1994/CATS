@@ -85,6 +85,7 @@ def test_imported_provenance_does_not_promote_newer_historical_version():
     ("registry/payments:1.5", False, "service", "service"),
     ("registry/payments:1.5", False, "service", "api-service"),
     ("registry/payments:1.5\nregistry/sidecar:1", False, "service", "auto"),
+    ("registry/payments:1.5\nregistry/sidecar:1", False, "evidence", "scheduled"),
 ])
 def test_public_ingest_scope_uses_job_inputs_not_vulnerable_image_count(monkeypatch, tmp_path, input_images, chart, expected_scope, selected_scope):
     import json
@@ -106,14 +107,22 @@ def test_public_ingest_scope_uses_job_inputs_not_vulnerable_image_count(monkeypa
     monkeypatch.setattr(main, "PUBLIC_JOB_ROOT", tmp_path)
     main.PUBLIC_JOBS[job_id] = {"job_id": job_id, "status": "complete", "owner_user_id": 1,
         "image_list": input_images, "chart_url": "https://charts.invalid/chart.tgz" if chart else "",
-        "ingest_service_version": "1.5", "ingest_scope": "service" if selected_scope == "service" else "auto"}
+        "ingest_service_version": "1.5", "ingest_scope": "service" if selected_scope == "service" else "auto",
+        "schedule_context": {"revision": "scheduled-inventory"} if selected_scope == "scheduled" else None,
+        "ingest_service_id": "payments-service" if selected_scope == "scheduled" else ""}
+    if selected_scope == "scheduled":
+        wrong_service = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=other-service")
+        assert wrong_service.status_code == 409
     scope_query = "&scan_scope=service" if selected_scope == "api-service" else ""
     response = client.post(f"/api/public/jobs/{job_id}/ingest?service_id=payments-service{scope_query}")
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
         execution = db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}"))
         assert execution.scan_scope == expected_scope
-        assert db.scalar(select(Service)).current_version.version == ("1.0" if expected_scope == "image" else "1.5")
+        assert db.scalar(select(Service)).current_version.version == ("1.5" if expected_scope == "service" else "1.0")
+        if selected_scope == "scheduled":
+            assert not execution.complete
+            assert db.scalar(select(Finding.active).where(Finding.cve == "CVE-OLD"))
 
 
 def test_scan_form_retains_explicit_full_service_choice(monkeypatch):

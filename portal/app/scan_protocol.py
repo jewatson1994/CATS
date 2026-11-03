@@ -9,6 +9,7 @@ import shutil
 import tempfile
 import tarfile
 import threading
+import time
 from datetime import timedelta
 from pathlib import Path
 
@@ -325,7 +326,15 @@ def _ingest_one():
 
 
 async def maintenance():
+    from .service_scan_schedule import dispatch_due
+    next_schedule_check = 0
     while True:
+        if time.monotonic() >= next_schedule_check:
+            next_schedule_check = time.monotonic() + 60
+            try:
+                await asyncio.to_thread(dispatch_due)
+            except Exception:
+                logging.getLogger(__name__).exception("Scheduled scan maintenance failed")
         try:
             await asyncio.to_thread(ingest_one)
             await asyncio.to_thread(retention_once)

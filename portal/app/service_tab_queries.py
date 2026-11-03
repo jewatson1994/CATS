@@ -75,7 +75,7 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
         exception = select(ExceptionRecord.id).where(ExceptionRecord.finding_id == Finding.id,
             ExceptionRecord.revoked_at.is_(None), ExceptionRecord.starts_at <= now,
             ExceptionRecord.expires_at > now).exists()
-        _, noncompliant, needs_observations = _risk_finding_expressions(configs, now, exception)
+        _, noncompliant, needs_observations = _risk_finding_expressions(db, configs, now, exception)
         vulnerable = select(Finding.id).where(Finding.service_id == service.id,
             Finding.active.is_(True), noncompliant, ~exception)
     if needs_observations:

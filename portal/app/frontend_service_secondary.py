@@ -33,7 +33,17 @@ def project_secondary(data, name, context, can=None, formatters=None):
         request = context.get("request")
         data["evidence_notice"] = "stale" if request is not None and request.query_params.get("evidence_notice") == "stale" else None
         view = context.get("view", {})
-        service_id = _field(_field(view, "service"), "id")
+        service = _field(view, "service")
+        service_id = _field(service, "id")
+        schedule = context.get("scan_schedule")
+        if schedule is not None:
+            data["scan_schedule"] = _fields(schedule, ("cadence", "timezone", "weekday", "last_job_id", "last_result"))
+            for field in ("next_run_at", "last_run_at"):
+                data["scan_schedule"][field] = _formatted(_field(schedule, field))
+            can_edit = bool(callable(can) and can("service.edit", service_id))
+            data["can_schedule_scans"] = can_edit and _field(service, "lifecycle_status", "active") == "active" and bool(can("scan.ingest", service_id))
+            data["can_disable_scan_schedule"] = can_edit
+            data["schedule_saved"] = request is not None and request.query_params.get("schedule_saved") == "1"
         data.setdefault("can", {})["evidence.remove"] = {str(service_id): bool(can("evidence.remove", service_id)) if callable(can) else False}
         counts = {}
         precomputed = context.get("finding_counts")

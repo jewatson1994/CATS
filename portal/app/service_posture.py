@@ -52,7 +52,7 @@ from .models import (DependencyWatchlistMatch, DeploymentValidationRun, Exceptio
                      PolicyFinding, PortalSetting, Service, ServiceArchiveEvent, ServiceGroup, ServicePosture)
 
 logger = logging.getLogger("cats.posture")
-ALGORITHM_VERSION = 1
+ALGORITHM_VERSION = 2
 EPOCH_KEY = "service_posture_epoch"
 # Settings that never affect posture (they change for unrelated reasons).
 _CONFIG_EXCLUDED = frozenset({"authorization_revision", EPOCH_KEY})

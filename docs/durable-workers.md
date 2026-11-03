@@ -12,8 +12,9 @@ validator VM; image patching remains in the existing patch-worker.
 | portal | Authorizes and persists requests; serves status and authorized downloads. No Docker socket. |
 | remediation-worker | Plans, expensive previews, source resolution, candidate orchestration, validation coordination and delivery. Calls patch-worker for image patching. |
 | export-worker | Spreadsheet, diagram, evidence and ZIP generation. Uses existing export builders; does not assemble remediation candidates a second time. |
+| security-data-worker | Checks KEV, EPSS, Grype and Trivy once per UTC day. A failed update leaves the installed data available. |
 | provisioning-worker | Privileged SSH/Docker provisioning with the existing managed-validator operation and attempt records. Has the HQ Docker socket; exposes no HTTP port. |
-| scan-worker / portal-control | Existing scan queue and private control protocol, unchanged. |
+| scan-worker / portal-control | Dispatches service schedules, runs image scans within the configured worker limits and ingests the results. |
 
 The shared Jobs page projects the existing scan and provisioning records together
 with the new `durable_jobs` table. List, counts and details respect current scope
@@ -199,15 +200,15 @@ is optional; it is not part of the normal managed flow.
 
 Back up PostgreSQL and the existing encryption key. Upgrade the image and Compose
 files together, preserving your environment values and existing volumes. Add the
-three worker services and their named volumes from this revision. Remove the old
+worker services and their named volumes from this revision. Remove the old
 mandatory staged-release setting unless deliberately retaining that path.
 
 ```sh
 # Select the newly built/imported image in the existing .env first.
 docker compose config --quiet
-docker compose up -d --force-recreate --wait portal portal-control scan-worker patch-worker remediation-worker export-worker provisioning-worker
+docker compose up -d --force-recreate --wait portal portal-control oci-proxy scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
 docker compose ps
-docker compose logs --tail=100 remediation-worker export-worker provisioning-worker
+docker compose logs --tail=100 remediation-worker security-data-worker export-worker provisioning-worker
 ```
 
 Portal startup creates the new job table and applies additive provisioning-attempt
@@ -222,6 +223,7 @@ volume before replacing that container.
 | --- | --- | --- | --- | --- | --- |
 | remediation-worker | `CATS_REMEDIATION_WORKERS` (default 1) | 1 | 2 GiB | 256 | 2 main + 2 background at one worker; otherwise `2*workers+2` background; no overflow |
 | export-worker | 1 shared export slot | 1 | 1 GiB | 128 | 2 main + 2 background; no overflow |
+| security-data-worker | 1 source update | 1 | 2 GiB | 128 | 2 main + 2 background, no overflow |
 | provisioning-worker | 1 per process; per-validator exclusion | 1 | 2 GiB | 256 | 2 main + 2 background; no overflow |
 
 Compose exposes `CATS_REMEDIATION_CPUS`/`CATS_REMEDIATION_MEMORY`,

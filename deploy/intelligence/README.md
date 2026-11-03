@@ -25,7 +25,7 @@ later does not change an already initialized PostgreSQL user's password.
    For the checked-in Compose stack, run:
 
    ```sh
-   docker compose stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker export-worker provisioning-worker patch-worker scan-worker db-backup
+   docker compose stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker patch-worker scan-worker db-backup
    ```
 
    Also stop any additional replicas or jobs outside this Compose project. Stop the
