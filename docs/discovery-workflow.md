@@ -2,7 +2,7 @@
 
 Open **Discovery** next to Scan. Discovery inspects deployment configuration and preserves evidence; starting discovery does not start a vulnerability scan.
 
-1. Select an owning group and upload a deployment file or repository archive. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists. Direct Git repository fetching is not enabled. An OCI image reference can also be inspected; chart references require an exact chart version and an administrator-configured offline mirror, or an uploaded local chart and will report unresolved input explicitly.
+1. Select an owning group and upload a deployment file or repository source archive. Supported configuration includes Helm, Kubernetes, Kustomize, Compose, GitOps definitions and image lists. For a project hosted in Git, upload the checkout or source archive for the intended revision. Discovery does not clone a pasted Git URL. You can also submit an OCI image reference or an OCI chart reference with an exact version.
 2. Optionally name the environment and enter relative values-file paths, one per line in override order. Use non-secret configuration. Later files override earlier files.
 3. Review each deployment root, its components, image references, completeness and diagnostics. Expand **Source evidence** to inspect provenance or **Complete inventory and relationships** for the full graph. Discovery treats inputs as untrusted and does not execute application scripts, build images or deploy workloads.
 4. Select the roots belonging to one service. Choose an existing service, or **Stage a new service** if your group staging authority permits it. New services receive exactly the selected owning group. Only services in the owning group for which you have scan permission appear. Explicitly acknowledge a partial inventory after reviewing its gaps. Blocked or invalid inventories cannot be confirmed.
@@ -11,6 +11,16 @@ Open **Discovery** next to Scan. Discovery inspects deployment configuration and
 Running work can be cancelled. Retry or **Rediscover as new version** preserves prior evidence. Under **Compare immutable versions**, select an earlier completed discovery from the same group to inspect added, removed and changed component IDs. Comparison reports inventory changes, not vulnerability changes.
 
 If discovery is incomplete, review diagnostics and candidate environment paths. In **Resolution assistance**, adjust non-secret options (including ordered files or a `source_map` from Flux source identity to an uploaded directory), then retry as a new version. This reruns discovery and preserves earlier evidence. To add missing source files, submit a corrected archive. Administrators can also supply exact-version, SHA-256-verified archives through the optional [offline mirror](universal-deployment-discovery.md#follow-up-implementation-2026-10-20). The page never silently treats an unknown or partial result as a complete deployment.
+
+## Helm charts declared in values.yaml
+
+A parent `Chart.yaml` can contain only chart metadata while its sibling `values.yaml` declares child charts under `services`. For example, `services.prometheus.helmRepo` can declare the chart `kube-prometheus-stack`, its repository and its version. Discovery follows recognized Helm and OCI entries, including entries with `enabled: false`, so the inventory covers every declared component. When a resolved child's values also declare services, Discovery follows that catalog in turn. [Example catalog](../scanning-main/examples/services-values.yml)
+
+For offline discovery, place each child under the parent's `charts/` directory as an unpacked chart or a `<chart>-<version>.tgz` package. Discovery checks the name and version against the catalog. You can also use a local `chart_map` for another uploaded directory or an administrator-configured mirror for the exact version. Direct retrieval requires `HELM_ALLOW_NETWORK=true` and an approved repository or registry namespace. [Worker source and registry configuration](universal-deployment-discovery.md#helm-network-retrieval-and-live-archive-acceptance-2026-10-21)
+
+Each child starts with its own chart defaults. Its `valuesFiles` (also spelled `values_files`) are applied in declaration order using paths relative to the source root. Files selected for that child in **Resolution assistance** apply last. Later files override earlier ones. A parent's values selection configures the parent, and each child's selection applies only to that child.
+
+Review each child under **Complete inventory and relationships**. A successfully rendered workload provides image evidence. If a chart or a required values file is unavailable, the inventory retains the child and its diagnostic while Discovery continues with its siblings. Supply the missing input and retry as a new version to verify the rendered images.
 
 ## Native rendering isolation
 

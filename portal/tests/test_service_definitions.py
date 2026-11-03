@@ -1,8 +1,9 @@
 import json
+from pathlib import Path
 
 import pytest
 
-from app.service_definitions import DefinitionError, parse_definition
+from app.service_definitions import DefinitionError, parse_definition, parse_definition_mapping
 
 
 def catalog(extra=''):
@@ -36,6 +37,29 @@ def test_examples_and_exact_oci():
     assert result['components'][3]['reference'].endswith('/postgresql:15.5.38')
     assert result['components'][3]['chart_name'] == 'postgresql'
     json.dumps(result)
+
+
+def test_scanner_values_catalog_chart_names_and_repositories():
+    fixture = Path(__file__).resolve().parents[2] / 'scanning-main/examples/services-values.yml'
+    components = parse_definition(fixture.read_bytes())['components']
+    assert [(c['chart_name'], c['repository'], c['version'], c['status']) for c in components] == [
+        ('kube-prometheus-stack', 'https://prometheus-community.github.io/helm-charts', '27.20.0', 'normalized'),
+        ('cert-manager', 'https://charts.jetstack.io', 'v1.18.2', 'normalized'),
+    ]
+
+
+def test_helm_catalog_field_precedence_and_validation():
+    text = catalog().replace('      url:', '''      chartName: primary
+      chart: alternate
+      repoUrl: https://alternate.example
+      url:''')
+    component = parse_definition(text)['components'][0]
+    assert (component['chart_name'], component['repository']) == ('primary', 'https://charts.jetstack.io')
+    assert parse_definition(text.replace('chartName: primary', 'chartName: ../invalid'))['components'][0]['status'] == 'unresolved'
+    alternate = text.replace('      url: https://charts.jetstack.io\n', '').replace(
+        'https://alternate.example', 'https://user:secret@alternate.example')
+    component = parse_definition(alternate)['components'][0]
+    assert component['status'] == 'unresolved' and 'secret' not in json.dumps(component)
 
 
 def test_singularity_sibling_oci_fields_and_deployment_disabled_components():
@@ -84,6 +108,33 @@ def test_unrelated_urls_not_discovered():
         parse_definition('services: {random: {url: "https://example.org"}}')
     result = parse_definition('services: {random: {url: "https://example.org"}}', 'singularity')
     assert result['components'][0]['status'] == 'unresolved'
+
+
+@pytest.mark.parametrize('source_type', ['helm', 'oci'])
+def test_explicit_source_without_repository_is_detected_but_not_acquired(source_type):
+    document = {'services': {'missing': {'sourceType': source_type, 'url': 'https://unrelated.example'}}}
+    result = parse_definition_mapping(document)
+    assert result == parse_definition(json.dumps(document))
+    assert result['counts'] == {'declared': 1, 'normalized': 0, 'unsupported': 0, 'unresolved': 1}
+    component, = result['components']
+    assert component['source_type'] == source_type and component['reference'] is None
+    assert 'repository' in component['reason'].lower()
+
+
+def test_mapping_rechecks_combined_limits_and_rejects_non_string_keys(monkeypatch):
+    entries = {'chart': {'sourceType': 'helm'}}
+    with pytest.raises(DefinitionError, match='Mapping keys must be strings'):
+        parse_definition_mapping({'services': entries, 'extra': {1: 'x'}})
+    monkeypatch.setenv('CATS_SERVICE_DEFINITION_MAX_COMPONENTS', '1')
+    with pytest.raises(DefinitionError, match='component limit'):
+        parse_definition_mapping({'services': {**entries, 'another': {'sourceType': 'oci'}}})
+
+
+def test_merged_catalog_keeps_a_combined_text_budget(monkeypatch):
+    monkeypatch.setenv('CATS_SERVICE_DEFINITION_MAX_BYTES', '60')
+    with pytest.raises(DefinitionError, match='byte limit'):
+        parse_definition_mapping({'services': {'one': {'sourceType': 'helm', 'note': 'a' * 25},
+                                               'two': {'sourceType': 'oci', 'note': 'b' * 25}}})
 
 
 @pytest.mark.parametrize('text', [

@@ -10,6 +10,20 @@ const inventory = {roots: [{id: 'root', path: 'deploy/chart', technology: 'helm'
 
 afterEach(() => vi.unstubAllGlobals());
 
+it('shows a product chart identity with its source path and identifies unresolved children', async () => {
+  const product = {...inventory,
+    roots: [{...inventory.roots[0], chart_name: 'payments', chart_version: '2.1.0'}],
+    diagnostics: [{code: 'catalog_chart_unresolved', component_name: 'billing-db', message: 'Missing chart archive.'}],
+  };
+  vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(
+    url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: product} : catalog),
+    {headers: {'Content-Type': 'application/json'}}));
+  render(<Page data={{csrf_token: 'token'}}/>);
+  expect(await screen.findByRole('checkbox', {name: 'payments 2.1.0 deploy/chart helm'})).toBeVisible();
+  expect(screen.getByText('billing-db needs attention')).toBeVisible();
+  expect(screen.getByText('Missing chart archive.')).toBeVisible();
+});
+
 it('requires selected roots and partial acknowledgement, confirms without scanning, and scopes services', async () => {
 
   const fetch = vi.fn(async (url: string, _init?: RequestInit) => new Response(JSON.stringify(url.endsWith('/confirm') ? {inventory_id: 'confirmed'} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory} : catalog), {headers: {'Content-Type': 'application/json'}}));
