@@ -26,11 +26,24 @@ def test_internal_control_listener_and_network_connectivity(deployment):
     assert control["command"][-1] == "8001"
     assert worker["environment"]["CATS_SCAN_PORTAL_URL"] == "http://portal-control:8001"
     assert worker["depends_on"]["portal-control"]["condition"] == "service_healthy"
-    public_only = {"CATS_DISCOVERY_GITLAB_SOURCES", "CATS_DISCOVERY_GITLAB_CA_FILE"}
-    assert control["environment"] == {key: value for key, value in portal["environment"].items()
-                                      if key not in public_only}
-    assert control["volumes"] == portal["volumes"]
-    assert portal["ports"] == ["${CATS_PORT:-8080}:8000"]
+    public_only = {"CATS_DISCOVERY_GITLAB_SOURCES", "CATS_DISCOVERY_GITLAB_CA_FILE",
+                   "CATS_PUBLIC_URL", "SESSION_COOKIE_SECURE"}
+    assert {key: value for key, value in control["environment"].items() if key not in public_only} == {
+        key: value for key, value in portal["environment"].items() if key not in public_only}
+    if "nginx" in services:
+        assert "ports" not in portal and "ports" not in services["oci-proxy"]
+        assert services["nginx"]["ports"] == ["443:8443"]
+        assert portal["environment"]["SESSION_COOKIE_SECURE"] == "true"
+        assert control["volumes"] == [mount for mount in portal["volumes"]
+                                      if not isinstance(mount, dict) or mount["target"] != "/app/certs"]
+        # TLS private keys belong only to the backend that serves that hostname.
+        for name, service in services.items():
+            cert_mounts = [mount["target"] for mount in service.get("volumes", [])
+                           if isinstance(mount, dict) and mount["target"] in ("/app/certs", "/app/oci-certs")]
+            assert cert_mounts == {"portal": ["/app/certs"], "oci-proxy": ["/app/oci-certs"]}.get(name, [])
+    else:
+        assert control["volumes"] == portal["volumes"]
+        assert portal["ports"] == ["${CATS_PORT:-8080}:8000"]
 
 
 def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
