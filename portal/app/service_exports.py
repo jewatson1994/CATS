@@ -125,16 +125,19 @@ def _service_sbom_components(service_key: str, db: Session):
 
 def _service_evidence_zip(service_key: str, db: Session, category: str):
     """Download retained bytes from exactly the current version's assessment."""
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404)
+    return _execution_evidence_zip(service_key, current_execution(db, service), category)
+
+
+def _execution_evidence_zip(service_key, latest, category):
     from .release_exports import _BoundedFile
     from .retained_documents import (EvidenceDocument, UnavailableDocument, SBOM_FORMATS,
                                      SCANNER_FORMATS, decode_document, validate_documents)
 
     if category not in {"scanner", "sbom"}:
         raise ValueError("Unknown evidence export category")
-    service = db.scalar(select(Service).where(Service.service_key == service_key))
-    if service is None:
-        raise HTTPException(404)
-    latest = current_execution(db, service)
     raw = (latest.raw_payload or {}) if latest else {}
     try:
         documents = [EvidenceDocument.model_validate(value) for value in raw.get("evidence_documents", [])]

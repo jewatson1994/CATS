@@ -84,10 +84,15 @@ class HelmNetworkResolver:
                  trusted_ca_certificates=(), allowed_redirect_origins=(),
                  allowed_token_origins=(), ca_file=None, timeout=20):
         self.sources = []
+        self.index_sources = set()
         self.credentials = []
         for source in allowed_sources:
-            _url(source)
-            self.sources.append(source.rstrip('/'))
+            parsed = _url(source)
+            path = parsed.path.rstrip('/')
+            if parsed.scheme == 'https' and path.endswith('/index.yaml'):
+                self.index_sources.add((_origin(source), path))
+            else:
+                self.sources.append(source.rstrip('/'))
         for row in oci_registries:
             endpoint = str(row.get('endpoint') or '').rstrip('/')
             if '://' not in endpoint:
@@ -222,16 +227,33 @@ class HelmNetworkResolver:
 
     def resolve(self, kind, reference, version):
         key = _identity(kind, reference, version)
-        if kind != 'helm' or not any(_under(reference, source) for source in self.sources):
-            raise ArtifactResolutionError('Helm source is not administrator-approved.')
+        if kind != 'helm':
+            raise ArtifactResolutionError('This artifact requires an administrator-configured mirror.')
         p = _url(reference)
+        if p.scheme == 'https':
+            path, _, chart = p.path.rpartition('/')
+            if not chart:
+                raise ArtifactResolutionError('HTTPS Helm references require a chart name.')
+            path = path.removesuffix('/index.yaml')
+            repository = p._replace(path=path).geturl()
+            reference = repository + '/' + chart
+            approved_index = (_origin(repository), path + '/index.yaml') in self.index_sources
+        else:
+            approved_index = False
+        if not approved_index and not any(_under(reference, source) for source in self.sources):
+            if p.scheme == 'oci':
+                raise ArtifactResolutionError(
+                    f'Helm source is not administrator-approved. An administrator can add {reference} to '
+                    'CATS_DISCOVERY_HELM_SOURCES on the Discovery worker or configure its OCI registry and namespace in Administration.')
+            raise ArtifactResolutionError(
+                f'Helm source is not administrator-approved. An administrator can add {repository}/index.yaml '
+                'to CATS_DISCOVERY_HELM_SOURCES on the Discovery worker.')
         if not re.fullmatch(r'(?:v?\d+\.\d+\.\d+(?:[-+][A-Za-z0-9._-]+)?|sha256:[0-9a-f]{64})', version):
             raise ArtifactResolutionError('Helm network retrieval requires an exact chart version or OCI SHA-256 digest.')
         try:
             if p.scheme == 'oci':
                 data, expected = self._oci(reference, version)
             else:
-                repository, _, chart = reference.rpartition('/')
                 origins = {_origin(repository)} | self.redirect_origins
                 index, _ = self._get(repository + '/index.yaml', limit=MAX_METADATA, origins=origins)
                 document = yaml.safe_load(index)

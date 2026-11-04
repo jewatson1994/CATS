@@ -3,7 +3,7 @@ import {afterEach, expect, it, vi} from 'vitest';
 import {requestJson} from '../api';
 import {OCIDistribution} from './oci_distribution';
 vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.fn()}));
-afterEach(() => {cleanup(); vi.resetAllMocks();});
+afterEach(() => {cleanup(); vi.resetAllMocks(); vi.restoreAllMocks();});
 it('creates scoped expiring machine access with CSRF and dismisses the one-time password', async () => {
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {secret:'one-time-password'} as any;
@@ -24,4 +24,49 @@ it('creates scoped expiring machine access with CSRF and dismisses the one-time 
   expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({name:'ci-reader',repository_ids:[3],enabled:true});
   fireEvent.click(screen.getByRole('button',{name:'Dismiss password'}));
   await waitFor(() => expect(screen.queryByText('one-time-password')).not.toBeInTheDocument());
+});
+
+it('saves a project mapping without selecting a single service', async () => {
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (options?.method === 'POST') return {} as any;
+    if (url === '/api/oci/upstreams') return [{id: 4, name: 'Harbor', enabled: true}] as any;
+    if (url === '/api/oci/status/overview') return {services: [{id: 1, name: 'API'}]} as any;
+    return [] as any;
+  });
+  render(<OCIDistribution data={{csrf_token: 'csrf'}}/>);
+  await screen.findByText('Harbor');
+  fireEvent.click(screen.getByRole('button', {name: 'Add mapping'}));
+  expect(screen.getByLabelText('Service')).toBeRequired();
+  fireEvent.change(screen.getByLabelText('Public repository'), {target: {value: 'approved/*'}});
+  expect(screen.queryByLabelText('Service')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Upstream repository'), {target: {value: 'platform/*'}});
+  fireEvent.change(screen.getByLabelText('Upstream'), {target: {value: '4'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+  await screen.findByText('Distribution settings saved.');
+  const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
+  expect(call?.[0]).toBe('/api/oci/repositories');
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+    public_repository: 'approved/*', upstream_repository: 'platform/*', upstream_id: 4, service_id: null,
+  });
+});
+
+it('tests a concrete project repository and identifies project-wide machine grants', async () => {
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (options?.method === 'POST') return {message: 'Connected'} as any;
+    if (url === '/api/oci/repositories') return [{
+      id: 7, public_repository: 'approved/*', upstream_repository: 'platform/*', service_id: null, enabled: true,
+    }] as any;
+    return [] as any;
+  });
+  render(<OCIDistribution data={{csrf_token: 'csrf'}}/>);
+  await screen.findByText('approved/*');
+  fireEvent.click(screen.getByRole('button', {name: 'Add machine account'}));
+  expect(screen.getByLabelText('approved/* (whole project)')).toBeInTheDocument();
+  const prompt = vi.spyOn(window, 'prompt').mockReturnValueOnce('v2').mockReturnValueOnce('approved/team/api');
+  fireEvent.click(screen.getByRole('button', {name: 'Test connection'}));
+  await screen.findByText('Connected');
+  expect(prompt).toHaveBeenCalledWith('Concrete public repository within approved/*');
+  const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
+  expect(call?.[0]).toBe('/api/oci/repositories/7/test');
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({repository: 'approved/team/api', reference: 'v2'});
 });

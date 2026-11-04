@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 import pytest
 from app import oci_proxy as proxy, oci_evidence as evidence, cyber_approvals as approvals
-from test_oci_proxy import setup, digest
+from test_oci_proxy import digest, project, registry, setup
 from app.models import Execution
 from app.durable_jobs import now
 
@@ -42,6 +42,33 @@ def test_original_bundle_and_digest_returned(bundle):
     assert response.content == bundle.data
     assert response.headers['x-cats-evidence-digest'] == digest(bundle.data)
     assert response.headers['cache-control'] == 'private, no-store'
+
+
+def test_project_evidence_uses_the_concrete_repository_approval(project, monkeypatch, tmp_path):
+    s = project
+    monkeypatch.setattr(approvals, 'root', lambda: tmp_path)
+    data = b'published service evidence'
+    published_id = s.approvals[s.published]
+    with s.sessions() as db:
+        approval = db.get(approvals.CyberApproval, published_id)
+        bundle_path = tmp_path / approval.release_key / 'bundle.zip'
+        bundle_path.parent.mkdir()
+        bundle_path.write_bytes(data)
+        approval.publication = dict(approval.publication, bundle_path=str(bundle_path),
+                                    bundle_digest=digest(data))
+        db.commit()
+    suffix = f'/manifests/{s.image}/offline'
+    url = f'/api/oci/evidence/{s.published}' + suffix
+    response = s.client.get(url)
+    assert response.status_code == 200 and response.content == data
+    assert response.headers['X-CATS-Approval-ID'] == str(published_id)
+    # Same image, different approval: only the published service has a bundle.
+    assert s.client.get(f'/api/oci/evidence/{s.scanned}' + suffix).status_code == 404
+    with s.sessions() as db:
+        db.get(approvals.CyberApproval, published_id).revoked_at = now()
+        db.commit()
+    assert s.client.get(url).status_code == 403
+
 
 @pytest.mark.parametrize('mode',['modified','outside','unsigned','wrong_receipt'])
 def test_unverified_or_unconfined_bundle_denied(bundle, mode):

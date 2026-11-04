@@ -1,0 +1,20 @@
+.service-distributions article {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.service-distributions article h3 { margin: 0; }
+.service-distributions details { margin: .75rem 0; }
+.service-distributions summary, .distribution-details summary { cursor: pointer; }
+.distribution-details, .service-distributions fieldset { min-width: 0; overflow-wrap: anywhere; }
+.service-distributions form { margin-top: 1rem; }
+.service-distributions fieldset { border: 1px solid var(--border); padding: 1rem; }
+.service-distributions fieldset > label { display: grid; gap: .3rem; margin-bottom: .75rem; }
+.service-distributions fieldset > fieldset { margin: .75rem 0; }
+.service-distributions select { max-width: 100%; }
+.service-distributions .distribution-choice { display: flex; gap: .65rem; align-items: flex-start; }
+.service-distributions .distribution-choice input { flex: none; }
+.distribution-chart + .distribution-chart { margin-top: .75rem; }
+.service-distributions .distribution-chart details { margin-left: 1.5rem; }
+.distribution-choice small { display: block; margin-top: .15rem; color: var(--muted); }

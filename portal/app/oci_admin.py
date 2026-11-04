@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .auth import AuthContext, record_audit, require_permission
 from .database import get_db
 from .models import Service
-from .oci_models import OCIPrincipal, OCIRepository, OCIUpstream
+from .oci_models import OCIPrincipal, OCIRepository, OCIUpstream, is_project_pattern, project_repository
 from .release_validity import utc
 from .secrets import encrypt_secret
 from .service_oci import _csrf, validate_destination
@@ -92,26 +92,41 @@ def _save_upstream(row, data):
 
 
 def _save_repository(db, row, data):
-    for key in ('public_repository', 'upstream_repository'):
-        value = data.get(key, getattr(row, key, None))
-        if not isinstance(value, str) or len(value) > 255 or not REPOSITORY.fullmatch(value):
-            raise HTTPException(422, f'Invalid {key}')
-        if key == 'public_repository' and '/' not in value:
-            raise HTTPException(422, 'Public repository must include a project namespace')
-        setattr(row, key, value)
-    for key, model in (('service_id', Service), ('upstream_id', OCIUpstream)):
-        identity = data.get(key, getattr(row, key, None))
-        if type(identity) is not int or db.get(model, identity) is None:
-            raise HTTPException(422, f'Invalid {key}')
-        setattr(row, key, identity)
+    public_name = data.get('public_repository', row.public_repository)
+    upstream_name = data.get('upstream_repository', row.upstream_repository)
+    for key, value in (('public_repository', public_name), ('upstream_repository', upstream_name)):
+        if (not isinstance(value, str) or len(value) > 255
+                or not (REPOSITORY.fullmatch(value) or is_project_pattern(value))):
+            raise HTTPException(422, f'Invalid {key}. Use a repository name or project/*')
+    if '/' not in public_name:
+        raise HTTPException(422, 'Public repository must include a project namespace')
+    project = is_project_pattern(public_name)
+    if project != is_project_pattern(upstream_name):
+        raise HTTPException(422, 'Project mappings require project/* on both sides')
+    upstream_id = data.get('upstream_id', row.upstream_id)
+    if row.id is not None and (project or is_project_pattern(row.public_repository)):
+        if (public_name, upstream_name, upstream_id) != (row.public_repository, row.upstream_repository, row.upstream_id):
+            raise HTTPException(409, 'Create a mapping with a new public name and grant access to it explicitly to change project scope or target')
+    if type(upstream_id) is not int or db.get(OCIUpstream, upstream_id) is None:
+        raise HTTPException(422, 'Invalid upstream_id')
+    service_id = data.get('service_id', row.service_id)
+    if project:
+        if service_id is not None:
+            raise HTTPException(422, 'Project mappings determine the service from approval evidence')
+    elif type(service_id) is not int or db.get(Service, service_id) is None:
+        raise HTTPException(422, 'Invalid service_id')
     policy = data.get('policy', row.policy or {})
     if not isinstance(policy, dict) or set(policy) - {'max_scan_age_days', 'max_approval_age_days'}:
         raise HTTPException(422, 'Unsupported distribution policy')
     for key, value in policy.items():
         if type(value) is not int or not 1 <= value <= 3650:
             raise HTTPException(422, f'{key} must be from 1 to 3650')
-    row.policy = policy
     row.suspended = _boolean(data, 'suspended', row.suspended if row.suspended is not None else False)
+    row.public_repository = public_name
+    row.upstream_repository = upstream_name
+    row.upstream_id = upstream_id
+    row.service_id = service_id
+    row.policy = policy
 
 
 def _save_principal(db, row, data):
@@ -168,12 +183,20 @@ async def test_repository(identity: int, request: Request, db: Session = Depends
     from .oci_transport import RegistryClient, RegistryError
     from .secrets import decrypt_secret
     from starlette.concurrency import run_in_threadpool
+    repository = row.upstream_repository
+    if is_project_pattern(row.public_repository):
+        try:
+            repository = project_repository(row.upstream_repository, row.public_repository, body.get('repository'))
+        except ValueError:
+            raise HTTPException(422, f'Enter a concrete public repository within {row.public_repository}') from None
+    elif 'repository' in body and body['repository'] != row.public_repository:
+        raise HTTPException(422, 'Repository must match the selected mapping')
     upstream = row.upstream
     try:
         client = RegistryClient(dict(endpoint=upstream.endpoint, username=decrypt_secret(upstream.username),
             password=decrypt_secret(upstream.password), ca_pem=upstream.ca_pem,
             token_realms=upstream.token_realms, redirect_origins=upstream.redirect_origins))
-        _, _, digest = await run_in_threadpool(client.fetch_manifest, row.upstream_repository, body.get('reference', 'latest'))
+        _, _, digest = await run_in_threadpool(client.fetch_manifest, repository, body.get('reference', 'latest'))
     except (RegistryError, ValueError, OSError):
         return {'ok': False, 'message': 'Connection check failed. Check registry access, reference, credentials, TLS and allowed token realms.'}
     record_audit(db, auth, 'oci.connection.test', 'repositories', row.id)

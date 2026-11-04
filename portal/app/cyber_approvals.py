@@ -113,9 +113,9 @@ def _signing_ready(db):
         return False
 
 
-def _readiness(db, service, variant, remediation_id):
+def _readiness(db, service, variant, remediation_id, distribution_id=None):
     from .cyber_approval_evidence import readiness
-    result = readiness(db, service, variant, remediation_id)
+    result = readiness(db, service, variant, remediation_id, distribution_id=distribution_id)
     destinations = [public_destination(row) for row in db.scalars(select(ApprovedReleaseDestination)) if _eligible(row, service)]
     notes = list(result.get('review_notes', []))
     if not destinations:
@@ -128,11 +128,13 @@ def _readiness(db, service, variant, remediation_id):
 
 @router.get('/api/services/{key}/cyber-approval-readiness')
 def readiness_api(key: str, variant: str = 'current_service', remediation_id: int | None = None,
+                  distribution_id: str | None = None,
                   db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     service = _service(db, auth, key)
-    result = _readiness(db, service, variant, remediation_id)
+    result = _readiness(db, service, variant, remediation_id, distribution_id)
     execution = result.get('execution')
-    return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant', 'review_notes')} | {
+    return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant', 'review_notes', 'distribution')} | {
+        'source_execution_id': execution.id if execution else None,
         'executions': [{'id': execution.id, 'scanned_at': execution.scanned_at.isoformat()}] if execution else [],
         'remediations': [{'id': row.id, 'label': row.job_key} for row in db.scalars(select(RemediationExecution).where(
             RemediationExecution.service_id == service.id,
@@ -155,6 +157,7 @@ def dto(db, row, auth, detail=False):
     requested_by = db.get(User, row.requested_by_id) if row.requested_by_id else None
     result = {key: getattr(row, key) for key in ('id', 'release_key', 'variant', 'status', 'publish_status', 'rationale', 'decision_rationale', 'snapshot_digest', 'revocation_reason')}
     result.update(service_key=service.service_key, service_name=service.name, version=row.snapshot.get('version'),
+        distribution_name=(row.snapshot.get('distribution') or {}).get('name'),
         scan_date=row.snapshot.get('scan_date'), label='CATS Remediated' if row.variant == 'cats_remediated' else 'Current Service',
         requested_at=row.requested_at.isoformat(), decided_at=row.decided_at.isoformat() if row.decided_at else None,
         requested_by=requested_by.display_name if requested_by else 'Retained account', destination=row.destination,
@@ -196,10 +199,13 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
             raise HTTPException(422, 'Revision inventory differs from amendment proposal')
         data['release_revision'] = specification
     variant = data.get('variant', 'current_service')
+    distribution_id = data.get('distribution_id')
+    if distribution_id is not None and (not isinstance(distribution_id, str) or not distribution_id or len(distribution_id) > 32):
+        raise HTTPException(422, 'Select a saved distribution')
     if variant not in ('current_service', 'cats_remediated'):
         raise HTTPException(422, 'Select Current Service or CATS Remediated')
     if data.get('amendment_proposal_id') is not None:
-        if variant != 'current_service' or data.get('remediation_id') is not None:
+        if variant != 'current_service' or data.get('remediation_id') is not None or distribution_id is not None:
             raise HTTPException(422, 'Amendment review uses its retained proposed assessment')
         from .proposal_assessments import assess
         try:
@@ -207,9 +213,11 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
     else:
-        result = _readiness(db, service, variant, data.get('remediation_id'))
+        result = _readiness(db, service, variant, data.get('remediation_id'), distribution_id)
     if not result['ready']:
         raise HTTPException(409, {'message': 'Resolve all missing evidence before requesting approval', 'blockers': result['blockers']})
+    if distribution_id is not None and result['execution'].id != data.get('expected_source_execution_id'):
+        raise HTTPException(409, 'Distribution scan changed. Review its current evidence before submitting.')
     eligible = [row for row in db.scalars(select(ApprovedReleaseDestination).order_by(
         ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id)) if _eligible(row, service)]
     destination = eligible[0] if eligible else None
@@ -223,6 +231,8 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         renewal = db.scalar(select(CyberApproval).where(CyberApproval.id == data['renews_approval_id']).with_for_update())
         if not renewal or renewal.service_id != service.id or renewal.status != 'approved' or renewal.revoked_at:
             raise HTTPException(409, 'Renewal requires a non-revoked approval for this service')
+        if (renewal.snapshot.get('distribution') or {}).get('id') != distribution_id:
+            raise HTTPException(409, 'A different distribution needs a separate Cyber approval.')
         if data.get('reassessment_event_id'):
             from .oci_lifecycle import OCIReassessmentEvent
             event = db.get(OCIReassessmentEvent, str(data['reassessment_event_id']))

@@ -650,6 +650,8 @@ def test_root_chart_dependencies_use_approved_mirror(tmp_path):
     assert calls == ['helm']
     assert result['images'][0]['reference'] == 'example:test'
     assert result['artifact_provenance']
+    dependency, = [node for node in result['nodes'] if node['kind'] == 'HelmDependency']
+    assert dependency['provenance'][0]['enabled'] is True
     assert not (source / 'charts').exists()
 
 
@@ -750,3 +752,28 @@ def test_kustomize_failure_does_not_request_helm_values(tmp_path):
     diagnostic = next(d for d in result['diagnostics'] if d['code'] == 'native_render_failed')
     assert diagnostic['renderer'] == 'kustomize'
     assert 'Kustomize build failed' in diagnostic['message']
+
+
+@pytest.mark.parametrize('gitlab_import', [False, True])
+def test_kustomize_builds_overlay_but_not_helm_templates_or_components(tmp_path, gitlab_import):
+    archive = tmp_path / 'project.zip'
+    pod = 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: app:IMAGE}]}'
+    with zipfile.ZipFile(archive, 'w') as out:
+        for name, contents in {
+            'product/Chart.yaml': 'apiVersion: v2\nname: product\nversion: 1.0.0',
+            'product/templates/kustomization.yaml': '{{ if .Values.flux }}...{{ end }}',
+            'shared/Kustomization': 'apiVersion: kustomize.config.k8s.io/v1alpha1\nkind: Component\nresources: [pod.yaml]',
+            'shared/pod.yaml': pod.replace('IMAGE', 'raw'),
+            'prod/kustomization.yml': 'components: [../shared]\nimages: [{name: app, newTag: production}]',
+        }.items():
+            out.writestr('project-rev/' + name, contents)
+
+    calls = []
+    def runner(tool, args, cwd):
+        calls.append((tool, Path(args[-1]).name))
+        return pod.replace('IMAGE', 'production') if tool == 'kustomize' else ''
+
+    inventory = run_discovery(archive, runner=runner, gitlab_archive=gitlab_import)
+    assert calls == [('helm', 'product'), ('kustomize', 'prod')]
+    assert [image['reference'] for image in inventory['images']] == ['app:production']
+    assert inventory['completeness'] == 'complete', inventory['diagnostics']

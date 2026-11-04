@@ -92,3 +92,62 @@ def test_connection_and_status(context, monkeypatch):
     monkeypatch.setattr(RegistryClient, 'fetch_manifest', failed)
     result = post(client, path, {}).json()
     assert not result['ok'] and 'sensitive' not in str(result)
+
+
+def test_project_mapping_grants_and_connection(context, monkeypatch):
+    client, _, _ = context
+    upstream = post(client, 'upstreams', dict(name='Registry', endpoint='https://registry.example')).json()
+    data = dict(public_repository='approved/*', upstream_repository='platform/*', upstream_id=upstream['id'])
+    result = post(client, 'repositories', data)
+    assert result.status_code == 200, result.text
+    mapping = result.json()
+    assert mapping['service_id'] is None
+    assert client.get('/api/oci/repositories').json() == [mapping]
+    assert post(client, 'principals', dict(name='project-reader', repository_ids=[mapping['id']])).status_code == 200
+
+    from app.oci_transport import RegistryClient
+    calls = []
+    def fetch_manifest(self, repository, reference):
+        calls.append((repository, reference))
+        return b'{}', 'application/json', 'sha256:' + 'a' * 64
+    monkeypatch.setattr(RegistryClient, 'fetch_manifest', fetch_manifest)
+    path = f"repositories/{mapping['id']}/test"
+    for repository in (None, 'approved/*', 'approved', 'approved-2/api', 'approved/../elsewhere', 'platform/api'):
+        assert post(client, path, {'repository': repository}).status_code == 422
+    assert calls == []
+    assert post(client, path, dict(repository='approved/team/api', reference='v1')).json()['ok']
+    assert calls == [('platform/team/api', 'v1')]
+
+
+@pytest.mark.parametrize(('public_name', 'upstream_name', 'service_id'), [
+    ('*', '*', None), ('team/*', 'team/image', None), ('team/image', 'team/*', 1),
+    ('team/*/api', 'team/*', None), ('team/sub/*', 'other/*', None), ('team/*', 'other/sub/*', None),
+    ('team/*', 'other/*', 1), ('team/image', 'other/image', None),
+])
+def test_invalid_repository_scopes(context, public_name, upstream_name, service_id):
+    client, _, _ = context
+    upstream = post(client, 'upstreams', dict(name='Registry', endpoint='https://registry.example')).json()
+    result = post(client, 'repositories', dict(public_repository=public_name, upstream_repository=upstream_name,
+        service_id=service_id, upstream_id=upstream['id']))
+    assert result.status_code == 422, result.text
+
+
+def test_project_scope_changes_require_new_grants(context):
+    client, _, _ = context
+    registry = post(client, 'upstreams', dict(name='Primary', endpoint='https://registry.example')).json()
+    second = post(client, 'upstreams', dict(name='Other', endpoint='https://other.example')).json()
+    exact = post(client, 'repositories', dict(public_repository='approved/api', upstream_repository='team/api',
+        upstream_id=registry['id'], service_id=1)).json()
+    project = post(client, 'repositories', dict(public_repository='approved/*', upstream_repository='team/*',
+        upstream_id=registry['id'])).json()
+    post(client, 'principals', dict(name='reader', repository_ids=[exact['id']])).raise_for_status()
+    def update(mapping, **values):
+        return client.put(f"/api/oci/repositories/{mapping['id']}", json=values, headers={'X-CSRF-Token': 'token'})
+    assert update(exact, public_repository='new/*', upstream_repository='new/*', service_id=None).status_code == 409
+    assert update(project, public_repository='other/*').status_code == 409
+    assert update(project, upstream_repository='other/*').status_code == 409
+    assert update(project, upstream_id=second['id']).status_code == 409
+    assert update(project, public_repository='new/api', upstream_repository='team/api', service_id=1).status_code == 409
+    assert client.get('/api/oci/repositories').json() == [exact, project]
+    assert client.get('/api/oci/principals').json()[0]['repository_ids'] == [exact['id']]
+    assert update(project, policy={'max_scan_age_days': 7}, suspended=True).json()['suspended']

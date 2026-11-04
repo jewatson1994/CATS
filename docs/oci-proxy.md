@@ -15,15 +15,27 @@ For the main deployment template, use the ordinary [template startup commands](.
 
 The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named `oci_proxy_cache` volume survives restarts and service recreation. It has no Docker socket, privileged execution, or registry storage backend. The application listens on port 5000; Compose publishes it only on host loopback at `127.0.0.1:5000` by default (`CATS_OCI_PORT` changes the host port). Terminate HTTPS at a trusted reverse proxy and forward only over the trusted local/container network. Configure clients to trust that HTTPS certificate. Do not send machine credentials over a public HTTP connection.
 
+For this upgrade, use the updated shared `CATS_IMAGE` for `portal`, `portal-control`, and `oci-proxy`. Both integrated Compose definitions provide a writable 64 MiB `/tmp` tmpfs for startup while retaining the read-only remediation volume. Keep that tmpfs entry when adapting the template; shared startup code creates `/tmp/cats-patch-jobs`.
+
 Configure an upstream HTTPS registry origin and its read-only upstream credentials through the CATS administration interface. Add private CA PEM certificates when needed. Delegated token service origins and blob redirect origins require explicit allowlisting. Keep the allowlists narrow: token services receive upstream credentials. Redirects to another origin lose Authorization headers; signed CDN URLs can still work. No insecure TLS bypass exists.
 
 Cyber release publication runs in `remediation-worker` and has a separate redirect policy. If its source registry or destination redirects blob GET/HEAD requests to object storage, configure `CATS_OCI_BLOB_REDIRECT_ORIGINS` in the deployment environment and recreate the worker. Same-origin redirects need no setting; registry credentials are never forwarded cross-origin, and cross-origin writes and manifest redirects remain blocked. The upstream allowlists above and `CATS_OCI_TOKEN_REALMS` do not grant this permission. See [publication configuration](signed-release-documentation.md#configuration-and-boundaries).
 
 Issue separate scoped machine credentials for consumers. Use those credentials with `docker login`, Helm registry login, or an equivalent OCI client against the CATS hostname. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials.
 
+## Map a Harbor project
+
+On the **Approved Release Destinations** page, open **Approved artifact distribution** and choose **Add mapping**. Select the Harbor upstream and enter `cyber-approved/*` for both **Public repository** and **Upstream repository**. This exposes `cyber-approved/team/api` under the same name in CATS. To use a different public name, enter `approved/*` on the public side. CATS keeps the entire path below the project name. Both patterns must consist of one project name followed by `/*`.
+
+Grant the new mapping to a CATS machine account. The grant covers current and future repositories in the project. CATS uses scan or verified publication evidence to identify the service for each repository and digest, then checks current approval and compliance. If two services claim the same repository and digest, use an exact mapping to select the intended service. Exact mappings take precedence and require their own grant. A suspended exact mapping blocks the pull. For services using signed release revisions, pulls by tag also require the tag and digest to match the active signed release.
+
+To test registry access, choose **Test connection**, enter an existing tag or digest, then enter a concrete public repository such as `cyber-approved/team/api`. To verify the full pull, log in to the CATS proxy with the CATS machine credentials and run `docker pull cats.example/cyber-approved/team/api:v1` with an approved image and tag from your project.
+
 ## Content and policy behavior
 
 Every delivery must pass the current authorization and compliance decision, including a content-cache hit. Cached bytes are never evidence of approval. Mutable tags resolve to immutable upstream manifest digests before policy evaluation. Child manifests, configs, layers, and referrers must remain within the authorized approved graph; knowing a blob digest does not grant access to it. Multi-platform indexes require all exposed children to be eligible. Unknown, stale, blocked, revoked, and out-of-scope artifacts fail closed.
+
+An approved saved service distribution uses its own retained scan and frozen component selection. Its approval does not authorize excluded images. Current policy, finding deadlines, and exception validity still apply to the selected findings; a pending or newer distribution scan requires approval of the current evidence before pulls resume.
 
 Manifest responses preserve upstream bytes and their SHA-256 identity; retained manifest JSON is stored in PostgreSQL. The configurable disk quota applies to cached blobs, not database metadata. Blob downloads stream to temporary files in bounded chunks, verify SHA-256, and atomically enter the cache only after success. Cache hits are rehashed; corrupted entries are removed and fetched again. Writers use an interprocess lock. Older entries are evicted to enforce the byte quota. Interrupted temporary files are removed by a subsequent writer. Repository pushes, deletes, and uploads are unsupported.
 
@@ -52,6 +64,7 @@ Run these checks against a staging Harbor instance and a staging CATS database b
 6. Change policy or introduce overdue findings for the approved digest. Verify subsequent GET and HEAD requests fail closed despite a populated cache.
 7. Verify subject-bound referrers and pagination; no unrelated or disallowed artifact may appear. Attempt write/delete operations and verify rejection.
 8. Interrupt a large download and restart the proxy. Verify no partial blob is served, subsequent download succeeds, and cache use stays within the configured content quota.
+9. With one `cyber-approved/*` mapping and one machine grant, pull approved images from two services, including a nested repository. Confirm an unapproved digest and a revoked approval fail with cached layers present. Add an exact repository mapping and confirm the project grant cannot access it until the machine receives the exact mapping's separate grant; suspending the exact mapping must block that repository.
 
 ## Startup database locks
 

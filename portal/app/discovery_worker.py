@@ -1,14 +1,15 @@
 """Durable discovery execution; native renderers run in a separate sandbox."""
 from contextlib import ExitStack
+from functools import partial
 import hashlib
 import json
 import os
 from pathlib import Path
 import uuid
 import tempfile
-from sqlalchemy import select
+from sqlalchemy import select, update
 from . import models, discovery_models
-from .durable_jobs import JobError, run_worker
+from .durable_jobs import DurableJob, JobError, LeaseLost, run_worker
 from .discovery_models import DiscoveryInventory
 from .discovery_sources import decrypted_source, SourceStorageError
 
@@ -91,9 +92,9 @@ def handle(ctx, payload):
             models.PortalSetting.group_id.is_(None),
             models.PortalSetting.key.in_(['oci_registries', 'trusted_ca_certificates'])))}
     artifact_resolver = configured_artifact_resolver(settings)
-    runner = isolated_runner
+    runner = partial(isolated_runner, check_cancelled=ctx.check)
     if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true':
-        runner = RenderCache(isolated_runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
+        runner = RenderCache(runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
                              str(payload['group_id']) + ':' + token, tool_version)
     try:
         with ExitStack() as stack:
@@ -148,9 +149,17 @@ def handle(ctx, payload):
             existing = DiscoveryInventory(id=uuid.uuid4().hex, job_id=job.id, group_id=payload['group_id'],
                 source_hash=payload['source_hash'], content_hash=content, inventory=inventory)
             db.add(existing)
-        job.result = {**job.result, 'inventory_id': existing.id, 'completeness': existing.inventory.get('completeness'), 'metrics': existing.inventory.get('metrics', {})}
+        result = {**job.result, 'inventory_id': existing.id, 'completeness': existing.inventory.get('completeness'), 'metrics': existing.inventory.get('metrics', {})}
+        # SQLite has no SELECT FOR UPDATE. Fence publication with the same
+        # active lease and cancellation flag in the inventory transaction.
+        changed = db.execute(update(DurableJob).where(DurableJob.id == job.id, DurableJob.status == 'running',
+            DurableJob.lease_token == job.lease_token, DurableJob.cancel_requested.is_(False)).values(result=result))
+        if not changed.rowcount:
+            db.rollback()
+            ctx.check()
+            raise LeaseLost()
         db.commit()
-        return dict(job.result)
+        return result
 
 if __name__ == '__main__':
     run_worker(['discovery'], handle)

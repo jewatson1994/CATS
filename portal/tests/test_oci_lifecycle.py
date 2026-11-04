@@ -59,6 +59,56 @@ def test_chart_requires_complete_assessment():
     with pytest.raises(HTTPException):
         lifecycle.scan_references(SimpleNamespace(snapshot={'artifacts':[{'kind':'chart'}]}))
 
+
+@pytest.mark.parametrize('scope', [{'distribution': {'id': 'selected'}}, {'evidence_scope': 'service-distribution-scan'}])
+def test_distribution_cannot_schedule_service_reassessment(db, scope):
+    row = db.scalar(select(CyberApproval))
+    row.snapshot = {**row.snapshot, **scope}
+    row.snapshot_digest = digest(row.snapshot)
+    db.commit()
+    actor = auth(permissions=('service.view', 'approval.request', 'service.export', 'scan.ingest', 'service.edit'))
+    with pytest.raises(HTTPException, match=lifecycle.DISTRIBUTION_REVIEW) as rejected:
+        asyncio.run(lifecycle.schedule(row.id, request({'interval_days': 1}), db, actor))
+    assert rejected.value.status_code == 409
+    lifecycle.enqueue_due(db)
+    assert db.get(lifecycle.OCIReassessmentSchedule, row.id).enabled is False
+    assert db.scalar(select(func.count()).select_from(DurableJob)) == 0
+    assert lifecycle.events(row.id, db, actor)['reassessment_blocker'] == lifecycle.DISTRIBUTION_REVIEW
+
+
+@pytest.mark.parametrize('scan_id', [None, 'prior-scan'])
+def test_legacy_distribution_dispatch_never_scans_ingests_or_renews(db, monkeypatch, scan_id):
+    from contextlib import nullcontext
+    from app import main
+    lifecycle.enqueue_due(db)
+    row = db.scalar(select(CyberApproval))
+    row.snapshot = {**row.snapshot, 'distribution': {'id': 'selected'}}
+    row.snapshot_digest = digest(row.snapshot)
+    event = db.scalar(select(lifecycle.OCIReassessmentEvent))
+    event.scan_id = scan_id
+    db.commit()
+    job = db.get(DurableJob, event.id)
+    monkeypatch.setattr(main, 'SessionLocal', lambda: nullcontext(db))
+    monkeypatch.setattr(main, '_start_public_scan', lambda *a, **k: pytest.fail('dispatched a service scan'))
+    monkeypatch.setattr(main, 'PUBLIC_JOBS', {'prior-scan': {'status': 'complete'}})
+    with pytest.raises(lifecycle.JobError, match=lifecycle.DISTRIBUTION_REVIEW):
+        lifecycle.handle(SimpleNamespace(job=job, check=lambda: None), job.payload)
+    if scan_id:
+        # Both manual service ingestion and the scanner's automatic ingestion
+        # use this entry point. Neither needs the lifecycle reconciler to run.
+        monkeypatch.setattr(main, '_authorized_public_job', lambda *a: {})
+        actor = SimpleNamespace(accessible_service_ids=lambda permission: {row.service_id})
+        with pytest.raises(HTTPException, match=lifecycle.DISTRIBUTION_REVIEW) as blocked:
+            main.ingest_public_scan(scan_id, 'one', None, db=db, auth=actor)
+        assert blocked.value.status_code == 409
+    lifecycle.guard_reassessment_ingest(db, 'unrelated-scan')
+    event.state = 'scanning' if scan_id else 'queued'
+    db.commit()
+    monkeypatch.setattr(main, 'ingest_public_scan', lambda *a, **k: pytest.fail('ingested a service scan'))
+    lifecycle.reconcile(db)
+    assert (event.state, event.detail, event.renewal_id) == ('review_required', lifecycle.DISTRIBUTION_REVIEW, None)
+    assert db.scalar(select(func.count()).select_from(CyberApproval)) == 1
+
 @pytest.mark.parametrize('status', ['failed','error','incomplete','cancelled'])
 def test_scan_failure_never_creates_or_extends_approval(db, monkeypatch, status):
     import sys

@@ -1,8 +1,30 @@
 from pathlib import Path
+from types import SimpleNamespace
+import tempfile
 
 import pytest
 
 from app import discovery_renderer as renderer
+
+
+def test_cancelling_native_render_reaps_process_group(linux, tmp_path, monkeypatch):
+    from app.durable_jobs import JobCancelled
+    actions = []
+    process = SimpleNamespace(pid=1234, stdout=tempfile.TemporaryFile(), stderr=tempfile.TemporaryFile(),
+                              wait=lambda: actions.append('reaped'))
+    monkeypatch.setattr(renderer, 'child_seccomp', tempfile.TemporaryFile)
+    monkeypatch.setattr(renderer.subprocess, 'Popen', lambda *a, **kw: process)
+    # An actual renderer on Linux uses pollable pipes. A select-based selector
+    # can register these fixture files cross-platform; the check runs first.
+    monkeypatch.setattr(renderer.selectors, 'DefaultSelector', renderer.selectors.SelectSelector)
+    monkeypatch.setattr(renderer.os, 'killpg', lambda pid, sig: actions.append(pid), raising=False)
+    monkeypatch.setattr(renderer.signal, 'SIGKILL', 9, raising=False)
+    def cancel():
+        raise JobCancelled()
+    with pytest.raises(JobCancelled):
+        renderer.isolated_runner('helm', ['template'], tmp_path, max_output=1024, check_cancelled=cancel)
+    assert actions == [1234, 'reaped']
+    assert process.stdout.closed and process.stderr.closed
 
 
 @pytest.fixture(autouse=True)

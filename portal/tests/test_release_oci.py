@@ -1,5 +1,6 @@
 """Exercise the distribution protocol against a disposable, authenticated TLS registry."""
 import base64
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,6 +11,7 @@ import ssl
 from threading import Thread
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
+from urllib.response import addinfourl
 from zipfile import ZipFile
 
 from cryptography import x509
@@ -37,6 +39,12 @@ def files(tmp_path):
 
 @pytest.fixture
 def registry(tmp_path):
+    with tls_registry(tmp_path) as state:
+        yield state
+
+
+@contextmanager
+def tls_registry(tmp_path):
     key = ec.generate_private_key(ec.SECP256R1())
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "isolated test registry")])
     now = datetime.now(timezone.utc)
@@ -56,7 +64,8 @@ def registry(tmp_path):
     subject_digest = oci._digest(subject_bytes)
     state = SimpleNamespace(blobs={}, manifests={subject_digest: subject_bytes}, tags={}, referrers=True,
                             reject_subject=False, corrupt_blob=False, requests=[], bearer=False,
-                            token_realm=None, upload_location=None, corrupt_manifest=False,
+                            token_realm=None, token_scope="repository:approved/release:pull,push",
+                            upload_location=None, corrupt_manifest=False,
                             fail_manifest=False, auth=auth, subject_digest=subject_digest,
                             redirects={}, same_origin_redirect=None, blob_redirect=False,
                             storage_requests=[], storage_hosts=[], storage_redirects={}, storage_body=None,
@@ -95,7 +104,7 @@ def registry(tmp_path):
                 if authorization != auth:
                     self.respond(403)
                     return
-                assert parse_qs(parsed.query)["scope"] == ["repository:approved/release:pull,push"]
+                assert parse_qs(parsed.query)["scope"] == [state.token_scope]
                 self.respond(200, b'{"token":"isolated-token"}')
                 return
             required = "Bearer isolated-token" if state.bearer else auth
@@ -105,7 +114,7 @@ def registry(tmp_path):
                 return
             if "/blobs/uploads/" in path:
                 if self.command == "POST":
-                    self.respond(202, Location=state.upload_location or "/v2/approved/release/blobs/uploads/test?state=preserved")
+                    self.respond(202, Location=state.upload_location or path + "test?state=preserved")
                 elif self.command == "PUT":
                     query = parse_qs(parsed.query)
                     assert query["state"] == ["preserved"]
@@ -288,6 +297,85 @@ def test_bearer_authentication_uses_only_approved_repository_scope(registry, fil
     assert any(path.startswith("/token?") for _, path, _ in registry.requests)
 
 
+@pytest.mark.parametrize("configured", [False, True])
+def test_docker_hub_pull_uses_registry_auth_and_credential_free_cdn(monkeypatch, tmp_path, configured):
+    content = b"image config"
+    digest = oci._digest(content)
+    env = {}
+    credential = base64.b64encode(b"hub-user:hub-secret").decode()
+    if configured:
+        (tmp_path / "config.json").write_text(json.dumps({"auths": {"docker.io": {"auth": credential}}}))
+        env["DOCKER_CONFIG"] = str(tmp_path)
+    client = oci._Client("docker.io", "node", env, pull_only=True)
+    registry = "https://registry-1.docker.io/v2/library/node/blobs/" + digest
+    cdn = "https://production.cloudfront.docker.com/objects/config?signature=opaque"
+    attempts = []
+
+    def open_request(request, timeout):
+        url = request.full_url
+        auth = request.get_header("Authorization")
+        attempts.append(url)
+        headers = Message()
+        if url == registry:
+            if len(attempts) == 1:
+                assert auth is None
+                headers["WWW-Authenticate"] = ('Bearer realm="https://auth.docker.io/token",'
+                                               'service="registry.docker.io",scope="repository:other/name:pull,push"')
+                raise oci.urllib.error.HTTPError(url, 401, "Token required", headers, BytesIO())
+            assert auth == "Bearer scoped-token"
+            headers["Location"] = cdn
+            raise oci.urllib.error.HTTPError(url, 307, "Redirect", headers, BytesIO())
+        if urlsplit(url).hostname == "auth.docker.io":
+            assert parse_qs(urlsplit(url).query) == {
+                "scope": ["repository:library/node:pull"], "service": ["registry.docker.io"],
+            }
+            assert auth == ("Basic " + credential if configured else None)
+            return addinfourl(BytesIO(b'{"token":"scoped-token"}'), headers, url, 200)
+        assert url == cdn and auth is None
+        return addinfourl(BytesIO(content), headers, url, 200)
+
+    monkeypatch.setattr(client.opener, "open", open_request)
+    assert client.request("GET", client.api + "/blobs/" + digest, limit=len(content))[2] == content
+    assert len(attempts) == 4
+    with pytest.raises(ValueError, match="only support reads"):
+        client.request("PUT", client.api + "/manifests/latest", body=b"data")
+    assert len(attempts) == 4
+
+
+@pytest.mark.parametrize("host", ["docker.io", "registry-1.docker.io"])
+def test_docker_hub_pull_prefers_reference_credentials_over_docker_cli_alias(tmp_path, host):
+    env = {"DOCKER_CONFIG": str(tmp_path)}
+    config = tmp_path / "config.json"
+    cli = base64.b64encode(b"cli:hub-password").decode()
+    explicit = base64.b64encode(b"endpoint:explicit-password").decode()
+    auths = {"https://index.docker.io/v1/": {"auth": cli}}
+    config.write_text(json.dumps({"auths": auths}))
+    assert oci._Client(host, "library/node", env, pull_only=True).basic == "Basic " + cli
+    assert not oci._Client(host, "library/node", env).basic
+    assert not oci._Client("docker.io.example", "library/node", env, pull_only=True).basic
+    auths[host] = {"auth": explicit}
+    config.write_text(json.dumps({"auths": auths}))
+    assert oci._Client(host, "library/node", env, pull_only=True).basic == "Basic " + explicit
+
+
+@pytest.mark.parametrize("host,pull_only,is_hub_pull", [
+    ("index.docker.io", True, True), ("registry-1.docker.io", True, True),
+    ("docker.io:443", True, True), ("docker.io:5000", True, False),
+    ("docker.io.example", True, False), ("docker.io", False, False),
+    ("registry-1.docker.io", False, False),
+])
+def test_docker_hub_defaults_are_limited_to_its_source_endpoints(host, pull_only, is_hub_pull):
+    client = oci._Client(host, "library/node", {}, pull_only=pull_only)
+    assert client.base == ("https://registry-1.docker.io" if is_hub_pull else "https://" + host)
+    expected_origins = {oci._origin(client.base)}
+    expected_storage = set()
+    if is_hub_pull:
+        expected_origins.add(oci._origin("https://auth.docker.io"))
+        expected_storage.add(oci._origin("https://production.cloudfront.docker.com"))
+    assert client.auth_origins == expected_origins
+    assert client.blob_redirect_origins == expected_storage
+
+
 @pytest.mark.parametrize("status", [307, 308])
 def test_same_origin_redirects_preserve_publication_methods_bodies_and_auth(registry, files, status):
     registry.same_origin_redirect = status
@@ -348,7 +436,7 @@ def test_approved_blob_storage_redirect_preserves_query_and_strips_auth(registry
     assert any(auth == expected_auth for _, path, auth in registry.requests if "/blobs/" in path)
 
 
-@pytest.mark.parametrize("target_kind", ["unapproved", "http", "userinfo", "fragment"])
+@pytest.mark.parametrize("target_kind", ["unapproved", "http", "userinfo", "fragment", "invalid_authority"])
 def test_unsafe_blob_redirect_targets_are_rejected_before_contact(registry, target_kind):
     digest = oci._digest(b"blob")
     source = "/v2/approved/release/blobs/" + digest
@@ -359,6 +447,8 @@ def test_unsafe_blob_redirect_targets_are_rejected_before_contact(registry, targ
         target = target.replace("https://", "https://user:secret-password@", 1)
     elif target_kind == "fragment":
         target += "#private-fragment"
+    elif target_kind == "invalid_authority":
+        target = "https://[::1]secret-password/objects/blob?secret=signed-storage-secret"
     env = dict(registry.env)
     if target_kind != "unapproved":
         env["CATS_OCI_BLOB_REDIRECT_ORIGINS"] = registry.storage_base
@@ -367,15 +457,25 @@ def test_unsafe_blob_redirect_targets_are_rejected_before_contact(registry, targ
     with pytest.raises(oci._RegistryError) as error:
         client.request("GET", registry.base + source)
     assert error.value.status == 307
+    assert error.value.operation == "GET blob"
+    assert error.value.registry_origin == registry.base
+    assert error.value.redirect_from_origin is None
+    if target_kind == "unapproved":
+        assert error.value.reason == "unapproved_blob_origin"
+        assert error.value.redirect_origin == registry.storage_base
+        assert "CATS_OCI_BLOB_REDIRECT_ORIGINS" in error.value.cause
+    else:
+        assert error.value.reason == "invalid_location"
+        assert error.value.redirect_origin is None
     assert not registry.storage_requests
     assert len(registry.requests) == 1
     assert all(secret not in str(error.value) for secret in
                ("secret-password", "signed-storage-secret", "private-fragment", "debug information", target))
 
 
-@pytest.mark.parametrize("path", ["manifests/{digest}", "referrers/{digest}",
-                                  "blobs/uploads/", "blobs/not-a-digest"])
-def test_approved_storage_origin_cannot_receive_non_blob_reads(registry, path):
+@pytest.mark.parametrize("path,operation", [("manifests/{digest}", "GET manifest"), ("referrers/{digest}", "GET referrers"),
+                                            ("blobs/uploads/", "GET blob upload"), ("blobs/not-a-digest", "GET registry resource")])
+def test_approved_storage_origin_cannot_receive_non_blob_reads(registry, path, operation):
     source = "/v2/approved/release/" + path.format(digest=registry.subject_digest)
     registry.redirects[("GET", source)] = (307, registry.storage_base + "/objects/blob")
     env = {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base}
@@ -383,6 +483,11 @@ def test_approved_storage_origin_cannot_receive_non_blob_reads(registry, path):
     with pytest.raises(oci._RegistryError) as error:
         client.request("GET", registry.base + source)
     assert error.value.status == 307
+    assert error.value.reason == "cross_origin_operation"
+    assert error.value.operation == operation
+    assert error.value.registry_origin == registry.base
+    assert error.value.redirect_origin == registry.storage_base
+    assert "CATS_OCI_BLOB_REDIRECT_ORIGINS" not in error.value.cause
     assert not registry.storage_requests
 
 
@@ -457,6 +562,48 @@ def test_storage_cannot_trigger_registry_authentication(registry, redirect_back)
     assert not any(path.startswith("/token") for _, path, _ in registry.requests)
     if redirect_back:
         assert registry.requests[-1] == ("GET", "/redirected" + source, None)
+
+
+def test_token_redirect_reports_credential_free_origins(registry):
+    registry.bearer = True
+    registry.redirects[("GET", "/token")] = (307, "https://[2001:DB8::1]:443/storage?signature=secret-token")
+    client = oci._Client(registry.host, "approved/release", registry.env)
+    with pytest.raises(oci._RedirectError) as caught:
+        client.request("GET", client.api + "/blobs/" + oci._digest(b"blob"))
+    error = caught.value
+    assert (error.reason, error.operation) == ("cross_origin_operation", "GET token")
+    assert error.registry_origin == registry.base
+    assert error.redirect_origin == "https://[2001:db8::1]"
+    assert "CATS_OCI_BLOB_REDIRECT_ORIGINS" not in error.cause
+    assert "secret-token" not in repr(vars(error))
+
+
+def test_redirect_origin_preserves_internal_registry_alias_but_omits_unsafe_authority():
+    client = oci._Client("internal_registry:8443", "approved/release", {})
+    error = oci._RedirectError(307, "unapproved_blob_origin", registry_origin=client.base,
+                               redirect_origin="https://bad%2Fsecret.example/storage?signature=private")
+    assert error.registry_origin == "https://internal_registry:8443"
+    assert error.redirect_origin is None
+    assert "secret" not in repr(vars(error)) and "private" not in repr(vars(error))
+
+
+def test_storage_redirect_reports_which_origin_redirected(registry):
+    digest = oci._digest(b"blob")
+    registry.blobs[digest] = b"blob"
+    registry.blob_redirect = True
+    registry.storage_redirects[("HEAD", "/objects/" + digest)] = (
+        307, "https://STORAGE.example:8443/private-object?signature=secret-token")
+    client = oci._Client(registry.host, "approved/release",
+                         {**registry.env, "CATS_OCI_BLOB_REDIRECT_ORIGINS": registry.storage_base})
+    with pytest.raises(oci._RedirectError) as caught:
+        client.upload(b"blob", "example")
+    error = caught.value
+    assert (error.reason, error.operation) == ("unapproved_blob_origin", "HEAD blob")
+    assert error.registry_origin == registry.base
+    assert error.redirect_from_origin == registry.storage_base
+    assert error.redirect_origin == "https://storage.example:8443"
+    assert all(secret not in repr(vars(error)) for secret in (registry.storage_query, "secret-token", "private-object"))
+    assert all(auth is None for _, _, auth in registry.storage_requests)
 
 
 def test_redirected_blob_digest_verification_preserves_unverified_publication(registry, files):

@@ -22,3 +22,11 @@ it('shows evidence without decision controls for a reader', async () => {
   await screen.findByText('Review frozen revision manifest');
   expect(screen.queryByRole('button',{name:'Activate revision'})).not.toBeInTheDocument();
 });
+
+it('shows the saved distribution from the revision manifest', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...revision, manifest:{distribution:{id:'d', name:'Partition A', inventory_id:'archive',
+    selection_digest:'sha256:selection', charts:[], enabled_chart_ids:[], disabled_chart_ids:[], images:['example/gateway:v3']}}});
+  render(<ReleaseRevision data={{}} approvalId="8" serviceId={9}/>);
+  expect(await screen.findByRole('heading', {name:'Partition A'})).toBeVisible();
+  expect(screen.getByText('sha256:selection')).toBeVisible();
+});

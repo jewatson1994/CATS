@@ -1,16 +1,17 @@
 """Live, fail-closed distribution decisions over existing CATS evidence."""
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
+from sqlalchemy import Text, cast, or_, select
 
 from .cyber_approvals import CyberApproval, digest as snapshot_digest
-from .cyber_approval_evidence import DIGEST, _identity, _repository_identity
+from .cyber_approval_evidence import DIGEST, _identity, _registry_path
 from .execution_summaries import payload_digest
-from .models import Service
+from .models import Execution, Service
 from .release_validity import require_current, utc
-from .service_evidence import current_execution
+from .service_evidence import current_execution, current_execution_id_query
 from . import release_revisions
 
 
@@ -22,7 +23,11 @@ class AuthorizationDecision:
     execution_id: int | None = None
 
 
-def _artifact_matches(snapshot, repository, digest):
+def _artifact_matches(snapshot, repository, digest, *, published=False):
+    host = repository.partition('/')[0]
+    expected = _registry_path(repository, host, explicit_host=True)
+    if not expected:
+        return False
     for artifact in snapshot.get('artifacts', []):
         if not isinstance(artifact, dict) or artifact.get('kind') not in {'image', 'chart'}:
             continue
@@ -31,7 +36,7 @@ def _artifact_matches(snapshot, repository, digest):
             continue
         try:
             reference, retained = _identity(artifact.get('reference'), artifact.get('digest'))
-            if retained == digest and _repository_identity(reference) == _repository_identity(repository):
+            if retained == digest and _registry_path(reference, host, explicit_host=published) == expected:
                 return True
         except ValueError:
             continue
@@ -62,9 +67,153 @@ def _published_artifact_matches(approval, repository, digest):
                 or artifact.get('scan_identity_retained') is not True or artifact.get('verification_status') != 'verified'
                 or artifact.get('identity_resolution') != 'retained-evidence'):
             continue
-        if _artifact_matches({'artifacts': [artifact]}, repository, digest):
+        if _artifact_matches({'artifacts': [artifact]}, repository, digest, published=True):
             return True
     return False
+
+
+def candidate_service_ids(db, mapping, digest):
+    """Locate potential owners of concrete upstream bytes; authorize each pull separately."""
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        return set()
+    repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
+    scanned = CyberApproval.snapshot['artifacts']
+    published = CyberApproval.publication['artifacts']
+    # Filter the artifact lists in the database, without hydrating scans,
+    # approval snapshots or publication receipts for unrelated services.
+    current_scan = current_execution_id_query(Service).correlate(Service).scalar_subquery()
+    query = (select(CyberApproval.service_id, scanned, published)
+             .join(Service, Service.id == CyberApproval.service_id)
+             .join(Execution, Execution.id == CyberApproval.source_execution_id)
+             .where(or_(CyberApproval.source_execution_id == current_scan,
+                        Execution.scan_scope == 'distribution'),
+                    or_(cast(scanned, Text).contains(digest),
+                        cast(published, Text).contains(digest))))
+    owners = set()
+    for service_id, source_artifacts, published_artifacts in db.execute(query):
+        for artifacts, published_location in ((source_artifacts, False), (published_artifacts, True)):
+            if isinstance(artifacts, list) and _artifact_matches(
+                    {'artifacts': artifacts}, repository, digest, published=published_location):
+                owners.add(service_id)
+                break
+    return owners
+
+
+def _distribution_execution(db, service, approval):
+    """A distribution never borrows the baseline scan or an earlier admission."""
+    from .cyber_approval_evidence import _distribution_assessment
+    from .discovery_models import DiscoveryDistribution
+    frozen = approval.snapshot.get('distribution')
+    if (not isinstance(frozen, dict) or not isinstance(frozen.get('id'), str)
+            or not DIGEST.fullmatch(str(frozen.get('selection_digest', '')))):
+        return None
+    saved = db.get(DiscoveryDistribution, frozen['id'], populate_existing=True)
+    if (saved is None or saved.service_id != service.id or not isinstance(saved.selection, dict)
+            or snapshot_digest(saved.selection) != saved.selection_digest):
+        return None
+    blockers = []
+    try:
+        selection, execution = _distribution_assessment(db, service, saved.id, blockers)
+        if (blockers or frozen != selection or execution is None
+                or execution.id != approval.source_execution_id
+                or execution.service_version is None or execution.service_version.service_id != service.id
+                or approval.snapshot.get('source_version_id') != execution.service_version_id
+                or not isinstance(execution.raw_payload, dict)
+                or execution.raw_payload.get('scan_scope') != 'distribution'
+                or execution.payload_digest != payload_digest(execution.raw_payload)):
+            return None
+        return execution
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def _distribution_policy_ages(db, service, execution, identities):
+    """Retain continuous policy episodes without reconciling baseline posture."""
+    from .discovery_models import DiscoveryDistributionScan
+    from .scan_coordination import ScanJob
+    from .main import policy_finding_identity, policy_finding_values
+    provenance = execution.raw_payload['service_overview']['definition_provenance']
+    retained = Execution.raw_payload['service_overview']['definition_provenance']
+    context = ScanJob.payload['definition_context']
+    ages = {identity: utc(execution.scanned_at) for identity in identities}
+    if not ages:
+        return ages
+    history = db.execute(select(Execution.scanned_at, Execution.complete,
+        Execution.raw_payload['policy_findings']).join(DiscoveryDistributionScan,
+        Execution.execution_key == 'public:' + DiscoveryDistributionScan.scan_job_id)
+        .join(ScanJob, ScanJob.id == DiscoveryDistributionScan.scan_job_id).where(
+        Execution.service_id == service.id, Execution.scan_scope == 'distribution',
+        Execution.id != execution.id, ScanJob.status == 'complete', ScanJob.service_key == service.service_key,
+        DiscoveryDistributionScan.distribution_id == provenance['distribution_id'],
+        retained['distribution_id'].as_string() == provenance['distribution_id'],
+        retained['selection_digest'].as_string() == provenance['selection_digest'],
+        context['distribution_id'].as_string() == provenance['distribution_id'],
+        context['selection_digest'].as_string() == provenance['selection_digest'])
+        .order_by(DiscoveryDistributionScan.created_at.desc(), DiscoveryDistributionScan.scan_job_id.desc()))
+    pending = set(ages)
+    for scanned_at, complete, items in history:
+        observed = {policy_finding_identity(policy_finding_values(item)) for item in items or []}
+        for identity in pending & observed:
+            ages[identity] = min(ages[identity], utc(scanned_at))
+        if complete:
+            pending &= observed
+        if not pending:
+            break
+    return ages
+
+
+def _distribution_service(db, service, execution):
+    """Project retained findings into the existing live policy evaluator.
+
+    Distribution ingestion intentionally does not reconcile baseline posture.
+    Use retained severity/observations, live matching exceptions, and the earlier
+    known episode age without changing the actual service or its relationships.
+    """
+    from .main import policy_finding_identity, policy_finding_values
+    payload = execution.raw_payload
+    existing = {row.cve: row for row in service.findings}
+    policies = {row.identity_key: row for row in service.policy_findings}
+
+    def state(index, row, earlier=None):
+        dates = [utc(execution.scanned_at)]
+        if row:
+            dates.append(utc(row.episode_started))
+        if earlier:
+            dates.append(utc(earlier))
+        return dict(id=index, active=True, exceptions=list(row.exceptions) if row else [],
+                    episode_started=min(dates))
+
+    findings = []
+    for index, item in enumerate(payload.get('findings') or [], 1):
+        evidence = dict(item.get('evidence') or {})
+        evidence.setdefault('kev', item.get('kev', False))
+        if item.get('epss') is not None:
+            evidence.setdefault('epss', item['epss'])
+        row = existing.get(item['cve'])
+        findings.append(SimpleNamespace(**state(index, row, row.first_seen if row else None),
+            cve=item['cve'], severity=item['severity'],
+            observations=[SimpleNamespace(id=index, evidence=evidence)]))
+    policy_findings = []
+    values_by_identity = {policy_finding_identity(values): values
+        for item in payload.get('policy_findings') or [] for values in [policy_finding_values(item)]}
+    policy_ages = _distribution_policy_ages(db, service, execution, values_by_identity)
+    for index, (identity, values) in enumerate(values_by_identity.items(), 1):
+        policy_findings.append(SimpleNamespace(**values,
+            **state(index, policies.get(identity), policy_ages[identity])))
+    return SimpleNamespace(id=service.id, service_key=service.service_key,
+        current_version_id=execution.service_version_id, current_version=execution.service_version,
+        manual_version=None, executions=[execution], findings=findings, policy_findings=policy_findings,
+        poam_entries=[], archive_events=service.archive_events)
+
+
+def project_tag_allowed(db, mapping, tag, digest, now=None):
+    """A revision-managed tag must sign this exact route and its current upstream bytes."""
+    try:
+        binding = release_revisions.resolve_distribution_tag(db, mapping, tag, now)
+    except ValueError:
+        return False
+    return binding is None or (binding['digest'] == digest
+                               and binding['upstream_repository'] == mapping.upstream_repository)
 
 
 def _payload_evidence_matches(db, approval, execution, service, active, now, _seen=None):
@@ -160,13 +309,10 @@ def authorize(db, mapping, digest, now=None):
     from .main import configuration_for_service, service_lifecycle, service_view
     if service_lifecycle(service) != 'active':
         return AuthorizationDecision(False, 'service_inactive')
-    execution = current_execution(db, service)
-    if execution is None:
-        return AuthorizationDecision(False, 'scan_missing')
+    baseline = execution = current_execution(db, service)
     def deny(reason, approval=None):
-        return AuthorizationDecision(False, reason, approval.id if approval else None, execution.id)
-    if not execution.complete:
-        return deny('scan_incomplete')
+        return AuthorizationDecision(False, reason, approval.id if approval else None,
+                                     execution.id if execution else None)
     policy = mapping.policy or {}
     if not isinstance(policy, dict):
         return deny('invalid_policy')
@@ -179,10 +325,6 @@ def authorize(db, mapping, digest, now=None):
     if max_age is not None:
         if type(max_age) is not int or not 1 <= max_age <= 3650:
             return deny('invalid_policy')
-        if now >= utc(execution.scanned_at) + timedelta(days=max_age):
-            return deny('scan_stale')
-    if utc(execution.scanned_at) > now:
-        return deny('scan_not_yet_valid')
     # Refresh relationship graphs so reused sessions cannot retain expired or
     # revoked exception state, findings, or newly arrived scan evidence.
     db.expire(service)
@@ -190,11 +332,6 @@ def authorize(db, mapping, digest, now=None):
         db.refresh(finding)
         for exception in finding.exceptions:
             db.refresh(exception)
-    view = service_view(service, now, configuration_for_service(db, service))
-    if view['incomplete']:
-        return deny('scan_incomplete')
-    if not view['compliant']:
-        return deny('service_noncompliant')
     repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
     # Once a service enters revision distribution, historical approvals cannot
     # bypass a missing, suspended, revoked, expired or unverifiable pointer.
@@ -209,11 +346,14 @@ def authorize(db, mapping, digest, now=None):
             repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + release_revisions.distribution_location(mapping, active, digest)
         except ValueError:
             return deny('signed_distribution_location_changed')
-    approvals = db.scalars(select(CyberApproval).where(
+    approvals = db.execute(select(CyberApproval, Execution.scan_scope)
+        .join(Execution, Execution.id == CyberApproval.source_execution_id).where(
         CyberApproval.service_id == service.id,
-        CyberApproval.source_execution_id == execution.id,
+        or_(CyberApproval.source_execution_id == (baseline.id if baseline else None),
+            Execution.scan_scope == 'distribution'),
     ).order_by(CyberApproval.id.desc()).execution_options(populate_existing=True))
-    for approval in approvals:
+    from .oci_lifecycle import _distribution_snapshot
+    for approval, scan_scope in approvals:
         if revision_managed and approval.id != active.approval_id:
             continue
         snapshot = approval.snapshot
@@ -223,6 +363,25 @@ def authorize(db, mapping, digest, now=None):
         if not isinstance(snapshot, dict) or not (_artifact_matches(snapshot, repository, digest)
                 or _published_artifact_matches(approval, repository, digest)):
             continue
+        distribution = _distribution_snapshot(snapshot) or scan_scope == 'distribution'
+        execution = _distribution_execution(db, service, approval) if distribution else baseline
+        if execution is None:
+            return deny('approval_evidence_changed' if distribution else 'scan_missing', approval)
+        if not execution.complete:
+            return deny('scan_incomplete', approval)
+        if max_age is not None and now >= utc(execution.scanned_at) + timedelta(days=max_age):
+            return deny('scan_stale', approval)
+        if utc(execution.scanned_at) > now:
+            return deny('scan_not_yet_valid', approval)
+        try:
+            subject = _distribution_service(db, service, execution) if distribution else service
+            view = service_view(subject, now, configuration_for_service(db, service))
+        except (AttributeError, KeyError, TypeError, ValueError):
+            return deny('approval_evidence_changed', approval)
+        if view['incomplete']:
+            return deny('scan_incomplete', approval)
+        if not view['compliant']:
+            return deny('service_noncompliant', approval)
         # A newer decision on these exact bytes supersedes older authorization.
         if approval.status != 'approved' or approval.revoked_at:
             return deny('approval_not_current', approval)
@@ -230,7 +389,7 @@ def authorize(db, mapping, digest, now=None):
             return deny('approval_evidence_changed', approval)
         if (snapshot.get('service_id') != service.id
                 or snapshot.get('source_execution_id') != execution.id
-                or snapshot.get('source_version_id') != service.current_version_id
+                or snapshot.get('source_version_id') != (execution.service_version_id if distribution else service.current_version_id)
                 or not _payload_evidence_matches(db, approval, execution, service, active, now)):
             return deny('approval_evidence_changed', approval)
         try:
@@ -240,4 +399,4 @@ def authorize(db, mapping, digest, now=None):
         if approval_age is not None and now >= utc(approval.decided_at) + timedelta(days=approval_age):
             return deny('approval_window_elapsed', approval)
         return AuthorizationDecision(True, 'approved', approval.id, execution.id)
-    return deny('digest_not_approved')
+    return deny('digest_not_approved' if baseline else 'scan_missing')

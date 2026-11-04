@@ -24,6 +24,7 @@ from sqlalchemy import select
 import yaml
 
 from . import release_oci, release_signing, signing
+from .delivery_execution import delivery_lock
 from .deployment_bundle import file_digest
 from .models import PortalSetting
 from .release_documentation import canonical, registry_environment
@@ -44,14 +45,17 @@ class PublicationValidationError(ValueError):
 
 
 def failure_diagnostic(exc, stage):
-    """Never retain exception text, command arguments, output, URLs or file paths."""
+    """Keep validated origins and fixed diagnostics. Omit URL paths, queries and tool output."""
     detail = {"stage": stage, "cause": "Unexpected publication error; inspect the worker using the correlation ID."}
     reason = exc.reason if isinstance(exc, URLError) else exc
     if isinstance(exc, PublicationValidationError):
         detail["cause"] = str(exc)
     elif isinstance(exc, release_oci._RedirectError):
-        detail["http_status"] = int(exc.status)
-        detail["cause"] = exc.cause
+        detail.update(http_status=int(exc.status), cause=exc.cause, redirect_reason=exc.reason)
+        for key in ("operation", "registry_origin", "redirect_from_origin", "redirect_origin"):
+            value = getattr(exc, key)
+            if value:
+                detail[key] = value
     elif isinstance(exc, release_oci._RegistryError):
         detail["http_status"] = int(exc.status)
         detail["cause"] = {
@@ -218,6 +222,25 @@ class _Transport:
         (self.root / "oci-layout").write_bytes(canonical({"imageLayoutVersion": "1.0.0"}))
         (self.root / "index.json").write_bytes(canonical({"schemaVersion": 2, "manifests": self.entries}))
 
+    def tag(self, client, descriptor, tag):
+        url = client.api + "/manifests/" + tag
+        try:
+            _, _, existing = client.request("GET", url)
+        except release_oci._RegistryError as exc:
+            if exc.status != 404:
+                raise
+        else:
+            if release_oci._digest(existing) == descriptor["digest"]:
+                return
+            raise PublicationValidationError("The release tag already identifies different content")
+        content = (self.blobs / descriptor["digest"][7:]).read_bytes()
+        status, _, _ = client.request("PUT", url, body=content, media_type=descriptor["mediaType"])
+        if status != 201:
+            raise PublicationValidationError("Destination did not accept the release tag")
+        _, _, retrieved = client.request("GET", url)
+        if release_oci._digest(retrieved) != descriptor["digest"]:
+            raise PublicationValidationError("Release tag verification failed")
+
 
 def _signature(transport, client, reference, config, credentials, env, layout_name):
     result = signing.sign_and_verify(reference, config, credentials, env)
@@ -268,6 +291,15 @@ def image_source(reference):
     return parsed['registry'], repository, identity
 
 
+def _repository_component(value):
+    """Preserve ordinary Service IDs and chart names without aliasing unsafe names."""
+    if not isinstance(value, str) or not value:
+        raise PublicationValidationError("Approved repository name is missing")
+    if "/" not in value and release_oci._REPOSITORY.fullmatch(value) and not value.startswith("cats-id-"):
+        return value
+    return "cats-id-" + hashlib.sha256(value.encode()).hexdigest()
+
+
 def _publish_image_archive(client, item, env, work, index):
     """Reuse the existing Skopeo Docker-archive delivery format, then verify the OCI graph."""
     path = _checked_file(item)
@@ -280,7 +312,7 @@ def _publish_image_archive(client, item, env, work, index):
     if env.get('SSL_CERT_FILE'):
         shutil.copyfile(env['SSL_CERT_FILE'], certdir / 'ca.crt')
     # Credentials/trust come from the same scoped destination environment used by OCI signing.
-    destination = client.api.removeprefix('https://').replace('/v2/', '/', 1) + ':retained'
+    destination = client.api.removeprefix('https://').replace('/v2/', '/', 1) + ':retained-' + item['digest'][7:]
     subprocess.run([skopeo, 'copy', '--authfile', str(Path(env['DOCKER_CONFIG']) / 'config.json'),
         '--dest-tls-verify=true', '--dest-cert-dir', str(certdir), '--digestfile', str(digestfile),
         'docker-archive:' + str(path), 'docker://' + destination],
@@ -405,11 +437,17 @@ def publish(db, approval, destination, checkpoint):
                 env = signing.clean_environment(environment)
                 transport = _Transport(root / "oci", env)
                 host = destination["endpoint"].removeprefix("https://").rstrip("/")
-                prefix = "/".join(filter(None, (destination.get("namespace", ""), "cyber-approved", approval.release_key.lower())))
+                namespace = destination.get("namespace") or "cyber-approved"
+                prefix = namespace + "/" + _repository_component(snapshot["service_key"])
                 for index, item in enumerate(artifacts):
                     check_worker()
                     stage = f"Transferring and verifying artifact {index + 1} of {len(artifacts)}"
-                    repository = f"{prefix}/{item['kind']}-{index}"
+                    if item["kind"] == "image":
+                        _, source_name, _ = image_source(item["reference"])
+                        repository = prefix + "/" + source_name.rsplit("/", 1)[-1]
+                    else:
+                        chart_name = item.get("name") or image_source(item["reference"])[1].rsplit("/", 1)[-1]
+                        repository = prefix + "/charts/" + _repository_component(chart_name)
                     target = release_oci._Client(host, repository, env)
                     if item.get("path"):
                         digest = (_publish_image_archive(target, item, env, root, index)
@@ -418,7 +456,7 @@ def publish(db, approval, destination, checkpoint):
                     else:
                         source_host, source_repository, digest = image_source(item["reference"])
                         retrieval_env = env if source_host == host else source_envs.get(source_host, source_env)
-                        source = release_oci._Client(source_host, source_repository, retrieval_env)
+                        source = release_oci._Client(source_host, source_repository, retrieval_env, pull_only=True)
                         if item.get('resolve_at_publication'):
                             retained = receipt['resolved_images'].get(str(index))
                             if retained:
@@ -434,6 +472,8 @@ def publish(db, approval, destination, checkpoint):
                         descriptor = transport.graph(source, digest, target)
                     name = f"artifact-{index}"
                     transport.entry(descriptor, name)
+                    tag = f"approval-{approval.id}-{index + 1}"
+                    transport.tag(target, descriptor, tag)
                     reference = f"{host}/{repository}@{digest}"
                     artifact = {"kind": item["kind"], "source_reference": item.get("reference"),
                                 "source_references": item.get("source_references", [item["reference"]] if item.get("reference") else []),
@@ -441,12 +481,17 @@ def publish(db, approval, destination, checkpoint):
                                 "source_digest": item["digest"] or digest,
                                 "scan_identity_retained": not bool(item.get('resolve_at_publication')),
                                 "identity_resolution": 'publication' if item.get('resolve_at_publication') else 'retained-evidence',
-                                "reference": reference, "digest": digest, "layout_name": name,
+                                "reference": reference, "digest": digest, "layout_name": name, "tag": tag,
                                 "repository_suffix": f"{item['kind']}-{index}", "verification_status": "verified"}
                     receipt["artifacts"].append(artifact)
                     save()
                     stage = f"Signing and verifying artifact {index + 1} of {len(artifacts)}"
-                    artifact["signature"] = _signature(transport, target, reference, config, credentials, env, name + "-signature")
+                    # Cosign appends approval annotations to a shared per-digest signature tag.
+                    with delivery_lock(evidence.parent.parent / ".signatures", snapshot["service_id"], wait=True) as owned:
+                        if not owned:
+                            raise PublicationValidationError("Another release is signing this service. Retry publication.")
+                        check_worker()
+                        artifact["signature"] = _signature(transport, target, reference, config, credentials, env, name + "-signature")
                     save()
                 manifest = {"format": "cats-cyber-approved-release-v1", "release_key": approval.release_key,
                             "approval_id": approval.id, "snapshot_digest": approval.snapshot_digest,
@@ -469,12 +514,13 @@ def publish(db, approval, destination, checkpoint):
                 if signed.get("signature_status") != "verified":
                     raise PublicationValidationError("Release manifest signing failed")
                 documents.update({name: root / name for name in ("release-manifest.json", "release-manifest.sig")})
-                client = release_oci._Client(host, prefix + "/release", env)
+                release_repository = prefix + "/releases/" + _repository_component(approval.release_key)
+                client = release_oci._Client(host, release_repository, env)
                 stage = "Publishing release documents"
                 digest = _publish_files(client, documents)
                 descriptor = transport.graph(client, digest)
                 transport.entry(descriptor, "release")
-                reference = f"{host}/{prefix}/release@{digest}"
+                reference = f"{host}/{release_repository}@{digest}"
                 receipt["release"] = {"reference": reference, "digest": digest, "layout_name": "release", "repository_suffix": "release"}
                 stage = "Signing published release"
                 receipt["release"]["signature"] = _signature(transport, client, reference, config, credentials, env, "release-signature")

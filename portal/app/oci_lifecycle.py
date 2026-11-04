@@ -16,6 +16,7 @@ from . import cyber_approvals as approvals, signing
 from .service_oci import _csrf
 router = APIRouter()
 KIND = 'oci_reassessment'
+DISTRIBUTION_REVIEW = 'Scan the saved distribution and request a new Cyber review.'
 
 class OCIReassessmentSchedule(Base):
     __tablename__ = 'oci_reassessment_schedules'
@@ -29,7 +30,7 @@ class OCIReassessmentEvent(Base):
     __tablename__ = 'oci_reassessment_events'
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     approval_id: Mapped[int] = mapped_column(ForeignKey('cyber_approvals.id'), index=True)
-    scan_id: Mapped[str | None] = mapped_column(String(64))
+    scan_id: Mapped[str | None] = mapped_column(String(64), index=True)
     state: Mapped[str] = mapped_column(String(32), default='queued')
     renewal_id: Mapped[int | None] = mapped_column(ForeignKey('cyber_approvals.id'))
     detail: Mapped[str] = mapped_column(Text, default='')
@@ -64,9 +65,29 @@ def public_keys(db):
 def key_discovery(db: Session = Depends(get_db)):
     return public_keys(db)
 
+def _distribution_snapshot(snapshot):
+    return ('distribution' in snapshot or snapshot.get('evidence_scope') in
+            ('service-distribution-scan', 'current-distribution-scan'))
+
+
+def guard_reassessment_ingest(db, scan_id):
+    # Legacy dispatchers recorded a public service-scope scan on the event.
+    # Its worker may reach automatic ingestion before lifecycle reconciliation.
+    originals = db.scalars(select(approvals.CyberApproval.snapshot).select_from(OCIReassessmentEvent)
+        .outerjoin(approvals.CyberApproval, approvals.CyberApproval.id == OCIReassessmentEvent.approval_id)
+        .where(OCIReassessmentEvent.scan_id == scan_id))
+    for snapshot in originals:
+        if snapshot is None:
+            raise HTTPException(409, 'The original reassessment approval is unavailable.')
+        if _distribution_snapshot(snapshot):
+            raise HTTPException(409, DISTRIBUTION_REVIEW)
+
+
 def scan_references(row):
     if hasattr(row, 'snapshot_digest') and row.snapshot_digest != approvals.digest(row.snapshot):
         raise HTTPException(409, 'Approval evidence integrity check failed')
+    if _distribution_snapshot(row.snapshot):
+        raise HTTPException(409, DISTRIBUTION_REVIEW)
     items = row.snapshot.get('artifacts') or []
     if not items or any(i.get('kind') != 'image' or i.get('archive_path') or i.get('format') == 'docker-archive' for i in items):
         raise HTTPException(409, 'Scheduled reassessment requires registry-backed images only; charts and archives need a full assessment')
@@ -100,9 +121,10 @@ async def schedule(identity: int, request: Request, db: Session = Depends(get_db
 
 @router.get('/api/cyber-approvals/{identity}/reassessment')
 def events(identity: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
-    approvals._record(db, auth, identity)
+    approval = approvals._record(db, auth, identity)
     item = db.get(OCIReassessmentSchedule, identity)
-    return {'schedule': {'interval_days': item.interval_days, 'enabled': item.enabled, 'next_run': item.next_run.isoformat()} if item else None,
+    return {'reassessment_blocker': DISTRIBUTION_REVIEW if _distribution_snapshot(approval.snapshot) else None,
+            'schedule': {'interval_days': item.interval_days, 'enabled': item.enabled, 'next_run': item.next_run.isoformat()} if item else None,
             'events': [{'id': r.id, 'state': r.state, 'scan_id': r.scan_id, 'renewal_id': r.renewal_id, 'detail': r.detail}
             for r in db.scalars(select(OCIReassessmentEvent).where(OCIReassessmentEvent.approval_id == identity).limit(100))]}
 
@@ -112,7 +134,7 @@ def enqueue_due(db, clock=None):
         OCIReassessmentSchedule.next_run <= clock).with_for_update(skip_locked=True).limit(100)).all()
     for item in schedules:
         row = db.get(approvals.CyberApproval, item.approval_id)
-        if not row or row.revoked_at or row.status != 'approved':
+        if not row or row.revoked_at or row.status != 'approved' or _distribution_snapshot(row.snapshot):
             item.enabled = False
             continue
         job = submit(db, kind=KIND, payload={'approval_id': row.id}, service_id=row.service_id,
@@ -138,8 +160,13 @@ def handle(ctx, payload):
     with main.SessionLocal() as db:
         event = db.get(OCIReassessmentEvent, ctx.job.id)
         row = db.get(approvals.CyberApproval, payload['approval_id'])
-        if not event or not row or row.revoked_at or row.status != 'approved':
+        if (not event or not row or event.approval_id != row.id or row.service_id != ctx.job.service_id
+                or row.revoked_at or row.status != 'approved'):
             raise JobError('Release is no longer eligible for reassessment')
+        if _distribution_snapshot(row.snapshot):
+            event.state, event.detail = 'review_required', DISTRIBUTION_REVIEW
+            db.commit()
+            raise JobError(DISTRIBUTION_REVIEW)
         auth, service = _actor(db, ctx.job)
         if event.scan_id:
             return {'scan_id': event.scan_id}
@@ -161,6 +188,10 @@ def reconcile(db):
     from . import main
     for event in db.scalars(select(OCIReassessmentEvent).where(OCIReassessmentEvent.state.in_(('queued', 'scanning')))
                            .with_for_update(skip_locked=True).limit(100)):
+        original = db.get(approvals.CyberApproval, event.approval_id)
+        if original and _distribution_snapshot(original.snapshot):
+            event.state, event.detail = 'review_required', DISTRIBUTION_REVIEW
+            continue
         job = db.get(DurableJob, event.id)
         if not job:
             event.state, event.detail = 'failed', 'Dispatcher missing'
@@ -175,8 +206,8 @@ def reconcile(db):
         elif scan.get('status') == 'complete':
             try:
                 auth, service = _actor(db, job)
-                original = db.get(approvals.CyberApproval, event.approval_id)
-                if original.revoked_at or original.status != 'approved':
+                if (not original or original.service_id != service.id or job.payload.get('approval_id') != original.id
+                        or original.revoked_at or original.status != 'approved'):
                     raise JobError('Release is no longer eligible for renewal')
                 ingested = main.ingest_public_scan(event.scan_id, service.service_key, _request({}, auth), scan_scope='service', db=db, auth=auth)
                 result = asyncio.run(approvals.request_approval(_request({'service_key': service.service_key,

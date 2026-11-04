@@ -26,10 +26,14 @@ def descriptor(content, media_type="application/octet-stream"):
 
 @pytest.fixture
 def environment(tmp_path, monkeypatch):
+    return publication_environment(tmp_path, monkeypatch, in_memory_registry=True)
+
+
+def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
     stores = {}
 
     class Registry:
-        def __init__(self, host, repository, env=None):
+        def __init__(self, host, repository, env=None, *, pull_only=False):
             self.api = f"https://{host}/v2/{repository}"
             self.data = stores.setdefault((host, repository), {"manifests": {}, "blobs": {}})
 
@@ -43,17 +47,21 @@ def environment(tmp_path, monkeypatch):
             kind, digest = endpoint.split("/", 1)
             if method == "PUT":
                 self.data[kind][digest] = body
+                self.data[kind][release_oci._digest(body)] = body
                 return 201, None, b""
+            if digest not in self.data[kind]:
+                raise release_oci._RegistryError(404)
             content = self.data[kind][digest]
             return 200, SimpleNamespace(get_content_type=lambda: release_oci.MANIFEST_TYPE), content
 
-    monkeypatch.setattr(release_oci, "_Client", Registry)
     monkeypatch.setattr(publication.shutil, "which", lambda name: name)
 
     @contextmanager
     def registry_environment(destination, certificates=()):
         yield {}
-    monkeypatch.setattr(publication, "registry_environment", registry_environment)
+    if in_memory_registry:
+        monkeypatch.setattr(release_oci, "_Client", Registry)
+        monkeypatch.setattr(publication, "registry_environment", registry_environment)
     private = ec.generate_private_key(ec.SECP256R1())
     public = private.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
     private_pem = private.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
@@ -85,14 +93,14 @@ def environment(tmp_path, monkeypatch):
 
     def sign_and_verify(reference, config, credentials, env):
         host, repository, digest = release_oci._reference(reference)
-        client = Registry(host, repository)
+        client = release_oci._Client(host, repository, env)
         payload = publication.canonical({"critical": {"image": {"docker-manifest-digest": digest}}, "optional": config.get("approval_annotations", {})})
         layer = client.upload(payload, "application/vnd.dev.cosign.simplesigning.v1+json")
         layer["annotations"] = {"dev.cosignproject.cosign/signature": sign(payload)}
         content = publication.canonical({"schemaVersion": 2, "mediaType": release_oci.MANIFEST_TYPE,
                                          "config": client.upload(b"{}", "application/vnd.oci.empty.v1+json"), "layers": [layer]})
-        client.data["manifests"]["sha256-" + digest[7:] + ".sig"] = content
-        client.data["manifests"][release_oci._digest(content)] = content
+        client.request("PUT", client.api + "/manifests/sha256-" + digest[7:] + ".sig",
+                       body=content, media_type=release_oci.MANIFEST_TYPE)
         return {"signature_status": "verified", "signature": {"key_fingerprint": fingerprint}}
     monkeypatch.setattr(signing, "sign_and_verify", sign_and_verify)
     source = Registry("source.example", "app")
@@ -111,9 +119,10 @@ def environment(tmp_path, monkeypatch):
         member = tarfile.TarInfo("sample/Chart.yaml")
         member.size = len(data)
         archive.addfile(member, io.BytesIO(data))
-    snapshot = {"evidence": {"path": str(evidence), "digest": publication.file_digest(evidence)},
+    snapshot = {"service_id": 12, "service_key": "demo",
+                "evidence": {"path": str(evidence), "digest": publication.file_digest(evidence)},
                 "artifacts": [{"kind": "image", "reference": "source.example/app@" + digest, "digest": digest},
-                              {"kind": "chart", "path": str(chart), "digest": publication.file_digest(chart)}]}
+                              {"kind": "chart", "name": "sample", "path": str(chart), "digest": publication.file_digest(chart)}]}
     destination = {"id": "saved:3", "endpoint": "https://approved.example", "namespace": "team"}
     decided_at = datetime.now(timezone.utc)
     snapshot.update(destination=destination, signing_fingerprint=fingerprint, approval_validity=release_validity.new_validity(decided_at))
@@ -420,7 +429,10 @@ def test_publication_rejects_legacy_approval_without_registry_writes(environment
 @pytest.mark.parametrize('exception,expected', [
     (release_oci._RegistryError(403), 'Registry access was denied'),
     (release_oci._RegistryError(307), 'redirect that could not be followed'),
-    (release_oci._RedirectError(307, 'unapproved_origin'), 'CATS_OCI_BLOB_REDIRECT_ORIGINS'),
+    (release_oci._RedirectError(307, 'unapproved_blob_origin',
+                                registry_origin='https://registry.example', redirect_origin='https://storage.example',
+                                operation='GET blob'), 'CATS_OCI_BLOB_REDIRECT_ORIGINS'),
+    (release_oci._RedirectError(307, 'cross_origin_operation'), 'original origin'),
     (release_oci._RedirectError(308, 'limit'), 'redirect loop'),
     (release_oci._RedirectError(307, 'missing_location'), 'did not include a destination'),
     (release_oci._RedirectError(307, 'invalid_location'), 'credential-free HTTPS'),
@@ -443,6 +455,12 @@ def test_publication_failure_retains_safe_stage_and_cause(environment, monkeypat
     assert 'secret' not in json.dumps(receipt)
     if isinstance(exception, release_oci._RegistryError):
         assert receipt['diagnostic']['http_status'] == exception.status
+    if isinstance(exception, release_oci._RedirectError):
+        assert receipt['diagnostic']['redirect_reason'] == exception.reason
+        if exception.reason == 'unapproved_blob_origin':
+            assert receipt['diagnostic']['registry_origin'] == 'https://registry.example'
+            assert receipt['diagnostic']['redirect_origin'] == 'https://storage.example'
+            assert receipt['diagnostic']['operation'] == 'GET blob'
     if isinstance(exception, subprocess.CalledProcessError):
         assert receipt['diagnostic']['exit_code'] == 7
 

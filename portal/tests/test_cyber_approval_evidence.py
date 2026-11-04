@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -8,9 +9,193 @@ from sqlalchemy import select
 from app import cyber_approval_evidence as evidence
 from app.models import Service, Execution
 from app.execution_summaries import payload_digest
-from test_portal import setup_function, new_client, payload, pipeline_headers, SessionLocal
+from test_cyber_release_publication import environment as publication_environment
+from test_portal import setup_function, new_client, csrf, payload, pipeline_headers, SessionLocal
+from test_retained_evidence_exports import document
 
 D = 'sha256:' + 'a' * 64
+
+SELECTED = 'source.example/app:1'
+EXCLUDED = 'source.example/optional:1'
+
+
+def retained_reports(images):
+    reports = []
+    for index, image in enumerate(images):
+        reports.append(document(image=image, name=f'grype-{index}.json'))
+        reports.append(document(b'{"artifacts":[]}', image=image, category='sbom',
+                                format='syft-json', name=f'syft-{index}.json'))
+    return reports
+
+
+@pytest.fixture
+def distribution_case(tmp_path, monkeypatch):
+    from app import cyber_approvals, main
+    from app.discovery_models import DiscoveryConfirmation, DiscoveryInventory
+    from app.durable_jobs import DurableJob
+    from app.models import Role, User, UserRoleAssignment
+
+    seeded()
+    client = new_client()
+    token = csrf(client)
+    monkeypatch.setattr(main, 'PUBLIC_JOB_ROOT', tmp_path / 'scans')
+    monkeypatch.setattr(cyber_approvals, 'root', lambda: tmp_path / 'approvals')
+    inventory = {'completeness': 'complete', 'roots': [{'id': 'product', 'technology': 'kubernetes'}],
+                 'nodes': [], 'edges': [], 'images': []}
+    # Invert the Discovery defaults to prove that the release uses the saved selection.
+    for name, reference, default, checksum in [('api', SELECTED, False, 'a'), ('optional', EXCLUDED, True, 'b')]:
+        inventory['nodes'].append({'id': name, 'name': name, 'root_id': 'product', 'kind': 'ChartReference',
+            'state': 'rendered', 'provenance': [{'enabled': default, 'version': '1.2.3', 'path': 'values.yaml',
+                'reference': 'oci://charts.example/' + name, 'chart_sha256': checksum * 64, 'chart_digest_kind': 'archive'}]})
+        inventory['edges'].append({'kind': 'declares', 'source': 'product', 'target': name})
+        inventory['images'].append({'root_id': 'product', 'component_id': name, 'reference': reference})
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        group_id = service.groups[0].id
+        baseline_version = service.current_version_id
+        baseline_execution = db.scalar(select(Execution.id))
+        admin_id = db.scalar(select(User.id).where(User.username == 'admin'))
+        db.add(UserRoleAssignment(user_id=admin_id, service_id=service.id,
+                                  role_id=db.scalar(select(Role.id).where(Role.name == 'Service Manager'))))
+        db.add(DurableJob(id='discovery', kind='discovery', status='completed'))
+        db.flush()
+        db.add(DiscoveryInventory(id='inventory', job_id='discovery', group_id=group_id, source_hash='d' * 64,
+                                  content_hash='e' * 64, inventory=inventory))
+        db.flush()
+        db.add(DiscoveryConfirmation(id='confirmed', inventory_id='inventory', service_id=service.id,
+                                     confirmed_by=admin_id, root_ids=['product']))
+        db.add(cyber_approvals.ApprovedReleaseDestination(name='Approved', endpoint='https://approved.example',
+                                                         namespace='team', group_ids=[group_id]))
+        db.commit()
+    base = '/api/services/payments-service'
+    created = client.post(base + '/distributions', json={'csrf_token': token, 'name': 'Core',
+                          'confirmation_id': 'confirmed', 'enabled_chart_ids': ['api']})
+    assert created.status_code == 200, created.text
+    selected = created.json()['distribution']
+
+    def scan(images, extra_report_image=None):
+        admitted = client.post(f"{base}/distributions/{selected['id']}/scan", json={'csrf_token': token})
+        assert admitted.status_code == 200, admitted.text
+        job_id = admitted.json()['job_id']
+        assert main.PUBLIC_JOBS[job_id]['image_list'].splitlines() == [SELECTED]
+        body = payload('worker', datetime.now(timezone.utc), [])
+        body['service_overview'] = {'images': [{'image': ref, 'digest': pin} for ref, pin in images]}
+        body['sbom_components'] = [{'image': ref, 'image_digest': pin, 'name': 'openssl', 'version': '1'}
+                                   for ref, pin in images]
+        report_images = [ref for ref, _ in images]
+        if extra_report_image:
+            report_images.append(extra_report_image)
+        body['evidence_documents'] = retained_reports(report_images)
+        output = main.PUBLIC_JOB_ROOT / job_id / 'output' / 'portal-result.json'
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(body), encoding='utf-8')
+        main.PUBLIC_JOBS.update_job(job_id, {'status': 'complete'})
+        ingested = client.post(f'/api/public/jobs/{job_id}/ingest', params={'service_id': 'payments-service'})
+        assert ingested.status_code == 200, ingested.text
+        return job_id
+
+    return SimpleNamespace(client=client, headers={'X-CSRF-Token': token}, selected=selected, scan=scan,
+        ready=base + '/cyber-approval-readiness', baseline_version=baseline_version, baseline_execution=baseline_execution)
+
+
+@pytest.mark.parametrize('governed_revision', [False, True], ids=['normal-publication', 'governed-revision'])
+def test_distribution_scan_through_signed_publication(distribution_case, publication_environment, tmp_path,
+                                                      monkeypatch, governed_revision):
+    from app import artifact_catalog, cyber_approvals, cyber_release_publication, release_revisions, signing
+    from app.models import Finding
+
+    case, registry = distribution_case, publication_environment
+    pin = registry.approval.snapshot['artifacts'][0]['digest']
+    params = {'distribution_id': case.selected['id']}
+    request = {'service_key': 'payments-service', **params}
+    material = signing.job_material({}, 'push')
+    config, _ = material
+    monkeypatch.setattr(signing, 'configuration', lambda _: {'fingerprint': registry.fingerprint,
+                        'public_key': config['signing_public_key'], 'enabled': True, 'private_key': 'fixture'})
+    if governed_revision:
+        monkeypatch.setattr(release_revisions, 'root', lambda: tmp_path / 'approvals')
+        with SessionLocal() as db:
+            artifact = artifact_catalog.register_artifact(db, digest=pin, media_type='application/vnd.oci.image.manifest.v1+json')
+            artifact_catalog.assign_artifact(db, service_id=db.scalar(select(Service.id)), artifact_id=artifact.id)
+            request['release_revision'] = {'artifact_ids': [artifact.id], 'base_revision_id': None}
+            db.commit()
+    case.scan([(SELECTED, pin)])
+    first = case.client.get(case.ready, params=params).json()
+    assert first['ready'], first['blockers']
+    job_id = case.scan([(SELECTED, pin)])
+    ready = case.client.get(case.ready, params=params).json()
+    assert ready['ready'], ready['blockers']
+    assert ready['source_execution_id'] != first['source_execution_id']
+    stale = case.client.post('/api/cyber-approvals', headers=case.headers,
+        json={**request, 'expected_source_execution_id': first['source_execution_id']})
+    assert stale.status_code == 409 and 'scan changed' in stale.text
+    assert case.client.get(case.ready).json()['source_execution_id'] == case.baseline_execution
+    created = case.client.post('/api/cyber-approvals', headers=case.headers,
+        json={**request, 'expected_source_execution_id': ready['source_execution_id']})
+    assert created.status_code == 200, created.text
+    assert all(chart['source_path'] == 'values.yaml' for chart in created.json()['snapshot']['distribution']['charts'])
+    approval_id = created.json()['id']
+    decided = case.client.post(f'/api/cyber-approvals/{approval_id}/decision', headers=case.headers,
+        json={'decision': 'approved', 'rationale': 'Reviewed the Core distribution.'})
+    assert decided.status_code == 200, decided.text
+    with SessionLocal() as db:
+        assert db.scalar(select(Service)).current_version_id == case.baseline_version
+        assert db.scalar(select(Finding).where(Finding.cve == 'CVE-1')).active
+        row = db.get(cyber_approvals.CyberApproval, approval_id)
+        execution = db.get(Execution, row.source_execution_id)
+        assert execution.execution_key == 'public:' + job_id and execution.scan_scope == 'distribution'
+        assert row.snapshot['source_payload_digest'] == execution.payload_digest
+        frozen = row.snapshot['distribution']
+        assert frozen == ready['distribution']
+        assert frozen['selection_digest'] == case.selected['selection_digest']
+        assert frozen['content_hash'] == 'e' * 64 and frozen['images'] == [SELECTED]
+        assert frozen['enabled_chart_ids'] == ['api'] and frozen['disabled_chart_ids'] == ['optional']
+        assert [(c['id'], c['default_enabled'], c['content_digest']) for c in frozen['charts']] == [
+            ('api', False, 'a' * 64), ('optional', True, 'b' * 64)]
+        assert row.snapshot['findings']['vulnerabilities'] == []
+        with ZipFile(row.snapshot['evidence']['path']) as archive:
+            assert json.loads(archive.read('distribution.json')) == frozen
+            assert {item['image'] for item in json.loads(archive.read('sbom-components.json'))} == {SELECTED}
+            for name in ('raw-scanner-outputs.zip', 'sboms.zip'):
+                with ZipFile(BytesIO(archive.read(name))) as reports:
+                    manifest = json.loads(reports.read('manifest.json'))
+                    assert manifest['execution_id'] == 'public:' + job_id
+                    assert [entry['image'] for entry in manifest['entries']] == [SELECTED]
+                    assert reports.read(manifest['entries'][0]['archive_name']) == (
+                        b'{"matches":[]}\r\n' if name == 'raw-scanner-outputs.zip' else b'{"artifacts":[]}')
+        receipt = cyber_release_publication.publish(db, row, row.destination, lambda _: None)
+        if governed_revision:
+            signed = release_revisions.publish_manifest(db, row, material)
+            assert signed['signature_status'] == 'verified' and signed['key_fingerprint'] == registry.fingerprint
+            revision = db.scalar(select(release_revisions.ReleaseRevision).where(
+                release_revisions.ReleaseRevision.approval_id == approval_id))
+            signed_revision = json.loads((release_revisions.manifest_directory(revision) / 'release-manifest.json').read_bytes())
+            assert signed_revision['distribution'] == frozen
+            assert [a['digest'] for a in signed_revision['artifacts']] == [pin]
+    assert receipt['status'] == 'published', receipt
+    output = tmp_path / 'offline'
+    with ZipFile(receipt['bundle_path']) as bundle:
+        bundle.extractall(output)
+    cyber_release_publication.verify_local(output, registry.fingerprint)
+    manifest = json.loads((output / 'release-manifest.json').read_bytes())
+    assert manifest['snapshot']['distribution'] == frozen
+    assert [item['source_reference'] for item in manifest['artifacts']] == ['source.example/app@' + pin]
+
+
+@pytest.mark.parametrize('images,extra_report_image', [
+    ([], None), ([(SELECTED, D), (EXCLUDED, 'sha256:' + 'b' * 64)], None), ([(SELECTED, D)], EXCLUDED),
+], ids=['missing-selected-image', 'unexpected-disabled-image', 'off-scope-original-reports'])
+def test_distribution_refuses_different_scanned_images(distribution_case, images, extra_report_image):
+    case = distribution_case
+    case.scan(images, extra_report_image)
+    params = {'distribution_id': case.selected['id']}
+    ready = case.client.get(case.ready, params=params).json()
+    assert not ready['ready']
+    assert any('distribution' in blocker.lower() and 'image' in blocker.lower() for blocker in ready['blockers'])
+    denied = case.client.post('/api/cyber-approvals', headers=case.headers,
+        json={'service_key': 'payments-service', **params, 'expected_source_execution_id': ready['source_execution_id']})
+    assert denied.status_code == 409
+    assert denied.json()['detail']['blockers'] == ready['blockers']
 
 
 def seeded(scan_scope='service'):
@@ -21,6 +206,7 @@ def seeded(scan_scope='service'):
     for finding in body['findings']:
         finding['image'] = 'registry.example/app:1'
     body['sbom_components'] = [{'name': 'pkg', 'version': '1', 'image': 'registry.example/app:1'}]
+    body['evidence_documents'] = retained_reports(['registry.example/app:1'])
     body['helm_values_files'] = ['app/values.yaml']
     body['service_overview'] = {'images': [{'image': 'registry.example/app:1', 'digest': D}],
         'charts': [{'name': 'app', 'version': '1.0.0'}],
@@ -256,7 +442,8 @@ def test_image_only_freezes_actual_export_all(tmp_path, scan_scope):
         with ZipFile(snapshot['evidence']['path']) as archive:
             assert json.loads(archive.read('sbom-components.json'))['execution_id'] == execution.execution_key
             assert {'ppsm.xlsx', 'poam.xlsx', 'asset_list.xlsx', 'mitigations.xlsx', 'findings.xlsx',
-                    'diagrams.zip', 'sbom-components.json', 'frozen-snapshot.json'}.issubset(archive.namelist())
+                    'diagrams.zip', 'sbom-components.json', 'raw-scanner-outputs.zip', 'sboms.zip',
+                    'frozen-snapshot.json'}.issubset(archive.namelist())
             from openpyxl import load_workbook
             with archive.open('findings.xlsx') as stream:
                 book = load_workbook(stream)

@@ -24,6 +24,10 @@ The top-level **Approvals** queue lists pending, approved, and denied requests. 
 
 The **Approved Releases** catalog separates the Cyber decision from publication status. Open a release to inspect the decision record, destination, immutable artifact references, signature evidence, and available evidence or offline downloads. Pull and deployment instructions are shown with the release. Deploy the immutable references recorded there instead of a mutable tag.
 
+**Supporting evidence → Artifacts** shows the original sources reviewed by Cyber. For a service with ID `demo` and destination namespace `cyber-approved`, publishing `docker.io/library/node` writes `cyber-approved/demo/node` in the destination registry. Each image and chart receives an `approval-<approval-id>-<artifact-number>` tag. The signed receipt maps each source to its exact destination digest, including when two sources share the same image name. Charts live under `demo/charts/<chart-name>` within the project, and release documents under `demo/releases/<release-key>`. Service IDs and chart names that cannot be used literally in a repository get a deterministic encoded name.
+
+For Docker Hub sources the worker contacts Docker's registry and token service, and follows Docker's content-delivery redirect for image layers. A Harbor destination that serves its own layers needs no blob redirect setting for this workflow. A disconnected worker needs an accessible source or mirror containing the approved image. [Docker network endpoints](https://docs.docker.com/desktop/enterprise/allow-list/)
+
 For a failed publication, authorized reviewers can choose **Retry publication**. Refresh the release to view publication progress and errors. A retry publishes the same approved snapshot; it does not approve new service changes.
 
 Revoked releases and their retained artifacts remain available for audit history only and are no longer authorized for deployment. Revocation does not remove already imported artifacts or automatically enforce a policy in running clusters. Registry access controls and deployment admission policies must enforce who can retrieve or deploy those artifacts.

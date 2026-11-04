@@ -10,6 +10,79 @@ const inventory = {roots: [{id: 'root', path: 'deploy/chart', technology: 'helm'
 
 afterEach(() => vi.unstubAllGlobals());
 
+async function openRecent() {
+  fireEvent.change(await screen.findByLabelText('Recent discoveries'), {target: {value: 'job-1'}});
+}
+
+it('rediscovers ongoing runs on return and lets the user start fresh while a run continues', async () => {
+  const running = {id: 'older', filename: 'stack.zip', group_id: 1, status: 'running', stage: 'Rendering'};
+  const fresh = {id: 'fresh', filename: 'images.txt', group_id: 1, status: 'queued'};
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/ongoing')) return Response.json({jobs: [running]});
+    if (url.endsWith('/older')) return Response.json({job: running, inventory: null});
+    if (url.endsWith('/fresh')) return Response.json({job: fresh, inventory: null});
+    if (init?.method === 'POST') return Response.json({job_id: fresh.id});
+    return Response.json(catalog);
+  });
+  vi.stubGlobal('fetch', fetch);
+  const firstVisit = render(<Page data={{csrf_token: 'token'}}/>);
+  fireEvent.click(await screen.findByRole('button', {name: 'Open discovery stack.zip · older'}));
+  await screen.findByText('running · Rendering', {selector: '[role="status"]'});
+  firstVisit.unmount();
+
+  render(<Page data={{csrf_token: 'token'}}/>);
+  expect(await screen.findByText('No discovery selected')).toBeVisible();
+  fireEvent.click(await screen.findByRole('button', {name: 'Open discovery stack.zip · older'}));
+  await screen.findByText('running · Rendering', {selector: '[role="status"]'});
+  fireEvent.change(screen.getByLabelText('Environment'), {target: {value: 'old-environment'}});
+  fireEvent.click(screen.getByRole('button', {name: 'New discovery'}));
+  expect(screen.getByText('No discovery selected')).toBeVisible();
+  expect(screen.getByLabelText('Owning group')).toHaveFocus();
+  expect(screen.getByLabelText('Environment')).toHaveValue('');
+  expect(screen.getByRole('button', {name: 'Open discovery stack.zip · older'})).toBeEnabled();
+  expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith('/job-1'))).toBe(false);
+
+  fireEvent.change(screen.getByLabelText('Owning group'), {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Source type'), {target: {value: 'reference'}});
+  fireEvent.change(screen.getByLabelText('OCI image or chart reference'), {target: {value: 'nginx:1'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Start discovery'}));
+  expect(await screen.findByText('images.txt · fresh')).toBeVisible();
+});
+
+it('cancels a queued run from the list and shows pending cancellation for a running discovery', async () => {
+  const queued = {id: 'queue', status: 'queued', group_id: 1, cancel_requested: false};
+  const running = {id: 'work', status: 'running', group_id: 1, cancel_requested: false};
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith('/ongoing')) return Response.json({jobs: [queued, running].filter(item => item.status !== 'cancelled')});
+    if (url.endsWith('/work')) return Response.json({job: running, inventory: null});
+    if (url.endsWith('/job-1')) return Response.json({job: catalog.jobs[0], inventory});
+    if (init?.method === 'POST') {
+      const job = url.endsWith('/queue/cancel') ? queued : running;
+      if (job === queued) job.status = 'cancelled';
+      job.cancel_requested = true;
+      return Response.json({job_id: job.id, job});
+    }
+    return Response.json(catalog);
+  });
+  vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
+  await openRecent();
+  fireEvent.change(await screen.findByLabelText('Resolution settings'), {target: {value: '{"environment":"staging"}'}});
+  fireEvent.click(await screen.findByRole('button', {name: 'Cancel discovery queue'}));
+  await waitFor(() => expect(screen.queryByRole('button', {name: 'Cancel discovery queue'})).not.toBeInTheDocument());
+  expect(screen.getByLabelText('Resolution settings')).toHaveValue('{"environment":"staging"}');
+  expect(fetch.mock.calls.filter(([url]) => url.endsWith('/job-1'))).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', {name: 'Open discovery work'}));
+  fireEvent.click(await screen.findByRole('button', {name: 'Cancel discovery'}));
+  expect(await screen.findByText('Cancellation requested', {selector: '[role="status"]'})).toBeVisible();
+  expect(screen.getByRole('button', {name: 'Cancel discovery'})).toBeDisabled();
+  expect(screen.getByRole('button', {name: 'Cancel discovery work'})).toBeDisabled();
+  expect(fetch.mock.calls.filter(([, init]) => init?.method === 'POST').map(([url, init]) => [new URL(url).pathname, JSON.parse(String(init?.body))])).toEqual([
+    ['/api/discovery/queue/cancel', {csrf_token: 'token'}],
+    ['/api/discovery/work/cancel', {csrf_token: 'token'}],
+  ]);
+});
+
 it('loads grouped GitLab revisions and submits the selected tag even when a branch has the same name', async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith('/gitlab/refs')) return Response.json({branches: ['release'], tags: ['release'], truncated: true});
@@ -138,15 +211,21 @@ it.each([
 it('shows a product chart identity with its source path and identifies unresolved children', async () => {
   const product = {...inventory,
     roots: [{...inventory.roots[0], chart_name: 'payments', chart_version: '2.1.0'}],
+    nodes: [{id: 'wiki', root_id: 'root', name: 'dokuwiki', kind: 'ChartReference', state: 'rendered', provenance: [{path: 'values.yaml', enabled: false}]}],
     diagnostics: [{code: 'catalog_chart_unresolved', component_name: 'billing-db', message: 'Missing chart archive.'}],
   };
   vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(
     url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: product} : catalog),
     {headers: {'Content-Type': 'application/json'}}));
   render(<Page data={{csrf_token: 'token'}}/>);
+  await openRecent();
   expect(await screen.findByRole('checkbox', {name: 'payments 2.1.0 deploy/chart helm'})).toBeVisible();
   expect(screen.getByText('billing-db needs attention')).toBeVisible();
   expect(screen.getByText('Missing chart archive.')).toBeVisible();
+  fireEvent.click(screen.getByText('Components and source evidence'));
+  const wiki = screen.getByText('dokuwiki', {selector: 'strong'}).closest('li');
+  expect(wiki).toHaveTextContent('rendered');
+  expect(wiki).toHaveTextContent('Disabled in source');
 });
 
 it('requires selected roots and partial acknowledgement, confirms without scanning, and scopes services', async () => {
@@ -155,6 +234,7 @@ it('requires selected roots and partial acknowledgement, confirms without scanni
 
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
 
+  await openRecent();
   await screen.findByText('nginx:1');
 
   expect(screen.queryByRole('option', {name: 'Other (other)'})).not.toBeInTheDocument();
@@ -231,6 +311,7 @@ it('offers service staging only with group authority and sends one owner through
 
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
 
+  await openRecent();
   await screen.findByText('nginx:1');
 
   fireEvent.change(screen.getByLabelText('Service'), {target: {value: 'new'}});
@@ -269,6 +350,7 @@ it('uploads supplemental files with resolution choices and opens the new immutab
 
   render(<Page data={{csrf_token: 'supplement-token'}}/>);
 
+  await openRecent();
   await screen.findByText('nginx:1');
 
   fireEvent.click(screen.getByText('Supply missing files'));
@@ -351,6 +433,7 @@ it('shows missing chart keys and retries with selected values instead of a succe
 
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
 
+  await openRecent();
   await screen.findByText('Needs attention - Review unresolved configuration');
   expect(screen.getByText('No images were rendered.')).toBeVisible();
   const resolutionPanel = screen.getByText('Resolve configuration and rediscover').closest('details')!;
@@ -377,7 +460,10 @@ it('restores isolated component values and submits explicit override order', asy
   const configured = {...inventory, candidate_values_files: ['a.yaml', 'b.yaml'], selection: {values_files: ['parent.yaml'], component_values: {child: ['a.yaml', 'b.yaml']}}, configurable_components: [{id: 'child', label: 'Child release', path: 'Chart.yaml', technology: 'helm', values_origin: 'Generated ConfigMap'}], diagnostics: [{code: 'native_render_failed', renderer: 'kustomize', path: 'kustomization.yaml', message: 'Missing base'}]};
   const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: configured} : catalog), {headers: {'Content-Type': 'application/json'}}));
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
-  await screen.findByText('Kustomize configuration needs attention');
+  await openRecent();
+  await screen.findByText('Could not build this Kustomize configuration');
+  expect(screen.getByText(/if your service uses this overlay/i)).toBeInTheDocument();
+  expect(screen.queryByText(/choose values for your deployment/i)).not.toBeInTheDocument();
   expect(screen.getByText('Base configuration: Generated ConfigMap')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', {name: 'Move b.yaml earlier for Child release', hidden: true}));
   fireEvent.click(screen.getByRole('button', {name: 'Render with selected values'}));

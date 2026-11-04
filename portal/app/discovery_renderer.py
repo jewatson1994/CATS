@@ -89,7 +89,7 @@ def sandbox_command(tool: str, args: list[str], cwd: str | Path) -> list[str]:
 
 
 def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
-                    timeout: float = 60, max_output: int | None = None) -> dict[str, str]:
+                    timeout: float = 60, max_output: int | None = None, check_cancelled=None) -> dict[str, str]:
     """Bound wall time and optional output budget; spool native output to disk."""
     if max_output is None:
         from .discovery_limits import limit
@@ -107,8 +107,13 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
         with selectors.DefaultSelector() as selector:
             for name in outputs:
                 selector.register(getattr(process, name), selectors.EVENT_READ, name)
-            while selector.get_map():
-                remaining = deadline - time.monotonic()
+            next_check = 0.0
+            while selector.get_map() or process.poll() is None:
+                now = time.monotonic()
+                if check_cancelled and now >= next_check:
+                    check_cancelled()
+                    next_check = now + 1
+                remaining = deadline - now
                 if remaining <= 0:
                     raise RendererError("Discovery renderer exceeded time limit")
                 for key, _ in selector.select(min(remaining, 0.2)):
@@ -120,7 +125,6 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
                     output_size += len(chunk)
                     if max_output and output_size > max_output:
                         raise RendererError("Discovery renderer exceeded output limit")
-            process.wait(timeout=max(0.001, deadline - time.monotonic()))
         for output in outputs.values():
             output.seek(0)
         if process.returncode:

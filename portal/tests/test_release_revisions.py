@@ -183,6 +183,46 @@ def test_distribution_binding_uses_retained_location_and_scoped_mapping(db, appr
         revisions._distribution_bindings(db, approval, [artifact], requested)
 
 
+def test_project_signed_tag_pins_concrete_route_and_upstream_bytes(db, approved_revision, monkeypatch):
+    from app.cyber_approvals import CyberApproval
+    from app.oci_authorization import project_tag_allowed
+    from app.oci_models import OCIRepository, OCIUpstream
+    revision, _ = approved_revision
+    approval = db.get(CyberApproval, revision.approval_id)
+    upstream = OCIUpstream(name='project', endpoint='https://harbor.example')
+    db.add(upstream)
+    db.flush()
+    project = OCIRepository(public_repository='public/*', upstream_id=upstream.id, upstream_repository='team/*')
+    db.add(project)
+    db.flush()
+    artifact = revision.manifest['artifacts'][0]
+    digest = artifact['digest']
+    requested = [dict(repository_id=project.id, tag='stable', artifact_id=artifact['id'])]
+    retained = dict(kind='image', digest=digest, reference='harbor.example/team/nested/app@' + digest)
+    approval.snapshot = dict(approval.snapshot, artifacts=[retained])
+    binding = revisions._distribution_bindings(db, approval, [artifact], requested)[0]
+    assert binding['public_repository'] == 'public/nested/app'
+    assert binding['upstream_repository'] == 'team/nested/app'
+    effective = SimpleNamespace(id=project.id, service_id=revision.service_id, public_repository='public/nested/app',
+        upstream_repository='team/nested/app', project=project, upstream=upstream, upstream_id=upstream.id,
+        enabled=True, suspended=False)
+    active = SimpleNamespace(id=revision.id, manifest=dict(artifacts=[artifact], distribution_bindings=[binding]))
+    monkeypatch.setattr(revisions, 'active_revision', lambda *args: active)
+    assert project_tag_allowed(db, effective, 'stable', digest)
+    assert not project_tag_allowed(db, effective, 'stable', 'sha256:' + 'a' * 64)
+    assert not project_tag_allowed(db, effective, 'unbound', digest)
+    effective.public_repository = 'public/sibling'
+    effective.upstream_repository = 'team/sibling'
+    assert not project_tag_allowed(db, effective, 'stable', digest)
+    assert revisions.distribution_location(effective, active, digest) == 'team/sibling'
+    effective.public_repository = binding['public_repository']
+    effective.upstream_repository = binding['upstream_repository']
+    project.upstream_repository = 'another/*'
+    assert not project_tag_allowed(db, effective, 'stable', digest)
+    with pytest.raises(ValueError, match='retained artifact evidence'):
+        revisions._distribution_bindings(db, approval, [artifact], requested)
+
+
 def test_recommendation_amendment_retains_inventory_and_requires_current_base(db, approved_revision, monkeypatch):
     from app.artifact_catalog import register_artifact, assign_artifact, ArtifactRecommendation
     base, auth = approved_revision

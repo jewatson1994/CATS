@@ -9,8 +9,10 @@ from app import discovery_helm_network as network
 from app.discovery_artifacts import ArtifactResolutionError
 
 
-def test_https_index_exact_version_checksum(monkeypatch):
-    resolver = network.HelmNetworkResolver(allowed_sources=['https://charts.example/repo'])
+@pytest.mark.parametrize('approved_path', ['/repo/', '/repo/index.yaml'])
+@pytest.mark.parametrize('catalog_path', ['/repo', '/repo/index.yaml'])
+def test_https_index_exact_version_checksum(monkeypatch, approved_path, catalog_path):
+    resolver = network.HelmNetworkResolver(allowed_sources=['https://charts.example' + approved_path])
     archive = b'chart archive'
     digest = hashlib.sha256(archive).hexdigest()
     index = json.dumps({'entries': {'demo': [{'version': '1.2.3', 'digest': digest, 'urls': ['demo.tgz']}]}}).encode()
@@ -19,10 +21,20 @@ def test_https_index_exact_version_checksum(monkeypatch):
         calls.append(url)
         return (index if url.endswith('index.yaml') else archive), {}
     monkeypatch.setattr(resolver, '_get', get)
-    result = resolver.resolve('helm', 'https://charts.example/repo/demo', '1.2.3')
+    result = resolver.resolve('helm', 'https://charts.example' + catalog_path + '/demo', '1.2.3')
     assert result.data == archive
     assert result.sha256 == digest
     assert calls == ['https://charts.example/repo/index.yaml', 'https://charts.example/repo/demo.tgz']
+
+
+@pytest.mark.parametrize('path', ['/repo/team', '/repository', '/repo/index.yaml/other'])
+def test_explicit_index_approval_does_not_authorize_other_repositories(monkeypatch, path):
+    resolver = network.HelmNetworkResolver(allowed_sources=['https://charts.example/repo/index.yaml'])
+    monkeypatch.setattr(resolver, '_get', lambda *a, **kw: pytest.fail('unapproved network access'))
+    with pytest.raises(ArtifactResolutionError, match='administrator-approved') as exc:
+        resolver.resolve('helm', 'https://charts.example' + path + '/demo', '1.2.3')
+    assert 'https://charts.example' + path + '/index.yaml' in str(exc.value)
+    assert 'CATS_DISCOVERY_HELM_SOURCES' in str(exc.value)
 
 
 @pytest.mark.parametrize('reference,version', [

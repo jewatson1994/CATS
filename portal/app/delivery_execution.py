@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 @contextmanager
-def delivery_lock(root, attempt_id):
+def delivery_lock(root, attempt_id, *, wait=False):
     if not isinstance(attempt_id, int) or attempt_id < 1:
         raise ValueError("Invalid delivery identity")
     directory = Path(root) / ".delivery-locks"
@@ -23,10 +23,10 @@ def delivery_lock(root, attempt_id):
         try:
             if os.name == "nt":
                 import msvcrt
-                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK if wait else msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
-                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             yield False
             return

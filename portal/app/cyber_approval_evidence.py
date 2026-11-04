@@ -14,7 +14,7 @@ from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
 import yaml
 from sqlalchemy import select
-from .models import (RemediationExecution, Finding, PolicyFinding,
+from .models import (Execution, RemediationExecution, Finding, PolicyFinding,
                      ExceptionRecord, PolicyExceptionRecord, PoamEntry)
 from .deployment_bundle import safe_path, file_digest, dependency_inventory, workload_images
 from .execution_summaries import payload_digest
@@ -33,15 +33,34 @@ def _row(row):
     return {column.key: getattr(row, column.key) for column in row.__table__.columns}
 
 
+def _registry_name(host):
+    host = host.lower()
+    return 'docker.io' if host in {'index.docker.io', 'registry-1.docker.io'} else host
+
+
 def _repository_identity(reference):
     parsed = parse_image_reference(reference)
-    registry = parsed['registry']
-    if registry in {'index.docker.io', 'registry-1.docker.io'}:
-        registry = 'docker.io'
+    registry = _registry_name(parsed['registry'])
     repository = parsed['repository']
     if registry == 'docker.io' and repository == '—':
         repository = 'library'
     return registry, repository, parsed['artifact']
+
+
+def _registry_path(reference, host, *, explicit_host=False):
+    """Return a repository path only if its identity belongs to the configured registry."""
+    host = _registry_name(host)
+    if explicit_host:
+        # Gateway configuration and publication receipts supply a fully
+        # qualified registry, including single-label internal hostnames.
+        registry, separator, path = reference.split('@', 1)[0].partition('/')
+        if not separator or _registry_name(registry) != host:
+            return None
+        return 'library/' + path if host == 'docker.io' and '/' not in path else path
+    registry, namespace, artifact = _repository_identity(reference)
+    if registry != host:
+        return None
+    return artifact if namespace == '—' else namespace + '/' + artifact
 
 
 def _identity(reference, digest=None):
@@ -98,25 +117,63 @@ def _charts(files):
     return result
 
 
-def readiness(db, service, variant='current_service', remediation_id=None, *, _proposal_execution=None):
+def _distribution_assessment(db, service, distribution_id, blockers):
+    from .discovery_models import DiscoveryDistribution, DiscoveryDistributionScan, service_distributions
+    from .scan_coordination import ScanJob
+    distribution = db.scalar(service_distributions(service.id).where(DiscoveryDistribution.id == distribution_id))
+    if distribution is None:
+        blockers.append('This distribution is unavailable for this service.')
+        return None, None
+    selection = {**distribution.selection, 'id': distribution.id, 'name': distribution.name,
+                 'selection_digest': distribution.selection_digest}
+    admission = db.scalar(select(DiscoveryDistributionScan).where(
+        DiscoveryDistributionScan.distribution_id == distribution.id
+    ).order_by(DiscoveryDistributionScan.created_at.desc(), DiscoveryDistributionScan.scan_job_id.desc()).limit(1))
+    job = db.get(ScanJob, admission.scan_job_id, populate_existing=True) if admission else None
+    execution = db.scalar(select(Execution).where(Execution.service_id == service.id,
+        Execution.execution_key == 'public:' + job.id, Execution.scan_scope == 'distribution'
+    ).execution_options(populate_existing=True)) if job else None
+    if not execution or job.status != 'complete' or job.service_key != service.service_key:
+        blockers.append('Complete a successful scan of this saved distribution before requesting Cyber approval.')
+        return selection, None
+    provenance = (execution.raw_payload.get('service_overview') or {}).get('definition_provenance') or {}
+    for context in (provenance, job.payload.get('definition_context') or {}):
+        if context.get('distribution_id') != distribution.id or context.get('selection_digest') != distribution.selection_digest:
+            blockers.append('The retained scan does not match this distribution selection.')
+            return selection, None
+    return selection, execution
+
+
+def readiness(db, service, variant='current_service', remediation_id=None, *, _proposal_execution=None, distribution_id=None):
     db.refresh(service)
     blockers = []
     review_notes = []
-    execution = _proposal_execution or (current_execution(db, service) if service.current_version_id is not None else None)
+    distribution = None
+    if distribution_id is not None:
+        distribution, execution = _distribution_assessment(db, service, distribution_id, blockers)
+    else:
+        execution = _proposal_execution or (current_execution(db, service) if service.current_version_id is not None else None)
     result = {'ready': False, 'blockers': blockers, 'execution': execution, 'remediation': None,
               'artifacts': [], 'overview': {}, 'variant': variant, 'review_notes': review_notes,
-              'version': service.current_version.version if service.current_version else None,
+              'version': (execution.service_version.version if distribution and execution and execution.service_version else
+                          service.current_version.version if service.current_version and not distribution else None),
               'scan_date': execution.scanned_at.isoformat() if execution else None}
+    if distribution:
+        result['distribution'] = distribution
+        if variant != 'current_service' or remediation_id is not None:
+            blockers.append('A distribution requires its own retained scan. Save and scan a new selection for a changed release.')
+            return result
     if variant not in {'current_service', 'cats_remediated'}:
         blockers.append('Unsupported release variant.')
     if execution is None:
-        blockers.append('A retained scan for the exact current service version is required.')
+        if distribution_id is None:
+            blockers.append('A retained scan for the exact current service version is required.')
         return result
     if execution.scan_scope == 'image':
         review_notes.append('Evidence covers the selected image scan only; whole-service configuration and deployment coverage have not been established.')
     payload = json.loads(json.dumps(execution.raw_payload or {}))
     if not execution.complete:
-        blockers.append('The selected current-version scan is incomplete.')
+        blockers.append('The selected distribution scan is incomplete.' if distribution else 'The selected current-version scan is incomplete.')
     if execution.payload_digest and execution.payload_digest != payload_digest(payload):
         blockers.append('Retained scan digest mismatch.')
     if not payload.get('sbom_components'):
@@ -133,6 +190,11 @@ def readiness(db, service, variant='current_service', remediation_id=None, *, _p
     resources = raw.get('rendered_resources') or payload.get('rendered_resources') or []
     rendered = yaml.safe_dump_all(resources, sort_keys=False) if resources else ''
     image_rows = list(raw.get('images') or raw.get('container_images') or [])
+    if distribution:
+        sbom_identities = dict.fromkeys((row['image'], row.get('image_digest'))
+                                        for row in payload.get('sbom_components', []) if row.get('image'))
+        image_rows.extend({'image': ref, 'digest': digest} for ref, digest in sbom_identities)
+        image_rows.extend(payload.get('sbom_images') or [])
     image_rows.extend({'image': row['image'], 'digest': row.get('image_digest')}
         for row in payload.get('findings', []) if row.get('image'))
     candidate_path = None
@@ -276,9 +338,29 @@ def readiness(db, service, variant='current_service', remediation_id=None, *, _p
     for reference, item in identities.items():
         if item.get('resolve_at_publication'):
             review_notes.append('Image identity was not retained for ' + reference + '. Its tag will be resolved at publication and may differ from the scanned image.')
+    if distribution:
+        def image_key(reference):
+            parsed = parse_image_reference(reference)
+            return (*_repository_identity(reference), parsed['digest'] if parsed['digest'] != '—' else parsed['version'])
+        expected = {image_key(reference) for reference in distribution['images']}
+        observed = [(image_key(ref), image_key(item['reference'])) for ref, item in identities.items()]
+        matched = {key for pair in observed for key in pair if key in expected}
+        approved_pins = {pin for source, pin in observed if source in expected or pin in expected}
+        allowed_sources = expected | approved_pins
+        if matched != expected or any(source not in allowed_sources and pin not in expected for source, pin in observed):
+            blockers.append('The scanned image inventory differs from the saved distribution. Review and rescan this selection.')
+        documents = [*payload.get('evidence_documents', []), *payload.get('evidence_unavailable', [])]
+        if any(doc.get('image') and image_key(doc['image']) not in allowed_sources for doc in documents):
+            blockers.append('Retained scanner or SBOM evidence identifies an image outside the saved distribution.')
+        if any(not item.get('digest') for item in identities.values()):
+            blockers.append('An immutable image digest is required for each image in this distribution.')
+        if charts or files:
+            blockers.append('This distribution scan contains chart sources outside its selected image inventory.')
     if not identities and not charts:
         blockers.append('No complete retained image or chart inventory is available.')
-    if not charts:
+    if distribution:
+        review_notes.append('The distribution records the selected chart identities. Publication delivers the selected container images by digest.')
+    elif not charts:
         review_notes.append('No Helm charts were supplied for this release.')
     configuration_available = (result.get('candidate_config_scan') is not None if record else
         bool(payload.get('policy_findings') or payload.get('configuration_scan') or payload.get('config_scan')))
@@ -369,7 +451,8 @@ def freeze(db, service, auth, readiness, folder: Path):
             from .proposal_assessments import assess
             return assess(db, service, readiness['proposal_id'])
         return globals()['readiness'](db, service, readiness['variant'],
-            readiness['remediation'].id if readiness['remediation'] else None)
+            readiness['remediation'].id if readiness['remediation'] else None,
+            distribution_id=(readiness.get('distribution') or {}).get('id'))
     fresh = refresh_evidence()
     if not fresh['ready'] or fresh['execution'].id != readiness['execution'].id:
         raise ValueError('Approval evidence changed; refresh readiness')
@@ -390,6 +473,8 @@ def freeze(db, service, auth, readiness, folder: Path):
                      'vulnerability_scans': readiness['candidate_vulnerability_scans']} if record else {'vulnerabilities': readiness['payload'].get('findings', []), 'configuration': readiness['payload'].get('policy_findings', [])},
         'mitigations': [_row(row) for row in db.scalars(select(PoamEntry).where(PoamEntry.service_id == service.id))],
         'exceptions': exceptions, 'remediation': _row(record) if record else None, 'artifacts': []}
+    if readiness.get('distribution'):
+        snapshot.update(distribution=readiness['distribution'], evidence_scope='service-distribution-scan')
     if readiness.get('proposal_id') is not None:
         snapshot.update(amendment_proposal_id=readiness['proposal_id'],
             proposal_assessment_id=readiness['proposal_assessment_id'],
@@ -416,7 +501,16 @@ def freeze(db, service, auth, readiness, folder: Path):
     from .service_exports import write_all
     evidence = folder / 'all.zip'
     baseline = folder / 'current-service-all.zip' if record else evidence
-    if readiness.get('proposal_id') is not None:
+    if readiness.get('distribution'):
+        from .service_exports import _execution_evidence_zip
+        with ZipFile(evidence, 'w', ZIP_DEFLATED) as archive:
+            archive.writestr('distribution.json', _json(readiness['distribution']))
+            archive.writestr('sbom-components.json', _json(readiness['payload']['sbom_components']))
+            for category, name in [('scanner', 'raw-scanner-outputs.zip'), ('sbom', 'sboms.zip')]:
+                if any(d.get('category') == category for d in readiness['payload'].get('evidence_documents', [])):
+                    archive.writestr(name, _execution_evidence_zip(service.service_key, execution, category))
+        exported = {'entries': []}
+    elif readiness.get('proposal_id') is not None:
         with ZipFile(evidence, 'w', ZIP_DEFLATED) as archive:
             archive.writestr('proposed-scan.json', _json(readiness['payload']))
             archive.writestr('proposed-sbom.json', _json(readiness['payload'].get('sbom_components', [])))
@@ -464,5 +558,7 @@ def freeze(db, service, auth, readiness, folder: Path):
             or payload_digest(final['payload']) != payload_digest(readiness['payload'])
             or (record and file_digest(readiness['candidate_path']) != record.artifact_digest)):
         raise ValueError('Service evidence changed while freezing; retry the request')
-    snapshot['evidence'] = {'path': str(evidence.resolve()), 'digest': file_digest(evidence), 'format': 'cats-export-all-v1', 'evidence_scope': snapshot['evidence_scope']}
+    snapshot['evidence'] = {'path': str(evidence.resolve()), 'digest': file_digest(evidence),
+                            'format': 'cats-distribution-evidence-v1' if readiness.get('distribution') else 'cats-export-all-v1',
+                            'evidence_scope': snapshot['evidence_scope']}
     return snapshot

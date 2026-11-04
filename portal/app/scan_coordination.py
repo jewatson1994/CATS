@@ -54,6 +54,30 @@ class ScanAttempt(Base):
 TERMINAL = {"complete", "incomplete", "error", "cancelled"}
 
 
+class DistributionScanInProgress(Exception):
+    def __init__(self, job_id):
+        self.job_id = job_id
+
+
+def _reserve_distribution(db, key, payload):
+    from .discovery_models import DiscoveryDistribution, DiscoveryDistributionScan, service_distributions
+    from .models import Service
+    context = payload.get("definition_context") or {}
+    service_id = select(Service.id).where(Service.service_key == payload.get("ingest_service_id")).scalar_subquery()
+    distribution = db.scalar(service_distributions(service_id)
+        .where(DiscoveryDistribution.id == context.get("distribution_id"),
+               DiscoveryDistribution.selection_digest == context.get("selection_digest")))
+    if (not distribution or distribution.scan_context() != context
+            or distribution.selection["images"] != payload["image_list"].splitlines()):
+        raise HTTPException(409, "Scan input does not match the saved distribution")
+    active = db.scalar(select(ScanJob.id).join(DiscoveryDistributionScan,
+        DiscoveryDistributionScan.scan_job_id == ScanJob.id).where(
+        DiscoveryDistributionScan.distribution_id == distribution.id, ScanJob.status.not_in(TERMINAL)).limit(1))
+    if active:
+        raise DistributionScanInProgress(active)
+    db.add(DiscoveryDistributionScan(distribution_id=distribution.id, scan_job_id=key))
+
+
 class DurableJobs(MutableMapping):
     """Compatibility read interface for the existing public job endpoints."""
     def __getitem__(self, key):
@@ -67,6 +91,10 @@ class DurableJobs(MutableMapping):
         with SessionLocal() as db:
             if db.get_bind().dialect.name == "postgresql":
                 db.execute(text("SELECT pg_advisory_xact_lock(73488292)"))
+            elif payload.get("ingest_scope") == "distribution" and db.get_bind().dialect.name == "sqlite":
+                db.execute(text("BEGIN IMMEDIATE"))
+            if payload.get("ingest_scope") == "distribution":
+                _reserve_distribution(db, key, payload)
             count = db.scalar(select(func.count()).select_from(ScanJob).where(ScanJob.status.not_in(TERMINAL)))
             if count >= setting("CATS_SCAN_QUEUE_CAPACITY", 100):
                 raise HTTPException(429, "Scan queue is full")

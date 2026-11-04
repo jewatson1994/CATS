@@ -23,3 +23,24 @@ def test_legacy_approval_migration_preserves_records_indexes_and_foreign_keys(tm
         connection.exec_driver_sql("INSERT INTO cyber_approvals VALUES (8, NULL, 'new review')")
         assert not connection.exec_driver_sql('PRAGMA foreign_key_check').all()
     engine.dispose()
+
+
+def test_project_mapping_upgrade_preserves_existing_repository_and_cached_links():
+    engine = create_engine('sqlite://')
+    with engine.begin() as connection:
+        connection.exec_driver_sql('CREATE TABLE services (id INTEGER PRIMARY KEY)')
+        connection.exec_driver_sql('CREATE TABLE oci_repositories (id INTEGER PRIMARY KEY, public_repository TEXT UNIQUE, service_id INTEGER NOT NULL REFERENCES services(id))')
+        connection.exec_driver_sql('CREATE INDEX ix_repository_service ON oci_repositories(service_id)')
+        connection.exec_driver_sql('CREATE TABLE oci_object_links (repository_id INTEGER REFERENCES oci_repositories(id))')
+        connection.exec_driver_sql('INSERT INTO services VALUES (5)')
+        connection.exec_driver_sql("INSERT INTO oci_repositories VALUES (7, 'project/image', 5)")
+        connection.exec_driver_sql('INSERT INTO oci_object_links VALUES (7)')
+    with migration_transaction(engine) as connection:
+        upgrade_connection(connection)
+        upgrade_connection(connection)
+        connection.exec_driver_sql("INSERT INTO oci_repositories VALUES (8, 'project/*', NULL)")
+        assert connection.exec_driver_sql('SELECT * FROM oci_repositories WHERE id = 7').one() == (7, 'project/image', 5)
+        assert inspect(connection).get_indexes('oci_repositories')[0]['name'] == 'ix_repository_service'
+        assert inspect(connection).get_unique_constraints('oci_repositories')[0]['column_names'] == ['public_repository']
+        assert not connection.exec_driver_sql('PRAGMA foreign_key_check').all()
+    engine.dispose()

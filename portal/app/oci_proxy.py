@@ -16,8 +16,9 @@ from starlette.background import BackgroundTask
 from . import main as _portal  # Existing additive schema/bootstrap and policy engine.
 from .auth import record_audit
 from .database import SessionLocal
-from .oci_models import OCIManifest, OCIObjectLink, OCIPrincipal, OCIRepository
-from .oci_authorization import authorize
+from .oci_models import (OCIManifest, OCIObjectLink, OCIPrincipal, OCIProjectObjectLink,
+                         OCIRepository, project_repository)
+from .oci_authorization import authorize, candidate_service_ids, project_tag_allowed
 from .oci_transport import ContentCache, DIGEST, REPOSITORY, RegistryClient, RegistryError
 from .release_validity import utc
 from .release_revisions import resolve_distribution_tag, resolve_distribution_location
@@ -83,13 +84,48 @@ def principal(db, request, repository_id=None):
 
 
 def mapping_for(db, repository):
-    if not REPOSITORY.fullmatch(repository):
+    if len(repository) > 255 or not REPOSITORY.fullmatch(repository):
         raise Denied('Invalid repository', 400, 'NAME_INVALID')
-    mapping = db.scalar(select(OCIRepository).where(OCIRepository.public_repository == repository).execution_options(populate_existing=True))
+    names = [repository]
+    if '/' in repository:
+        names.append(repository.partition('/')[0] + '/*')
+    name = OCIRepository.public_repository
+    mapping = db.scalar(select(OCIRepository).where(name.in_(names))
+                        .order_by((name == repository).desc()).limit(1).execution_options(populate_existing=True))
     if mapping is None:
         raise Denied('Unknown repository', 404, 'NAME_UNKNOWN')
     db.refresh(mapping.upstream)
-    return mapping
+    if mapping.public_repository == repository:
+        return mapping
+    if mapping.service_id is not None or not mapping.enabled or mapping.suspended or not mapping.upstream.enabled:
+        raise Denied('Project mapping unavailable')
+    try:
+        upstream_repository = project_repository(mapping.upstream_repository, mapping.public_repository, repository)
+    except ValueError as exc:
+        raise Denied(str(exc)) from None
+    return ProjectMapping(mapping, repository, upstream_repository)
+
+
+class ProjectMapping:
+    def __init__(self, project, public_repository, upstream_repository, service_id=None):
+        self.project = project
+        self.public_repository = public_repository
+        self.upstream_repository = upstream_repository
+        self.service_id = service_id
+
+    def __getattr__(self, name):
+        return getattr(self.project, name)
+
+
+def service_mapping(db, mapping, digest):
+    """Bind a project pull to unambiguous evidence before checking live policy."""
+    if not isinstance(mapping, ProjectMapping) or mapping.service_id is not None:
+        return mapping
+    candidates = candidate_service_ids(db, mapping, digest)
+    if len(candidates) != 1:
+        raise Denied('No unique service approval for this repository and digest')
+    return ProjectMapping(mapping.project, mapping.public_repository, mapping.upstream_repository,
+                          next(iter(candidates)))
 
 
 class EffectiveMapping:
@@ -102,6 +138,8 @@ class EffectiveMapping:
 
 
 def effective_mapping(db, mapping, digest, binding=None):
+    if isinstance(mapping, ProjectMapping):
+        return mapping
     try:
         repository = binding['upstream_repository'] if binding else resolve_distribution_location(db, mapping, digest)
     except ValueError as exc:
@@ -125,15 +163,13 @@ def content_cache():
 def save_signature(db, mapping, subject, signature):
     save_unique(db, OCIManifest, dict(repository_id=mapping.id, digest=signature.digest),
                 media_type=signature.media_type, content=signature.raw.decode('utf-8'))
-    save_unique(db, OCIObjectLink, dict(repository_id=mapping.id, root_digest=subject,
-                object_digest=signature.digest, kind='signature'))
+    link_object(db, mapping, subject, signature.digest, 'signature')
     for blob in signature.blob_digests:
-        save_unique(db, OCIObjectLink, dict(repository_id=mapping.id, root_digest=subject,
-                    object_digest=blob, kind='blob'))
+        link_object(db, mapping, subject, blob, 'blob')
 
 
 def require(db, mapping, digest):
-    decision = authorize(db, getattr(mapping, '_mapping', mapping), digest)
+    decision = authorize(db, service_mapping(db, getattr(mapping, '_mapping', mapping), digest), digest)
     if not decision.allowed:
         raise Denied(decision.reason)
     return decision
@@ -155,7 +191,13 @@ def save_unique(db, model, where, **values):
 def manifest(db, mapping, transport, reference):
     row = None
     if DIGEST.fullmatch(reference):
-        row = db.scalar(select(OCIManifest).filter_by(repository_id=mapping.id, digest=reference))
+        query = select(OCIManifest).filter_by(repository_id=mapping.id, digest=reference)
+        if isinstance(mapping, ProjectMapping):
+            # Reuse immutable bytes only after observing them in this concrete repo.
+            link, scope = link_scope(mapping)
+            query = query.where(select(link.root_digest).filter_by(**scope, object_digest=reference)
+                                .where(link.kind.in_(('manifest', 'signature'))).exists())
+        row = db.scalar(query)
     if row:
         raw, media, digest = row.content.encode('utf-8'), row.media_type, row.digest
         if 'sha256:' + hashlib.sha256(raw).hexdigest() != digest:
@@ -182,6 +224,23 @@ def descriptor(value):
     return value['digest']
 
 
+def link_scope(mapping):
+    if isinstance(mapping, ProjectMapping):
+        return OCIProjectObjectLink, dict(repository_id=mapping.id, repository_path=mapping.public_repository)
+    return OCIObjectLink, dict(repository_id=mapping.id)
+
+
+def link_object(db, mapping, root, digest, kind):
+    model, scope = link_scope(mapping)
+    save_unique(db, model, dict(**scope, root_digest=root, object_digest=digest, kind=kind))
+
+
+def check_project_tag(db, mapping, reference, digest):
+    if isinstance(mapping, ProjectMapping) and not DIGEST.fullmatch(reference):
+        if not project_tag_allowed(db, mapping, reference, digest):
+            raise Denied('Tag is not bound to this digest in the active release')
+
+
 def graph(db, mapping, transport, reference, root=None, seen=None, depth=0):
     seen = set() if seen is None else seen
     if depth > 8 or len(seen) >= 256:
@@ -191,8 +250,10 @@ def graph(db, mapping, transport, reference, root=None, seen=None, depth=0):
     if digest in seen:
         return raw, media, digest
     seen.add(digest)
+    mapping = service_mapping(db, mapping, digest)
     require(db, mapping, digest)
-    save_unique(db, OCIObjectLink, dict(repository_id=mapping.id, root_digest=root, object_digest=digest, kind='manifest'))
+    check_project_tag(db, mapping, reference, digest)
+    link_object(db, mapping, root, digest, 'manifest')
     if 'manifests' in doc:
         if not isinstance(doc['manifests'], list) or len(doc['manifests']) > 256:
             raise RegistryError('Invalid artifact index')
@@ -207,29 +268,32 @@ def graph(db, mapping, transport, reference, root=None, seen=None, depth=0):
         blobs = [doc.get('config'), *doc['layers']]
         for item in blobs:
             blob = descriptor(item)
-            save_unique(db, OCIObjectLink, dict(repository_id=mapping.id, root_digest=root, object_digest=blob, kind='blob'))
+            link_object(db, mapping, root, blob, 'blob')
     return raw, media, digest
 
 
 def authorize_object(db, mapping, digest, kind):
     mapping = getattr(mapping, '_mapping', mapping)
-    roots = db.scalars(select(OCIObjectLink.root_digest).where(OCIObjectLink.repository_id == mapping.id,
-        OCIObjectLink.object_digest == digest, OCIObjectLink.kind == kind)).all()
+    model, scope = link_scope(mapping)
+    roots = db.scalars(select(model.root_digest).filter_by(**scope, object_digest=digest, kind=kind)).all()
     for root in roots:
-        decision = authorize(db, mapping, root)
+        try:
+            owner = service_mapping(db, mapping, root)
+        except Denied:
+            continue
+        decision = authorize(db, owner, root)
         if not decision.allowed:
             continue
         # Index children must remain authorized after graph construction too.
-        members = db.scalars(select(OCIObjectLink.object_digest).where(OCIObjectLink.repository_id == mapping.id,
-            OCIObjectLink.root_digest == root, OCIObjectLink.kind == 'manifest')).all()
-        if all(authorize(db, mapping, member).allowed for member in members):
+        members = db.scalars(select(model.object_digest).filter_by(**scope, root_digest=root, kind='manifest')).all()
+        if all(authorize(db, owner, member).allowed for member in members):
             return root
     raise Denied('Object has no currently authorized image association')
 
 
 def audit(db, machine, mapping, digest, outcome):
     record_audit(db, None, 'oci.pull', 'oci_repository', mapping.id,
-                 principal_id=machine.id, digest=digest, outcome=outcome)
+                 principal_id=machine.id, repository=mapping.public_repository, digest=digest, outcome=outcome)
     db.commit()
 
 
@@ -255,7 +319,7 @@ def get_manifest(repository: str, reference: str, request: Request):
         try:
             signature_root = legacy_subject(reference)
             binding = None
-            if not signature_root and not DIGEST.fullmatch(reference):
+            if not isinstance(mapping, ProjectMapping) and not signature_root and not DIGEST.fullmatch(reference):
                 try:
                     binding = resolve_distribution_tag(db, mapping, reference)
                 except ValueError as exc:
@@ -268,6 +332,8 @@ def get_manifest(repository: str, reference: str, request: Request):
                     signature_root = authorize_object(db, mapping, reference, 'signature')
                 except Denied:
                     pass
+                if not signature_root:
+                    mapping = service_mapping(db, mapping, reference)
             mapping = effective_mapping(db, mapping, signature_root or (binding['digest'] if binding else reference), binding)
             if signature_root:
                 require(db, mapping, signature_root)
@@ -283,12 +349,15 @@ def get_manifest(repository: str, reference: str, request: Request):
             mapping = mapping_for(db, repository)
             principal(db, request, mapping.id)
             if not signature_root and not DIGEST.fullmatch(reference):
-                try:
-                    current_binding = resolve_distribution_tag(db, mapping, reference)
-                except ValueError as exc:
-                    raise Denied(str(exc)) from None
-                if current_binding != binding:
-                    raise Denied('Active release changed during retrieval; retry')
+                if isinstance(mapping, ProjectMapping):
+                    check_project_tag(db, service_mapping(db, mapping, digest), reference, digest)
+                else:
+                    try:
+                        current_binding = resolve_distribution_tag(db, mapping, reference)
+                    except ValueError as exc:
+                        raise Denied(str(exc)) from None
+                    if current_binding != binding:
+                        raise Denied('Active release changed during retrieval; retry')
             authorize_object(db, mapping, digest, 'signature' if signature_root else 'manifest')
             audit(db, machine, mapping, digest, 'allowed')
         except Denied as exc:

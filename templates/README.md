@@ -49,7 +49,7 @@ The root `compose.yaml` and this template share the same runtime settings and vo
 
 ## Signed release documentation
 
-The main environment and Compose templates include `CATS_RELEASE_DOC_MAX_BYTES` (256 MiB default) and `CATS_OCI_TOKEN_REALMS` (empty by default). Configure delegated token-service origins only when your approved registry requires them. Release documents use the existing signing configuration and destination CA trust. Review [release documentation operations](../docs/signed-release-documentation.md) before deployment, including disclosure authorization, retained-history storage, independent verification, and registry compatibility checks.
+The main environment and Compose templates include `CATS_RELEASE_DOC_MAX_BYTES` (256 MiB default). If your registry delegates authentication, configure its approved token-service origins in `CATS_OCI_TOKEN_REALMS`. If it redirects publication blob downloads to object storage, configure the approved storage origins in `CATS_OCI_BLOB_REDIRECT_ORIGINS`. Both origin lists default to empty. For worker recreation and verification commands, see [release documentation operations](../docs/signed-release-documentation.md#configuration-and-boundaries).
 
 ## OIDC clock skew and remediation validation
 

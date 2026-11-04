@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from app import discovery_routes as routes, discovery_worker as worker
+from app import discovery_distributions as distributions
 from app.auth import AuthContext, require_user
 from app.database import Base
 from app.models import AuditEvent, Service, Group, ServiceGroup
@@ -52,6 +53,7 @@ def api(monkeypatch, tmp_path):
         current = {'auth':scoped_auth(db.get(Group, 1))}
         application = FastAPI()
         application.include_router(routes.router)
+        application.include_router(distributions.router)
         application.dependency_overrides[require_user] = lambda: current['auth']
         application.dependency_overrides[routes.get_db] = lambda: db
         with TestClient(application) as client:
@@ -88,6 +90,63 @@ def test_group_visibility_and_cross_group_actions(api):
     for action in ('cancel','retry','confirm','scan','forget-source'):
         assert post(client,'/foreign/'+action).status_code == 404
     assert client.get('/api/discovery/own/compare/foreign').status_code == 404
+
+
+def test_ongoing_includes_older_active_jobs_and_only_visible_discovery(api):
+    client, db, _ = api
+    earlier = utcnow() - timedelta(days=1)
+    db.add_all([
+        DurableJob(id='waiting', kind='discovery', payload={'group_id': 1}, created_at=earlier),
+        DurableJob(id='stopping', kind='discovery', status='running', cancel_requested=True,
+                   payload={'group_id': 1, 'filename': 'deployment.zip'}, created_at=earlier),
+        DurableJob(id='foreign', kind='discovery', payload={'group_id': 2}),
+        DurableJob(id='unrelated', kind='other', payload={'group_id': 1}),
+    ])
+    db.add_all(DurableJob(id=f'done-{i}', kind='discovery', status='completed',
+                          payload={'group_id': 1}) for i in range(101))
+    db.commit()
+    assert len(client.get('/api/discovery').json()['jobs']) == 100
+    response = client.get('/api/discovery/ongoing')
+    assert response.status_code == 200, response.text
+    jobs = {row['id']: row for row in response.json()['jobs']}
+    assert set(jobs) == {'waiting', 'stopping'}
+    assert jobs['stopping']['cancel_requested'] and jobs['stopping']['filename'] == 'deployment.zip'
+
+
+def test_cancel_running_is_idempotent_and_worker_acknowledges(api):
+    client, db, _ = api
+    row = DurableJob(id='active', kind='discovery', payload={'group_id': 1})
+    db.add(row)
+    db.commit()
+    sessions = lambda: Session(db.get_bind())
+    claimed = claim(('discovery',), 'test-worker', sessions)
+
+    def cancel_work(ctx, payload):
+        for _ in range(2):
+            response = post(client, '/active/cancel')
+            assert response.status_code == 200, response.text
+            current = response.json()['job']
+            assert current['status'] == 'running' and current['cancel_requested']
+        assert [j['id'] for j in client.get('/api/discovery/ongoing').json()['jobs']] == ['active']
+        ctx.check()
+        pytest.fail('Worker continued after cancellation')
+
+    execute(claimed, cancel_work, sessions)
+    db.refresh(row)
+    assert row.status == 'cancelled' and row.completed_at is not None and row.lease_token is None
+    assert client.get('/api/discovery/ongoing').json()['jobs'] == []
+    assert post(client, '/active/cancel').json()['job']['status'] == 'cancelled'
+    assert len(db.scalars(select(AuditEvent).where(AuditEvent.action == 'discovery.cancel_requested')).all()) == 1
+
+
+def test_cancel_during_inventory_publication_preserves_worker_completion(api):
+    client, db, _ = api
+    row, item = job(db, status='running')
+    row.result = {'inventory_id': item.id}
+    db.commit()
+    assert post(client, '/own/cancel').status_code == 409
+    db.refresh(row)
+    assert not row.cancel_requested and row.status == 'running'
 
 
 @pytest.mark.parametrize('action',['cancel','retry','confirm','scan','forget-source'])
@@ -140,7 +199,8 @@ def test_retry_creates_new_job_and_cancel_preserves_evidence(api):
     assert post(client,'/'+new.id+'/retry').status_code == 409
     assert post(client,'/'+new.id+'/cancel').status_code == 200
     db.refresh(new)
-    assert new.status == 'cancelled' and new.cancel_requested
+    assert new.status == 'cancelled' and new.cancel_requested and new.completed_at is not None
+    assert claim(('discovery',), 'test-worker', lambda: Session(db.get_bind())) is None
 
 
 def test_comparison_is_read_only(api):
@@ -404,7 +464,8 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
     stages=[]
     checkpoints=[]
     def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None,gitlab_archive=False):
-        assert runner is discovery_renderer.isolated_runner
+        assert runner.func is discovery_renderer.isolated_runner
+        assert runner.keywords['check_cancelled'] is ctx.check
         assert gitlab_archive is False
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})

@@ -8,7 +8,9 @@ Open **Discovery** next to Scan. Discovery inspects deployment configuration and
 4. Select the roots belonging to one service. Choose an existing service, or **Stage a new service** if your group staging authority permits it. New services receive exactly the selected owning group. Only services in the owning group for which you have scan permission appear. Explicitly acknowledge a partial inventory after reviewing its gaps. Blocked or invalid inventories cannot be confirmed.
 5. Choose **Confirm inventory**. This records the reviewed service association without scanning. Choose **Start scan** separately when ready, then follow **View scan progress**.
 
-Running work can be cancelled. Retry or **Rediscover as new version** preserves prior evidence. Under **Compare immutable versions**, select an earlier completed discovery from the same group to inspect added, removed and changed component IDs. Comparison reports inventory changes, not vulnerability changes.
+Leaving Discovery keeps the job running. Reopen it under **Ongoing** to check progress or cancel it. **New discovery** opens a fresh form while other jobs continue. A queued cancellation takes effect immediately. A running job shows **Cancellation requested** until the worker stops. Completed discoveries remain available under **Recent discoveries**.
+
+Retry or **Rediscover as new version** preserves prior evidence. Under **Compare immutable versions**, select an earlier completed discovery from the same group to inspect added, removed and changed component IDs.
 
 If discovery is incomplete, review diagnostics and candidate environment paths. In **Resolution assistance**, adjust non-secret options (including ordered files or a `source_map` from Flux source identity to an uploaded directory), then retry as a new version. This reruns discovery and preserves earlier evidence. To add missing source files, submit a corrected archive. Administrators can also supply exact-version, SHA-256-verified archives through the optional [offline mirror](universal-deployment-discovery.md#follow-up-implementation-2026-10-20). The page never silently treats an unknown or partial result as a complete deployment.
 
@@ -42,9 +44,26 @@ A parent `Chart.yaml` can contain only chart metadata while its sibling `values.
 
 For offline discovery, place each child under the parent's `charts/` directory as an unpacked chart or a `<chart>-<version>.tgz` package. Discovery checks the name and version against the catalog. You can also use a local `chart_map` for another uploaded directory or an administrator-configured mirror for the exact version. Direct retrieval requires `HELM_ALLOW_NETWORK=true` and an approved repository or registry namespace. [Worker source and registry configuration](universal-deployment-discovery.md#helm-network-retrieval-and-live-archive-acceptance-2026-10-21)
 
-Each child starts with its own chart defaults. Its `valuesFiles` (also spelled `values_files`) are applied in declaration order using paths relative to the source root. Files selected for that child in **Resolution assistance** apply last. Later files override earlier ones. A parent's values selection configures the parent, and each child's selection applies only to that child.
+Each child starts with its own chart defaults. Discovery applies its `valuesFiles` (also spelled `values_files`) in declaration order, using paths relative to the source root. The entry's inline `values` mapping overrides those files. Files selected for that child in **Resolution assistance** apply last. Catalog `postRenderers` supports declarative Kustomize image changes and inline patches. A nonempty catalog `valuesFrom` or `postRenders` leaves the chart unresolved and blocks its inclusion in a distribution.
 
 Review each child under **Complete inventory and relationships**. A successfully rendered workload provides image evidence. If a chart or a required values file is unavailable, the inventory retains the child and its diagnostic while Discovery continues with its siblings. Supply the missing input and retry as a new version to verify the rendered images.
+
+For example, `services.dokuwiki.enabled: false` sets the initial distribution choice for DokuWiki. Discovery still attempts to resolve the declared chart and identifies the source file, version and result. The same rules apply to GitLab imports and uploaded archives. Allowing a GitLab project lets Discovery read that project. An administrator separately chooses which external chart sources the worker may contact.
+
+If you intend to use `oci://oci.trueforge.org/truecharts/dokuwiki` directly, enable `HELM_ALLOW_NETWORK=true` and add that exact chart URL to the JSON list in `CATS_DISCOVERY_HELM_SOURCES` in your Compose environment. Preserve any existing entries. Recreate the Discovery worker and retry Discovery. For offline use, supply the exact chart archive locally or through the configured mirror.
+
+### Release a service distribution
+
+1. Confirm the inventory for the service. Open the service's **Artifacts** tab, expand **Service distributions**, and choose **Create distribution**.
+2. Give the distribution a name such as `Production without wiki`. Review the enabled and disabled chart list. You can enable a rendered catalog chart even when its source default was off. Save the selection and choose **Scan distribution**. An image shared by multiple charts is included once if any included component uses it.
+3. Once the scan finishes, choose **Request Cyber approval for this distribution**. Cyber sees both lists, the chart identities, and the retained image digests from that scan. Publication delivers the selected container images. The signed release records the distribution and its exact inventory. Other selections for the service have their own approvals.
+4. To reassess the same distribution, return to **Service distributions**, scan it again and submit the new evidence for Cyber review. To change the selection, choose **Edit as new distribution**, save, scan and submit it. The earlier release remains bound to its original selection.
+
+Disabling a catalog service also excludes its nested releases unless another enabled service supplies them. Enabling a service restores the declared defaults for children that become available.
+
+For a native dependency declared inside `Chart.yaml`, Helm evaluates conditions and values in the parent chart's render. CATS records these dependencies under the parent. To change one, select the corresponding parent values file in Discovery, confirm the new rendering, and use that inventory for the distribution.
+
+An ordinary Helm service can be discovered without Kustomize. If Discovery reports a Kustomize problem, the diagnostic points to a detected overlay. Inspect that directory and supply any referenced bases or patches if the overlay belongs in the deployment.
 
 ## Native rendering isolation
 

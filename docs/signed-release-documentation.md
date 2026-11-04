@@ -37,7 +37,18 @@ For example, a registry at `https://registry.example` with a separate token serv
 
 OCI publication uses the approved service destination or administrator-approved remediation destination, its encrypted credentials, and its additive CA trust. Documents are stored in the **same repository** as their immutable subject (`registry/repository@sha256:...`). The helper reads only the supplied `DOCKER_CONFIG/config.json`; it does not invoke credential helpers or fall back to a user's Docker configuration. HTTPS verification remains enabled. Cross-origin upload locations, writes, and manifest redirects are rejected.
 
-For a registry that redirects blob downloads to object storage, set `CATS_OCI_BLOB_REDIRECT_ORIGINS` to the storage service's approved HTTPS origin, for example `https://registry-storage.example`. This applies to both source retrieval and destination verification during publication. Use origins only, including any non-default port; do not include paths, queries, credentials, or signed URLs. The redirected storage service must accept the request without registry credentials, typically through a signed URL issued by the registry. Configure CA trust separately when needed. `CATS_OCI_TOKEN_REALMS` and the OCI proxy's upstream allowlists do not authorize publication blob redirects. Recreate `remediation-worker`, `portal`, and `portal-control` after changing these environment settings, then retry the failed publication.
+For a registry that redirects blob downloads to object storage, confirm the storage origin with the registry administrator. Set `CATS_OCI_BLOB_REDIRECT_ORIGINS` in the deployment's existing environment file to that HTTPS origin, for example `https://registry-storage.example`. Include any non-default port. Omit paths, queries, credentials and signed URLs. The setting applies to source retrieval and destination verification. The storage service must accept requests without registry credentials, typically through a signed URL issued by the registry. Configure CA trust separately when needed.
+
+On the approved release page, a blocked redirect shows the registry operation, registry origin, and the target origin when it is safe to display. If a recorded HTTP 307 has none of those details, retry with the updated worker. For `GET blob` or `HEAD blob`, use the confirmed storage origin. For a cross-origin manifest, token, or upload redirect, check the registry's external URL and reverse proxy settings. The blob setting applies only to blob reads.
+
+After editing the root deployment's `.env`, recreate the services to load it. Replace the example origin in the check with the value you configured. A result of `True` confirms the running publication worker received that entry.
+
+```sh
+docker compose up -d --no-deps --force-recreate --wait portal portal-control remediation-worker
+docker compose exec -T remediation-worker python -c "import os; print('https://registry-storage.example' in [v.strip() for v in os.getenv('CATS_OCI_BLOB_REDIRECT_ORIGINS', '').split(',')])"
+```
+
+For the deployment template, edit the environment file used at startup and add `--env-file /secure/cats.env -f templates/compose.main.yaml` immediately after `docker compose` in both commands, substituting your actual file path. Retry the failed publication once the worker reports the expected setting.
 
 The private signing key and password remain in encrypted configuration. Only the public key is exported. The public-key fingerprint is SHA-256 over DER SubjectPublicKeyInfo, recorded with the `sha256:` prefix. Obtain the expected fingerprint through a trusted administrative channel; trusting a key solely because it accompanies a signature does not authenticate the publisher.
 

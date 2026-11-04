@@ -11,6 +11,8 @@ import tempfile
 from pathlib import Path
 import yaml
 from .discovery_limits import limit
+from .discovery_artifacts import ArtifactResolutionError
+from .discovery_helm_network import _url as validate_helm_url
 from . import compose_ingestion as compose
 from . import service_definitions as legacy
 
@@ -19,6 +21,7 @@ SCHEMA_VERSION = '1.0'
 MAX_REPOSITORY_ENTRIES = limit("FILES")
 MAX_REPOSITORY_BYTES = limit("EXTRACTED_BYTES")
 MAX_REPOSITORY_FILE_BYTES = limit("FILE_BYTES")
+_CHART_VERSION = re.compile(r'v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?')
 
 def _exceeds(value, limit):
     return bool(limit and value > limit)
@@ -26,6 +29,19 @@ def _exceeds(value, limit):
 def _file_hash(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
+
+def _tree_hash(directory, paths, check):
+    digest = hashlib.sha256()
+    for path in paths:
+        source_file = directory / path
+        encoded = path.encode()
+        digest.update(len(encoded).to_bytes(8, 'big') + encoded + source_file.stat().st_size.to_bytes(8, 'big'))
+        with source_file.open('rb') as stream:
+            while chunk := stream.read(1024 * 1024):
+                check()
+                digest.update(chunk)
+    return digest.hexdigest()
+
 @dataclass(frozen=True)
 class DiscoveryAdapter:
     """Trusted format adapter. Custom handlers receive bounded staged inputs.
@@ -139,6 +155,42 @@ def _package_chart(package):
         raise ValueError('Expected a single top-level chart.')
     return charts[0].parent
 
+def _dependency_values(directory, options):
+    """Read the same values layers passed to Helm, only to report dependency conditions."""
+    if '--set' in options:
+        return None  # Helm strvals may override any condition or tag.
+    paths = [directory / 'values.yaml', *(Path(p) for i, p in enumerate(options) if i and options[i - 1] == '-f')]
+    values = {}
+    for path in paths:
+        if path.is_file():
+            try:
+                document = _documents(path.read_text(encoding='utf-8-sig'))
+            except (ValueError, OSError, UnicodeError, yaml.YAMLError):
+                return None
+            if len(document) != 1 or not isinstance(document[0], dict):
+                return None
+            values = _merge(values, document[0])
+    return values
+
+def _dependency_enabled(dependency, values):
+    if not dependency.get('condition') and not dependency.get('tags'):
+        return True
+    if values is None:
+        return None
+    for condition in str(dependency.get('condition', '')).split(','):
+        value = values
+        for part in condition.strip().split('.'):
+            value = value.get(part) if isinstance(value, dict) else None
+        if isinstance(value, bool):
+            return value
+    tags = dependency.get('tags') or []
+    switches = values.get('tags', {})
+    if isinstance(tags, list) and isinstance(switches, dict):
+        flags = [switches[tag] for tag in tags if isinstance(tag, str) and isinstance(switches.get(tag), bool)]
+        if flags:
+            return any(flags)
+    return None
+
 def run_discovery(source_path, options=None, runner=None, progress=None, artifact_resolver=None, supplemental_inputs=None, check_cancelled=None, *, gitlab_archive=False):
     options = options or {}
     if not isinstance(options, dict):
@@ -159,7 +211,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     result = dict(schema_version=SCHEMA_VERSION, source_hash='', roots=[], nodes=[], edges=[], images=[],
                   diagnostics=[], completeness='complete', metrics={}, tool_versions={}, configurable_components=[])
     secret_values = set()
-    root_ids, nodes_by_id, image_ids = set(), {}, set()
+    roots_by_id, nodes_by_id, image_ids = {}, {}, set()
     pending_refs, definitions, workloads, services, edge_ids = [], {}, [], [], set()
     definition_origins, ambiguous_definitions, owned_definitions = {}, set(), {}
     def collect_secrets(documents):
@@ -194,15 +246,14 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         if diagnostic_component:
             result['diagnostics'][-1].update(component_id=diagnostic_component[0], component_name=clean(diagnostic_component[1]))
         result['completeness'] = 'partial'
-        for item in result['roots']:
-            if item['id'] == rid:
-                item['completeness'] = 'partial'
+        if rid in roots_by_id:
+            roots_by_id[rid]['completeness'] = 'partial'
     def root(path, technology, **metadata):
         item = dict(id=_id('root', path, technology), path=path, technology=technology, completeness='complete', **metadata)
-        if item['id'] not in root_ids:
-            if len(root_ids) >= 5000:
+        if item['id'] not in roots_by_id:
+            if len(roots_by_id) >= 5000:
                 raise DiscoveryError('Root limit exceeded.')
-            root_ids.add(item['id'])
+            roots_by_id[item['id']] = item
             result['roots'].append(item)
         return item['id']
     def values_argument(selected_file, source_root):
@@ -212,8 +263,14 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 or not isinstance(documents[0], dict) or any(key in documents[0] for key in ('apiVersion', 'kind'))):
             raise ValueError()
         return str(value_path)
-    def component_values(component_id, label, path, rid, inherited=()):
-        selected = options.get('component_values', {}).get(component_id, [])
+    def stage_values(component_id, values):
+        value_path = base / ('.discovery-values-' + component_id + '.yaml')
+        with value_path.open('x', encoding='utf-8') as output:
+            yaml.safe_dump(values, output)
+        return value_path
+    def component_values(component_id, label, path, rid, inherited=(), previous_id=None):
+        selections = options.get('component_values', {})
+        selected = selections.get(component_id, selections.get(previous_id, []))
         result['configurable_components'].append(dict(id=component_id, label=clean(label), path=path,
             technology='helm', root_id=rid, values_origin=list(inherited), selected_values=list(selected)))
         arguments = []
@@ -371,9 +428,20 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         nested_options = {k: v for k, v in options.items() if k not in ('reference', 'reference_kind', 'reference_version')}
                         resolved = run_discovery(staged_artifact['root'], nested_options, runner, progress, artifact_resolver, supplemental_inputs, check_cancelled)
                         resolved['artifact_provenance'] = [staged_artifact['provenance'], *resolved.get('artifact_provenance', [])]
+                        if not supplemental_inputs:
+                            package = Path(staged_artifact['root'])
+                            try:
+                                chart_path = _package_chart(package).relative_to(package).as_posix()
+                            except ValueError:
+                                chart_path = None
+                            for target in resolved['roots']:
+                                if target['technology'] == 'helm' and target['path'] == chart_path:
+                                    target.update(chart_digest_kind='archive', chart_sha256=staged_artifact['provenance']['sha256'])
                         return resolved
-                except (ValueError, OSError):
+                except (ValueError, OSError) as exc:
                     issue('approved_artifact_unavailable', rid, 'reference')
+                    if isinstance(exc, ArtifactResolutionError):
+                        result['diagnostics'][-1]['message'] = clean(str(exc))
             issue('remote_chart_requires_local_artifact', rid, 'reference')
             result['completeness'] = 'blocked'
         else:
@@ -448,21 +516,18 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             except ValueError:
                 raise DiscoveryError('Supplemental inputs are unsafe, conflict, or exceed limits.') from None
         files = sorted(p.relative_to(base).as_posix() for p in base.rglob('*') if p.is_file())
-        digest = hashlib.sha256()
-        for path in files:
-            source_file = base / path
-            digest.update(len(path.encode()).to_bytes(8, 'big') + path.encode() + source_file.stat().st_size.to_bytes(8, 'big'))
-            with source_file.open('rb') as stream:
-                while chunk := stream.read(1024 * 1024):
-                    check()
-                    digest.update(chunk)
-        result['source_hash'] = 'sha256:' + digest.hexdigest()
+        source_digest = _tree_hash(base, files, check)
+        result['source_hash'] = 'sha256:' + source_digest
         parsed = {}
         charts = [p for p in files if Path(p).name == 'Chart.yaml']
-        kustomizations = [p for p in files if Path(p).name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')]
+        helm_templates = {Path(chart).parent / 'templates' for chart in charts}
+        kustomizations = {p for p in files if Path(p).name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')
+                          and helm_templates.isdisjoint(Path(p).parents)}
         compose_files = [p for p in files if Path(p).name in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml')]
-        for path in files:
-            if Path(path).suffix.lower() not in ('.yaml', '.yml', '.json') or '/templates/' in '/' + path:
+        for index, path in enumerate(files):
+            if index % 25 == 0:
+                check()
+            if path not in kustomizations and (Path(path).suffix.lower() not in ('.yaml', '.yml', '.json') or '/templates/' in '/' + path):
                 continue
             try:
                 parsed[path] = _documents((base / path).read_text(encoding='utf-8-sig'))
@@ -471,9 +536,15 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 # native/fallback pass below reports invalid selected inputs.
                 if path not in compose_files and Path(path).name not in ('compose.override.yaml', 'compose.override.yml', 'docker-compose.override.yaml', 'docker-compose.override.yml'):
                     issue('invalid_or_unsupported_document', path=path)
-        kustomizations = [p for p in kustomizations if not any(isinstance(doc, dict) and 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', '')) for doc in parsed.get(p, []))]
+        kustomizations = {p for p in kustomizations if not any(isinstance(doc, dict) and 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', '')) for doc in parsed.get(p, []))}
         collect_secrets([doc for docs in parsed.values() for doc in docs])
         managed_paths = {p for p in parsed if any(Path(k).parent == Path('.') or Path(k).parent in Path(p).parents for k in kustomizations)}
+        # Components contribute through a consuming overlay. Keep their raw
+        # resources managed, but do not run a standalone build for a Component.
+        kustomize_roots = {p for p in kustomizations
+                           if not any(isinstance(doc, dict) and doc.get('kind') == 'Component'
+                                      and str(doc.get('apiVersion', '')).startswith('kustomize.config.k8s.io/')
+                                      for doc in parsed.get(p, []))}
         rendered_documents = []
         resources = {}
         resource_origins, ambiguous_resources = {}, set()
@@ -506,6 +577,24 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         pass
         acquired_sources = {}
         staged_artifacts = {}
+        archive_hashes = {}
+        chart_hashes = {base: dict(chart_digest_kind='tree', chart_sha256=source_digest)}
+        source_paths = set(files)
+        def chart_hash(directory):
+            if directory not in chart_hashes:
+                # Exclude dependencies added to the staged upload by a previous render.
+                uploaded = (directory / 'Chart.yaml').relative_to(base).as_posix() in source_paths
+                paths = sorted(p.relative_to(directory).as_posix() for p in directory.rglob('*')
+                               if p.is_file() and (not uploaded or p.relative_to(base).as_posix() in source_paths))
+                chart_hashes[directory] = dict(chart_digest_kind='tree', chart_sha256=_tree_hash(directory, paths, check))
+            return chart_hashes[directory]
+        def record_reference(evidence, reference):
+            # Repository declarations may be untrusted even for a vendored chart.
+            try:
+                validate_helm_url(reference)
+            except ArtifactResolutionError:
+                return
+            evidence['reference'] = clean(reference)
         helm_source_declarations, resolved_helm_sources = [], set()
         artifact_file_count = len(files)
         artifact_bytes = sum((base / p).stat().st_size for p in files)
@@ -535,6 +624,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             artifact_bytes += new_size
             result.setdefault('artifact_provenance', []).append(staged_artifact['provenance'])
             staged_artifacts[identity] = destination
+            archive_hashes[destination] = staged_artifact['provenance']['sha256']
             return destination
         def local_source(source_key):
             mapping_key = '/'.join(source_key)
@@ -555,13 +645,26 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             destination = stage_artifact(artifact, source_key)
             acquired_sources[source_key] = destination
             return destination
+        def packaged_chart(package):
+            local = _package_chart(package)
+            chart_hashes[local] = dict(chart_digest_kind='archive', chart_sha256=archive_hashes[package])
+            return local
         def acquire_chart(identity):
             package = staged_artifacts.get(identity)
             if package is None:
                 package = stage_artifact(artifact_resolver.resolve(*identity), identity)
-            return _package_chart(package)
-        def catalog_chart(component, identity, directory, source_root):
+            return packaged_chart(package)
+        def bundled_chart(packaged):
             from .discovery_artifacts import ResolvedArtifact
+            package_key = ('bundled-helm', packaged.relative_to(base).as_posix())
+            if package_key not in staged_artifacts:
+                with packaged.open('rb') as stream:
+                    artifact = ResolvedArtifact(stream, packaged.name, _file_hash(packaged), 'helm',
+                                                _id(*package_key), 'uploaded-chart')
+                    stage_artifact(artifact, package_key)
+                result['artifact_provenance'][-1]['integrity'] = 'source-archive'
+            return packaged_chart(staged_artifacts[package_key])
+        def catalog_chart(component, identity, directory, source_root):
             _, reference, version = identity
             name = component['chart_name']
             mapped = mapping.get(reference + ':' + version) or mapping.get(reference) or mapping.get(component['reference'])
@@ -572,14 +675,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             elif (unpacked / 'Chart.yaml').is_file():
                 local = unpacked
             elif packaged.is_file():
-                package_key = ('bundled-helm', packaged.relative_to(base).as_posix())
-                if package_key not in staged_artifacts:
-                    with packaged.open('rb') as stream:
-                        artifact = ResolvedArtifact(stream, packaged.name, _file_hash(packaged), 'helm',
-                                                    _id(*package_key), 'uploaded-chart')
-                        stage_artifact(artifact, package_key)
-                    result['artifact_provenance'][-1]['integrity'] = 'source-archive'
-                local = _package_chart(staged_artifacts[package_key])
+                local = bundled_chart(packaged)
                 source_root = local
             elif artifact_resolver is not None:
                 local = acquire_chart(identity)
@@ -592,7 +688,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 raise ValueError()
             return local, source_root if local.is_relative_to(source_root) else base
         rendered_releases = set()
-        def prepare_chart(directory, rid, path, ancestry=()):
+        def prepare_chart(directory, rid, path, owner, options, inherited=None, ancestry=(), packaged=False):
             """Acquire only explicitly configured dependencies; Helm owns render semantics."""
             nonlocal artifact_file_count, artifact_bytes
             if len(ancestry) >= 20:
@@ -603,8 +699,27 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if not isinstance(dependencies, list) or len(dependencies) > 500:
                 issue('invalid_helm_dependencies', rid, path)
                 return False
+            if not dependencies:
+                return True
+            locked = []
+            lock_path = directory / 'Chart.lock'
+            if lock_path.is_file():
+                try:
+                    lock, = _documents(lock_path.read_text(encoding='utf-8-sig'))
+                    if not isinstance(lock, dict) or not re.fullmatch(r'sha256:[0-9a-f]{64}', str(lock.get('digest', ''))):
+                        raise ValueError('Invalid lock digest')
+                    locked = lock.get('dependencies')
+                    if (not isinstance(locked, list) or len(locked) != len(dependencies)
+                            or any(not isinstance(row, dict) for row in locked)):
+                        raise ValueError('Invalid lock dependencies')
+                except (OSError, ValueError, yaml.YAMLError):
+                    issue('invalid_helm_dependency_lock', rid, path)
+                    return False
+            values = _dependency_values(directory, options)
+            if ancestry:
+                values = _merge(values, inherited) if values is not None and isinstance(inherited, dict) else None
             ready = True
-            for dependency in dependencies:
+            for index, dependency in enumerate(dependencies):
                 if not isinstance(dependency, dict):
                     issue('invalid_helm_dependency', rid, path)
                     ready = False
@@ -615,23 +730,65 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     issue('invalid_helm_dependency', rid, path)
                     ready = False
                     continue
-                identity = ('helm', repository.rstrip('/') + '/' + name, version)
-                local = directory / 'charts' / name
-                # Packaged dependencies remain for Helm to validate and unpack natively.
-                if not (local / 'Chart.yaml').is_file() and list((directory / 'charts').glob(name + '-*.tgz')):
+                reference = repository.rstrip('/') + '/' + name
+                alias = dependency.get('alias', name)
+                if not isinstance(alias, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', alias):
+                    issue('invalid_helm_dependency', rid, path)
+                    ready = False
                     continue
+                dep_id = node(rid, 'HelmDependency', alias, path, 'unresolved', owner=owner)
+                evidence = nodes_by_id[dep_id]['provenance'][0]
+                evidence.update(chart=clean(name), declared_version=clean(version), selection_scope='parent')
+                if repository:
+                    record_reference(evidence, reference)
+                if isinstance(dependency.get('condition'), str):
+                    evidence['condition'] = clean(dependency['condition'])
+                if isinstance(dependency.get('tags'), list):
+                    evidence['tags'] = [clean(s) for s in dependency['tags'] if isinstance(s, str)]
+                enabled = _dependency_enabled(dependency, values)
+                if enabled is not None:
+                    evidence['enabled'] = enabled
+                local = directory / 'charts' / name
                 try:
+                    exact = version.strip().removeprefix('=').strip()
+                    expected = exact if _CHART_VERSION.fullmatch(exact) else None
+                    if locked:
+                        # Helm writes one lock row per declaration in the same order, including aliases.
+                        pin = locked[index]
+                        if pin.get('name') != name or pin.get('repository', '') != repository:
+                            raise ArtifactResolutionError('Chart.lock does not match this dependency declaration.')
+                        locked_version = str(pin.get('version', ''))
+                        if _CHART_VERSION.fullmatch(locked_version):
+                            if expected and expected != locked_version:
+                                raise ArtifactResolutionError('Chart.lock does not match the declared chart version.')
+                            expected = locked_version
+                            evidence['locked_version'] = clean(locked_version)
+                        elif locked_version != version:
+                            raise ArtifactResolutionError('Chart.lock does not contain a matching chart version.')
+                    identity = ('helm', reference, expected or version)
                     if identity in ancestry:
                         raise ValueError('cycle')
-                    if not (local / 'Chart.yaml').is_file():
-                        if artifact_resolver is None or not repository:
+                    packages = list((directory / 'charts').glob(name + '-*.tgz'))
+                    in_archive = packaged
+                    acquired = None
+                    if not (local / 'Chart.yaml').is_file() and packages:
+                        if len(packages) != 1:
+                            raise ValueError('ambiguous')
+                        local = bundled_chart(packages[0])
+                        in_archive = True
+                    elif not (local / 'Chart.yaml').is_file():
+                        if packaged or artifact_resolver is None or not repository:
                             raise ValueError('missing')
                         acquired = acquire_chart(identity)
                         if local.exists():
                             raise ValueError('ambiguous')
-                        chart_metadata = yaml.safe_load((acquired / 'Chart.yaml').read_text(encoding='utf-8-sig'))
-                        if chart_metadata.get('name') != name:
-                            raise ValueError('identity')
+                    child = _documents(((acquired or local) / 'Chart.yaml').read_text(encoding='utf-8-sig'))
+                    if len(child) != 1 or not isinstance(child[0], dict) or child[0].get('name') != name:
+                        raise ValueError('identity')
+                    actual_version = str(child[0].get('version') or '')
+                    if not actual_version or (expected and actual_version != expected):
+                        raise ArtifactResolutionError(f'The chart metadata declares version {clean(actual_version)!r}. Expected {clean(expected or version)!r}.')
+                    if acquired:
                         copied_files = [p for p in acquired.rglob('*') if p.is_file()]
                         copied_bytes = sum(p.stat().st_size for p in copied_files)
                         if _exceeds(artifact_file_count + len(copied_files), MAX_REPOSITORY_ENTRIES) or _exceeds(artifact_bytes + copied_bytes, MAX_REPOSITORY_BYTES):
@@ -640,24 +797,32 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         artifact_bytes += copied_bytes
                         local.parent.mkdir(exist_ok=True)
                         shutil.copytree(acquired, local)
-                    if not prepare_chart(local, rid, path, (*ancestry, identity)):
+                        chart_hashes[local] = chart_hash(acquired)
+                    evidence.update(version=clean(actual_version), **chart_hash(local))
+                    nodes_by_id[dep_id]['state'] = 'resolved'
+                    if (dependency.get('condition') or dependency.get('tags')) and enabled is not True:
+                        issue('helm_dependency_images_not_verified', rid, path)
+                        result['diagnostics'][-1].update(component_id=dep_id, component_name=clean(alias),
+                            message='This optional dependency is available. Its images cannot be verified independently from the parent Helm render.')
+                    scoped_values = values.get(alias, {}) if values is not None else None
+                    if not prepare_chart(local, rid, path, dep_id, [], scoped_values, (*ancestry, identity), in_archive):
                         ready = False
                 except (ValueError, OSError, TypeError, yaml.YAMLError) as exc:
-                    from .discovery_artifacts import ArtifactResolutionError
                     reason = str(exc) if isinstance(exc, ArtifactResolutionError) else 'Supply the chart under charts/ or configure an approved artifact source.'
                     issue('helm_dependency_unavailable', rid, path)
                     result['diagnostics'][-1].update(
-                        dependency=clean(name), version=clean(version),
+                        component_id=dep_id, component_name=clean(alias), dependency=clean(name), version=clean(version),
                         message=f"Required Helm chart {clean(name)} ({clean(version)}) is unavailable. {clean(reason)}")
                     ready = False
             return ready
 
         def render(tool, args, rid, path, postrenderers=None, output_transform=None, owner=None, catalog_scope=None):
+            check()
             if runner is None:
                 issue('native_renderer_unavailable', rid, path)
                 return
             try:
-                if tool == 'helm' and not prepare_chart(Path(args[2]), rid, path):
+                if tool == 'helm' and not prepare_chart(Path(args[2]), rid, path, owner or rid, args[3:]):
                     return
                 output = runner(tool, args, str(base))
                 if isinstance(output, dict):
@@ -702,16 +867,16 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     if isinstance(metadata, dict) and all(isinstance(v, str) for v in (document.get('kind'), metadata.get('namespace', 'default'), metadata.get('name'))):
                         index_resource(document, path)
                     if 'toolkit.fluxcd.io/' in str(document.get('apiVersion', '')) and isinstance(metadata, dict):
-                        ownership = None
-                        if owner:
-                            controller = node(rid, document.get('kind'), metadata.get('name', '[unnamed]'), path,
-                                              'rendered', namespace=metadata.get('namespace', ''), owner=owner)
-                            ownership = (rid, catalog_scope or owner, controller)
-                        rendered_documents.append((path, document, True, ownership))
+                        controller = node(rid, document.get('kind'), metadata.get('name', '[unnamed]'), path,
+                                          'rendered', namespace=metadata.get('namespace', ''), owner=owner)
+                        if not owner:
+                            edge(rid, controller, 'declares')
+                        rendered_documents.append((path, document, True, (rid, catalog_scope or owner or rid, controller)))
                 return True
             except (MemoryError, OSError):
                 raise
             except Exception as exc:
+                check()
                 issue('native_render_failed', rid, path)
                 diagnostic = result['diagnostics'][-1]
                 diagnostic['renderer'] = tool
@@ -725,6 +890,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     diagnostic['value_paths'] = [clean(value) for value in exc.value_paths]
 
         applied_catalog_inputs = set()
+        inline_origins = {}
         product_directories = set()
         catalog_entries = 0
 
@@ -753,6 +919,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 return False
             product_directories.add(directory)
             origin = catalog_files[0].relative_to(base).as_posix()
+            origin = inline_origins.get(origin, origin)
             try:
                 # The service importer also rejects duplicate and YAML merge keys in source.
                 for value_file in catalog_files:
@@ -773,10 +940,15 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if catalog_entries > 5000:
                     raise DiscoveryError('Service catalog component limit exceeded.')
                 name = component['logical_name']
+                entry = entries[name]
+                enabled = entry.get('enabled') if isinstance(entry, dict) else None
                 nid = node(rid, 'ChartReference', name, path, 'unresolved', owner=parent)
                 item = nodes_by_id[nid]
+                if isinstance(enabled, bool):
+                    item['provenance'][0]['enabled'] = enabled
                 previous = diagnostic_component
                 diagnostic_component = (nid, name)
+                inline_path = None
                 try:
                     if component['status'] != 'normalized':
                         issue('catalog_chart_unresolved', rid, path)
@@ -788,13 +960,13 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         reference = reference.rstrip('/') + '/' + chart
                     identity = ('helm', reference, version)
                     item['provenance'][0].update(chart=clean(chart), version=clean(version), reference=clean(reference))
-                    entry = entries[name]
-                    if isinstance(entry.get('enabled'), bool):
-                        item['provenance'][0]['enabled'] = entry['enabled']
                     if identity in ancestry or len(ancestry) >= 20:
                         issue('catalog_chart_cycle_or_depth_exceeded', rid, path)
                         continue
-                    overrides = component_values(nid, name, path, rid, ['chart defaults', 'ordered catalog values files'])
+                    origins = ['chart defaults', 'ordered catalog values files']
+                    if entry.get('values'):
+                        origins.append('inline catalog values')
+                    overrides = component_values(nid, name, path, rid, origins)
                     if overrides is None:
                         continue
                     declared = entry.get('valuesFiles', entry.get('values_files', []))
@@ -814,7 +986,6 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         issue('catalog_values_file_unavailable', rid, path)
                         result['diagnostics'][-1]['message'] = f'The declared values file {clean(value_file)} is missing or is not a values mapping.'
                         continue
-                    arguments += overrides
                     try:
                         location = catalog_chart(component, identity, directory, source_root)
                         if location is None:
@@ -822,19 +993,44 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                             result['diagnostics'][-1]['message'] = f'Supply {clean(chart)} ({clean(version)}) under charts/, through a local chart mapping or from an approved artifact source.'
                             continue
                         local, child_source = location
+                        item['provenance'][0].update(chart_hash(local))
                     except (ValueError, OSError, yaml.YAMLError) as exc:
-                        from .discovery_artifacts import ArtifactResolutionError
                         issue('catalog_chart_unavailable', rid, path)
                         reason = str(exc) if isinstance(exc, ArtifactResolutionError) else 'Check the chart name, version and local mapping.'
                         result['diagnostics'][-1]['message'] = f'Could not acquire {clean(chart)} ({clean(version)}). {clean(reason)}'
                         continue
+                    unsupported = [field for field in ('valuesFrom', 'postRenders') if entry.get(field)]
+                    if unsupported:
+                        issue('unsupported_catalog_override', rid, path)
+                        result['diagnostics'][-1]['message'] = 'Discovery cannot apply the catalog ' + ', '.join(unsupported) + ' configuration.'
+                        continue
+                    postrenderers = entry.get('postRenderers')
+                    if postrenderers and not isinstance(postrenderers, list):
+                        issue('invalid_catalog_postrenderers', rid, path)
+                        continue
+                    inline = entry.get('values')
+                    if inline is not None and not isinstance(inline, dict):
+                        issue('invalid_catalog_inline_values', rid, path)
+                        result['diagnostics'][-1]['message'] = 'Declare inline catalog values as a YAML mapping.'
+                        continue
+                    if inline:
+                        try:
+                            inline_path = stage_values(nid, inline)
+                        except FileExistsError:
+                            issue('catalog_values_path_conflict', rid, path)
+                            continue
+                        inline_origins[inline_path.relative_to(base).as_posix()] = path
+                        arguments += ['-f', str(inline_path)]
+                    arguments += overrides
                     release = name if re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]{0,51}[a-z0-9])?', name) else 'discovery-' + nid
                     chart_path = (local / 'Chart.yaml').relative_to(base).as_posix()
-                    if render('helm', ['template', release, str(local), *arguments], rid, chart_path, owner=nid):
+                    if render('helm', ['template', release, str(local), *arguments], rid, chart_path, postrenderers, owner=nid):
                         item['state'] = 'rendered'
                     layers = [Path(p) for p in arguments[1::2]]
                     discover_chart_values(local, layers, child_source, rid, nid, (*ancestry, identity))
                 finally:
+                    if inline_path is not None:
+                        inline_path.unlink()
                     diagnostic_component = previous
 
         top_directories = {Path(p).parts[0] for p in files}
@@ -866,11 +1062,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             if not adapter.tool:
                 continue
             for path in (p for p in files if adapter.matches(p, parsed.get(p, [])) and not (adapter.tool == 'helm' and vendored_chart(p))):
-                if adapter.tool == 'kustomize' and (path not in kustomizations or Path(path).parent.as_posix() in flux_build_paths):
+                if adapter.tool == 'kustomize' and (path not in kustomize_roots or Path(path).parent.as_posix() in flux_build_paths):
                     continue
                 directory = (base / path).parent
                 metadata = {}
                 if adapter.tool == 'helm' and len(parsed.get(path, ())) == 1 and isinstance(parsed[path][0], dict):
+                    metadata.update(chart_hash(directory))
                     for field in ('name', 'version'):
                         value = parsed[path][0].get(field)
                         if isinstance(value, str):
@@ -878,6 +1075,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 rid = root(Path(path).parent.as_posix(), adapter.technology, **metadata)
                 args = [*adapter.prefix, str(directory)]
                 if adapter.tool == 'helm':
+                    roots_by_id[rid]['state'] = 'unresolved'
                     missing_selection = False
                     for value_file in options.get('values_files', []):
                         try:
@@ -898,9 +1096,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     args += overrides
                 nodes_before_render = len(nodes_by_id)
                 product = adapter.tool == 'helm' and discover_chart_values(directory, [Path(p) for p in args[4::2]], upload_root, rid, rid, ())
-                render(adapter.tool, args, rid, path, owner=rid if product else None)
+                rendered = render(adapter.tool, args, rid, path, owner=rid if product else None)
                 if adapter.tool == 'helm':
+                    if rendered:
+                        roots_by_id[rid]['state'] = 'rendered'
                     if metadata and files == [path] and len(nodes_by_id) == nodes_before_render and not parsed[path][0].get('dependencies'):
+                        roots_by_id[rid]['state'] = 'unresolved'
                         issue('chart_metadata_only', rid, path)
                         result['diagnostics'][-1]['message'] = 'Only Chart.yaml was supplied. Enter the GitLab repository URL, upload a chart package or source archive containing values.yaml and the templates, or upload the service-definition values.yaml on its own.'
         for path in compose_files:
@@ -937,6 +1138,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     if not isinstance(native_services, dict):
                         raise ValueError()
                 except Exception:
+                    check()
                     issue('compose_native_render_failed', rid, path)
             else:
                 issue('compose_native_renderer_unavailable', rid, path)
@@ -1024,6 +1226,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         rendered_documents.clear()
         cursor = 0
         while cursor < len(queue):
+            if cursor % 100 == 0:
+                check()
             diagnostic_component = None
             if cursor > 2000:
                 issue('render_graph_limit_exceeded')
@@ -1035,7 +1239,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             flux = 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', ''))
             catalog_scope = controller = None
             if ownership:
-                # Rendering already recorded this controller under its product component.
+                # Rendering already recorded this controller under its originating root.
                 rid, catalog_scope, controller = ownership
             else:
                 rid = root(path, 'flux' if flux else 'kubernetes')
@@ -1161,7 +1365,15 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 continue
             release_meta = doc.get('metadata', {})
             release_ns = release_meta.get('namespace') or 'default'
-            release_id = controller or definitions.get(('HelmRelease', release_ns, str(release_meta.get('name', ''))))
+            release_name = release_meta.get('name', '[unnamed]')
+            release_id = controller or node(rid, 'HelmRelease', release_name, path, namespace=release_meta.get('namespace', ''))
+            release_key = _id(catalog_scope, path, doc)
+            if release_key in rendered_releases:
+                continue
+            rendered_releases.add(release_key)
+            nodes_by_id[release_id]['state'] = 'unresolved'
+            diagnostic_component = (release_id, str(release_name))
+            evidence = nodes_by_id[release_id]['provenance'][0]
             for dependency in spec.get('dependsOn', []) if isinstance(spec.get('dependsOn', []), list) else []:
                 if isinstance(dependency, dict):
                     reference(release_id, 'HelmRelease', dependency.get('name'), dependency.get('namespace', release_ns), rid, path, 'depends_on')
@@ -1186,16 +1398,16 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     issue('flux_chart_reference_unresolved', rid, path)
                     continue
             source_ref = chart_spec.get('sourceRef', {}) if isinstance(chart_spec, dict) else {}
+            if isinstance(chart_spec, dict):
+                if isinstance(chart_spec.get('chart'), str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', chart_spec['chart']):
+                    evidence['chart'] = clean(chart_spec['chart'])
+                if isinstance(chart_spec.get('version'), str):
+                    evidence['version'] = clean(chart_spec['version'])
             if isinstance(source_ref, dict):
                 reference(release_id, source_ref.get('kind', 'HelmRepository'), source_ref.get('name'), source_ref.get('namespace', chart_ref_key[1] if chart_ref_key else release_ns), rid, path, 'uses_source')
-            release_key = _id(catalog_scope, path, doc)
-            if release_key in rendered_releases:
-                continue
-            rendered_releases.add(release_key)
             release_diagnostic_start = len(result['diagnostics'])
-            component_id = controller or _id('helm-release', path, release_ns, release_meta.get('name', ''))
-            diagnostic_component = (component_id, str(release_meta.get('name', 'Helm release')))
-            overrides = component_values(component_id, str(release_meta.get('name', 'Helm release')), path, rid, ['chart defaults', 'ordered Flux valuesFrom', 'inline Flux values', 'Flux targetPath (highest Helm precedence)'])
+            previous_id = _id('helm-release', path, release_ns, release_meta.get('name', '')) if not controller or catalog_scope == rid else None
+            overrides = component_values(release_id, str(release_name), path, rid, ['chart defaults', 'ordered Flux valuesFrom', 'inline Flux values', 'Flux targetPath (highest Helm precedence)'], previous_id)
             if overrides is None:
                 continue
             values = {}
@@ -1259,15 +1471,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 chart = options.get('chart_map', {}).get(chart, chart)
                 local = compose._inside(base, str(chart))
                 if chart_ref_key and chart_ref_key[0] == 'OCIRepository':
+                    source_spec = resources[chart_ref_key].get('spec', {})
+                    record_reference(evidence, source_spec.get('url'))
                     package = local_source(chart_ref_key)
-                    candidates = list(package.rglob('Chart.yaml'))
-                    if not candidates:
-                        raise ValueError()
-                    depth = min(len(p.relative_to(package).parts) for p in candidates)
-                    candidates = [p for p in candidates if len(p.relative_to(package).parts) == depth]
-                    if len(candidates) != 1:
-                        raise ValueError()
-                    local = candidates[0].parent
+                    local = packaged_chart(package) if package in archive_hashes else _package_chart(package)
                 if not (local / 'Chart.yaml').is_file():
                     source_key = (source_ref.get('kind', 'HelmRepository'), source_ref.get('namespace', chart_ref_key[1] if chart_ref_key else release_ns), source_ref.get('name'))
                     source_document = resources.get(source_key)
@@ -1281,13 +1488,21 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         if not isinstance(repository, str) or not isinstance(chart, str):
                             raise ValueError()
                         chart_reference = repository.rstrip('/') + '/' + chart
+                        record_reference(evidence, chart_reference)
                         local = acquire_chart(('helm', chart_reference, chart_spec.get('version', '')))
                         resolved_helm_sources.add(source_key)
                     if not (local / 'Chart.yaml').is_file():
                         raise ValueError()
                 if chart_ref_key:
                     resolved_helm_sources.add(chart_ref_key)
-                child_rid = root(local.relative_to(base).as_posix(), 'helm')
+                chart_metadata = _documents((local / 'Chart.yaml').read_text(encoding='utf-8-sig'))
+                if len(chart_metadata) != 1 or not isinstance(chart_metadata[0], dict):
+                    raise ValueError()
+                for field, attribute in [('name', 'chart'), ('version', 'version')]:
+                    if isinstance(chart_metadata[0].get(field), (str, int, float)):
+                        evidence[attribute] = clean(str(chart_metadata[0][field]))
+                evidence.update(chart_hash(local))
+                child_rid = root(local.relative_to(base).as_posix(), 'helm', **chart_hash(local))
                 if any(d['root_id'] == rid and d['code'] in ('ambiguous_flux_values_reference', 'missing_flux_values_reference', 'secret_values_not_rendered', 'unsupported_flux_values_input', 'invalid_flux_inline_values', 'invalid_flux_values_reference') for d in result['diagnostics'][release_diagnostic_start:]):
                     issue('flux_render_blocked_by_values', rid, path)
                     continue
@@ -1321,18 +1536,16 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     except (ValueError, TypeError, OSError, UnicodeError, compose.ComposeInputError, yaml.YAMLError):
                         issue('unsupported_flux_chart_values_files', rid, path)
                         continue
-                values_path = base / ('.discovery-values-' + component_id + '.yaml')
-                if values_path.exists():
-                    raise ValueError()
-                values_path.write_text(yaml.safe_dump(values), encoding='utf-8')
+                values_path = stage_values(release_id, values)
                 release_name = spec.get('releaseName', doc.get('metadata', {}).get('name', 'discovery'))
                 release_namespace = spec.get('targetNamespace', namespace)
                 if not all(isinstance(value, str) and re.fullmatch(r'[a-z0-9][a-z0-9.-]{0,252}', value) for value in (release_name, release_namespace)):
                     raise ValueError()
                 def render_release(chart_directory):
                     chart_path = (local / 'Chart.yaml').relative_to(base).as_posix() if ownership else path
-                    render('helm', ['template', release_name, str(chart_directory), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *overrides, *targets],
-                           rid, chart_path, spec.get('postRenderers'), owner=controller, catalog_scope=catalog_scope)
+                    if render('helm', ['template', release_name, str(chart_directory), '--namespace', release_namespace, '--include-crds', '-f', str(values_path), *overrides, *targets],
+                              rid, chart_path, spec.get('postRenderers'), owner=release_id, catalog_scope=catalog_scope):
+                        nodes_by_id[release_id]['state'] = 'rendered'
                 if chart_values is None:
                     render_release(local)
                 else:
@@ -1344,9 +1557,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         (prepared_chart / 'values.yaml').write_text(yaml.safe_dump(chart_values), encoding='utf-8')
                         render_release(prepared_chart)
                 values_path.unlink()
-                edge(controller or rid, child_rid, 'renders')
-            except (ValueError, TypeError, OSError, AttributeError, compose.ComposeInputError):
+                edge(release_id, child_rid, 'renders')
+            except (ValueError, TypeError, OSError, AttributeError, compose.ComposeInputError) as exc:
                 issue('flux_chart_source_unavailable', rid, path)
+                if isinstance(exc, ArtifactResolutionError):
+                    result['diagnostics'][-1]['message'] = clean(str(exc))
             if any(key in spec for key in ('kubeConfig',)):
                 issue('flux_controller_semantics_not_evaluated', rid, path)
             queue.extend(rendered_documents)
@@ -1375,6 +1590,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     for item in fragment.get('diagnostics', []):
                         issue('adapter_input_unresolved', rid, path)
                 except Exception:
+                    check()
                     issue('adapter_failed', rid, path)
         for path in files:
             if Path(path).name.lower() in ('images.txt', 'image-list.txt'):
@@ -1416,7 +1632,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         issue('missing_submodule_content', path=path)
         if not result['roots']:
             issue('no_supported_deployment_roots')
-        if result['completeness'] == 'partial' and not result['images'] and not result['nodes']:
+        if result['completeness'] == 'partial' and not result['images'] and all(
+                n['kind'] == 'HelmDependency' and n['state'] == 'unresolved' for n in result['nodes']):
             result['completeness'] = 'invalid' if any(d['code'] == 'invalid_or_unsupported_document' for d in result['diagnostics']) else 'blocked'
         for item in result['nodes']:
             for field in ('name', 'namespace', 'kind'):

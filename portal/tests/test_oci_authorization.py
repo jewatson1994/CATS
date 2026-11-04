@@ -75,10 +75,35 @@ def test_fail_closed(context, change):
 
 def test_new_scan_cannot_reuse_approval(context):
     db, mapping, approval, execution = context
+    assert auth.candidate_service_ids(db, mapping, DIGEST) == {mapping.service_id}
     db.add(Execution(service_id=mapping.service_id, execution_key='new',
         scanned_at=NOW + timedelta(seconds=1), complete=True, raw_payload={}))
     db.commit()
     assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(seconds=2)).reason == 'digest_not_approved'
+    assert not auth.candidate_service_ids(db, mapping, DIGEST)
+
+
+def test_project_service_lookup_matches_concrete_registry_repository_and_digest(context):
+    db, mapping, approval, execution = context
+    # A second service can retain the same bytes at a different repository.
+    other = Service(service_key='other-project', name='Other')
+    db.add(other)
+    db.flush()
+    scan = Execution(service_id=other.id, execution_key='other-scan', scanned_at=NOW,
+                     complete=True, scan_scope='service', raw_payload={})
+    db.add(scan)
+    db.flush()
+    snapshot = dict(approval.snapshot, artifacts=[dict(kind='image', digest=DIGEST,
+                    reference='registry.example/team/other@' + DIGEST)])
+    db.add(CyberApproval(service_id=other.id, source_execution_id=scan.id, variant='current',
+                         snapshot=snapshot, snapshot_digest=snapshot_digest(snapshot), decided_at=NOW))
+    db.commit()
+    assert auth.candidate_service_ids(db, mapping, DIGEST) == {mapping.service_id}
+    mapping.upstream_repository = 'team/other'
+    assert auth.candidate_service_ids(db, mapping, DIGEST) == {other.id}
+    assert not auth.candidate_service_ids(db, mapping, 'sha256:' + 'd' * 64)
+    mapping.upstream.endpoint = 'https://other.example'
+    assert not auth.candidate_service_ids(db, mapping, DIGEST)
 
 
 def test_canonical_policy_is_live(context, monkeypatch):
@@ -146,6 +171,18 @@ def test_pinned_chart_digest():
     assert not auth._artifact_matches({'artifacts': [artifact]}, 'registry.example/team/chart', DIGEST)
 
 
+def test_explicit_internal_registry_identity_cannot_cross_docker_hub():
+    def matches(reference, repository, *, published=False):
+        artifact = dict(kind='image', reference=reference + '@' + DIGEST, digest=DIGEST)
+        return auth._artifact_matches({'artifacts': [artifact]}, repository, DIGEST, published=published)
+
+    assert not matches('docker.io/harbor/team/app', 'harbor/team/app')
+    assert not matches('harbor/team/app', 'docker.io/harbor/team/app', published=True)
+    assert matches('harbor/team/app', 'harbor/team/app', published=True)
+    assert matches('busybox', 'registry-1.docker.io/library/busybox')
+    assert matches('index.docker.io/busybox', 'registry-1.docker.io/library/busybox', published=True)
+
+
 def test_published_chart_requires_verified_source_binding(context):
     import copy
     db, mapping, approval, _ = context
@@ -163,6 +200,7 @@ def test_published_chart_requires_verified_source_binding(context):
     approval.publish_status = 'published'
     approval.publication = receipt
     db.commit()
+    assert auth.candidate_service_ids(db, mapping, DIGEST) == {mapping.service_id}
     assert auth.authorize(db, mapping, DIGEST, NOW).allowed
     receipt = copy.deepcopy(receipt)
     receipt['artifacts'][0]['source_digest'] = DIGEST

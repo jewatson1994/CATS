@@ -1,10 +1,30 @@
 """Additive OCI metadata and small manifests; blob bytes remain on disk."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
+from .oci_transport import REPOSITORY
+
+
+def is_project_pattern(value):
+    return (isinstance(value, str) and value.endswith('/*') and value.count('/') == 1
+            and len(value) <= 255 and bool(REPOSITORY.fullmatch(value[:-2])))
+
+
+def project_repository(target_pattern, source_pattern, repository):
+    """Translate only a concrete descendant of the configured Harbor project."""
+    if (not is_project_pattern(target_pattern) or not is_project_pattern(source_pattern)
+            or not isinstance(repository, str) or not REPOSITORY.fullmatch(repository)
+            or not repository.startswith(source_pattern[:-1]) or len(repository) > 255):
+        raise ValueError('Repository is outside the configured project')
+    target_project = target_pattern.removesuffix('/*')
+    _, _, relative_path = repository.partition('/')
+    result = f'{target_project}/{relative_path}'
+    if len(result) > 255:
+        raise ValueError('Repository name is too long')
+    return result
 
 
 def now():
@@ -28,7 +48,7 @@ class OCIRepository(Base):
     __tablename__ = 'oci_repositories'
     id: Mapped[int] = mapped_column(primary_key=True)
     public_repository: Mapped[str] = mapped_column(String(255), unique=True)
-    service_id: Mapped[int] = mapped_column(ForeignKey('services.id'), index=True)
+    service_id: Mapped[int | None] = mapped_column(ForeignKey('services.id'), index=True)
     upstream_id: Mapped[int] = mapped_column(ForeignKey('oci_upstreams.id'))
     upstream_repository: Mapped[str] = mapped_column(String(255))
     upstream: Mapped[OCIUpstream] = relationship()
@@ -67,6 +87,17 @@ class OCIObjectLink(Base):
     root_digest: Mapped[str] = mapped_column(String(71), index=True)
     object_digest: Mapped[str] = mapped_column(String(71), index=True)
     kind: Mapped[str] = mapped_column(String(16))
+
+
+class OCIProjectObjectLink(Base):
+    """A sibling repository's cached graph never conveys access to these objects."""
+    __tablename__ = 'oci_project_object_links'
+    __table_args__ = (Index('ix_oci_project_graph_root', 'repository_id', 'repository_path', 'root_digest', 'kind'),)
+    repository_id: Mapped[int] = mapped_column(ForeignKey('oci_repositories.id'), primary_key=True)
+    repository_path: Mapped[str] = mapped_column(String(255), primary_key=True)
+    object_digest: Mapped[str] = mapped_column(String(71), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    root_digest: Mapped[str] = mapped_column(String(71), primary_key=True)
 
 
 class OCITag(Base):

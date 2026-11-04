@@ -19,6 +19,7 @@ def offline(repository: str, digest: str, request: Request):
         with proxy.SessionLocal() as db:
             mapping = proxy.mapping_for(db, repository)
             machine = proxy.principal(db, request, mapping.id)
+            mapping = proxy.service_mapping(db, mapping, digest)
             decision = proxy.require(db, mapping, digest)
             row = db.get(approvals.CyberApproval, decision.approval_id, populate_existing=True) if decision.approval_id else None
             receipt = row.publication or {} if row else {}

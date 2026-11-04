@@ -28,6 +28,8 @@ METADATA_ALLOWANCE = 2 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 _DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
 _REPOSITORY = re.compile(r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*\Z")
+_DISPLAY_AUTHORITY = re.compile(r"(?:[a-z0-9._-]+|\[[0-9a-f:.]+\])(?::[0-9]+)?", re.ASCII | re.IGNORECASE)
+_DOCKER_HUB_HOSTS = ("docker.io", "index.docker.io", "registry-1.docker.io")
 
 
 def _json(value):
@@ -68,14 +70,30 @@ def _origin(url):
         raise ValueError("Registry URLs must not contain control characters")
     parts = urlsplit(url)
     if (parts.scheme != "https" or not parts.hostname or parts.username is not None
-            or parts.password is not None or parts.fragment or parts.port == 0):
+            or parts.password is not None or parts.fragment or parts.port == 0
+            or (parts.netloc.startswith("[") and not re.fullmatch(r"\[[^\]]+\](?::[0-9]+)?", parts.netloc))):
         raise ValueError("Registry URLs must use credential-free HTTPS")
     return parts.scheme, parts.hostname.lower(), parts.port or 443
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):
+def _display_origin(url):
+    try:
+        scheme, host, port = _origin(url)
+        if len(host.rstrip(".")) > 253 or not _DISPLAY_AUTHORITY.fullmatch(urlsplit(url).netloc):
+            return None
+    except ValueError:
         return None
+    authority = f"[{host}]" if ":" in host else host
+    return f"{scheme}://{authority}" + (f":{port}" if port != 443 else "")
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # Let HTTPDefaultErrorHandler deliver the untouched response. The standard
+    # redirect handler parses Location before calling redirect_request.
+    def http_error_302(self, request, response, code, message, headers):
+        return None
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
 class _RegistryError(ValueError):
@@ -85,26 +103,39 @@ class _RegistryError(ValueError):
 
 
 class _RedirectError(_RegistryError):
-    """Fixed diagnostics only: a Location can contain a signed storage credential."""
+    """Only the operation and validated origins may accompany the fixed diagnostic."""
 
     _CAUSES = {
         "missing_location": "The registry redirect did not include a destination. Check the registry or reverse proxy configuration.",
         "invalid_location": "The registry redirect has an invalid or unsafe destination. Redirects require credential-free HTTPS.",
-        "unapproved_origin": "The registry redirect leaves an approved origin. For trusted blob storage, configure CATS_OCI_BLOB_REDIRECT_ORIGINS; other operations must stay on their original origin.",
+        "unapproved_blob_origin": "The registry redirected a blob read to an unapproved storage origin. If you trust this storage service, add its HTTPS origin to CATS_OCI_BLOB_REDIRECT_ORIGINS.",
+        "cross_origin_operation": "This registry operation must stay on its original origin. Check the registry's external URL and reverse proxy redirect configuration.",
         "unsafe_method": "The registry redirect would change an upload method. Configure the registry or reverse proxy to use HTTP 307 or 308 for uploads.",
         "limit": "The registry exceeded the redirect limit. Check the registry or reverse proxy for a redirect loop.",
     }
 
-    def __init__(self, status, reason):
+    def __init__(self, status, reason, *, registry_origin=None, redirect_origin=None, redirect_from_origin=None, operation=None):
         super().__init__(status)
+        self.reason = reason
+        self.registry_origin = _display_origin(registry_origin) if registry_origin else None
+        self.redirect_origin = _display_origin(redirect_origin) if redirect_origin else None
+        issued_by = _display_origin(redirect_from_origin) if redirect_from_origin else None
+        self.redirect_from_origin = issued_by if issued_by != self.registry_origin else None
+        self.operation = operation
         self.cause = self._CAUSES[reason]
         self.args = (self.cause,)
 
 
 class _Client:
-    def __init__(self, host, repository, env):
+    def __init__(self, host, repository, env, *, pull_only=False):
         self.max_bytes = _size_limit(env)
-        self.base = "https://" + host
+        self.pull_only = pull_only
+        configured_base = "https://" + host
+        _, hostname, port = _origin(configured_base)
+        self.docker_hub_pull = pull_only and port == 443 and hostname in _DOCKER_HUB_HOSTS
+        self.base = "https://registry-1.docker.io" if self.docker_hub_pull else configured_base
+        if self.docker_hub_pull and "/" not in repository:
+            repository = "library/" + repository
         self.repository = repository
         self.api = self.base + "/v2/" + repository
         context = ssl.create_default_context()
@@ -115,11 +146,15 @@ class _Client:
         self.basic = ""
         self.token = ""
         self.auth_origins = {_origin(self.base)}
-        # Delegated token services must be explicitly approved by the operator.
+        self.blob_redirect_origins = set()
+        if self.docker_hub_pull:
+            # Docker's published registry/auth/CDN endpoints apply only to Hub pulls.
+            # https://docs.docker.com/desktop/enterprise/allow-list/
+            self.auth_origins.add(_origin("https://auth.docker.io"))
+            self.blob_redirect_origins.add(_origin("https://production.cloudfront.docker.com"))
         for realm in env.get("CATS_OCI_TOKEN_REALMS", "").split(","):
             if realm.strip():
                 self.auth_origins.add(_origin(realm.strip()))
-        self.blob_redirect_origins = set()
         for origin in env.get("CATS_OCI_BLOB_REDIRECT_ORIGINS", "").split(","):
             if origin.strip():
                 parts = urlsplit(origin.strip())
@@ -130,7 +165,12 @@ class _Client:
         if config_dir:
             config = json.loads((Path(config_dir) / "config.json").read_text(encoding="utf-8"))
             auths = config.get("auths", {})
-            for key in (host, self.base, self.base + "/v1/"):
+            # Prefer the configured reference's credentials. Docker CLI uses
+            # https://index.docker.io/v1/ for Hub, including registry-1 pulls.
+            credential_hosts = (host, *_DOCKER_HUB_HOSTS) if self.docker_hub_pull else (host,)
+            keys = [key for name in credential_hosts
+                    for key in (name, "https://" + name, "https://" + name + "/v1/")]
+            for key in keys:
                 entry = auths.get(key, {})
                 if entry.get("auth"):
                     credential = entry["auth"]
@@ -140,7 +180,7 @@ class _Client:
                     self.basic = "Basic " + credential
                     break
 
-    def _open(self, request, limit, *, blob_redirects=False):
+    def _open(self, request, limit, *, operation, blob_redirects=False):
         original_origin = _origin(request.full_url)
         crossed_origin = False
         for redirects in range(6):
@@ -164,22 +204,24 @@ class _Client:
                     raise
                 location = exc.headers.get("Location", "")
                 exc.close()
+                context = {"registry_origin": self.base, "redirect_from_origin": request.full_url, "operation": operation}
                 if not location.strip():
-                    raise _RedirectError(status, "missing_location") from None
-                if redirects == 5:
-                    raise _RedirectError(status, "limit") from None
-                if request.get_method() not in ("GET", "HEAD") and status not in (307, 308):
-                    raise _RedirectError(status, "unsafe_method") from None
+                    raise _RedirectError(status, "missing_location", **context) from None
                 try:
                     if any(ord(character) < 32 or ord(character) == 127 for character in location):
                         raise ValueError("Invalid redirect")
                     target = urljoin(request.full_url, location)
                     target_origin = _origin(target)
                 except ValueError:
-                    raise _RedirectError(status, "invalid_location") from None
+                    raise _RedirectError(status, "invalid_location", **context) from None
+                if redirects == 5:
+                    raise _RedirectError(status, "limit", redirect_origin=target, **context) from None
+                if request.get_method() not in ("GET", "HEAD") and status not in (307, 308):
+                    raise _RedirectError(status, "unsafe_method", redirect_origin=target, **context) from None
                 if target_origin != original_origin and not (
                         blob_redirects and target_origin in self.blob_redirect_origins):
-                    raise _RedirectError(status, "unapproved_origin") from None
+                    reason = "unapproved_blob_origin" if blob_redirects else "cross_origin_operation"
+                    raise _RedirectError(status, reason, redirect_origin=target, **context) from None
                 # urllib adds routing/proxy headers while opening a request.
                 # Recompute these: the next host may use a different proxy.
                 headers = {key: value for key, value in request.header_items()
@@ -201,13 +243,14 @@ class _Client:
         # Derive scope locally; never grant a server-requested unrelated scope.
         query = [(key, value) for key, value in parse_qsl(parts.query)
                  if key not in ("scope", "service", "account")]
-        query.append(("scope", f"repository:{self.repository}:pull,push"))
+        actions = "pull" if self.pull_only else "pull,push"
+        query.append(("scope", f"repository:{self.repository}:{actions}"))
         if fields.get("service"):
             query.append(("service", fields["service"]))
         url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))
         headers = {"Authorization": self.basic} if self.basic else {}
         try:
-            _, _, data = self._open(urllib.request.Request(url, headers=headers), 1024 * 1024)
+            _, _, data = self._open(urllib.request.Request(url, headers=headers), 1024 * 1024, operation="GET token")
         except urllib.error.HTTPError as exc:
             status = exc.code
             exc.close()
@@ -219,6 +262,8 @@ class _Client:
         self.token = "Bearer " + token
 
     def request(self, method, url, *, body=None, media_type=None, limit=MAX_MANIFEST_BYTES):
+        if self.pull_only and (method not in ("GET", "HEAD") or body is not None):
+            raise ValueError("Source registry clients only support reads")
         if _origin(url) != _origin(self.base):
             raise ValueError("Registry operation attempted to leave the approved destination")
         headers = {"Accept": ", ".join((MANIFEST_TYPE, INDEX_TYPE,
@@ -226,17 +271,24 @@ class _Client:
                    "application/vnd.docker.distribution.manifest.list.v2+json"))}
         if media_type:
             headers["Content-Type"] = media_type
-        blob_prefix = urlsplit(self.api).path + "/blobs/"
-        path = urlsplit(url).path
-        blob_redirects = (method in ("GET", "HEAD") and body is None
-                          and path.startswith(blob_prefix) and bool(_DIGEST.fullmatch(path[len(blob_prefix):])))
+        path = urlsplit(url).path.removeprefix(urlsplit(self.api).path + "/")
+        resource, _, identifier = path.partition("/")
+        is_blob = resource == "blobs" and bool(_DIGEST.fullmatch(identifier))
+        blob_redirects = is_blob and method in ("GET", "HEAD") and body is None
+        if is_blob:
+            kind = "blob"
+        elif (resource == "blobs" and identifier.startswith("uploads/")) or media_type == "application/octet-stream":
+            kind = "blob upload"
+        else:
+            kind = {"manifests": "manifest", "referrers": "referrers"}.get(resource, "registry resource")
+        operation = f"{method} {kind}" if method in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE") else "registry request"
         for attempt in range(2):
-            authorization = self.token or self.basic
+            authorization = self.token or ("" if self.docker_hub_pull else self.basic)
             if authorization:
                 headers["Authorization"] = authorization
             request = urllib.request.Request(url, data=body, headers=headers, method=method)
             try:
-                return self._open(request, limit, blob_redirects=blob_redirects)
+                return self._open(request, limit, blob_redirects=blob_redirects, operation=operation)
             except urllib.error.HTTPError as exc:
                 status = exc.code
                 challenge = exc.headers.get("WWW-Authenticate", "")

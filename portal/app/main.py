@@ -124,7 +124,7 @@ from .runtime_version import deployed_version
 from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
 from .remediation_summary import build_summary as build_remediation_summary, artifacts as remediation_summary_artifacts
 from . import cyber_approvals
-from . import risk_routes, discovery_routes
+from . import risk_routes, discovery_routes, discovery_distributions
 from . import vex_models, risk_models, intelligence_models, native_vex_models, discovery_models
 from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
@@ -341,6 +341,7 @@ with migration_transaction(engine) as connection:
         ("findings", "ix_findings_service_active", "CREATE INDEX IF NOT EXISTS ix_findings_service_active ON findings (service_id, active)"),
         ("policy_findings", "ix_policy_findings_service_active", "CREATE INDEX IF NOT EXISTS ix_policy_findings_service_active ON policy_findings (service_id, active)"),
         ("executions", "ix_executions_service_scanned", "CREATE INDEX IF NOT EXISTS ix_executions_service_scanned ON executions (service_id, scanned_at)"),
+        ("oci_reassessment_events", "ix_oci_reassessment_events_scan_id", "CREATE INDEX IF NOT EXISTS ix_oci_reassessment_events_scan_id ON oci_reassessment_events (scan_id)"),
         ("poam_entries", "ix_poam_service_status_due", "CREATE INDEX IF NOT EXISTS ix_poam_service_status_due ON poam_entries (service_id, status, due_date)"),
         ("finding_observations", "ix_finding_observations_finding_id_id", "CREATE INDEX IF NOT EXISTS ix_finding_observations_finding_id_id ON finding_observations (finding_id, id)"),
         # One (finding_id, execution_id, id) index is sufficient: keep the model's
@@ -472,6 +473,7 @@ app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
+app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
 app.include_router(oci_lifecycle.router)
 app.include_router(artifact_catalog_routes.router)
@@ -3098,6 +3100,8 @@ def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db:
 
 @app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
 def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
+    if payload.scan_scope == "distribution":
+        raise HTTPException(422, "Submit distribution results through the scan bound to the saved selection")
     result = ingest_payload(payload, db)
     if background_tasks is not None and isinstance(result, dict) and result.get("accepted") and not result.get("duplicate"):
         queue_dependency_projection(db, background_tasks, result.get("execution_id"))
@@ -3224,7 +3228,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     # A delayed upload of an older release is historical evidence, even when
     # that release has never been seen before. A newer service scan can also
     # reactivate a previously retained version; first-seen order is not release order.
-    may_promote = (
+    may_promote = scan_scope != "distribution" and (
         previous_current_version_id is None
         or previous_current_version_id == service_version.id
         or (scan_scope == "service" and (
@@ -3246,7 +3250,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     # release's reconciled posture. This applies within a version as well as
     # across versions.
     current_ingest = (
-        service.current_version_id == service_version.id
+        scan_scope != "distribution" and service.current_version_id == service_version.id
         and (current_version_execution is None
              or aware(payload.scanned_at) >= aware(current_version_execution.scanned_at))
     )
@@ -4701,6 +4705,8 @@ def ingest_public_scan(
     if auth.accessible_service_ids("scan.ingest") == set():
         raise HTTPException(status_code=403, detail="Scan ingest permission is required")
     _authorized_public_job(job_id, auth, request)
+    from .oci_lifecycle import guard_reassessment_ingest
+    guard_reassessment_ingest(db, job_id)
     with PUBLIC_JOB_LOCK:
         if job_id not in PUBLIC_JOBS:
             raise HTTPException(status_code=404, detail="Job not found or expired")
@@ -4722,7 +4728,17 @@ def ingest_public_scan(
     if not auth.has("scan.ingest", service.id):
         raise HTTPException(status_code=403, detail="The service is outside your scope")
     selected_scope = scan_scope or str(job.get("ingest_scope") or "auto")
-    if selected_scope not in {"auto", "service"}:
+    distribution_job = job.get("ingest_scope") == "distribution"
+    if distribution_job and (job.get("ingest_service_id") != service_id or selected_scope != "distribution"):
+        raise HTTPException(409, "A distribution scan belongs to its saved service and component selection")
+    if distribution_job:
+        from .discovery_models import DiscoveryDistribution, DiscoveryDistributionScan
+        selection = db.scalar(select(DiscoveryDistribution).join(DiscoveryDistributionScan).where(
+            DiscoveryDistributionScan.scan_job_id == job_id, DiscoveryDistribution.service_id == service.id))
+        context = job.get("definition_context") or {}
+        if not selection or (selection.id, selection.selection_digest) != (context.get("distribution_id"), context.get("selection_digest")):
+            raise HTTPException(409, "Distribution scan does not match its saved selection")
+    if selected_scope not in {"auto", "service"} and not distribution_job:
         raise HTTPException(422, "Choose automatic scope or a full service assessment")
     ingest_started = time.perf_counter()
     stage_started = ingest_started
@@ -4752,11 +4768,11 @@ def ingest_public_scan(
         ]
         data["fixable_only"] = True
         data["execution_id"] = f"public:{job_id}"
-        with PUBLIC_JOB_LOCK:
-            definition_context = dict(PUBLIC_JOBS.get(job_id, {}).get("definition_context") or {})
+        definition_context = dict(job.get("definition_context") or {})
         if definition_context:
-            data["scan_scope"] = "evidence"
-            data["complete"] = False
+            data["scan_scope"] = "distribution" if distribution_job else "evidence"
+            if not distribution_job:
+                data["complete"] = False
             overview = data.get("service_overview") if isinstance(data.get("service_overview"), dict) else {}
             overview["definition_provenance"] = definition_context
             data["service_overview"] = overview
@@ -4770,12 +4786,11 @@ def ingest_public_scan(
             _enrich_values_source_mappings(data, source_files)
         stage_timings[ingest_stage] = round((time.perf_counter() - stage_started) * 1000, 2)
         ingest_stage = "bind_service"; stage_started = time.perf_counter()
-        with PUBLIC_JOB_LOCK:
-            job_input_images = [line.strip() for line in str(PUBLIC_JOBS.get(job_id, {}).get("image_list") or "").splitlines() if line.strip()]
-            selected_service_version = str(PUBLIC_JOBS.get(job_id, {}).get("ingest_service_version") or "").strip()
+        job_input_images = [line.strip() for line in str(job.get("image_list") or "").splitlines() if line.strip()]
+        selected_service_version = str(job.get("ingest_service_version") or "").strip()
         # Only an explicitly image-only job can infer image scope. A chart
         # scan remains service evidence even when only one image has findings.
-        if data.get("scan_scope") not in {"service", "image", "evidence"}:
+        if not distribution_job and data.get("scan_scope") not in {"service", "image", "evidence"}:
             data["scan_scope"] = "service"
         image_only_job = bool(job_input_images) and not (
             source_files or job.get("chart_url") or job.get("chart_names")
@@ -4845,7 +4860,7 @@ def ingest_public_scan(
         raise HTTPException(status_code=422, detail=detail) from exc
     ingest_stage = "database_ingest"; stage_started = time.perf_counter()
     try:
-        response = ingest(payload, db)
+        response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
     except Exception as exc:
         db.rollback()
         code = f"HTTP_{exc.status_code}" if isinstance(exc, HTTPException) else "PUBLIC_INGEST_DATABASE_ERROR"

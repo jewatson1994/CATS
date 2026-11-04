@@ -2,6 +2,7 @@ import {VexEvidence} from './native_vex';
 import {OCIDistribution} from './oci_distribution';
 import {useEffect, useState, type FormEvent} from 'react';
 import {ReleaseRevision} from './release_revision';
+import {DistributionDetails, FrozenDistribution} from './service-distributions';
 import {can, requestJson, type PageData} from '../api';
 import {EmptyState, humanize, PageHeader, StageProgress, StatusBadge, type Stage} from '../components/ui';
 import {DataGrid, type GridColumn} from '../components/DataGrid';
@@ -31,14 +32,25 @@ async function mutate(data: PageData, url: string, body: Row) {
 function PublicationDiagnostic({publication}: {publication: Row}) {
   const diagnostic = publication.diagnostic;
   if (!diagnostic && !publication.correlation_id) return null;
-  return <dl className="approval-metadata" aria-label="Publication failure details">
+  const legacyRedirect = !diagnostic?.redirect_reason && [301, 302, 303, 307, 308].includes(diagnostic?.http_status);
+  return <><dl className="approval-metadata" aria-label="Publication failure details">
     {diagnostic?.stage && <div><dt>Failed step</dt><dd>{label(diagnostic.stage)}</dd></div>}
     {diagnostic?.cause && <div><dt>Cause</dt><dd>{label(diagnostic.cause)}</dd></div>}
     {diagnostic?.http_status != null && <div><dt>Registry HTTP status</dt><dd>{label(diagnostic.http_status)}</dd></div>}
+    {diagnostic?.operation && <div><dt>Registry operation</dt><dd><code>{diagnostic.operation}</code></dd></div>}
+    {diagnostic?.registry_origin && <div><dt>Registry origin</dt><dd><code>{diagnostic.registry_origin}</code></dd></div>}
+    {diagnostic?.redirect_from_origin && <div><dt>Redirect issued by</dt><dd><code>{diagnostic.redirect_from_origin}</code></dd></div>}
+    {diagnostic?.redirect_origin && <div><dt>Redirect target</dt><dd><code>{diagnostic.redirect_origin}</code></dd></div>}
     {diagnostic?.exit_code != null && <div><dt>Tool exit code</dt><dd>{label(diagnostic.exit_code)}</dd></div>}
     {diagnostic?.os_error != null && <div><dt>System error number</dt><dd>{label(diagnostic.os_error)}</dd></div>}
     {publication.correlation_id && <div><dt>Correlation ID</dt><dd><code>{label(publication.correlation_id)}</code></dd></div>}
-  </dl>;
+  </dl>
+    {diagnostic?.redirect_reason === 'unapproved_blob_origin' && diagnostic.redirect_origin && <p>
+      Ask your registry administrator to confirm the redirect target is trusted storage.
+      Then add that origin to <code>CATS_OCI_BLOB_REDIRECT_ORIGINS</code>, recreate <code>remediation-worker</code>, and retry publication.
+    </p>}
+    {legacyRedirect && <p>This attempt did not record the redirect target. Retry publication with the updated worker to see where the request was redirected.</p>}
+  </>;
 }
 function ResourceState({error, pending}: {error: string; pending: boolean}) {
   return error ? <p className="error" role="alert">{error}</p> : pending ? <p role="status">Loading…</p> : null;
@@ -91,25 +103,29 @@ function ServiceAtAGlance({snapshot}: {snapshot: Row}) {
   </section>;
 }
 
-export function RequestApproval({data, serviceKey, amendmentProposalId}: {data: PageData; serviceKey: string; amendmentProposalId?: number}) {
+export function RequestApproval({data, serviceKey, amendmentProposalId, distributionId}: {data: PageData; serviceKey: string; amendmentProposalId?: number; distributionId?: string}) {
   const [selection, setSelection] = useState('current_service'), [candidates, setCandidates] = useState<Row[]>([]);
   const variant = selection === 'current_service' ? 'current_service' : 'cats_remediated';
   const remediation = variant === 'cats_remediated' ? selection.slice('cats_remediated:'.length) : '';
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [created, setCreated] = useState<Row | null>(null);
   const query = new URLSearchParams({variant});
   if (remediation) query.set('remediation_id', remediation);
+  if (distributionId) query.set('distribution_id', distributionId);
   const readiness = useResource(`/api/services/${encodeURIComponent(serviceKey)}/cyber-approval-readiness?${query}`);
   const ready = readiness.value;
   useEffect(() => {if (ready) setCandidates(list(ready.remediations));}, [ready]);
   const allowed = ready?.can_request ?? data.can_request ?? can(data, 'approval.request', ready?.service_id ?? data.service?.id);
+  const selectionMatches = !distributionId || String(ready?.distribution?.id) === distributionId;
+  const canSubmitEvidence = ready?.ready && selectionMatches && (!distributionId || Number.isInteger(ready.source_execution_id));
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); if (!ready?.ready || !allowed || busy) return;
+    event.preventDefault(); if (!canSubmitEvidence || !allowed || busy) return;
     setBusy(true); setError('');
-    try {setCreated(await mutate(data, '/api/cyber-approvals', {service_key: serviceKey, variant, remediation_id: remediation || undefined, ...(amendmentProposalId ? {amendment_proposal_id: amendmentProposalId} : {})}));}
+    try {setCreated(await mutate(data, '/api/cyber-approvals', {service_key: serviceKey, variant, remediation_id: remediation || undefined, ...(amendmentProposalId ? {amendment_proposal_id: amendmentProposalId} : {}), ...(distributionId ? {distribution_id: distributionId, expected_source_execution_id: ready.source_execution_id} : {})}));}
     catch (error) {setError(message(error)); readiness.refresh();} finally {setBusy(false);}
   };
   if (created) return <section className="panel padded"><h2>Cyber approval requested</h2><p role="status">The snapshot is ready for Cyber review.</p><a href={`/cyber-approvals?id=${encodeURIComponent(created.id)}`}>Review request #{created.id}</a></section>;
-  return <section className="panel padded"><h2>Request Cyber Approval</h2>{amendmentProposalId && <p role="note">Amendment proposal #{amendmentProposalId} requires an actual fresh service assessment containing the replacement artifact. Selecting a proposal does not run an assessment or prove that its evidence is current. Retain the new assessment and service validation before submitting; the server verifies the evidence and current base revision.</p>}<p>Choose the release to submit. Cyber reviews vulnerabilities, configuration coverage, mitigations, exceptions and deployment verification.</p><form className="approval-form" onSubmit={submit}><label>Release variant<select disabled={busy} value={selection} onChange={event => setSelection(event.target.value)}><option value="current_service">Current Service</option>{candidates.map(row => <option key={row.id} value={`cats_remediated:${row.id}`}>CATS Remediated · {row.label || row.id}</option>)}</select></label><ResourceState error={readiness.error} pending={!ready && !readiness.error}/>{ready && <><div className="approval-readiness" role="status"><StatusBadge value={ready.ready ? 'ready' : 'blocked'} label={ready.ready ? 'Ready for Cyber review' : 'Evidence incomplete'}/><p>Version: {ready.version || 'Unknown'} · Scan date: {ready.scan_date || 'Not recorded'}</p>{!!ready.blockers?.length && <ul>{ready.blockers.map((reason: string, index: number) => <li key={index}>{reason}</li>)}</ul>}</div>{!allowed && <p>You do not have permission to request Cyber approval for this service.</p>}</>}<ResourceState error={error} pending={false}/><button disabled={busy || !ready?.ready || !allowed}>{busy ? 'Submitting…' : 'Request Cyber Approval'}</button></form></section>;
+  return <section className="panel padded"><h2>Request Cyber Approval</h2>{amendmentProposalId && <p role="note">Amendment proposal #{amendmentProposalId} requires an actual fresh service assessment containing the replacement artifact. Selecting a proposal does not run an assessment or prove that its evidence is current. Retain the new assessment and service validation before submitting; the server verifies the evidence and current base revision.</p>}<p>Choose the release to submit. Cyber reviews vulnerabilities, configuration coverage, mitigations, exceptions and deployment verification.</p>{!amendmentProposalId && <p><a href={`/services/${encodeURIComponent(serviceKey)}?artifacts=true#service-distributions`}>Choose a saved service distribution</a></p>}
+    <form className="approval-form" onSubmit={submit}>{distributionId ? <div><h3>Distribution for review</h3>{ready?.distribution && selectionMatches ? <><strong>{ready.distribution.name}</strong><DistributionDetails selection={ready.distribution}/></> : <code>{distributionId}</code>}</div> : <label>Release variant<select disabled={busy} value={selection} onChange={event => setSelection(event.target.value)}><option value="current_service">Current Service</option>{candidates.map(row => <option key={row.id} value={`cats_remediated:${row.id}`}>CATS Remediated · {row.label || row.id}</option>)}</select></label>}<ResourceState error={readiness.error} pending={!ready && !readiness.error}/>{ready && <><div className="approval-readiness" role="status"><StatusBadge value={canSubmitEvidence ? 'ready' : 'blocked'} label={canSubmitEvidence ? 'Ready for Cyber review' : 'Evidence incomplete'}/><p>Version: {ready.version || 'Unknown'} · Scan date: {ready.scan_date || 'Not recorded'}</p>{distributionId && !canSubmitEvidence && !ready.blockers?.length && <p>A completed scan for this distribution is required.</p>}{!!ready.blockers?.length && <ul>{ready.blockers.map((reason: string, index: number) => <li key={index}>{reason}</li>)}</ul>}</div>{!allowed && <p>You do not have permission to request Cyber approval for this service.</p>}</>}<ResourceState error={error} pending={false}/><button disabled={busy || !canSubmitEvidence || !allowed}>{busy ? 'Submitting…' : 'Request Cyber Approval'}</button></form></section>;
 }
 
 function Decision({data, row, refresh}: {data: PageData; row: Row; refresh: () => void}) {
@@ -184,10 +200,11 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <div className="approval-review-context"><span>Snapshot scan</span><strong>{dateLabel(row.scan_date || snapshot.scan_date)}</strong><small>Frozen evidence · later service changes do not update this review.</small>{row.evidence_url && <a href={row.evidence_url}>Download retained evidence ↗</a>}</div>
       </section>
       <ReviewTrack row={row} snapshot={snapshot}/>
+      <FrozenDistribution selection={snapshot.distribution}/>
       {!!snapshot.review_notes?.length && <section className="approval-review-notes panel padded"><h2>Cyber review considerations</h2><ul>{snapshot.review_notes.map((note: string, index: number) => <li key={index}>{note}</li>)}</ul></section>}
       <ServiceAtAGlance snapshot={snapshot}/>
       <ApprovalFindings findings={snapshot.findings} intelligence={snapshot.risk_intelligence}/>
-      <section className="panel padded approval-support"><h2>Supporting evidence</h2><p>Review configuration, risk decisions, and the artifacts included in this request.</p>
+      <section className="panel padded approval-support"><h2>Supporting evidence</h2><p>Artifact references show the sources submitted for review. After publication, Approved Releases shows the registry references to deploy.</p>
         <div className="approval-support-grid">
           <EvidenceSection title="Artifacts" value={snapshot.artifacts || snapshot.images}/>
           <EvidenceSection title="Configuration findings" value={snapshot.findings?.configuration || snapshot.findings?.policy_findings}/>
@@ -200,7 +217,10 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <SnapshotDetails snapshot={snapshot}/>
       </section>
       <Decision data={data} row={row} refresh={resource.refresh}/>
-      {row.status === 'approved' && <Reassessment data={data} row={row}/>}
+      {row.status === 'approved' && (snapshot.distribution ? <section className="panel padded">
+        <h2>Reassess this distribution</h2>
+        <p>Open <a href={`/services/${encodeURIComponent(row.service_key)}?artifacts=true#service-distributions`}>Service distributions</a>, scan <strong>{snapshot.distribution.name}</strong>, and submit its new evidence for Cyber review.</p>
+      </section> : <Reassessment data={data} row={row}/>)}
       {row.status === 'approved' && <section className="panel padded"><h2>Approved release publication</h2><p>The Cyber decision is approved. Publication status: <StatusBadge value={row.publish_status || 'pending'}/></p><a href={`/approved-releases?id=${encodeURIComponent(row.release_id || row.publication?.release_id || row.id)}`}>Open approved release</a></section>}
     </>}
   </div>;
@@ -209,16 +229,16 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
 export function Page({data}: {data: PageData}) {
   const params = new URLSearchParams(window.location.search), id = params.get('id') || data.approval_id;
   const service = params.get('service') || data.service_key || '';
-  return id ? <ApprovalDetail key={id} data={data} id={String(id)}/> : <ApprovalList data={data} serviceKey={service}/>;
+  return id ? <ApprovalDetail key={id} data={data} id={String(id)}/> : <ApprovalList data={data} serviceKey={service} distributionId={params.get('distribution_id') || undefined}/>;
 }
-function ApprovalList({data, serviceKey}: {data: PageData; serviceKey: string}) {
+function ApprovalList({data, serviceKey, distributionId}: {data: PageData; serviceKey: string; distributionId?: string}) {
   const [status, setStatus] = useState('');
   const query = new URLSearchParams(); if (serviceKey) query.set('service', serviceKey); if (status) query.set('status', status);
   const resource = useResource(`/api/cyber-approvals?${query}`), rows = list(resource.value);
   const total = resource.value?.total ?? rows.length;
   const columns: GridColumn<Row>[] = [
     {key: 'service', header: 'Service / snapshot', identifier: true, hideable: false, value: row => `${row.service_name || row.service_key} ${row.version || ''}`,
-      render: row => <a href={`/cyber-approvals?id=${row.id}`}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}</a>},
+      render: row => <a href={`/cyber-approvals?id=${row.id}`}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
     {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
     {key: 'requested', header: 'Requested', type: 'date', value: row => row.requested_at, render: row => row.requested_at || '—'},
     {key: 'decision', header: 'Cyber decision', hideable: false, value: row => row.status, description: 'Human Cyber reviewer decision on the frozen snapshot',
@@ -228,7 +248,7 @@ function ApprovalList({data, serviceKey}: {data: PageData; serviceKey: string}) 
   ];
   return <><PageHeader eyebrow="Cyber review" title="Approvals" description="Review immutable service snapshots and track decisions independently of publication."
     actions={<a className="secondary-button" href="/approved-releases">Approved Releases</a>}/>
-    {serviceKey && <><ServiceTabs serviceKey={serviceKey} active="approvals"/><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey} data={data} serviceKey={serviceKey}/></>}
+    {serviceKey && <><ServiceTabs serviceKey={serviceKey} active="approvals"/><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey + ':' + (distributionId || '')} data={data} serviceKey={serviceKey} distributionId={distributionId}/></>}
     <section className="panel"><DataGrid<Row> id="cyber-approvals" label={serviceKey ? `${serviceKey} requests` : 'Approval queue'} title={serviceKey ? `${serviceKey} requests` : 'Approval queue'}
       description={resource.value ? `${total} ${total === 1 ? 'request' : 'requests'}` : undefined}
       toolbar={<label className="inline-field">Decision status<select value={status} onChange={event => setStatus(event.target.value)}><option value="">All decisions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label>}
@@ -248,10 +268,10 @@ function ReleaseList() {
   const serviceKey = new URLSearchParams(window.location.search).get('service') || '';
   const [query, setQuery] = useState(''), [variant, setVariant] = useState('');
   const resource = useResource(`/api/approved-releases${serviceKey ? `?service=${encodeURIComponent(serviceKey)}` : ''}`), all = list(resource.value);
-  const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version}`.toLowerCase().includes(query.toLowerCase()));
+  const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version} ${row.distribution_name || ''}`.toLowerCase().includes(query.toLowerCase()));
   const columns: GridColumn<Row>[] = [
     {key: 'service', header: 'Service', identifier: true, hideable: false, value: row => row.service_name || row.service_key,
-      render: row => <a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}</a>},
+      render: row => <a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
     {key: 'version', header: 'Version', value: row => row.version || row.label, render: row => row.version || row.label || '—'},
     {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
     {key: 'authorization', header: 'Authorization', hideable: false, value: row => row.revoked ? 'revoked' : row.validity_status, description: 'Whether the approval currently authorizes deployment',
@@ -267,7 +287,7 @@ function ReleaseList() {
     {serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}
     <section className="panel"><DataGrid<Row> id="approved-releases" label="Approved releases" title="Approved releases"
       description={resource.value ? `${rows.length} of ${all.length} releases` : undefined}
-      toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service or version"/></label>
+      toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service, version or distribution"/></label>
         <label className="inline-field">Variant<select value={variant} onChange={event => setVariant(event.target.value)}><option value="">All variants</option><option value="current_service">Current Service</option><option value="cats_remediated">CATS Remediated</option></select></label></div>}
       trailingActions={<button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button>}
       above={resource.error ? <ResourceState error={resource.error} pending={false}/> : null}
@@ -284,7 +304,7 @@ export function ReleaseDetail({data, id}: {data: PageData; id: string}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   async function retry() {setBusy(true); setError(''); try {await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/retry`, {}); resource.refresh();} catch (error) {setError(message(error));} finally {setBusy(false);}}
   const publication = row?.publication || {}, artifacts = row?.artifacts || publication.artifacts || [];
-  return <><a className="back" href="/approved-releases">All approved releases</a><ResourceState error={resource.error} pending={!row && !resource.error}/>{row && <><section className="heading"><div><p className="eyebrow">APPROVED RELEASE · #{row.id}</p><h1>{row.service_name || row.service_key}</h1><p>{row.version || row.label} · {variantLabel(row.variant)} · Scan date: {row.scan_date || 'Not recorded'}</p><Badges row={{...row, status: 'approved'}}/></div><button className="secondary-button" type="button" onClick={resource.refresh}>Refresh publication</button></section><section className="panel padded"><h2>Publication</h2>{row.revoked && <p className="error" role="alert">This release has been revoked and is no longer authorized for deployment. {row.revocation_reason}</p>}<p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p><p>Destination: {row.destination?.name} · <code>{row.destination?.endpoint}/{row.destination?.namespace}</code></p>{(row.publish_error || publication.error) && <p className="error" role="alert">{row.publish_error || publication.error}</p>}{row.publish_status === 'failed' && <PublicationDiagnostic publication={publication}/>}<ResourceState error={error} pending={false}/>{!row.revoked && currentApproval(row) && row.publish_status === 'failed' && (row.can_retry ?? can(data, 'approval.decide', row.service_id)) && <button type="button" disabled={busy} onClick={retry}>{busy ? 'Queuing publication…' : 'Retry publication'}</button>}<p><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></p></section><ReleaseRevision data={data} approvalId={String(row.approval_id || row.id)} serviceId={row.service_id}/><section className="panel padded"><h2>Immutable artifacts</h2>{publication.release?.reference && <p>Release manifest: <code className="approval-ref">{publication.release.reference}</code></p>}{!list(artifacts).length && <p>Artifact references will appear when publication completes.</p>}{list(artifacts).map((artifact, index) => <article className="approval-evidence" key={index}><h3>{artifact.name || artifact.kind || artifact.type || `Artifact ${index + 1}`}</h3><code className="approval-ref">{artifact.immutable_ref || artifact.ref || artifact.reference || artifact.digest}</code>{artifact.digest && <p>Digest: <code>{artifact.digest}</code></p>}<EvidenceSection title="Signature verification" value={artifact.signature || artifact.signature_evidence}/></article>)}</section><section className="panel padded"><h2>Signature and release evidence</h2><EvidenceSection title="Signing evidence" value={row.signature || publication.signature || publication.release?.signature || row.signature_evidence || (publication.signing_fingerprint ? {signing_fingerprint:publication.signing_fingerprint} : undefined)}/><ArtifactLinks value={row.evidence_links || publication.evidence_links || (row.evidence_url ? [{name:'Download retained evidence',url:row.evidence_url}] : [])}/><h3>Offline bundle</h3><ArtifactLinks value={row.offline_links || publication.offline_links || (row.offline_bundle_url ? [{name:'Download offline release bundle', url:row.offline_bundle_url}] : [])}/><h3>Pull and deployment instructions</h3>{row.publish_status === 'published' && !row.revoked && currentApproval(row) && publication.release?.reference && <pre className="approval-json">{`oras pull ${publication.release.reference}`}</pre>}<p>Verify the signatures and approval expiry against the signing key fingerprint supplied independently by your Cyber approver. A signature-only check does not enforce expiry. Registry access controls and deployment admission policies determine who can retrieve and deploy these artifacts.</p><pre className="approval-json">{row.pull_instructions || publication.pull_instructions || row.destination?.pull_instructions || 'Use the offline bundle README to verify the retained release and import it into your registry. Map the approved image digests into your environment-specific Helm values before deploying the retained charts.'}</pre>{row.deploy_instructions && <pre className="approval-json">{row.deploy_instructions}</pre>}</section></>}</>;
+  return <><a className="back" href="/approved-releases">All approved releases</a><ResourceState error={resource.error} pending={!row && !resource.error}/>{row && <><section className="heading"><div><p className="eyebrow">APPROVED RELEASE · #{row.id}</p><h1>{row.service_name || row.service_key}</h1><p>{row.version || row.label} · {variantLabel(row.variant)} · Scan date: {row.scan_date || 'Not recorded'}</p><Badges row={{...row, status: 'approved'}}/></div><button className="secondary-button" type="button" onClick={resource.refresh}>Refresh publication</button></section><section className="panel padded"><h2>Publication</h2>{row.revoked && <p className="error" role="alert">This release has been revoked and is no longer authorized for deployment. {row.revocation_reason}</p>}<p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p><p>Destination: {row.destination?.name} · <code>{row.destination?.endpoint}/{row.destination?.namespace}</code></p>{(row.publish_error || publication.error) && <p className="error" role="alert">{row.publish_error || publication.error}</p>}{row.publish_status === 'failed' && <PublicationDiagnostic publication={publication}/>}<ResourceState error={error} pending={false}/>{!row.revoked && currentApproval(row) && row.publish_status === 'failed' && (row.can_retry ?? can(data, 'approval.decide', row.service_id)) && <button type="button" disabled={busy} onClick={retry}>{busy ? 'Queuing publication…' : 'Retry publication'}</button>}<p><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></p></section><FrozenDistribution selection={row.snapshot?.distribution}/><ReleaseRevision showDistribution={!row.snapshot?.distribution} data={data} approvalId={String(row.approval_id || row.id)} serviceId={row.service_id}/><section className="panel padded"><h2>Immutable artifacts</h2>{publication.release?.reference && <p>Release manifest: <code className="approval-ref">{publication.release.reference}</code></p>}{!list(artifacts).length && <p>Artifact references will appear when publication completes.</p>}{list(artifacts).map((artifact, index) => <article className="approval-evidence" key={index}><h3>{artifact.name || artifact.kind || artifact.type || `Artifact ${index + 1}`}</h3><code className="approval-ref">{artifact.immutable_ref || artifact.ref || artifact.reference || artifact.digest}</code>{artifact.digest && <p>Digest: <code>{artifact.digest}</code></p>}<EvidenceSection title="Signature verification" value={artifact.signature || artifact.signature_evidence}/></article>)}</section><section className="panel padded"><h2>Signature and release evidence</h2><EvidenceSection title="Signing evidence" value={row.signature || publication.signature || publication.release?.signature || row.signature_evidence || (publication.signing_fingerprint ? {signing_fingerprint:publication.signing_fingerprint} : undefined)}/><ArtifactLinks value={row.evidence_links || publication.evidence_links || (row.evidence_url ? [{name:'Download retained evidence',url:row.evidence_url}] : [])}/><h3>Offline bundle</h3><ArtifactLinks value={row.offline_links || publication.offline_links || (row.offline_bundle_url ? [{name:'Download offline release bundle', url:row.offline_bundle_url}] : [])}/><h3>Pull and deployment instructions</h3>{row.publish_status === 'published' && !row.revoked && currentApproval(row) && publication.release?.reference && <pre className="approval-json">{`oras pull ${publication.release.reference}`}</pre>}<p>Verify the signatures and approval expiry against the signing key fingerprint supplied independently by your Cyber approver. A signature-only check does not enforce expiry. Registry access controls and deployment admission policies determine who can retrieve and deploy these artifacts.</p><pre className="approval-json">{row.pull_instructions || publication.pull_instructions || row.destination?.pull_instructions || 'Use the offline bundle README to verify the retained release and import it into your registry. Map the approved image digests into your environment-specific Helm values before deploying the retained charts.'}</pre>{row.deploy_instructions && <pre className="approval-json">{row.deploy_instructions}</pre>}</section></>}</>;
 }
 
 export function Destinations({data}: {data: PageData}) {

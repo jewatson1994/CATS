@@ -701,6 +701,8 @@ services:
     volumes:
       - oci_proxy_cache:/var/cache/cats-oci
       - remediation_jobs:/tmp/cats-remediation-jobs:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     init: true

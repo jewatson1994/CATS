@@ -32,4 +32,12 @@
 .discovery-workspace .notice{display:block;line-height:1.6;font-size:.88rem}
 .discovery-workspace .notice p{margin:.5rem 0}
 .discovery-workspace .notice ul{display:block;padding-left:1.25rem}
+.discovery-runs-header,.discovery-review-header,.discovery-runs-list li,.discovery-run-actions{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
+.discovery-runs-header h2{font-size:1.05rem;margin:0}
+.discovery-runs-header label{margin:0;max-width:100%;width:20rem}
+.discovery-runs-list{list-style:none;margin:1rem 0 0;padding:0;max-height:19rem;overflow:auto}
+.discovery-runs-list li{padding:.75rem 0;border-top:1px solid var(--border)}
+.discovery-runs-list li>div:first-child,.discovery-review-header p{min-width:0;overflow-wrap:anywhere}
+.discovery-runs-list small{display:block;color:var(--muted);margin-top:.3rem}
+.discovery-run-actions{gap:.5rem}
 @media(max-width:1000px){.discovery-layout{grid-template-columns:1fr}.discovery-values-order li{flex-wrap:wrap}.discovery-values-actions{margin-left:auto}.discovery-workspace .panel{padding:1rem}}

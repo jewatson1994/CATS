@@ -12,10 +12,10 @@ import uuid
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select
+from sqlalchemy import case, select, update
 from .auth import AuthContext, require_user, record_audit
 from .database import get_db
-from .models import Service, Group, ServiceGroup, PortalSetting
+from .models import Service, Group, ServiceGroup, PortalSetting, utcnow
 from . import discovery_gitlab as gitlab
 from .durable_jobs import DurableJob, submit
 from .discovery_models import DiscoveryInventory, DiscoveryConfirmation, DiscoveryScan
@@ -60,7 +60,8 @@ def get_job(db, auth, job_id, lock=False):
     return job
 
 def job_view(job):
-    view = {key: getattr(job, key) for key in ('id', 'status', 'stage', 'progress', 'result', 'error', 'created_at', 'completed_at') } | {'group_id': job.payload['group_id']}
+    view = {key: getattr(job, key) for key in ('id', 'status', 'stage', 'progress', 'result', 'error', 'created_at', 'completed_at', 'cancel_requested')}
+    view.update(group_id=job.payload['group_id'], filename=job.payload.get('filename'))
     if 'gitlab_source' in job.payload:
         view['gitlab_source'] = job.payload['gitlab_source']
     return view
@@ -92,11 +93,11 @@ async def gitlab_request(operation, *args, **kwargs):
     finally:
         _GITLAB_REQUEST_SLOTS.release()
 
-async def body(request, auth):
+async def body(request, auth, max_bytes=65536):
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
-        if len(raw) > 65536: raise HTTPException(413, 'Request too large')
+        if len(raw) > max_bytes: raise HTTPException(413, 'Request too large')
     try:
         data = json.loads(raw)
         if not isinstance(data, dict): raise ValueError()
@@ -138,13 +139,30 @@ def can_stage(db, auth, group_id):
         for a in auth.effective_assignments)
     return allowed and scan
 
+def visible_groups(db, auth):
+    return [g for g in db.scalars(select(Group).order_by(Group.name)) if permitted_group(auth, g.id)]
+
+
+def discovery_jobs(group_ids):
+    return select(DurableJob).where(DurableJob.kind == 'discovery',
+        DurableJob.payload['group_id'].as_integer().in_(group_ids)
+    ).order_by(DurableJob.created_at.desc(), DurableJob.id.desc())
+
+
 @router.get('')
 def listing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
-    groups = [g for g in db.scalars(select(Group).order_by(Group.name)) if permitted_group(auth, g.id)]
+    groups = visible_groups(db, auth)
     ids = {g.id for g in groups}
-    jobs = db.scalars(select(DurableJob).where(DurableJob.kind == 'discovery', DurableJob.payload['group_id'].as_integer().in_(ids)).order_by(DurableJob.created_at.desc()).limit(100))
+    jobs = db.scalars(discovery_jobs(ids).limit(100))
     services = [{'id': s.id, 'service_key': s.service_key, 'name': s.name, 'group_id': g} for s,g in db.execute(select(Service, ServiceGroup.group_id).join(ServiceGroup)) if g in ids and auth.has('scan.ingest', s.id)]
-    return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids][:100], 'groups': [{'id':g.id,'name':g.name,'can_stage':can_stage(db,auth,g.id)} for g in groups], 'services': services}
+    return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids], 'groups': [{'id':g.id,'name':g.name,'can_stage':can_stage(db,auth,g.id)} for g in groups], 'services': services}
+
+
+@router.get('/ongoing')
+def ongoing(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+    ids = {g.id for g in visible_groups(db, auth)}
+    jobs = db.scalars(discovery_jobs(ids).where(DurableJob.status.in_(('queued', 'running'))))
+    return {'jobs': [job_view(j) for j in jobs if j.payload.get('group_id') in ids]}
 
 @router.post('/gitlab/refs')
 async def gitlab_refs(request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -271,11 +289,22 @@ def detail(job_id: str, auth: AuthContext = Depends(require_user), db=Depends(ge
 async def cancel(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     await body(request, auth)
     job = get_job(db, auth, job_id, True)
-    if job.status in ('queued', 'running'):
-        job.cancel_requested = True
-        if job.status == 'queued': job.status, job.stage = 'cancelled', 'Cancelled'
+    # A queued job may have been claimed since the authorization read. Decide
+    # against the current state and leave any running worker's lease intact.
+    queued = DurableJob.status == 'queued'
+    changed = db.execute(update(DurableJob).where(DurableJob.id == job.id,
+        DurableJob.status.in_(('queued', 'running')), DurableJob.cancel_requested.is_(False),
+        DurableJob.result['inventory_id'].as_string().is_(None)).values(
+            cancel_requested=True, status=case((queued, 'cancelled'), else_=DurableJob.status),
+            stage=case((queued, 'Cancelled'), else_=DurableJob.stage),
+            completed_at=case((queued, utcnow()), else_=DurableJob.completed_at)))
+    if changed.rowcount:
+        record_audit(db, auth, 'discovery.cancel_requested', 'discovery', job.id, group_id=job.payload['group_id'])
     db.commit()
-    return {'job_id': job.id}
+    db.refresh(job)
+    if job.status in ('running', 'queued') and job.result.get('inventory_id'):
+        raise HTTPException(409, 'Discovery has already produced its inventory and is finishing.')
+    return {'job_id': job.id, 'job': job_view(job)}
 
 @router.post('/{job_id}/retry')
 async def retry(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -426,6 +455,7 @@ async def scan(job_id: str, request: Request, auth: AuthContext = Depends(requir
     from .scan_coordination import ScanJob
     admitted = db.scalar(select(ScanJob).where(
         ScanJob.payload['definition_context']['discovery_confirmation_id'].as_string() == confirmation.id,
+        ScanJob.payload['definition_context']['distribution_id'].as_string().is_(None),
         ScanJob.service_key == service.service_key).order_by(ScanJob.created_at).limit(1))
     if admitted:
         db.add(DiscoveryScan(confirmation_id=confirmation.id, scan_job_id=admitted.id))

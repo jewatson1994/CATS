@@ -7,6 +7,45 @@ vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.
 afterEach(() => {cleanup(); vi.resetAllMocks();});
 const data = {csrf_token:'csrf', can:{'approval.request':{'7':true},'release.destination.manage':{'*':true}}};
 const ready = {service_id:7, ready:true, blockers:[], version:'1.0', scan_date:'2026-10-14', destinations:[{id:2,name:'Approved registry',endpoint:'registry.test',namespace:'approved',is_default:true}],remediations:[{id:'rem-1',label:'Remediation 1'}]};
+const distribution = {id:'dist-1', name:'Regional gateway', inventory_id:'inv-2', selection_digest:'sha256:frozen',
+  enabled_chart_ids:['cache'], disabled_chart_ids:['worker'], images:['registry/cache:1'],
+  charts:[{id:'cache', label:'Cache', version:'1', reference:'oci://reg/cache',source_path:'charts/cache'},
+    {id:'worker', label:'Worker', version:'2', reference:'oci://reg/worker',source_path:'charts/worker'}]};
+
+it('requests the exact saved distribution and its reviewed scan execution', async () => {
+  vi.mocked(requestJson).mockResolvedValueOnce({...ready, distribution, source_execution_id:91}).mockResolvedValueOnce({id:20});
+  render(<RequestApproval data={data} serviceKey="sample" distributionId="dist-1"/>);
+  await screen.findByText('Ready for Cyber review');
+  expect(screen.getByText('Regional gateway')).toBeInTheDocument();
+  expect(screen.queryByLabelText('Release variant')).not.toBeInTheDocument();
+  expect(requestJson).toHaveBeenCalledWith('/api/services/sample/cyber-approval-readiness?variant=current_service&distribution_id=dist-1', expect.anything());
+  fireEvent.click(screen.getByRole('button', {name:'Request Cyber Approval'}));
+  await screen.findByRole('link', {name:'Review request #20'});
+  const options = vi.mocked(requestJson).mock.calls[1][1];
+  expect(JSON.parse(String(options?.body))).toEqual({service_key:'sample',variant:'current_service',distribution_id:'dist-1',expected_source_execution_id:91});
+});
+
+it.each([{id:'dist-2', execution:91},{id:'dist-1', execution:null}])('blocks a scoped request without its matching scan (%o)', async ({id, execution}) => {
+  vi.mocked(requestJson).mockResolvedValue({...ready, distribution:{...distribution, id}, source_execution_id:execution});
+  render(<RequestApproval data={data} serviceKey="sample" distributionId="dist-1"/>);
+  await screen.findByText('Evidence incomplete');
+  expect(screen.getByRole('button', {name:'Request Cyber Approval'})).toBeDisabled();
+});
+
+it.each([ApprovalDetail, ReleaseDetail])('shows frozen chart settings and image identities in the decision and release views', async Detail => {
+  vi.mocked(requestJson).mockResolvedValue({id:22, service_key:'sample', status:'approved', snapshot:{distribution}});
+  render(<Detail data={data} id="22"/>);
+  const frozen = within(await screen.findByRole('region', {name:'Frozen distribution selection'}));
+  expect(frozen.getByRole('heading', {name:'Regional gateway'})).toBeVisible();
+  expect(frozen.getByRole('heading', {name:'Enabled charts (1)'}).nextElementSibling).toHaveTextContent('oci://reg/cache');
+  expect(frozen.getByRole('heading', {name:'Disabled charts (1)'}).nextElementSibling).toHaveTextContent('oci://reg/worker');
+  fireEvent.click(frozen.getByText('Images in this distribution (1)'));
+  expect(frozen.getByText('registry/cache:1')).toBeVisible();
+  if (Detail === ApprovalDetail) {
+    expect(screen.getByRole('link', {name:'Service distributions'})).toHaveAttribute('href','/services/sample?artifacts=true#service-distributions');
+    expect(screen.queryByRole('region', {name:'Scheduled reassessment'})).not.toBeInTheDocument();
+  }
+});
 
 it('shows compact frozen service context with attributed ports and expandable coverage', async () => {
   vi.mocked(requestJson).mockResolvedValue({id:12, status:'pending', snapshot:{
@@ -104,6 +143,29 @@ it('keeps approval distinct from failed publication and permits an authorized re
   expect(screen.getByText(/Artifact delivery is not complete/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button',{name:'Retry publication'}));
   await waitFor(() => expect(requestJson).toHaveBeenCalledWith('/api/approved-releases/22/retry',expect.objectContaining({method:'POST'})));
+});
+
+it.each([
+  ['unapproved_blob_origin', 'GET blob', true],
+  ['cross_origin_operation', 'POST blob upload', false],
+] as const)('shows redirect details and recovery for %s', async (reason, operation, allowStorage) => {
+  const diagnostic = {http_status:307, redirect_reason:reason, operation, registry_origin:'https://registry.test',
+    redirect_from_origin:allowStorage ? 'https://storage.test' : undefined, redirect_origin:'https://redirect.test:8443'};
+  vi.mocked(requestJson).mockResolvedValue({id:22, validity_status:'valid', publish_status:'failed', publication:{diagnostic}});
+  render(<ReleaseDetail data={data} id="22"/>);
+  expect(await screen.findByText(operation)).toBeInTheDocument();
+  expect(screen.getByText('https://registry.test')).toBeInTheDocument();
+  if (allowStorage) expect(screen.getByText('https://storage.test')).toBeInTheDocument();
+  expect(screen.getByText('https://redirect.test:8443')).toBeInTheDocument();
+  expect(screen.queryByRole('link', {name:'https://redirect.test:8443'})).not.toBeInTheDocument();
+  expect(!!screen.queryByText('CATS_OCI_BLOB_REDIRECT_ORIGINS')).toBe(allowStorage);
+});
+
+it('explains how to get the missing target for a previously recorded redirect', async () => {
+  vi.mocked(requestJson).mockResolvedValue({id:22, validity_status:'valid', publish_status:'failed', publication:{diagnostic:{http_status:307}}});
+  render(<ReleaseDetail data={data} id="22"/>);
+  expect(await screen.findByText(/This attempt did not record the redirect target/)).toBeInTheDocument();
+  expect(screen.queryByText('CATS_OCI_BLOB_REDIRECT_ORIGINS')).not.toBeInTheDocument();
 });
 
 it('retains destination secrets on edit without echoing credentials into fields', async () => {

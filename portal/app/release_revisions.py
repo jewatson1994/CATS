@@ -105,6 +105,7 @@ def _manifest(db, approval):
                 snapshot_digest=approval.snapshot_digest, base_revision_id=base_id,
                 approval_validity=approval.snapshot.get('approval_validity'),
                 signing_fingerprint=approval.snapshot.get('signing_fingerprint'),
+                **({'distribution': approval.snapshot['distribution']} if approval.snapshot.get('distribution') else {}),
                 artifacts=artifacts,
                 distribution_bindings=_distribution_bindings(db, approval, artifacts, specification.get('distribution_bindings', [])))
 
@@ -271,8 +272,9 @@ def active_revision(db, service_id, now=None):
 
 def _distribution_bindings(db, approval, artifacts, requested):
     """Resolve location from scoped registry configuration and retained scan identity."""
-    from .oci_models import OCIRepository
-    from .cyber_approval_evidence import _identity, _repository_identity
+    from .oci_models import OCIRepository, is_project_pattern, project_repository
+    from .cyber_approval_evidence import _identity, _registry_path
+    from .oci_transport import REPOSITORY
     if not isinstance(requested, list) or len(requested) > 512:
         raise ValueError('Invalid distribution bindings')
     inventory = {item['id']: item for item in artifacts}
@@ -286,34 +288,37 @@ def _distribution_bindings(db, approval, artifacts, requested):
             raise ValueError('Signature tags are reserved')
         mapping = db.get(OCIRepository, item['repository_id'], populate_existing=True)
         artifact = inventory.get(item['artifact_id'])
-        if (mapping is None or mapping.service_id != approval.service_id or artifact is None
+        project = mapping is not None and is_project_pattern(mapping.public_repository)
+        if (mapping is None or mapping.service_id != (None if project else approval.service_id) or artifact is None
                 or not mapping.enabled or mapping.suspended or not mapping.upstream.enabled):
             raise ValueError('Binding repository or artifact unavailable in this service')
-        repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
-        locations = set()
+        host = urlsplit(mapping.upstream.endpoint).netloc
+        locations = {}
         for retained in approval.snapshot.get('artifacts', []):
             try:
                 reference, retained_digest = _identity(retained.get('reference'), retained.get('digest'))
                 if (retained_digest == artifact['digest'] and not retained.get('resolve_at_publication')
-                        and not retained.get('path') and retained.get('format') != 'docker-archive'
-                        and _repository_identity(reference)[0] == _repository_identity(repository)[0]):
-                    location = reference.split('@', 1)[0].split('/', 1)[1]
-                    from .oci_transport import REPOSITORY
-                    if REPOSITORY.fullmatch(location):
-                        locations.add(location)
+                        and not retained.get('path') and retained.get('format') != 'docker-archive'):
+                    location = _registry_path(reference, host)
+                    if location and REPOSITORY.fullmatch(location):
+                        locations[location] = (project_repository(mapping.public_repository, mapping.upstream_repository, location)
+                                               if project else mapping.public_repository)
             except (ValueError, TypeError):
                 continue
         if len(locations) != 1:
             raise ValueError('Distribution location is not bound to retained artifact evidence')
-        key = (mapping.public_repository, item['tag'])
+        location, public_repository = locations.popitem()
+        key = (public_repository, item['tag'])
         if key in seen:
             raise ValueError('Duplicate distribution tag binding')
         seen.add(key)
-        result.append(dict(repository_id=mapping.id, public_repository=mapping.public_repository,
+        binding = dict(repository_id=mapping.id, public_repository=public_repository,
             tag=item['tag'], artifact_id=artifact['id'], digest=artifact['digest'],
             upstream_id=mapping.upstream_id, endpoint=mapping.upstream.endpoint,
-            upstream_repository=next(iter(locations)),
-            mapping_upstream_repository=mapping.upstream_repository))
+            upstream_repository=location, mapping_upstream_repository=mapping.upstream_repository)
+        if project:
+            binding['mapping_public_repository'] = mapping.public_repository
+        result.append(binding)
     return sorted(result, key=lambda value: (value['public_repository'], value['tag']))
 
 
@@ -340,8 +345,16 @@ def validate_distribution_binding(mapping, revision, binding):
         endpoint=mapping.upstream.endpoint, public_repository=mapping.public_repository)
     configured = binding.get('mapping_upstream_repository', binding.get('upstream_repository'))
     from .oci_transport import REPOSITORY
+    project = getattr(mapping, 'project', None)
+    if project is not None:
+        from .oci_models import project_repository
+        if (project.service_id is not None or binding.get('mapping_public_repository') != project.public_repository
+                or project_repository(project.upstream_repository, project.public_repository, mapping.public_repository)
+                    != mapping.upstream_repository
+                or binding.get('upstream_repository') != mapping.upstream_repository):
+            raise ValueError('Signed distribution location changed')
     if (not mapping.enabled or mapping.suspended or not mapping.upstream.enabled
-            or configured != mapping.upstream_repository
+            or configured != (project.upstream_repository if project is not None else mapping.upstream_repository)
             or any(binding.get(key) != value for key, value in expected.items())
             or not REPOSITORY.fullmatch(str(binding.get('upstream_repository', '')))
             or not any(a['id'] == binding.get('artifact_id') and a['digest'] == binding.get('digest')
@@ -352,6 +365,8 @@ def validate_distribution_binding(mapping, revision, binding):
 def distribution_location(mapping, revision, digest):
     locations = set()
     for binding in revision.manifest.get('distribution_bindings', []):
+        if getattr(mapping, 'project', None) is not None and binding.get('public_repository') != mapping.public_repository:
+            continue
         if binding.get('repository_id') == mapping.id and binding.get('digest') == digest:
             validate_distribution_binding(mapping, revision, binding)
             locations.add(binding['upstream_repository'])
@@ -404,6 +419,8 @@ def propose_recommendation(db, auth, recommendation):
     if target is None:
         raise ValueError('Recommended artifact is unavailable')
     approval = _approval(db, base.approval_id)
+    if approval.snapshot.get('distribution'):
+        raise ValueError('Create and scan a new service distribution to change the approved component selection.')
     bindings = [dict(repository_id=item['repository_id'], tag=item['tag'],
         artifact_id=recommendation.target_artifact_id if item['artifact_id'] == recommendation.source_artifact_id else item['artifact_id'])
         for item in base.manifest.get('distribution_bindings', [])]

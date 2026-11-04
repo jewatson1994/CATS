@@ -72,7 +72,7 @@ class ExecutionPayload(BaseModel):
     execution_id: str
     scanned_at: datetime
     complete: bool
-    scan_scope: str = Field(default="service", pattern=r"^(service|image|evidence)$")
+    scan_scope: str = Field(default="service", pattern=r"^(service|image|evidence|distribution)$")
     scope_image: str | None = None
     skipped_images: list[str] = Field(default_factory=list)
     skipped_charts: list[str] = Field(default_factory=list)
