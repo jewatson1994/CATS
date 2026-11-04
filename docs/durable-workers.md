@@ -206,10 +206,13 @@ mandatory staged-release setting unless deliberately retaining that path.
 ```sh
 # Select the newly built/imported image in the existing .env first.
 docker compose config --quiet
-docker compose up -d --force-recreate --wait portal portal-control oci-proxy scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
+docker compose up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
 docker compose ps
-docker compose logs --tail=100 remediation-worker security-data-worker export-worker provisioning-worker
+docker compose logs --tail=100 discovery-worker remediation-worker security-data-worker export-worker provisioning-worker
 ```
+
+Discovery uses the same `CATS_IMAGE`. Its image must contain any newly enabled
+feature, and changes to its environment settings require recreating `discovery-worker`.
 
 Portal startup creates the new job table and applies additive provisioning-attempt
 columns. New workers wait for portal health. No manual data migration or scan-job

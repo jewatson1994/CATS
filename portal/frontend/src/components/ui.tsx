@@ -89,7 +89,7 @@ export function humanize(value: unknown): string {
 const toneWords: [Tone, RegExp][] = [
   ['danger', /^(red|bad|fail|failed|failure|error|errored|non[-_ ]?compliant|noncompliant|blocked|rejected|denied|overdue|critical|unhealthy|invalid|unsafe|missing|revoked|expired|crash\w*|degraded)$/],
   ['warning', /^(yellow|amber|warn|warning|warnings|partial|partially[-_ ]?verified|partially[-_ ]?validated|unverified|could[-_ ]?not[-_ ]?validate|not[-_ ]?verified|pending|pending[-_ ]?approval|awaiting\w*|stale|excepted|exception|needs[-_ ]?review|requested|assessment[-_ ]?pending|high|medium|incomplete|limited|inferred|unsigned|draft|approval[-_ ]?required|archival[-_ ]?pending)$/],
-  ['success', /^(green|ok|pass|passed|success|succeeded|successful|complete|completed|compliant|verified|validated|healthy|approved|signed|delivered|ready|resolved|closed|connected|online|installed|current|fixed|accepted|available|enabled)$/],
+  ['success', /^(green|ok|pass|passed|success|succeeded|successful|complete|completed|compliant|verified|validated|valid|healthy|approved|published|signed|delivered|ready|resolved|closed|connected|online|installed|current|fixed|accepted|available|enabled)$/],
   ['info', /^(running|in[-_ ]?progress|queued|scheduled|processing|provisioning|validating|deploying|starting|submitted|selected|new|open|static|declared|derived)$/],
   ['neutral', /^(unknown|not[-_ ]?run|not[-_ ]?attempted|not[-_ ]?applicable|n\/?a|none|skipped|unavailable|disabled|inactive|archived|staged|cancelled|canceled|withdrawn|superseded|not[-_ ]?configured|not[-_ ]?started|low|negligible|informational|original)$/],
 ];

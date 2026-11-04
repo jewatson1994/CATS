@@ -29,8 +29,10 @@ The portal defaults to HTTP port 8080. For shared deployments, configure your ap
 
 ```sh
 docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet
-docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --force-recreate --wait portal portal-control oci-proxy scan-worker patch-worker remediation-worker export-worker provisioning-worker
+docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker export-worker provisioning-worker
 ```
+
+Discovery uses the same `CATS_IMAGE`. Its image must contain any newly enabled feature, and changes to its environment settings require recreating `discovery-worker`.
 
 The read-only OCI compliance proxy starts with the main stack. It shares the portal image, database, and encryption key, and retains verified content in the `oci_proxy_cache` volume. Its endpoint is bound to `127.0.0.1:5000` by default; change `CATS_OCI_PORT` if needed and use a trusted HTTPS reverse proxy for consumer access. Configure upstream registries and scoped machine credentials before use. No overlay is needed; the legacy `compose.oci-proxy.yml` is a no-op compatibility file. See [OCI proxy operations](../docs/oci-proxy.md) for policy behavior, cache limits, acceptance checks, and rollback.
 

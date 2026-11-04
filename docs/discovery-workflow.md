@@ -42,7 +42,7 @@ docker compose -f compose.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d 
 
 A parent `Chart.yaml` can contain only chart metadata while its sibling `values.yaml` declares child charts under `services`. For example, `services.prometheus.helmRepo` can declare the chart `kube-prometheus-stack`, its repository and its version. Discovery follows recognized Helm and OCI entries, including entries with `enabled: false`, so the inventory covers every declared component. When a resolved child's values also declare services, Discovery follows that catalog in turn. [Example catalog](../scanning-main/examples/services-values.yml)
 
-For offline discovery, place each child under the parent's `charts/` directory as an unpacked chart or a `<chart>-<version>.tgz` package. Discovery checks the name and version against the catalog. You can also use a local `chart_map` for another uploaded directory or an administrator-configured mirror for the exact version. Direct retrieval requires `HELM_ALLOW_NETWORK=true` and an approved repository or registry namespace. [Worker source and registry configuration](universal-deployment-discovery.md#helm-network-retrieval-and-live-archive-acceptance-2026-10-21)
+For offline discovery, place each child under the parent's `charts/` directory as an unpacked chart or a `<chart>-<version>.tgz` package. Discovery checks the name and version against the catalog. You can also use a local `chart_map` for another uploaded directory or an administrator-configured mirror for the exact version. Direct retrieval requires `HELM_ALLOW_NETWORK=true` and a repository or registry namespace permitted by the administrator's source policy. That policy can list individual sources or allow all valid sources as described below. [Worker source and registry configuration](universal-deployment-discovery.md#helm-network-retrieval-and-live-archive-acceptance-2026-10-21)
 
 Each child starts with its own chart defaults. Discovery applies its `valuesFiles` (also spelled `values_files`) in declaration order, using paths relative to the source root. The entry's inline `values` mapping overrides those files. Files selected for that child in **Resolution assistance** apply last. Catalog `postRenderers` supports declarative Kustomize image changes and inline patches. A nonempty catalog `valuesFrom` or `postRenders` leaves the chart unresolved and blocks its inclusion in a distribution.
 
@@ -50,7 +50,22 @@ Review each child under **Complete inventory and relationships**. A successfully
 
 For example, `services.dokuwiki.enabled: false` sets the initial distribution choice for DokuWiki. Discovery still attempts to resolve the declared chart and identifies the source file, version and result. The same rules apply to GitLab imports and uploaded archives. Allowing a GitLab project lets Discovery read that project. An administrator separately chooses which external chart sources the worker may contact.
 
-If you intend to use `oci://oci.trueforge.org/truecharts/dokuwiki` directly, enable `HELM_ALLOW_NETWORK=true` and add that exact chart URL to the JSON list in `CATS_DISCOVERY_HELM_SOURCES` in your Compose environment. Preserve any existing entries. Recreate the Discovery worker and retry Discovery. For offline use, supply the exact chart archive locally or through the configured mirror.
+If you intend to use `oci://oci.trueforge.org/truecharts/dokuwiki` directly with an individual source policy, enable `HELM_ALLOW_NETWORK=true` and add that exact chart URL to the JSON list in `CATS_DISCOVERY_HELM_SOURCES` in your Compose environment. Preserve any existing entries. Recreate the Discovery worker and retry Discovery. For offline use, supply the exact chart archive locally or through the configured mirror.
+
+### Allow all chart sources for Discovery
+
+To permit Discovery to retrieve charts from all valid HTTPS Helm repositories and OCI registry sources, set both values in the deployment's environment file:
+
+```dotenv
+HELM_ALLOW_NETWORK=true
+CATS_DISCOVERY_HELM_SOURCES=["*"]
+```
+
+The wildcard also permits HTTPS chart downloads, CDN redirects and public anonymous OCI bearer-token services without listing each origin. TLS certificate and hostname verification, exact chart versions, checksum verification and resource limits still apply. This controls Discovery retrieval only; it does not grant Cyber approval or authorize publication. Network retrieval remains disabled by default.
+
+Private OCI registry credentials remain limited to their configured namespaces. To send those credentials to a separate bearer-token service, explicitly list its HTTPS origin in `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`, for example `["https://auth.registry.example"]`. An unlisted token service may be contacted anonymously; the wildcard does not authorize forwarding private registry credentials to it.
+
+After editing the environment file, recreate the worker and retry Discovery. For the root stack, run `docker compose up -d --no-deps --force-recreate discovery-worker`. For the main deployment template, run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate discovery-worker`.
 
 ### Release a service distribution
 

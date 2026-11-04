@@ -1,4 +1,4 @@
-"""Bounded Helm retrieval using administrator-approved sources only.
+"""Bounded Helm retrieval using administrator-configured source permissions.
 
 The worker owns the network feature gate. This transport never invokes Helm,
 uses ambient proxies, or learns source permissions from uploaded documents.
@@ -86,7 +86,11 @@ class HelmNetworkResolver:
         self.sources = []
         self.index_sources = set()
         self.credentials = []
+        self.allow_all_sources = False
         for source in allowed_sources:
+            if source == '*':
+                self.allow_all_sources = True
+                continue
             parsed = _url(source)
             path = parsed.path.rstrip('/')
             if parsed.scheme == 'https' and path.endswith('/index.yaml'):
@@ -126,7 +130,8 @@ class HelmNetworkResolver:
         # Queries are generated only by the token client or returned by approved redirects.
         initial = urlsplit(url)
         clean = initial._replace(query='').geturl() if query else url
-        if _url(clean).scheme != 'https' or _origin(clean) not in origins:
+        if (_url(clean).scheme != 'https'
+                or (not self.allow_all_sources and _origin(clean) not in origins)):
             raise ArtifactResolutionError('Helm download origin is not administrator-approved: ' + _origin_label(clean))
         headers = dict(headers or {})
         deadline = time.monotonic() + self.timeout
@@ -158,7 +163,8 @@ class HelmNetworkResolver:
                 target = urljoin(url, exc.headers.get('Location', ''))
                 p = urlsplit(target)
                 clean = p._replace(query='').geturl()
-                if (_url(clean).scheme != 'https' or _origin(clean) not in origins
+                if (_url(clean).scheme != 'https'
+                        or (not self.allow_all_sources and _origin(clean) not in origins)
                         or hop == 5 or time.monotonic() > deadline):
                     raise ArtifactResolutionError('Helm redirect is not approved or exceeds limits: ' + _origin_label(clean)) from None
                 if _origin(clean) != _origin(urlsplit(url)._replace(query='').geturl()):
@@ -192,11 +198,17 @@ class HelmNetworkResolver:
                     exc.close()
                     fields = request.parse_keqv_list(request.parse_http_list(params))
                     realm = fields.get('realm', '')
-                    if scheme.lower() != 'bearer' or _origin(realm) not in self.token_origins:
+                    realm_origin = _origin(realm)
+                    credentialed_realm = (realm_origin in self.token_origins
+                        or (self.allow_all_sources and realm_origin == _origin(base)))
+                    if scheme.lower() != 'bearer' or not (credentialed_realm or self.allow_all_sources):
                         raise ArtifactResolutionError('Approve the OCI token service origin before retrieving this chart: ' + _origin_label(realm))
                     query = urlencode({'scope': 'repository:' + repository + ':pull', 'service': fields.get('service', '')})
+                    # Source permission alone never grants a different token
+                    # service access to configured private registry credentials.
                     data, _ = self._get(realm + '?' + query, limit=1024 * 1024,
-                        headers={'Authorization': basic} if basic else {}, origins=self.token_origins, query=True)
+                        headers={'Authorization': basic} if basic and credentialed_realm else {},
+                        origins=self.token_origins, query=True)
                     document = json.loads(data)
                     token = document.get('token') or document.get('access_token')
                     if not isinstance(token, str) or not token or any(ord(c) < 33 for c in token):
@@ -240,7 +252,7 @@ class HelmNetworkResolver:
             approved_index = (_origin(repository), path + '/index.yaml') in self.index_sources
         else:
             approved_index = False
-        if not approved_index and not any(_under(reference, source) for source in self.sources):
+        if not self.allow_all_sources and not approved_index and not any(_under(reference, source) for source in self.sources):
             if p.scheme == 'oci':
                 raise ArtifactResolutionError(
                     f'Helm source is not administrator-approved. An administrator can add {reference} to '

@@ -190,13 +190,15 @@ Discovery now honors `HELM_ALLOW_NETWORK=true` in the worker. Both Compose defin
 
 Additional administrator settings are JSON arrays:
 
-- `CATS_DISCOVERY_HELM_SOURCES`: approved HTTPS Helm repository or OCI namespace prefixes.
+- `CATS_DISCOVERY_HELM_SOURCES`: permitted HTTPS Helm repository or OCI namespace prefixes. `["*"]` permits all valid HTTPS Helm and OCI chart sources when `HELM_ALLOW_NETWORK=true`.
 - `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`: explicitly approved OCI bearer-token service origins.
 - `CATS_DISCOVERY_HELM_ORIGINS`: explicitly approved chart download/CDN redirect origins.
 
-For example, a public repository may require both its repository source and a separate CDN origin. A configured registry does not automatically authorize arbitrary token servers or redirects. Cross-origin redirects strip authorization. Uploads cannot authorize sources or change these settings. Exact local/HTTPS manifest entries take precedence; integrity failures do not trigger a network fallback. HTTPS chart indexes must supply SHA-256 checksums; OCI layers are verified against their manifest digests. Retrieval has byte, timeout and redirect bounds. Extracted charts retain traversal, link, duplicate-path, expansion and recursion checks. Renderers remain network-isolated with no registry or database credentials.
+With individual source entries, a public repository may require both its repository source and a separate CDN origin. A configured registry does not automatically authorize arbitrary token servers or redirects. To allow all chart sources for Discovery, set `HELM_ALLOW_NETWORK=true` and `CATS_DISCOVERY_HELM_SOURCES=["*"]`. The wildcard also permits valid HTTPS chart download/CDN origins and public anonymous OCI bearer-token services without separate origin entries. Private registry credentials remain namespace-scoped: sending them to a separate token service still requires its explicit origin in `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`. An unlisted token service may be requested anonymously. This setting controls Discovery retrieval and does not grant Cyber approval or authorize publication. Defaults remain unchanged.
 
-Rebuild/recreate the Discovery worker to deploy these code and Compose changes. `HELM_ALLOW_NETWORK` enables the controlled retriever, not unrestricted Helm subprocess networking. Private authenticated HTTPS chart repositories are not implemented by this OCI credential integration; use a configured artifact mirror where needed.
+Cross-origin redirects strip authorization. Uploads cannot authorize sources or change these settings. TLS certificate and hostname verification, exact chart versions and checksum requirements apply in both source-policy modes. Exact local/HTTPS manifest entries take precedence; integrity failures do not trigger a network fallback. HTTPS chart indexes must supply SHA-256 checksums; OCI layers are verified against their manifest digests. Retrieval has byte, timeout and redirect bounds. Extracted charts retain traversal, link, duplicate-path, expansion and recursion checks. Renderers remain network-isolated with no registry or database credentials.
+
+Rebuild/recreate the Discovery worker to deploy these code and Compose changes. After changing only the environment settings on an updated deployment, recreate the worker with `docker compose up -d --no-deps --force-recreate discovery-worker` (or `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate discovery-worker` for the main template), then retry Discovery. `HELM_ALLOW_NETWORK` enables the controlled retriever, not unrestricted Helm subprocess networking. Private authenticated HTTPS chart repositories are not implemented by this OCI credential integration; use a configured artifact mirror where needed.
 
 The public `gitlab-master.zip` identified above passed an actual durable-worker/PostgreSQL/native Helm run with 1,220 source files, nine candidate roots, 283 nodes and **45 image occurrences / 22 distinct image references**. All nine external chart dependencies resolved: seven through approved network retrieval and two through explicit local mirrors. Traefik's configured endpoint returned HTTP 403, so its exact 10.19.4 chart was obtained from the official alternate repository and checked against its published checksum. The AI Gateway index omitted a checksum, so the exact 0.15.3 artifact was explicitly pinned locally after HTTPS retrieval; that pin is not a publisher-provided checksum. Production checksum enforcement was retained.
 
@@ -219,9 +221,12 @@ Verification: 122 focused tests passed, including real local TLS with custom CAs
 The normal Compose worker now mounts `CATS_DISCOVERY_MIRROR_DIR` read-only at
 `/opt/discovery-mirror`. The default `deploy/discovery-mirror/manifest.json` is
 empty. Include this directory when transferring deployment files.
-Network access still requires both `HELM_ALLOW_NETWORK=true` and explicit source,
-token, and redirect allowlists. Existing portal registry credentials and managed
-CA trust are used by the worker; renderers remain isolated from credentials.
+Network access requires `HELM_ALLOW_NETWORK=true` and an administrator source
+policy: individual source, token and redirect entries, or
+`CATS_DISCOVERY_HELM_SOURCES=["*"]` for all valid sources and anonymous token services.
+Separate token services still need explicit `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`
+entries to receive private registry credentials. Existing portal registry credentials
+and managed CA trust are used by the worker; renderers remain isolated from credentials.
 
 For the public GitLab chart example, review `deploy/discovery-gitlab-public.json`,
 then run `python scripts/configure-discovery-gitlab.py --apply`. This updates the
