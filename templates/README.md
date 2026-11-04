@@ -4,7 +4,11 @@ These templates deploy the current runtime and its separate validator sandbox. R
 
 ## Main CATS
 
-The main template runs PostgreSQL, portal, the private portal-control listener, oci-proxy, patch-worker, scan-worker, remediation-worker, export-worker, and provisioning-worker under the project name `cats`. All CATS services use the same already-built image; this template does not build it. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
+The main template runs PostgreSQL, portal, the private portal-control listener, oci-proxy, patch-worker, scan-worker, remediation-worker, export-worker, provisioning-worker, and Nginx under the project name `cats`. All CATS services use the same already-built application image; Nginx uses a pinned official image. This template does not build either image. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
+
+Use Docker Compose v2 (`docker compose`). Set the required, distinct `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME` values, configure their DNS, and provide matching `tls.crt` and `tls.key` files in `/opt/cats/certs` and `/opt/cats/oci-certs` (or your configured certificate directories). See [HTTPS setup and migration](../docs/nginx-ingress.md) before startup. Nginx and its configuration are included in this one Compose file; no `compose.nginx.yml` or separate Nginx configuration files are needed.
+
+For a new deployment:
 
 ```powershell
 Copy-Item templates/main.env.example C:/secure/cats.env
@@ -25,7 +29,7 @@ Generate the encryption key with the portal Python environment:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Upgrade the image and Compose file together; retain database volumes and the encryption key. After selecting the new image in your existing environment file, recreate all CATS services:
+Nginx serves the portal and OCI proxy on their separate HTTPS hostnames through host port 443. TLS terminates in the backends on private ports 8000 and 5000; neither backend publishes a host port. Secure session cookies are enabled. Keep `CATS_DEV_AUTH_BYPASS=false`. Upgrade the image and Compose file together; retain database volumes and the encryption key. For an existing installation, merge template changes into your current Compose file while preserving credentials, customizations, unrelated overrides and the existing project name. Follow the [migration sequence](../docs/nginx-ingress.md#apply-when-certificates-and-dns-are-ready) to release port 443 before starting Nginx. Once that migration is complete, after selecting a new application image in your existing environment file, recreate the CATS application services:
 
 ```sh
 docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet
@@ -34,7 +38,7 @@ docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d 
 
 Discovery uses the same `CATS_IMAGE`. Its image must contain any newly enabled feature, and changes to its environment settings require recreating `discovery-worker`.
 
-The read-only OCI compliance proxy starts with the main stack. It shares the portal image, database, and encryption key, and retains verified content in the `oci_proxy_cache` volume. Its endpoint is bound to `127.0.0.1:5000` by default; change `CATS_OCI_PORT` if needed and use a trusted HTTPS reverse proxy for consumer access. Configure upstream registries and scoped machine credentials before use. No overlay is needed; the legacy `compose.oci-proxy.yml` is a no-op compatibility file. See [OCI proxy operations](../docs/oci-proxy.md) for policy behavior, cache limits, acceptance checks, and rollback.
+The read-only OCI compliance proxy starts with the main stack. It shares the portal image, database, and encryption key, and retains verified content in the `oci_proxy_cache` volume. Consumers use the configured registry hostname on HTTPS port 443 without `:5000`; `CATS_OCI_PORT` does not apply to this template. Configure upstream registries and scoped machine credentials before use. No overlay is needed; the legacy `compose.oci-proxy.yml` is a no-op compatibility file. See [OCI proxy operations](../docs/oci-proxy.md) for policy behavior, cache limits, acceptance checks, and rollback.
 
 The three new workers share common Compose settings through YAML anchors and wait for portal health before starting. PostgreSQL stores their durable jobs; no message broker or additional published ports are needed. Preserve `validator_payloads`, `validator_data` (managed-validator state and preparation cache), and `export_jobs` (generated downloads). `validator_staged_release` is an empty fallback volume when no legacy release directory is selected. See the [upgrade guide](../docs/durable-workers.md#upgrade-an-existing-installation) before replacing a deployment that kept validator state only inside the portal container.
 
@@ -47,7 +51,7 @@ Scan inputs/results use plain tar envelopes; bounded submission preparation and 
 
 Follow [the dedicated worker guide](../docs/dedicated-scan-worker.md) for controls, credential rotation, storage/generation lifecycle, retention, and the target-host validation checklist. Compose rendering proves configuration consistency; validate actual scanner tools, large disk-backed artifacts, private OCI, offline imports, restart/cancellation, resource/network enforcement, and Portal latency on the deployment host before claiming operational readiness.
 
-The root `compose.yaml` and this template share the same runtime settings and volume names. The template requires an explicit image selection; the root file defaults to `cats:local`. Staged validator release directories are optional in both. Both use project `cats`, so they operate on the same main stack when run against the same Docker host.
+The root `compose.yaml` remains a local HTTP stack: portal port 8080 and the OCI proxy's loopback port 5000 are published by default. The [legacy Nginx override](../docs/nginx-ingress.md#legacy-root-stack-override) remains available for that stack. This deployment template includes HTTPS ingress and requires an explicit image selection; the root file defaults to `cats:local`. Both share volume names, support optional staged validator release directories, and use project `cats`, so they operate on the same main stack when run against the same Docker host.
 
 ## Signed release documentation
 
@@ -97,7 +101,7 @@ CATS submits and polls validation jobs; the validator does not call back into pr
 
 ## Maintaining the templates
 
-Keep root and template Compose service definitions synchronized, including the shared worker anchors. Their intended differences are the main template's required image selection and the validator template's relative build context. Keep `.env.example` and `main.env.example` worker settings aligned. Environment examples contain placeholders only; do not commit live settings, credentials, or private keys.
+Keep shared root and template Compose service settings synchronized, including the worker anchors. Their intended differences are the main template's required image selection and integrated HTTPS ingress, and the validator template's relative build context. Keep `.env.example` and `main.env.example` worker settings aligned. Environment examples contain placeholders only; do not commit live settings, credentials, or private keys.
 
 ### Discovery storage and optional limits
 

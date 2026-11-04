@@ -2,7 +2,7 @@
 
 Investigated repository main at b23e021bc554efe096592a7fba731a46c2c2c8b8.
 Local fix branch: fix/publication-managed-ca-trust. Nothing pushed or merged.
-Reported destination: https://harbor.aj.frm.project/cyber-approved.
+Reported destination (hostname anonymized): https://harbor.example.com/cyber-approved.
 Reported correlation ID: 09116a267f3b4c1aab6ab68cb065e82f.
 No access to the disconnected deployment, its database, logs, daemon configuration, or actual certificate chain was available.
 

@@ -1,0 +1,31 @@
+# Match the Compose CPU allocation and bounded PID/memory limits.
+worker_processes 1;
+pid /tmp/nginx.pid;
+error_log /dev/stderr warn;
+
+events {
+    worker_connections 1024;
+}
+
+stream {
+    # Resolve container addresses again after a backend is recreated.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # Read the TLS hostname without decrypting requests or handling credentials.
+    # Unrecognized names (including IP-only requests) have no public backend.
+    map $ssl_preread_server_name $cats_backend {
+        default 127.0.0.1:9;
+        ${CATS_PORTAL_HOSTNAME} portal:8000;
+        ${CATS_OCI_HOSTNAME} oci-proxy:5000;
+    }
+
+    server {
+        listen 8443;
+        ssl_preread on;
+        preread_timeout 10s;
+        proxy_connect_timeout 5s;
+        # Idle timeout, not a limit on total image download duration.
+        proxy_timeout 600s;
+        proxy_pass $cats_backend;
+    }
+}

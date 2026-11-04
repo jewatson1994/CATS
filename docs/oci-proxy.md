@@ -4,18 +4,22 @@ The CATS OCI facade is included in the main Compose stack and serves approved ar
 
 ## Deployment
 
-Build or load the CATS image containing this feature and configure the normal deployment environment. Both `compose.yaml` and `templates/compose.main.yaml` include `oci-proxy` by default. From the repository root, start the main stack normally:
+Build or load the CATS image containing this feature and configure the normal deployment environment. Both `compose.yaml` and `templates/compose.main.yaml` include `oci-proxy` by default. For a shared deployment, use the [main deployment template](../templates/README.md#main-cats) with Docker Compose v2 (`docker compose`): it includes Nginx and its configuration in one Compose file, with the portal and OCI proxy on distinct HTTPS hostnames sharing host port 443. Set the required `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME`, configure DNS, and provide matching certificates before startup. Follow [HTTPS setup and migration](nginx-ingress.md) when upgrading an existing installation.
+
+The repository-root `compose.yaml` remains the local HTTP stack. From the repository root, start that stack with:
 
 ```sh
 docker compose config --quiet
 docker compose up -d --wait
 ```
 
-For the main deployment template, use the ordinary [template startup commands](../templates/README.md#main-cats). No overlay is required. `compose.oci-proxy.yml` remains a no-op compatibility file so existing commands that include it continue to work with the main Compose file.
+No OCI overlay is required for either file. `compose.oci-proxy.yml` remains a no-op compatibility file so existing commands that include it continue to work with the main Compose file.
 
-The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named `oci_proxy_cache` volume survives restarts and service recreation. It has no Docker socket, privileged execution, or registry storage backend. The application listens on port 5000; Compose publishes it only on host loopback at `127.0.0.1:5000` by default (`CATS_OCI_PORT` changes the host port). Terminate HTTPS at a trusted reverse proxy and forward only over the trusted local/container network. Configure clients to trust that HTTPS certificate. Do not send machine credentials over a public HTTP connection.
+The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named `oci_proxy_cache` volume survives restarts and service recreation. It has no Docker socket, privileged execution, or registry storage backend. In the deployment template, the application serves HTTPS privately on port 5000 and Nginx passes through TLS from host port 443; neither backend publishes a host port. Clients use `registry.example.com` (replace with your configured hostname), without `:5000`, and must trust its certificate. The root local stack instead publishes HTTP only on host loopback at `127.0.0.1:5000` by default (`CATS_OCI_PORT` changes that host port). Do not send machine credentials over a public HTTP connection.
 
 For this upgrade, use the updated shared `CATS_IMAGE` for `portal`, `portal-control`, and `oci-proxy`. Both integrated Compose definitions provide a writable 64 MiB `/tmp` tmpfs for startup while retaining the read-only remediation volume. Keep that tmpfs entry when adapting the template; shared startup code creates `/tmp/cats-patch-jobs`.
+
+For older deployments retaining the root Compose file, the [legacy Nginx override](nginx-ingress.md#legacy-root-stack-override) enables the same TLS passthrough routing and removes backend published ports. The integrated deployment template needs no Nginx override or separate Nginx configuration files. No CATS image rebuild is needed for either routing setup.
 
 Configure an upstream HTTPS registry origin and its read-only upstream credentials through the CATS administration interface. Add private CA PEM certificates when needed. Delegated token service origins and blob redirect origins require explicit allowlisting. Keep the allowlists narrow: token services receive upstream credentials. Redirects to another origin lose Authorization headers; signed CDN URLs can still work. No insecure TLS bypass exists.
 
@@ -48,7 +52,7 @@ Cache configuration:
 | `CATS_OCI_CACHE_DIR` | `/var/cache/cats-oci` in the main stack | Persistent content directory |
 | `CATS_OCI_CACHE_MAX_BYTES` | 10737418240 | Total cached content quota (10 GiB) |
 | `CATS_OCI_MAX_BLOB_BYTES` | 4294967296 | Maximum individual blob (4 GiB) |
-| `CATS_OCI_PORT` | 5000 | Loopback host port |
+| `CATS_OCI_PORT` | 5000 | Loopback host port in the root local stack only; unused by the HTTPS deployment template |
 
 Provision free space for the configured quota and filesystem overhead. Cache eviction can require refetching content; upstream availability remains necessary for fresh tag/policy resolution. This is a cache, not offline registry replication.
 
