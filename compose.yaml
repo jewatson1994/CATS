@@ -724,7 +724,8 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       CATS_APPROVED_RELEASE_ROOT: /tmp/cats-remediation-jobs/approved-releases
     ports:
-      # HTTPS must terminate at a trusted reverse proxy before external exposure.
+      # For external HTTPS on shared port 443, apply compose.nginx.yml last.
+      # Otherwise terminate HTTPS at a trusted reverse proxy before exposure.
       - "127.0.0.1:${CATS_OCI_PORT:-5000}:5000"
     volumes:
       - oci_proxy_cache:/var/cache/cats-oci

@@ -25,7 +25,7 @@ Generate the encryption key with the portal Python environment:
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. Keep `CATS_DEV_AUTH_BYPASS=false`. Upgrade the image and Compose file together; retain database volumes and the encryption key. After selecting the new image in your existing environment file, recreate all CATS services:
+The portal defaults to HTTP port 8080. For shared deployments, configure your approved HTTPS reverse proxy and set `SESSION_COOKIE_SECURE=true`. The optional [Nginx Compose override](../docs/nginx-ingress.md) serves the portal and OCI proxy on separate hostnames sharing port 443, using their own TLS certificates. Keep that override last in Compose commands, including upgrades. Keep `CATS_DEV_AUTH_BYPASS=false`. Upgrade the image and Compose file together; retain database volumes and the encryption key. After selecting the new image in your existing environment file, recreate all CATS services:
 
 ```sh
 docker compose --env-file /secure/cats.env -f templates/compose.main.yaml config --quiet

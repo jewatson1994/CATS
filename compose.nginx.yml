@@ -1,0 +1,105 @@
+# Apply LAST, after the main Compose file and (if needed) compose.oci-proxy.yml.
+# Requires Docker Compose 2.24.4+ and certificates for both hostnames.
+# Set CATS_PORTAL_HOSTNAME and CATS_OCI_HOSTNAME; there are no hostname defaults.
+# Deployment, migration and rollback: docs/nginx-ingress.md
+services:
+  portal:
+    # Nginx owns host port 443. !reset also removes a customized 443:8000 mapping.
+    ports: !reset []
+    entrypoint: []
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --no-proxy-headers
+      - --ssl-certfile
+      - /app/certs/tls.crt
+      - --ssl-keyfile
+      - /app/certs/tls.key
+    environment:
+      SESSION_COOKIE_SECURE: "true"
+      CATS_PUBLIC_URL: https://${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}
+    volumes:
+      - type: bind
+        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs}
+        target: /app/certs
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "4", "--noproxy", "*", "--cacert", "/app/certs/tls.crt", "--resolve", "${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}:8000:127.0.0.1", "https://${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}:8000/health"]
+      timeout: 5s
+
+  oci-proxy:
+    ports: !reset []
+    entrypoint: []
+    command:
+      - uvicorn
+      - app.oci_proxy:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --no-proxy-headers
+      - --ssl-certfile
+      - /app/oci-certs/tls.crt
+      - --ssl-keyfile
+      - /app/oci-certs/tls.key
+    volumes:
+      - type: bind
+        source: ${CATS_OCI_CERT_DIR:-/opt/cats/oci-certs}
+        target: /app/oci-certs
+        read_only: true
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "5", "--noproxy", "*", "--cacert", "/app/oci-certs/tls.crt", "--resolve", "${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}:5000:127.0.0.1", "https://${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}:5000/healthz"]
+      timeout: 6s
+
+  nginx:
+    # Pinned official stable-alpine image, including stream + ssl_preread support.
+    image: ${CATS_NGINX_IMAGE:-nginx:stable-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949}
+    entrypoint: ["/bin/sh", "/etc/nginx/start-cats.sh"]
+    command: []
+    environment:
+      CATS_PORTAL_HOSTNAME: ${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}
+      CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}
+    ports:
+      - "443:8443"
+    volumes:
+      - type: bind
+        source: ./deploy/nginx/nginx.conf.template
+        target: /etc/nginx/cats.conf.template
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./deploy/nginx/start-nginx.sh
+        target: /etc/nginx/start-cats.sh
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      portal:
+        condition: service_healthy
+      oci-proxy:
+        condition: service_healthy
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 1
+    pids_limit: 64
+    healthcheck:
+      test: ["CMD-SHELL", "nginx -t -q -c /tmp/nginx.conf && nc -z -w 2 127.0.0.1 8443"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
