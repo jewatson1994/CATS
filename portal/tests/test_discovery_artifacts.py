@@ -1,12 +1,14 @@
 import hashlib
 from io import BytesIO
 import json
+from pathlib import Path
 import socket
 import zipfile
 
 import pytest
 
 from app import discovery_artifacts as artifacts
+from app.helm_archives import extract_chart
 
 
 def mirror(tmp_path, member='chart/Chart.yaml', content=b'name: example', **changes):
@@ -40,6 +42,29 @@ def test_exact_offline_resolution_and_safe_stage(tmp_path, monkeypatch, kind):
     assert manifest.read_bytes() == original
     with pytest.raises(artifacts.ArtifactResolutionError, match='Exact artifact version'):
         resolver.resolve(kind, entry['reference'], 'latest')
+
+
+@pytest.mark.parametrize('filename', ['demo.tgz', 'demo.tar.gz'])
+@pytest.mark.parametrize('payload_type', [bytes, BytesIO])
+def test_helm_packaged_chart_matches_scan_extraction(tmp_path, filename, payload_type):
+    chart = Path(__file__).resolve().parents[2] / 'scanning-main/examples/helm-diagram-demo-1.0.0.tgz'
+    data = chart.read_bytes()
+    assert data[:2] == b'\x1f\x8b'
+    assert data[3] & 0x04, 'The regression chart must retain its gzip FEXTRA header'
+
+    scan_root = tmp_path / 'scan'
+    extract_chart(data, filename, scan_root)
+    scan_package = next(scan_root.iterdir())
+    expected = {path.relative_to(scan_package).as_posix(): path.read_bytes()
+                for path in scan_package.rglob('*') if path.is_file()}
+    assert 'helm-diagram-demo/Chart.yaml' in expected
+
+    digest = hashlib.sha256(data).hexdigest()
+    artifact = artifacts.ResolvedArtifact(payload_type(data), filename, digest, 'helm', 'test')
+    staged = artifact.stage(tmp_path / 'discovery')
+    actual = {name: (staged['root'] / name).read_bytes() for name in staged['files']}
+    assert actual == expected
+    assert staged['provenance']['sha256'] == digest
 
 
 @pytest.mark.parametrize('path', ['../source.zip', '/source.zip', 'C:/source.zip', r'..\source.zip'])

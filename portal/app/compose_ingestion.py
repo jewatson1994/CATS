@@ -179,7 +179,10 @@ def stage_uploads(root: Path, uploads: list[tuple[Any, str]], *,
                                     with archive.open(member) as member_source:
                                         add(member.filename, member_source)
                         else:
-                            with tarfile.open(fileobj=spool, mode="r|*") as archive:
+                            # Match Scan's reader for the seekable spool. The
+                            # streaming gzip reader rejects valid optional
+                            # headers such as FEXTRA from Helm-packaged charts.
+                            with tarfile.open(fileobj=spool, mode="r:*") as archive:
                                 for number, member in enumerate(archive):
                                     checkpoint()
                                     if max_files and number >= max_files:
