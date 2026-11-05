@@ -456,6 +456,17 @@ it('shows missing chart keys and retries with selected values instead of a succe
 
 });
 
+it('shows worker isolation failure without recommending different chart values', async () => {
+  const message = 'The worker cannot start its isolated rendering tools. Changing chart values will not fix this failure.';
+  const failed = {...inventory, images: [], diagnostics: [{code: 'worker_isolation_unavailable', path: 'Chart.yaml', message}]};
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: failed} : catalog), {headers: {'Content-Type': 'application/json'}})));
+  render(<Page data={{csrf_token: 'token'}}/>);
+  await openRecent();
+  const panel = (await screen.findByText('Resolve configuration and rediscover')).closest('details')!;
+  expect(panel.textContent).toContain(message);
+  expect(panel.textContent).not.toContain('Choose values for your deployment.');
+});
+
 it('restores isolated component values and submits explicit override order', async () => {
   const configured = {...inventory, candidate_values_files: ['a.yaml', 'b.yaml'], selection: {values_files: ['parent.yaml'], component_values: {child: ['a.yaml', 'b.yaml']}}, configurable_components: [{id: 'child', label: 'Child release', path: 'Chart.yaml', technology: 'helm', values_origin: 'Generated ConfigMap'}], diagnostics: [{code: 'native_render_failed', renderer: 'kustomize', path: 'kustomization.yaml', message: 'Missing base'}]};
   const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: configured} : catalog), {headers: {'Content-Type': 'application/json'}}));

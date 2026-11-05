@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-for tool in syft jq yq python3; do
+for tool in syft trivy dockle bwrap jq yq python3; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "SKIP: $tool is required for the daemonless image source test."
     exit 0
@@ -20,22 +20,6 @@ cat > fake-bin/docker <<'SCRIPT'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$DOCKER_CALLS"
 exit 1
-SCRIPT
-cat > fake-bin/trivy <<'SCRIPT'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$TRIVY_CALLS"
-while [ "$#" -gt 0 ]; do
-  [ "$1" = --output ] && printf '{"SchemaVersion":2,"Results":[]}\n' > "$2"
-  shift
-done
-SCRIPT
-cat > fake-bin/dockle <<'SCRIPT'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "$DOCKLE_CALLS"
-while [ "$#" -gt 0 ]; do
-  [ "$1" = --output ] && printf '{"summary":{},"details":[]}\n' > "$2"
-  shift
-done
 SCRIPT
 chmod +x fake-bin/*
 
@@ -96,8 +80,7 @@ cut -f1 image-archive-map.tsv | sed 's/^/  - "/; s/$/"/' >> images.yml
 printf 'service:\n  id: daemonless\n' > service.yml
 
 export PATH="$TEMPORARY_DIRECTORY/fake-bin:$PATH" CI_PROJECT_DIR="$TEMPORARY_DIRECTORY" \
-  DOCKER_CALLS="$TEMPORARY_DIRECTORY/docker.calls" TRIVY_CALLS="$TEMPORARY_DIRECTORY/trivy.calls" \
-  DOCKLE_CALLS="$TEMPORARY_DIRECTORY/dockle.calls" IMAGE_MATERIALIZATION_DIR="$TEMPORARY_DIRECTORY/never-created"
+  DOCKER_CALLS="$TEMPORARY_DIRECTORY/docker.calls" IMAGE_MATERIALIZATION_DIR="$TEMPORARY_DIRECTORY/never-created"
 bash "$REPOSITORY_ROOT/scripts/generate-sboms.sh" > generate.log 2>&1 || { cat generate.log; exit 1; }
 
 # Docker was only probed for availability, never used.
@@ -116,8 +99,9 @@ done
 TRIVY_CONFIG_SCAN_ENABLED=false HELM_SCAN_ENABLED=false TRIVY_IMAGE_CONFIG_SCAN_ENABLED=true \
   DOCKLE_IMAGE_CONFIG_SCAN_ENABLED=true \
   bash "$REPOSITORY_ROOT/scripts/scan-configurations.sh" > configuration.log 2>&1 || { cat configuration.log; exit 1; }
-test "$(grep -c -- '--input .*/archives/.split/.*\.tar$' trivy.calls)" -eq 4
-test "$(grep -c -- '--input .*/archives/.split/.*\.tar$' dockle.calls)" -eq 4
+test "$(find trivy-results/raw -name '*-dockle.json' | wc -l)" -eq 4
+test "$(find trivy-results/raw -name '*.json' ! -name '*-dockle.json' | wc -l)" -eq 4
+jq -e '.complete and .source.succeeded == 4 and .dockle.succeeded == 4' configuration-scan-status.json >/dev/null
 test "$(sort -u docker.calls)" = info
 
 echo "Daemonless image archives were scanned without Docker."

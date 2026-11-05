@@ -35,10 +35,13 @@ esac
 exit 0
 SCRIPT
 
-cat > "$TEMPORARY_DIRECTORY/fake-bin/syft" <<'SCRIPT'
+REAL_PYTHON="$(command -v python3)"
+cat > "$TEMPORARY_DIRECTORY/fake-bin/python3" <<'SCRIPT'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$SYFT_CALLS"
-printf '%s\n' '{"artifacts":[]}'
+if [[ "$1" == */scanner-action.py ]]; then
+  printf '%s\n' "$*" >> "$SCANNER_CALLS"
+fi
+exec "$REAL_PYTHON" "$@"
 SCRIPT
 chmod +x "$TEMPORARY_DIRECTORY/fake-bin/"*
 
@@ -48,12 +51,12 @@ chmod +x "$TEMPORARY_DIRECTORY/fake-bin/"*
   CI_PROJECT_DIR="$TEMPORARY_DIRECTORY" \
   IMAGE_MATERIALIZATION_DIR="$TEMPORARY_DIRECTORY/image-filesystems" \
   DOCKER_CALLS="$TEMPORARY_DIRECTORY/docker.calls" \
-  SYFT_CALLS="$TEMPORARY_DIRECTORY/syft.calls" \
+  REAL_PYTHON="$REAL_PYTHON" SCANNER_CALLS="$TEMPORARY_DIRECTORY/scanner.calls" \
     bash "$REPOSITORY_ROOT/scripts/generate-sboms.sh"
 )
 
-grep -Eq '^dir:.+-rootfs --override-default-catalogers image -o syft-json$' "$TEMPORARY_DIRECTORY/syft.calls"
-! grep -Eq 'docker-archive:|docker save' "$TEMPORARY_DIRECTORY/syft.calls" "$TEMPORARY_DIRECTORY/docker.calls"
+grep -Eq '/scanner-action.py inventory .+-rootfs sboms/.+\.json$' "$TEMPORARY_DIRECTORY/scanner.calls"
+! grep -Eq 'docker-archive:|docker save' "$TEMPORARY_DIRECTORY/scanner.calls" "$TEMPORARY_DIRECTORY/docker.calls"
 test -s "$TEMPORARY_DIRECTORY"/sboms/*.json
 test -s "$TEMPORARY_DIRECTORY"/sboms/*.digest
 test ! -s "$TEMPORARY_DIRECTORY/skipped_images.txt"

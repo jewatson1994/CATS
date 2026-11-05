@@ -412,7 +412,9 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             elif kind not in {'Secret', 'ConfigMap', 'Service', 'Namespace', 'ServiceAccount', 'Role', 'RoleBinding',
                               'ClusterRole', 'ClusterRoleBinding', 'PersistentVolume', 'PersistentVolumeClaim',
                               'StorageClass', 'Ingress', 'IngressClass', 'NetworkPolicy', 'PodDisruptionBudget',
-                              'HorizontalPodAutoscaler', 'CustomResourceDefinition', 'ResourceQuota', 'LimitRange'}:
+                              'HorizontalPodAutoscaler', 'CustomResourceDefinition', 'ResourceQuota', 'LimitRange'} and not (
+                    api_group == 'admissionregistration.k8s.io' and kind in {
+                        'MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration'}):
                 if 'toolkit.fluxcd.io/' not in str(doc.get('apiVersion', '')):
                     issue('custom_resource_workloads_not_evaluated', rid, path)
     if options.get('reference') and source_path is None:
@@ -885,7 +887,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     diagnostic['message'] = 'Kustomize build failed. Review this overlay, its resources, bases, components and patches; Helm values files do not configure Kustomize.'
                 from .discovery_renderer import RendererError
                 if isinstance(exc, RendererError):
-                    if str(exc) in ('Discovery renderer exceeded time limit', 'Discovery renderer exceeded output limit'):
+                    if exc.infrastructure:
+                        diagnostic['code'] = 'worker_isolation_unavailable'
+                        diagnostic['message'] = 'The worker cannot start its isolated rendering tools. Check the worker health and host AppArmor/seccomp configuration, then rediscover. Changing chart values will not fix this failure.'
+                    elif str(exc) in ('Offline action exceeded time limit', 'Offline action exceeded output limit'):
                         diagnostic['message'] = str(exc) + '. Increase the configured budget or reduce the render scope.'
                     diagnostic['value_paths'] = [clean(value) for value in exc.value_paths]
 
@@ -1075,6 +1080,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 rid = root(Path(path).parent.as_posix(), adapter.technology, **metadata)
                 args = [*adapter.prefix, str(directory)]
                 if adapter.tool == 'helm':
+                    args[1] = metadata.get('chart_name') or directory.name
                     roots_by_id[rid]['state'] = 'unresolved'
                     missing_selection = False
                     for value_file in options.get('values_files', []):

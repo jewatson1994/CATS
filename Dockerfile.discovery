@@ -3,4 +3,5 @@ ARG CATS_TOOL_IMAGE=cats:local
 FROM ${CATS_TOOL_IMAGE}
 USER 10003:10003
 ENTRYPOINT []
+HEALTHCHECK --interval=30s --timeout=15s --start-period=10s --retries=3 CMD ["/opt/cats-venv/bin/python", "-m", "app.rendering", "--probe"]
 CMD ["/opt/cats-venv/bin/python", "-m", "app.discovery_worker"]

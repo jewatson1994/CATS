@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 
-# Best-effort Helm image handoff. Chart rendering problems are evidence gaps,
-# except for the narrowly handled Bitnami verification retry; scan-configurations
-# will append its own chart results to the same skipped_charts.txt file later.
+# Best-effort Helm image handoff using the shared offline rendering action.
 set -uo pipefail
 
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
@@ -199,7 +197,7 @@ render_chart() {
       '{source:$source,release:$release,namespace:$namespace,values:(.values // []),set:(.set // [])}' <<< "$entry_json" | sha256sum | awk '{print $1}')"
   fi
   helm_command=(helm template "$release" "$chart_path" --namespace "$namespace")
-  if jq -e '.include_crds == true' <<< "$entry_json" >/dev/null 2>&1; then
+  if jq -e '.include_crds != false' <<< "$entry_json" >/dev/null 2>&1; then
     helm_command+=(--include-crds)
   fi
   while IFS= read -r values_file; do
@@ -208,7 +206,7 @@ render_chart() {
   while IFS= read -r set_value; do
     [ -n "$set_value" ] && helm_command+=(--set-string "$set_value")
   done < <(jq -r '(.set // []) | if type == "object" then to_entries[] | "\(.key)=\(.value)" else .[]? end' <<< "$entry_json" 2>/dev/null)
-  if ! helm_render_with_bitnami_retry "$rendered" "$chart_name" "$chart_path" "${helm_command[@]}"; then
+  if ! helm_render "$rendered" "$chart_name" "$chart_path" "${helm_command[@]}"; then
     reason="helm template failed during image extraction"
     [ -n "$HELM_RENDER_LAST_ERROR" ] && reason="${reason}: ${HELM_RENDER_LAST_ERROR}"
     record_skip "$chart_name" "$reason"
@@ -218,8 +216,8 @@ render_chart() {
     record_skip "$chart_name" "helm template produced no manifests during image extraction"
     return
   fi
-  jq --arg namespace "$namespace" --arg release "$release" --arg path "$source_chart" --arg instance "$chart_instance_id" \
-    '. + {namespace:$namespace, release:$release, source_chart:$path, chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
+  jq --arg namespace "$namespace" --arg release "$release" --arg path "$source_chart" --arg root "$chart_path" --arg instance "$chart_instance_id" \
+    '. + {namespace:$namespace, release:$release, source_chart:$path, render_chart_root:$root, include_crds:(.include_crds != false), chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
   # A rendered ConfigMap or custom resource may also have an `image` field.
   # Only pod container locations provide affirmative image evidence.
   python3 "${SCRIPT_DIRECTORY}/extract-workload-images.py" "$rendered" >> "$IMAGE_FILE" || {

@@ -159,16 +159,38 @@ def remediation_portal(monkeypatch, tmp_path):
                   "artifact_sha256": hashlib.sha256((out / "patched-image.tar").read_bytes()).hexdigest(),
                   "vulnerabilities_before": 2, "vulnerabilities_after": 0,
                   "remediation_evidence": {"sbom": "complete", "scan_before": "complete", "scan_after": "complete"}}
+        result["scan_evidence"] = {"status": "complete", "candidate_digest": "sha256:" + result["artifact_sha256"],
+            "before": {"sha256": "sha256:" + hashlib.sha256((out / "grype-full-before.json").read_bytes()).hexdigest(),
+                       "sbom_digest": "sha256:" + "a" * 64},
+            "after": {"sha256": "sha256:" + hashlib.sha256((out / "grype-full-after.json").read_bytes()).hexdigest(),
+                      "sbom_digest": "sha256:" + "b" * 64}}
         (out / "patch-result.json").write_text(json.dumps(result))
     monkeypatch.setattr(main, "_run_patch_job", patch_job)
     from app import candidate_worker
-    real_which, real_run = shutil.which, subprocess.run
-    monkeypatch.setattr(candidate_worker.shutil, "which", lambda name: "simulated-trivy" if name == "trivy" else real_which(name))
-    def tools(command, **kwargs):
-        if command[0] == "simulated-trivy":
-            return subprocess.CompletedProcess(command, 0, json.dumps({"SchemaVersion": 2, "Results": []}), "")
-        return real_run(command, **kwargs)
-    monkeypatch.setattr(candidate_worker.subprocess, "run", tools)
+    def configuration(source, report_path, **kwargs):
+        report = {"SchemaVersion": 2, "Results": []}
+        report_path.write_text(json.dumps(report))
+        return report
+    # This content-flow fixture renders only the fixed chart above. Production
+    # process isolation is tested independently by the shared action suite.
+    def render(tool, args, cwd, **kwargs):
+        completed = subprocess.run([shutil.which(tool), *args], cwd=cwd,
+                                   capture_output=True, text=True, check=False)
+        if completed.returncode:
+            raise candidate_worker.RendererError('Fixture render failed')
+        return {'stdout': completed.stdout}
+    def template(chart, **kwargs):
+        args = ['template', kwargs['release'], str(chart), '--namespace', kwargs['namespace']]
+        if kwargs['include_crds']:
+            args.append('--include-crds')
+        for value in kwargs.get('values', []):
+            args.extend(['--values', str(value)])
+        for value in kwargs.get('set_values', []):
+            args.extend(['--set-string', value])
+        return render('helm', args, kwargs['source_root'])
+    monkeypatch.setattr(candidate_worker, 'scan_configuration', configuration)
+    monkeypatch.setattr(candidate_worker, 'isolated_runner', render)
+    monkeypatch.setattr(candidate_worker, 'helm_template', template)
     def worker_verification(directory, payload, plan, validation):
         checked = candidate_worker.validate_candidate(directory, payload, plan, validation)
         rendered = directory / ".cats-rendered.yaml"
@@ -214,7 +236,8 @@ def remediation_portal(monkeypatch, tmp_path):
         "fixable_only": True, "artifact_type": "helm",
         "service": {"id": "catalog", "name": "Catalog", "version": "1.4.0", "groups": ["Remediation test group"]},
         "helm_source_files": {f"upload/{relative}": content for relative, content in CHART.items()},
-        "service_overview": {"rendered_resources": resources},
+        "service_overview": {"rendered_resources": resources, "helm_render_settings": [
+            {"chart_root": "upload", "release": "catalog", "namespace": "default", "values": [], "set": [], "include_crds": True}]},
         "findings": [{"cve": "CVE-2026-0001", "severity": "High", "image": image, "package": "openssl", "fixed_version": "3.0.9"}
                      for image in ("registry.example/catalog-api:2.4.1", "registry.example/catalog-worker:2.4.1")],
         "policy_findings": [],
@@ -272,6 +295,12 @@ def test_remediation_runs_end_to_end_on_a_realistic_chart(remediation_portal):
     with zipfile.ZipFile(io.BytesIO(candidate.content)) as archive:
         values = yaml.safe_load(archive.read("candidate/upload/values.yaml"))
         rendered = archive.read("scans/rendered-after.yaml").decode()
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest['helm_render_settings'] == [{'chart_root': 'upload', 'release': 'catalog',
+            'namespace': 'default', 'values': [], 'set': [], 'include_crds': True}]
+        assert all(image['scan_evidence']['status'] == 'complete' and
+                   image['scan_evidence']['candidate_digest'] == 'sha256:' + image['artifact_sha256']
+                   for image in manifest['images'])
     assert values["images"]["api"].endswith(f"-cats-{job_key.lower()}")
     assert values["images"]["worker"].endswith(f"-cats-{job_key.lower()}")
     assert "registry.example/catalog-api:2.4.1\n" not in rendered

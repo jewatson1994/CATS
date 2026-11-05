@@ -19,6 +19,7 @@ from .database import Base
 from .secrets import decrypt_secret
 from .service_oci import destination_trust, validate_destination
 from .deployment_bundle import file_digest
+from .rendering import helm_template, isolated_runner
 
 
 class DeliveryAttempt(Base):
@@ -199,6 +200,90 @@ def embed_values(files, chart_root, values_files):
     return name, content
 
 
+def helm_chart_roots(files, *, include_vendored=False):
+    """A repository's charts/ directory is not itself a Helm dependency."""
+    roots = {PurePosixPath(name).parent for name in files if PurePosixPath(name).name == "Chart.yaml"}
+    if include_vendored:
+        return {root.as_posix() for root in roots}
+    return {root.as_posix() for root in roots if not any(
+        parent != root and root.is_relative_to(parent)
+        and root.relative_to(parent).parts[0] == "charts" for parent in roots)}
+
+
+def embedded_instance_values(files, settings, *, include_defaults=True):
+    """Let Helm interpret retained string overrides, including escaped/list keys."""
+    if not settings["set"]:
+        return embed_values(dict(files), settings["chart_root"], settings["values"])
+    from .remediation_jobs import check_worker
+    with tempfile.TemporaryDirectory(prefix="cats-values-") as directory:
+        source = Path(directory)
+        chart = source / "chart"
+        (chart / "templates").mkdir(parents=True)
+        (chart / "Chart.yaml").write_text("apiVersion: v2\nname: cats-values\nversion: 1.0.0\n", encoding="utf-8")
+        name = (PurePosixPath(settings["chart_root"]) / "values.yaml").as_posix()
+        (chart / "values.yaml").write_text(files.get(name, "{}") if include_defaults else "{}", encoding="utf-8")
+        (chart / "templates" / "values.yaml").write_text("{{ .Values | toJson }}\n", encoding="utf-8")
+        values = []
+        for index, selected in enumerate(settings["values"]):
+            path = source / f"values-{index}.yaml"
+            path.write_text(files[selected], encoding="utf-8")
+            values.append(path)
+        rendered = helm_template(chart, source_root=source, release="cats-values", namespace="default",
+            values=values, set_values=settings["set"], include_crds=False, check_cancelled=check_worker)["stdout"]
+        documents = list(yaml.safe_load_all(rendered))
+        if len(documents) != 1 or not isinstance(documents[0], dict):
+            raise ValueError("Helm values materialization did not return one mapping")
+        return name, yaml.safe_dump(documents[0], sort_keys=False)
+
+
+def checked_render_settings(settings, files, *, values_files=(), release="cats-remediation"):
+    """Retain explicit Helm render inputs without accepting arbitrary flags."""
+    if settings is None:
+        settings = {}
+    if not isinstance(settings, dict) or set(settings) - {"release", "namespace", "values", "set", "include_crds"}:
+        raise ValueError("Invalid retained Helm render settings")
+    selected_release, namespace = settings.get("release", release), settings.get("namespace", "default")
+    if not isinstance(selected_release, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,51}[a-z0-9])?", selected_release):
+        raise ValueError("Invalid retained Helm release")
+    if not isinstance(namespace, str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", namespace):
+        raise ValueError("Invalid retained Helm namespace")
+    set_values = settings.get("set", [])
+    if (not isinstance(set_values, list) or len(set_values) > 128
+            or any(not isinstance(value, str) or "=" not in value or "\x00" in value or len(value) > 8192 for value in set_values)):
+        raise ValueError("Invalid retained Helm set values")
+    include_crds = settings.get("include_crds", True)
+    if not isinstance(include_crds, bool):
+        raise ValueError("Invalid retained Helm CRD option")
+    return {"release": selected_release, "namespace": namespace,
+            "values": checked_values_files(settings.get("values", list(values_files)), files),
+            "set": list(set_values), "include_crds": include_crds}
+
+
+def checked_helm_render_settings(instances, files, *, render_settings=None, values_files=()):
+    """Bind each retained Helm invocation to its exact chart and source inputs."""
+    roots = helm_chart_roots(files)
+    available = helm_chart_roots(files, include_vendored=True)
+    if instances is None:
+        settings = checked_render_settings(render_settings, files, values_files=values_files)
+        return [{"chart_root": root, **settings} for root in sorted(roots)]
+    if not isinstance(instances, list) or len(instances) > 1000:
+        raise ValueError("Invalid retained Helm render instances")
+    if render_settings is not None or values_files:
+        raise ValueError("Ambiguous global and per-chart Helm render settings")
+    checked = []
+    for instance in instances:
+        if not isinstance(instance, dict) or "chart_root" not in instance:
+            raise ValueError("Invalid retained Helm render instance")
+        root = instance["chart_root"]
+        if not isinstance(root, str) or root not in available:
+            raise ValueError("Retained Helm chart source is unavailable")
+        settings = checked_render_settings({key: value for key, value in instance.items() if key != "chart_root"}, files)
+        checked.append({"chart_root": root, **settings})
+    if not roots.issubset({instance["chart_root"] for instance in checked}):
+        raise ValueError("Retained Helm render settings do not cover every chart")
+    return checked
+
+
 def deliver(record, destination, attempt_id, root, *, signing_material=None, checkpoint=None):
     """Copy retained image archives, reconcile/package Helm; never patch or decide."""
     source = retained_candidate(record, root)
@@ -217,8 +302,24 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
     with ZipFile(source) as bundle, tempfile.TemporaryDirectory(prefix="cats-delivery-") as temp:
         names = checked_inventory(bundle)
         manifest = json.loads(bundle.read("manifest.json"))
-        values_files = checked_values_files(manifest.get("values_files", []),
-            {name[10:] for name in names if name.startswith("candidate/") and not name.endswith("/")})
+        source_names = {name[10:] for name in names if name.startswith("candidate/") and not name.endswith("/")}
+        instances = checked_helm_render_settings(manifest.get("helm_render_settings"), source_names,
+            render_settings=manifest.get("render_settings"), values_files=manifest.get("values_files", []))
+        values_files = list(dict.fromkeys(value for instance in instances for value in instance["values"]))
+        source_files = {name[10:]: (bundle.read(name) if name.endswith(".tgz") else bundle.read(name).decode("utf-8"))
+                        for name in names if name.startswith("candidate/") and not name.endswith("/")}
+        embedded = {}
+        for settings in instances:
+            name, content = embedded_instance_values(source_files, settings)
+            if name in embedded and yaml.safe_load(embedded[name]) != yaml.safe_load(content):
+                raise ValueError("Delivery of differing values for one chart requires separate chart packages")
+            root_path = PurePosixPath(settings["chart_root"])
+            if (any(root_path != PurePosixPath(other["chart_root"])
+                    and root_path.is_relative_to(PurePosixPath(other["chart_root"])) for other in instances)
+                    and yaml.safe_load(source_files.get(name, "{}")) != yaml.safe_load(content)):
+                raise ValueError("Delivery of separately configured nested charts requires separate chart packages")
+            embedded[name] = content
+        source_files.update(embedded)
         work = Path(temp)
         work.chmod(0o700)
         password = decrypt_secret(destination.get("password", ""))
@@ -274,7 +375,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 mappings[image["remediated"]] = reference
                 results.append({"kind": "image", "reference": reference, "digest": digest, "identity_type": "oci_manifest"})
                 save_progress()
-            files = materialize({name[10:]: (bundle.read(name) if name.endswith(".tgz") else bundle.read(name).decode("utf-8")) for name in names if name.startswith("candidate/") and not name.endswith("/")}, mappings)
+            files = materialize(source_files, mappings)
             from .remediation_safety import assert_sources_safe
             assert_sources_safe({name: content for name, content in files.items() if isinstance(content, str)})
             candidate = work / "candidate"
@@ -287,8 +388,7 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 else:
                     target.write_text(content, encoding="utf-8")
             charts = []
-            chart_roots = [path.parent for path in candidate.rglob("Chart.yaml")
-                           if "charts" not in path.relative_to(candidate).parts[:-1]]
+            chart_roots = [candidate / name for name in sorted({instance["chart_root"] for instance in instances})]
             if chart_roots and not helm:
                 raise ValueError("Helm delivery tool unavailable")
             if username and password and helm and chart_roots:
@@ -307,11 +407,14 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 elif isinstance(value, list):
                     for child in value:
                         collect_images(child)
-            for chart_root in chart_roots:
-                name, content = embed_values(files, chart_root.relative_to(candidate), values_files)
-                (candidate / name).write_text(content, encoding="utf-8")
-                run([helm, "lint", str(chart_root)], env=env)
-                rendered = run([helm, "template", "cats-delivery", str(chart_root)], env=env)
+            for settings in instances:
+                chart_root = candidate / settings["chart_root"]
+                from .remediation_jobs import check_worker
+                isolated_runner("helm", ["lint", str(chart_root), "--namespace", settings["namespace"]],
+                                candidate, timeout=180, check_cancelled=check_worker)
+                rendered = helm_template(chart_root, source_root=candidate, release=settings["release"],
+                    namespace=settings["namespace"], include_crds=settings["include_crds"],
+                    check_cancelled=check_worker)["stdout"]
                 assert_sources_safe({"rendered.yaml": rendered})
                 for document in yaml.safe_load_all(rendered):
                     collect_images(document)
@@ -389,7 +492,8 @@ def deliver(record, destination, attempt_id, root, *, signing_material=None, che
                 save_progress()
             output_path = source.parent / f"delivery-{attempt_id}.zip"
             with ZipFile(output_path, "w", ZIP_DEFLATED) as output:
-                output.writestr("lineage.json", json.dumps({"remediation": record.job_key, "content_digest": record.artifact_digest, "artifacts": results, "values_files": values_files}))
+                output.writestr("lineage.json", json.dumps({"remediation": record.job_key, "content_digest": record.artifact_digest,
+                    "artifacts": results, "values_files": values_files, "helm_render_settings": instances}))
                 if "source-safety.json" in bundle.namelist():
                     output.writestr("source-safety.json", bundle.read("source-safety.json"))
                 for relative, content in files.items():

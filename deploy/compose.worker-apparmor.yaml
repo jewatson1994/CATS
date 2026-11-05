@@ -1,0 +1,16 @@
+# Ubuntu/AppArmor hosts: load cats-worker-actions.apparmor before using this file.
+# See deploy/worker-isolation.md. Keep this overlay on every recreate/update.
+# Compose appends this option to the base no-new-privileges and seccomp options.
+services:
+  discovery-worker:
+    security_opt:
+      - apparmor=cats-worker-actions
+  scan-worker:
+    security_opt:
+      - apparmor=cats-worker-actions
+  patch-worker:
+    security_opt:
+      - apparmor=cats-worker-actions
+  remediation-worker:
+    security_opt:
+      - apparmor=cats-worker-actions

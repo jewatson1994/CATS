@@ -37,7 +37,7 @@ jobs:
             --build-arg GRYPE_DB_REFRESH=${{ github.run_id }} \
             -f cats-scanner/Dockerfile \
             -t catscan-base:${{ github.sha }} \
-            cats-scanner
+            .
 
       - name: Build unified image
         run: |

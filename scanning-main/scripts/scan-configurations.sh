@@ -17,7 +17,7 @@ TRIVY_CONFIG_SEVERITIES="${TRIVY_CONFIG_SEVERITIES:-UNKNOWN,LOW,MEDIUM,HIGH,CRIT
 TRIVY_CACHE_DIR="${TRIVY_CACHE_DIR:-/opt/catscan/trivy-cache}"
 TRIVY_CHECKS_BUNDLE_REPOSITORY="${TRIVY_CHECKS_BUNDLE_REPOSITORY:-}"
 TRIVY_CONFIG_PATHS="${TRIVY_CONFIG_PATHS:-}"
-TRIVY_CONFIG_SKIP_DIRS="${TRIVY_CONFIG_SKIP_DIRS:-.git .cats-helm-graph sboms results trivy-results helm-rendered}"
+TRIVY_CONFIG_SKIP_DIRS="${TRIVY_CONFIG_SKIP_DIRS:-.git .cats-helm-graph .cats-images sboms results trivy-results helm-rendered}"
 HELM_CHART_ROOTS="${HELM_CHART_ROOTS:-charts}"
 HELM_DEPENDENCY_MODE="${HELM_DEPENDENCY_MODE:-auto}"
 HELM_ALLOW_NETWORK="${HELM_ALLOW_NETWORK:-false}"
@@ -186,29 +186,15 @@ run_trivy_config() {
   raw="${RAW_ROOT}/${safe}.json"
   normalized="${NORMALIZED_ROOT}/${safe}.json"
 
-  command=(trivy config
-    --format json
-    --output "$raw"
+  command=(python3 "${SCRIPT_DIRECTORY}/scanner-action.py" configuration "$input_path" "$raw"
     --severity "$TRIVY_CONFIG_SEVERITIES"
-    --exit-code 0
-    --cache-dir "$TRIVY_CACHE_DIR"
-    --skip-version-check
-    --disable-telemetry)
-
-  if is_true "$TRIVY_SKIP_CHECK_UPDATE"; then
-    command+=(--skip-check-update)
-  fi
-
-  if [ -n "$TRIVY_CHECKS_BUNDLE_REPOSITORY" ]; then
-    command+=(--checks-bundle-repository "$TRIVY_CHECKS_BUNDLE_REPOSITORY")
-  fi
+    --cache "$TRIVY_CACHE_DIR")
 
   read -r -a skip_dirs <<< "$TRIVY_CONFIG_SKIP_DIRS"
   for skip_dir in "${skip_dirs[@]}"; do
-    [ -n "$skip_dir" ] && command+=(--skip-dirs "$skip_dir")
+    [ -n "$skip_dir" ] && command+=(--skip-dir "$skip_dir")
   done
 
-  command+=("$input_path")
   echo "Scanning ${kind} configuration target: ${label} (${input_path})"
   if ! "${command[@]}"; then
     if [ "$kind" = "helm" ]; then
@@ -240,6 +226,21 @@ image_source() {
   awk -F '\t' -v image="$1" '$1 == image { print $2; exit }' image-sources.tsv
 }
 
+acquired_image_archive() {
+  local image="$1" source archive
+  source="$(image_source "$image")"
+  case "$source" in
+    docker-archive:*|oci-archive:*) printf '%s\n' "${source#*:}"; return 0 ;;
+    registry:*) return 1 ;;  # Acquisition must finish before any scanner runs.
+  esac
+  mkdir -p .cats-images || return 1
+  archive="$(pwd)/.cats-images/$(printf '%s' "$image" | sha256sum | cut -c1-24).tar"
+  if [ ! -s "$archive" ]; then
+    docker save --output "$archive" "$image" >&2 || return 1
+  fi
+  printf '%s\n' "$archive"
+}
+
 run_trivy_image_config() {
   local image="$1" safe raw normalized source
   local -a command
@@ -254,31 +255,12 @@ run_trivy_image_config() {
     return 1
   fi
 
-  command=(trivy image
-    --scanners misconfig
-    --image-config-scanners misconfig
-    --format json
-    --output "$raw"
-    --severity "$TRIVY_CONFIG_SEVERITIES"
-    --exit-code 0
-    --cache-dir "$TRIVY_CACHE_DIR"
-    --skip-version-check
-    --disable-telemetry)
-
-  if is_true "$TRIVY_SKIP_CHECK_UPDATE"; then
-    command+=(--skip-check-update)
+  if ! source="$(acquired_image_archive "$image")"; then
+    record_failure image "$image" "Acquired image archive is unavailable"
+    return 1
   fi
-
-  if [ -n "$TRIVY_CHECKS_BUNDLE_REPOSITORY" ]; then
-    command+=(--checks-bundle-repository "$TRIVY_CHECKS_BUNDLE_REPOSITORY")
-  fi
-
-  source="$(image_source "$image")"
-  case "$source" in
-    docker-archive:*|oci-archive:*) command+=(--input "${source#*:}") ;;
-    registry:*) command+=(--image-src remote "$image") ;;
-    *) command+=("$image") ;;
-  esac
+  command=(python3 "${SCRIPT_DIRECTORY}/scanner-action.py" image-configuration "$source" "$raw"
+    --severity "$TRIVY_CONFIG_SEVERITIES" --cache "$TRIVY_CACHE_DIR")
 
   echo "Scanning image configuration: ${image}"
   if ! "${command[@]}"; then
@@ -313,16 +295,11 @@ run_dockle_image_config() {
     return 0
   fi
 
-  command=(dockle
-    --format json
-    --output "$raw"
-    --exit-code 0)
-
-  source="$(image_source "$image")"
-  case "$source" in
-    docker-archive:*|oci-archive:*) command+=(--input "${source#*:}") ;;
-    *) command+=("$image") ;;  # Dockle reads the registry when Docker is absent.
-  esac
+  if ! source="$(acquired_image_archive "$image")"; then
+    record_failure image "$image" "Acquired image archive is unavailable"
+    return 1
+  fi
+  command=(python3 "${SCRIPT_DIRECTORY}/scanner-action.py" image-hardening "$source" "$raw")
 
   echo "Scanning image hardening: ${image}"
   if ! "${command[@]}"; then
@@ -494,7 +471,7 @@ process_chart_entry() {
   release="$(jq -r '.release // .name // empty' <<< "$entry_json")"
   namespace="$(jq -r --arg default_namespace "$HELM_DEFAULT_NAMESPACE" '.namespace // $default_namespace' <<< "$entry_json")"
   dependency_mode="$(jq -r --arg mode "$HELM_DEPENDENCY_MODE" '.dependency_mode // $mode' <<< "$entry_json")"
-  include_crds="$(jq -r '.include_crds // true' <<< "$entry_json")"
+  include_crds="$(jq -r '.include_crds != false' <<< "$entry_json")"
   framework="$(jq -r '.framework // empty' <<< "$entry_json")"
   declared_by="$(jq -r '.declared_by // empty' <<< "$entry_json")"
   declared_enabled="$(jq -r '.declared_enabled // empty' <<< "$entry_json")"
@@ -595,7 +572,7 @@ process_chart_entry() {
   ' <<< "$entry_json")
 
   echo "Rendering Helm chart ${name} as release ${release} in namespace ${namespace}"
-  if ! helm_render_with_bitnami_retry "$rendered" "$name" "$chart_source_identity" "${helm_command[@]}"; then
+  if ! helm_render "$rendered" "$name" "$chart_source_identity" "${helm_command[@]}"; then
     reason="helm template failed"
     [ -n "$HELM_RENDER_LAST_ERROR" ] && reason="${reason}: ${HELM_RENDER_LAST_ERROR}"
     record_chart_failure "$name" "$reason"
@@ -607,8 +584,8 @@ process_chart_entry() {
     record_chart_failure "$name" "helm template produced no Kubernetes manifests"
     return
   fi
-  jq --arg namespace "$namespace" --arg release "$release" --arg path "$chart_source_identity" --arg instance "$chart_instance_id" \
-    '. + {namespace:$namespace, release:$release, source_chart:$path, chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
+  jq --arg namespace "$namespace" --arg release "$release" --arg path "$chart_source_identity" --arg root "$path" --argjson crds "$include_crds" --arg instance "$chart_instance_id" \
+    '. + {namespace:$namespace, release:$release, source_chart:$path, render_chart_root:$root, include_crds:$crds, chart_instance_id:$instance}' <<< "$entry_json" > "${rendered%.yaml}.chart.json"
   update_chart_graph_status "$chart_instance_id" "$path" "Rendered" "helm template" "" "$rendered"
 
   if run_trivy_config helm "${name} (${release})" "$rendered" "$namespace" "$framework"; then
@@ -664,7 +641,7 @@ if is_true "$HELM_SCAN_ENABLED"; then
   fi
 fi
 
-for required_tool in base64 jq sha256sum trivy; do
+for required_tool in base64 bwrap jq python3 sha256sum trivy; do
   if ! command -v "$required_tool" >/dev/null 2>&1; then
     record_failure tooling "$required_tool" "Required executable is not installed in the CATScan image"
   fi
@@ -672,11 +649,8 @@ done
 if is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED" && ! command -v dockle >/dev/null 2>&1; then
   record_failure tooling dockle "Required executable is not installed in the CATScan image"
 fi
-if command -v trivy >/dev/null 2>&1; then
-  if ! mkdir -p "$TRIVY_CACHE_DIR" 2>/dev/null || [ ! -w "$TRIVY_CACHE_DIR" ]; then
-    record_failure tooling "$TRIVY_CACHE_DIR" "Trivy cache directory is not writable"
-  fi
-fi
+# The shared action copies retained policies into a private writable cache.
+# Configuration analysis uses embedded checks when no policy cache is retained.
 if [ "$FAILURES" -gt 0 ]; then
   # Missing scanner executables/cache infrastructure is not a target skip.
   finish || true

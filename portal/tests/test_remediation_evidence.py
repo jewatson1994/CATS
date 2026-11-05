@@ -75,17 +75,21 @@ def test_candidate_validation_applies_ordered_helm_overrides(tmp_path, monkeypat
     (tmp_path / "Chart.yaml").write_text("apiVersion: v2\nname: api\nversion: 1.0.0\n")
     for name, replicas in [("base.yaml", 2), ("service.yaml", 3)]:
         (tmp_path / name).write_text(f"replicas: {replicas}\n")
-    monkeypatch.setattr(main.shutil, "which", lambda name: "helm" if name == "helm" else None)
     calls = []
-    def run(args, **kwargs):
+    def lint(tool, args, source, **kwargs):
         calls.append(args)
         assert args[-4:] == ["--values", str(tmp_path / "base.yaml"), "--values", str(tmp_path / "service.yaml")]
-        return SimpleNamespace(returncode=0, stdout="kind: Pod\nmetadata: {name: api}\n", stderr="")
-    monkeypatch.setattr(main.subprocess, "run", run)
+        return {"stdout": ""}
+    def template(chart, **kwargs):
+        calls.append(["template"])
+        assert kwargs['values'] == [tmp_path / 'base.yaml', tmp_path / 'service.yaml']
+        return {"stdout": "kind: Pod\nmetadata: {name: api}\n"}
+    monkeypatch.setattr(candidate_worker, "isolated_runner", lint)
+    monkeypatch.setattr(candidate_worker, "helm_template", template)
     validation = {"checks": {}, "required_checks": []}
-    candidate_worker.validate_candidate(tmp_path, {"helm_values_files": ["base.yaml", "service.yaml"]},
+    candidate_worker.validate_candidate(tmp_path, {"helm_values_files": ["base.yaml", "service.yaml"], "render_only": True},
         {"before": {"resource_identities": ["Pod/api"]}, "images": []}, validation)
-    assert [args[1] for args in calls] == ["lint", "template"]
+    assert [args[0] for args in calls] == ["lint", "template"]
 
 
 def test_candidate_validation_rejects_unretained_values(tmp_path, monkeypatch):

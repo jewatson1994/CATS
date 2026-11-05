@@ -74,24 +74,41 @@ def test_skopeo_archive_streams_using_configured_trust_and_auth(tmp_path, monkey
     assert json.loads((tmp_path / 'image-auth-image.json').read_text())['auths']['private.test']
 
 
-def test_assembly_includes_unchanged_rendered_image_and_ordered_values(tmp_path, monkeypatch):
+@pytest.mark.parametrize('chart_root', ['helm/app', 'charts/app', '.'])
+@pytest.mark.parametrize('retained_settings', [False, True])
+def test_assembly_includes_unchanged_rendered_image_and_ordered_values(tmp_path, monkeypatch, chart_root, retained_settings):
     job = tmp_path / 'job'
     job.mkdir()
     candidate = job / 'candidate.zip'
     with ZipFile(candidate, 'w') as archive:
-        archive.writestr('candidate/helm/app/Chart.yaml', 'name: app\nversion: 1.0.0\n')
+        chart_file = (Path(chart_root) / 'Chart.yaml').as_posix()
+        archive.writestr('candidate/' + chart_file, 'name: app\nversion: 1.0.0\n')
         archive.writestr('candidate/first.yaml', 'x: 1')
         archive.writestr('candidate/second.yaml', 'x: 2')
         archive.writestr('documentation/remediation/summary-of-changes.md', 'Auditable retained changes')
-        archive.writestr('manifest.json', json.dumps({'values_files': ['first.yaml', 'second.yaml'], 'images': []}))
+        settings = {'chart_root': chart_root, 'release': 'original-release', 'namespace': 'production',
+                    'values': ['first.yaml', 'second.yaml'], 'set': ['labels.owner=ops'], 'include_crds': False}
+        manifest = ({'helm_render_settings': [settings], 'images': []} if retained_settings else
+                    {'values_files': ['first.yaml', 'second.yaml'], 'images': []})
+        archive.writestr('manifest.json', json.dumps(manifest))
     record = SimpleNamespace(job_key='job', artifact_path=str(candidate), artifact_digest=file_digest(candidate),
                              service=SimpleNamespace(service_key='app'), source_execution_id=1, source_version_id=1)
     monkeypatch.setattr(producer.shutil, 'which', lambda name: name)
     commands = []
-    def run(command, **kwargs):
-        commands.append(command)
-        return SimpleNamespace(returncode=0, stdout='apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: unchanged\n    image: private.test/unchanged:1\n')
-    monkeypatch.setattr(producer, '_run', run)
+    def render(chart, **kwargs):
+        commands.append((chart, kwargs))
+        assert chart.relative_to(kwargs['source_root']).as_posix() == chart_root
+        assert 'env' not in kwargs
+        assert not (kwargs['source_root'] / 'registry-auth.json').exists()
+        return {'stdout': 'apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: unchanged\n    image: private.test/unchanged:1\n'}
+    monkeypatch.setattr(producer, 'helm_template', render)
+    monkeypatch.setattr(producer, '_run', lambda *args, **kwargs: pytest.fail('Final rendering must use the shared action'))
+    materialized = []
+    def values_override(files, received, **kwargs):
+        materialized.append(received)
+        assert received == settings and kwargs == {'include_defaults': False}
+        return 'unused', 'x: 2\nlabels: {owner: ops}\n'
+    monkeypatch.setattr(producer, 'embedded_instance_values', values_override)
     def acquire(reference, target, workspace, configuration):
         assert reference == 'private.test/unchanged:1'
         docker_archive(target, reference)
@@ -103,11 +120,21 @@ def test_assembly_includes_unchanged_rendered_image_and_ordered_values(tmp_path,
         assert archive.read('documentation/remediation/summary-of-changes.md') == b'Auditable retained changes'
     assert 'documentation/remediation/summary-of-changes.md' in manifest['files']
     assert manifest['requiredImages'] == ['private.test/unchanged:1']
-    assert manifest['deployment']['valuesFiles'] == ['first.yaml', 'second.yaml']
+    values = ['cats-retained-overrides.yaml'] if retained_settings else ['first.yaml', 'second.yaml']
+    if chart_root == '.':
+        values = ['chart/' + name for name in values]
+    assert manifest['deployment']['valuesFiles'] == values
+    assert manifest['deployment']['namespace'] == ('production' if retained_settings else 'default')
     assert manifest['images'][0]['identityType'] == 'docker_config'
     assert result['materialized_digest'] == file_digest(path)
-    assert commands[0][-3].endswith('first.yaml')
-    assert commands[0][-1].endswith('second.yaml')
+    actual = commands[0][1]
+    assert [path.name for path in actual['values']] == ['first.yaml', 'second.yaml']
+    assert (actual['release'], actual['namespace'], actual['set_values'], actual['include_crds']) == (
+        ('original-release', 'production', ['labels.owner=ops'], False) if retained_settings
+        else ('cats-remediation', 'default', [], True))
+    if retained_settings:
+        assert materialized == [settings]
+        assert manifest['provenance']['helmRenderSettings'] == settings
     assert result['artifact_identities'][0]['identity_type'] == 'bundle_sha256'
     assert result['artifact_identities'][1]['identity_type'] == 'source_tree_sha256'
 
@@ -143,9 +170,24 @@ def release_candidate(tmp_path, monkeypatch):
     reference = 'private.test/app@sha256:' + 'a' * 64
     rendered = 'apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: app\n    image: ' + reference + '\n'
     monkeypatch.setattr(producer.shutil, 'which', lambda name: name)
-    monkeypatch.setattr(producer, '_run', lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=rendered))
+    monkeypatch.setattr(producer, 'helm_template', lambda *args, **kwargs: {'stdout': rendered})
     monkeypatch.setattr(producer, '_acquire_image', lambda ref, target, *args: {'identity': docker_archive(target, ref)})
     return record, reference, rendered
+
+
+def test_final_bundle_rejects_multiple_retained_instances_before_render(tmp_path, release_candidate, monkeypatch):
+    record, _, _ = release_candidate
+    with ZipFile(record.artifact_path) as source:
+        entries = {name: source.read(name) for name in source.namelist()}
+    entries['manifest.json'] = json.dumps({'helm_render_settings': [
+        {'chart_root': 'helm/app', 'release': 'blue'}, {'chart_root': 'helm/app', 'release': 'green'}]})
+    with ZipFile(record.artifact_path, 'w') as target:
+        for name, content in entries.items():
+            target.writestr(name, content)
+    record.artifact_digest = file_digest(record.artifact_path)
+    monkeypatch.setattr(producer, 'helm_template', lambda *args, **kwargs: pytest.fail('No ambiguous final render'))
+    with pytest.raises(ValueError, match='one explicitly selected Helm instance'):
+        producer.assemble(record, tmp_path, 'attempt', 'standard-bundle', '2')
 
 
 @pytest.mark.parametrize('bundle_type', ['standard-bundle', 'offline-bundle'])

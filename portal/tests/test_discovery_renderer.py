@@ -81,6 +81,17 @@ def test_kustomize_uses_bundled_kubectl(linux, tmp_path):
     assert command[-3:] == ["/tool", "kustomize", "."]
 
 
+def test_compose_accepts_discovery_global_options(linux, tmp_path):
+    args = ["--project-name", "discovery", "-f", str(tmp_path / "compose.yaml"),
+            "--env-file", str(tmp_path / ".env"), "--profile", "web", "config", "--format", "json"]
+    command = renderer.sandbox_command("compose", args, tmp_path)
+    assert [arg.replace("\\", "/") for arg in command[-11:]] == ["--project-name", "discovery", "-f", "/source/compose.yaml",
+                            "--env-file", "/source/.env", "--profile", "web", "config", "--format", "json"]
+    args[-3] = "up"
+    with pytest.raises(renderer.RendererError, match="offline rendering"):
+        renderer.sandbox_command("compose", args, tmp_path)
+
+
 def test_non_linux_fails_closed(monkeypatch, tmp_path):
     monkeypatch.setattr(renderer, "PLATFORM", "win32")
     with pytest.raises(renderer.RendererError):

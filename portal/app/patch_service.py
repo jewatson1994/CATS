@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import shutil
 import signal
@@ -26,7 +27,7 @@ LOCK = threading.Lock()
 
 
 def _authorize(value: str | None) -> None:
-    if TOKEN and value != TOKEN:
+    if not TOKEN or not isinstance(value, str) or not hmac.compare_digest(value.encode("utf-8"), TOKEN.encode("utf-8")):
         raise HTTPException(status_code=403, detail="Worker authentication failed")
 
 
@@ -76,8 +77,7 @@ def _record_interrupted(state_path: Path) -> None:
 
 @app.post("/internal/patch-bindings/prepare")
 def prepare_patch_binding(payload: dict, x_cats_worker_token: str | None = Header(None)):
-    # Identity must cross an authenticated worker boundary, even on deployments
-    # which intentionally permit legacy job endpoints without a shared token.
+    # Preparation and execution both require an authenticated worker boundary.
     if not TOKEN:
         raise HTTPException(status_code=503, detail="Worker binding authentication is not configured")
     _authorize(x_cats_worker_token)
@@ -294,9 +294,18 @@ def _candidate_paths(attempt_id: str) -> tuple[Path, Path, Path]:
 
 
 def _candidate_authorize(token: str | None) -> None:
-    import hmac
-    if not TOKEN or not token or not hmac.compare_digest(token.encode("utf-8"), TOKEN.encode("utf-8")):
-        raise HTTPException(status_code=403, detail="Worker authentication failed")
+    _authorize(token)
+
+
+def _candidate_environment() -> dict[str, str]:
+    # Candidate verification has no registry, signing, database or API role.
+    # Native actions apply a second, empty environment inside their isolation.
+    allowed = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "TZ",
+               "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "TRIVY_CACHE_DIR",
+               "CATS_REMEDIATION_SCAN_TIMEOUT"}
+    environment = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+    environment["DATABASE_URL"] = "sqlite://"
+    return environment
 
 
 def _watch_candidate(attempt_id: str, process: subprocess.Popen, config: Path) -> None:
@@ -344,7 +353,8 @@ def start_candidate_verification(attempt_id: str, payload: dict, x_cats_worker_t
             root.mkdir(parents=True, mode=0o700)
             config.write_text(json.dumps(payload), encoding="utf-8")
             process = subprocess.Popen([sys.executable, "-m", "app.candidate_worker", str(config), str(result)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                                       env=_candidate_environment(), stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, start_new_session=True)
             CANDIDATE_PROCESSES[attempt_id] = process
         except Exception:
             CANDIDATE_SLOTS.release()

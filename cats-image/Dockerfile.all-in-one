@@ -28,6 +28,10 @@ ARG COPA_VERSION=0.14.1
 ARG COPA_SHA256=a780f62c054f60cd1aecbbf4a4b2665a816aa852534e6b0b9592cf96a327fdc9
 ARG COSIGN_VERSION=2.6.1
 ARG COSIGN_SHA256=064954c5d8c7e3b28188eee5b1727b31c411550bc5fefd41aa672d3c761d103a
+# These must match cats-scanner/Dockerfile. The final build rejects stale bases.
+ARG HELM_VERSION=4.2.3
+ARG KUBECTL_VERSION=1.37.0
+ARG COMPOSE_VERSION=2.39.4
 
 USER root
 WORKDIR /app
@@ -42,7 +46,7 @@ RUN test -s /opt/cats/validation/loadbalancer/bundle.json \
     && test -s /opt/cats/validation/ingress/kube-webhook-certgen.tar \
     || { echo "Rebuild catscan-base with the bundled MetalLB and ingress-nginx capabilities before building CATS." >&2; exit 1; }
 
-RUN apk add --no-cache bubblewrap docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
+RUN apk add --no-cache bubblewrap skopeo docker-cli python3 py3-yaml py3-pip py3-virtualenv postgresql-libs \
     && python3 -m venv /opt/cats-venv
 
 # Portal signing is self-contained at runtime, including disconnected sites.
@@ -153,6 +157,10 @@ RUN addgroup -g 10003 discovery \
     && adduser -D -u 10003 -G discovery -h /tmp discovery \
     && mkdir -p /data/discovery-uploads /opt/discovery \
     && chown 10003:10003 /data/discovery-uploads
-RUN mkdir -p /opt/discovery && /opt/cats-venv/bin/python -c "import json, subprocess; commands={'helm':['helm','version','--short'], 'kustomize':['kubectl','version','--client','-o','json'], 'compose':['docker-compose','version','--short']}; versions={key:subprocess.check_output(args,text=True).strip() for key,args in commands.items()}; versions['kustomize']=json.loads(versions['kustomize'])['kustomizeVersion']; open('/opt/discovery/tool-versions.json','w').write(json.dumps(versions))"
+# Static tools work in the empty action filesystem without mounting host libs.
+COPY deploy/verify-worker-tools.py /tmp/verify-worker-tools.py
+RUN for tool in syft grype; do if [ ! -x "/usr/local/bin/$tool" ]; then ln -s "/usr/bin/$tool" "/usr/local/bin/$tool"; fi; done
+RUN /opt/cats-venv/bin/python /tmp/verify-worker-tools.py "${HELM_VERSION}" "${KUBECTL_VERSION}" "${COMPOSE_VERSION}" \
+    && rm /tmp/verify-worker-tools.py
 EXPOSE 8000 8443
 ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]

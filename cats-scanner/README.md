@@ -4,8 +4,8 @@ CATScan is the reusable tool image for the CATS scanning pipeline. It keeps
 scanner installation out of application pipelines and provides a consistent,
 reviewable toolchain:
 
-- Syft for SBOM generation (Alpine-packaged version, existing behavior)
-- Grype for offline vulnerability scanning (Alpine-packaged version, existing behavior)
+- Syft 1.31.0 for SBOM generation (checksum-pinned static upstream binary)
+- Grype 0.98.0 for offline vulnerability scanning (checksum-pinned static upstream binary)
 - Trivy `0.69.3` for configuration and rendered Kubernetes manifest scanning
 - Dockle `0.4.15` for container-image hardening checks
 - Helm `4.2.3` for linting, dependency handling, and deterministic rendering
@@ -16,7 +16,7 @@ the existing patching job and is not changed by this scanner-image update.
 
 ## Integrity and version policy
 
-Trivy, Dockle, and Helm are installed from version-specific release archives.
+Syft, Grype, Trivy, Dockle, and Helm are installed from version-specific release archives.
 Their reviewed SHA-256 values are pinned in the Dockerfile and CI
 configuration. A build fails before installing a binary if its archive does
 not match.
@@ -25,6 +25,8 @@ Current amd64 pins:
 
 | Tool | Version | SHA-256 |
 | --- | --- | --- |
+| Syft | `1.31.0` | `aa60fbe2a32453e7dea991c9c5c616ae1fff0c51e910419ae53bc6555bfd2ce2` |
+| Grype | `0.98.0` | `2c8769050993a117a20859a7ced8c748f5eb827de31d88c82e1f8c175f6bfe0f` |
 | Trivy | `0.69.3` | `1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75` |
 | Dockle | `0.4.15` | `8bfc9183d1d3d67800edb45bea4bb63ddf1d28bec5f89944075a07007d79caad` |
 | Helm | `4.2.3` | `e9b88b4ee95b18c706839c28d3a0220e5bc470e9cd9262410c90793c45ff8b7c` |
@@ -35,9 +37,13 @@ second architecture and its checksum are explicitly approved.
 
 ## Build and test locally
 
+Run from the repository root. The build includes the same minimal offline action
+modules as the unified image; see [worker isolation](../deploy/worker-isolation.md)
+for required runtime policies and preflight.
+
 ```bash
-docker compose build
-docker compose run --rm catscan
+docker compose -f cats-scanner/compose.yaml build
+docker compose -f cats-scanner/compose.yaml run --rm catscan
 ```
 
 The Compose command runs `catscan-self-test`, which verifies tool versions,
@@ -47,7 +53,7 @@ using Trivy's embedded checks, and validates the JSON report shape.
 To inspect versions only:
 
 ```bash
-docker compose run --rm catscan catscan-version
+docker compose -f cats-scanner/compose.yaml run --rm catscan catscan-version
 ```
 
 ## Disconnected image builds
@@ -58,6 +64,8 @@ official archives on an approved connected system and place them under
 
 ```text
 tool-archives/
+  syft_1.31.0_linux_amd64.tar.gz
+  grype_0.98.0_linux_amd64.tar.gz
   trivy_0.69.3_Linux-64bit.tar.gz
   dockle_0.4.15_Linux-64bit.tar.gz
   helm-v4.2.3-linux-amd64.tar.gz
@@ -81,7 +89,8 @@ linux/amd64 image manifest/config digests. It validates every uncompressed image
 layer against the pinned config, sets `imagePullPolicy: Never`, and emits
 `bundle.json` with runtime integrity hashes. The versioned tags are preserved
 in Docker archives for kind's offline image import; a mutable registry tag is
-never used to fetch an image. Skopeo exists only in the build stage.
+never used to fetch an image. Skopeo is also included in the final image for
+broker acquisition; offline scanning actions cannot execute it or reach registries.
 
 For disconnected builds, supply these additional inputs in `tool-archives/`:
 
@@ -99,7 +108,7 @@ internal mirror. Connected builds download only during image construction.
 To build just this bundle for validation acceptance testing:
 
 ```bash
-docker build --target validation-loadbalancer -t cats-validation-lb-bundle cats-scanner
+docker build -f cats-scanner/Dockerfile --target validation-loadbalancer -t cats-validation-lb-bundle .
 ```
 
 The [official MetalLB installation](https://metallb.io/installation/) publishes
@@ -205,7 +214,7 @@ For a connected build from the repository root:
 ```bash
 docker build --pull \
   --build-arg GRYPE_DB_REFRESH="$(date -u +%Y%m%d%H%M%S)" \
-  -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
+  -f cats-scanner/Dockerfile -t catscan-base:local .
 ```
 
 The build fails unless it finds a non-empty `vulnerability.db`, validates its

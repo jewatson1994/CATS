@@ -152,6 +152,9 @@ services:
   patch-worker:
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/discovery-seccomp.json
 
     command:
       [
@@ -179,6 +182,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - patch_jobs:/tmp/cats-patch-jobs
+      - security_grype_db:/opt/catscan/grype-db:ro
+      - security_trivy_db:/opt/catscan/trivy-cache:ro
 
     healthcheck:
       test:
@@ -186,10 +191,10 @@ services:
           "CMD",
           "/opt/cats-venv/bin/python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/openapi.json', timeout=3)"
+          "import subprocess,sys,urllib.request; subprocess.run([sys.executable,'-m','app.rendering','--probe'],check=True,timeout=10); urllib.request.urlopen('http://127.0.0.1:8010/openapi.json', timeout=3)"
         ]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 12
       start_period: 10s
 
@@ -214,6 +219,7 @@ services:
     cap_add: [SETUID, SETGID, CHOWN, KILL]
     security_opt:
       - no-new-privileges:true
+      - seccomp=./deploy/discovery-seccomp.json
     cpus: ${CATS_SCAN_CPUS:-2}
     mem_limit: ${CATS_SCAN_MEMORY:-4g}
     pids_limit: ${CATS_SCAN_PIDS:-256}
@@ -274,9 +280,9 @@ services:
       portal-control:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.scan_worker", "--readiness"]
+      test: ["CMD-SHELL", "/opt/cats-venv/bin/python -m app.scan_worker --readiness && /opt/cats-venv/bin/python -m app.rendering --probe"]
       interval: 10s
-      timeout: 5s
+      timeout: 15s
       retries: 6
       start_period: 30s
     restart: unless-stopped
@@ -792,31 +798,47 @@ services:
     depends_on:
       portal:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.rendering", "--probe"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
-  remediation-worker: &background_worker
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: []
-    command: ["python", "-m", "app.remediation_worker"]
-    environment:
-      <<: &background_environment
-        <<: *portal_environment
-        CATS_DB_POOL_SIZE: 2
-        CATS_DB_MAX_OVERFLOW: 0
-        CATS_DB_BACKGROUND_POOL_SIZE: 2
-        CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
-      CATS_REMEDIATION_WORKERS: ${CATS_REMEDIATION_WORKERS:-1}
-      # Blank selects the worker's bounded pool for its configured concurrency.
-      CATS_DB_BACKGROUND_POOL_SIZE: ${CATS_REMEDIATION_DB_POOL_SIZE:-}
-    volumes: *portal_volumes
-    cpus: ${CATS_REMEDIATION_CPUS:-1.0}
-    mem_limit: ${CATS_REMEDIATION_MEMORY:-2g}
-    pids_limit: 256
-    stop_grace_period: 30s
-    depends_on:
-      portal:
-        condition: service_healthy
-    restart: unless-stopped
+  remediation-worker:
+    <<: &background_worker
+      image: ${CATS_IMAGE:-cats:local}
+      entrypoint: []
+      command: ["python", "-m", "app.remediation_worker"]
+      environment:
+        <<: &background_environment
+          <<: *portal_environment
+          CATS_DB_POOL_SIZE: 2
+          CATS_DB_MAX_OVERFLOW: 0
+          CATS_DB_BACKGROUND_POOL_SIZE: 2
+          CATS_DB_BACKGROUND_MAX_OVERFLOW: 0
+        CATS_REMEDIATION_WORKERS: ${CATS_REMEDIATION_WORKERS:-1}
+        # Blank selects the worker's bounded pool for its configured concurrency.
+        CATS_DB_BACKGROUND_POOL_SIZE: ${CATS_REMEDIATION_DB_POOL_SIZE:-}
+      volumes: *portal_volumes
+      cpus: ${CATS_REMEDIATION_CPUS:-1.0}
+      mem_limit: ${CATS_REMEDIATION_MEMORY:-2g}
+      pids_limit: 256
+      stop_grace_period: 30s
+      depends_on:
+        portal:
+          condition: service_healthy
+      restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./deploy/discovery-seccomp.json
+    healthcheck:
+      test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.rendering", "--probe"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 10s
 
   security-data-worker:
     <<: *background_worker

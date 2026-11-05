@@ -4,8 +4,7 @@ from collections import Counter
 import hashlib
 import json
 import os
-import shutil
-import subprocess
+import re
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -13,7 +12,9 @@ from pathlib import Path, PurePosixPath
 import yaml
 
 from .remediation import resource_identity, summarize_configuration_report
-from .remediation_delivery import checked_values_files
+from .remediation_delivery import checked_values_files, checked_helm_render_settings
+from .rendering import RendererError, helm_template, isolated_runner
+from .scanner_actions import scan_configuration
 
 
 def request_digest(payload: dict) -> str:
@@ -33,6 +34,8 @@ def validate_request(payload: dict) -> None:
     from .remediation_safety import assert_sources_safe
     assert_sources_safe(files)
     checked_values_files(payload.get("helm_values_files", []), files)
+    checked_helm_render_settings((payload.get("service_overview") or {}).get("helm_render_settings"), files,
+        render_settings=payload.get("render_settings"), values_files=payload.get("helm_values_files", []))
 
 
 def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validation: dict) -> dict:
@@ -68,30 +71,36 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
     # output can establish these checks for the materialized candidate.
     for name in ("yaml_parsing", "expected_resources", "kubernetes_schema"):
         checks[name] = {"status": "FAIL", "detail": "No candidate Kubernetes resources were rendered."}
-    values_files = checked_values_files(payload.get("helm_values_files", []),
-        {path.relative_to(candidate_dir).as_posix() for path in candidate_dir.rglob("*") if path.is_file()})
-    overrides = [argument for value in values_files for argument in ("--values", str(candidate_dir / value))]
-    chart_roots = sorted({path.parent for path in candidate_dir.rglob("Chart.yaml")
-                          if "charts" not in path.relative_to(candidate_dir).parts[:-1]})
+    instances = checked_helm_render_settings((payload.get("service_overview") or {}).get("helm_render_settings"),
+        {path.relative_to(candidate_dir).as_posix() for path in candidate_dir.rglob("*") if path.is_file()},
+        render_settings=payload.get("render_settings"),
+        values_files=payload.get("helm_values_files", []))
+    chart_roots = [candidate_dir / instance["chart_root"] for instance in instances]
     rendered_parts: list[str] = []
-    helm = shutil.which("helm")
-    if chart_roots and helm:
+    if chart_roots:
         lint_results, template_results = [], []
-        for chart_root in chart_roots:
-            lint = subprocess.run([helm, "lint", str(chart_root), *overrides], capture_output=True, text=True, timeout=180, check=False)
-            lint_results.append(lint)
-            rendered = subprocess.run([helm, "template", "cats-remediation", str(chart_root), "--include-crds", *overrides],
-                                      capture_output=True, text=True, timeout=180, check=False)
-            template_results.append(rendered)
-            if rendered.returncode == 0:
-                rendered_parts.append(rendered.stdout)
-        checks["helm_lint"] = {"status": "PASS" if all(item.returncode == 0 for item in lint_results) else "FAIL",
+        for settings in instances:
+            chart_root = candidate_dir / settings["chart_root"]
+            values_files = settings["values"]
+            overrides = [argument for value in values_files for argument in ("--values", str(candidate_dir / value))]
+            overrides.extend(argument for value in settings["set"] for argument in ("--set-string", value))
+            try:
+                isolated_runner("helm", ["lint", str(chart_root), "--namespace", settings["namespace"], *overrides], candidate_dir, timeout=180)
+                lint_results.append(True)
+            except (RendererError, OSError, ValueError):
+                lint_results.append(False)
+            try:
+                rendered = helm_template(chart_root, source_root=candidate_dir, release=settings["release"],
+                    namespace=settings["namespace"], values=[candidate_dir / value for value in values_files],
+                    set_values=settings["set"], include_crds=settings["include_crds"])
+                rendered_parts.append(rendered["stdout"])
+                template_results.append(True)
+            except (RendererError, OSError, ValueError):
+                template_results.append(False)
+        checks["helm_lint"] = {"status": "PASS" if all(lint_results) else "FAIL",
                                "detail": "Validated every discovered chart."}
-        checks["helm_template"] = {"status": "PASS" if all(item.returncode == 0 for item in template_results) else "FAIL",
-                                   "detail": "Rendered every discovered chart with CRDs."}
-    elif chart_roots:
-        checks["helm_lint"] = {"status": "FAIL", "detail": "Helm is unavailable in the remediation worker."}
-        checks["helm_template"] = {"status": "FAIL", "detail": "Helm is unavailable in the remediation worker."}
+        checks["helm_template"] = {"status": "PASS" if all(template_results) else "FAIL",
+                                   "detail": "Rendered every discovered chart with retained Helm settings."}
     else:
         for raw in sorted(candidate_dir.rglob("*")):
             if raw.suffix in {".yaml", ".yml"} and not raw.name.startswith(".cats-"):
@@ -106,7 +115,8 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
             checks["yaml_parsing"] = {"status": "PASS" if objects else "FAIL", "detail": f"Parsed {len(objects)} candidate Kubernetes resources."}
             expected = Counter(plan.get("validation_expected_resources", plan["before"].get("resource_identities", [])))
             actual = Counter(resource_identity(item) for item in objects)
-            if chart_roots:
+            legacy_release = chart_roots and payload.get("render_settings") is None and (payload.get("service_overview") or {}).get("helm_render_settings") is None
+            if legacy_release:
                 # Helm's verification release differs from the original scan's
                 # release, so generated names/namespaces can legitimately differ.
                 # Portal also compares baseline and candidate renders under the
@@ -131,28 +141,23 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
     checks["candidate_security_evidence"] = {"status": "FAIL", "detail": "Completed configuration scanner evidence is required."}
     if "candidate_security_evidence" not in validation["required_checks"]:
         validation["required_checks"].append("candidate_security_evidence")
-    checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "Trivy is unavailable in the remediation worker."}
-    trivy = shutil.which("trivy")
-    if trivy:
-        # Scan the rendered candidate once, not both chart sources and their render.
-        scan_target = candidate_dir / ".cats-rendered.yaml"
-        if not scan_target.is_file():
-            checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "No rendered candidate is available for configuration scanning."}
-            validation["status"] = "FAIL"
-            return validation
-        result = subprocess.run([trivy, "config", "--skip-check-update", "--format", "json", "--exit-code", "0", str(scan_target)], capture_output=True, text=True,
-                                timeout=int(os.getenv("CATS_REMEDIATION_SCAN_TIMEOUT", "600")), check=False)
-        checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "Configuration scanner did not produce valid completed JSON evidence."}
-        if result.returncode == 0:
-            try:
-                summary = summarize_configuration_report(json.loads(result.stdout))
-                plan.setdefault("after", {}).update(summary)
-                checks["candidate_security_evidence"] = {"status": "PASS", "detail": "Completed configuration scanner JSON evidence is valid."}
-                checks["trivy_config_rescan"] = {"status": "PASS" if summary["configuration_findings"] == 0 else "FAIL",
-                    "detail": f"Completed configuration rescan: {summary['configuration_findings']} unresolved findings."}
-                (candidate_dir / ".cats-config-scan.json").write_text(result.stdout, encoding="utf-8")
-            except (ValueError, TypeError):
-                pass
+    checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "Configuration scanner did not produce valid completed JSON evidence."}
+    # Scan the rendered candidate once, not both chart sources and their render.
+    scan_target = candidate_dir / ".cats-rendered.yaml"
+    if not scan_target.is_file():
+        checks["trivy_config_rescan"] = {"status": "FAIL", "detail": "No rendered candidate is available for configuration scanning."}
+        validation["status"] = "FAIL"
+        return validation
+    report_path = candidate_dir / ".cats-config-scan.json"
+    try:
+        report = scan_configuration(scan_target, report_path, timeout=int(os.getenv("CATS_REMEDIATION_SCAN_TIMEOUT", "600")))
+        summary = summarize_configuration_report(report)
+        plan.setdefault("after", {}).update(summary)
+        checks["candidate_security_evidence"] = {"status": "PASS", "detail": "Completed configuration scanner JSON evidence is valid."}
+        checks["trivy_config_rescan"] = {"status": "PASS" if summary["configuration_findings"] == 0 else "FAIL",
+            "detail": f"Completed configuration rescan: {summary['configuration_findings']} unresolved findings."}
+    except (RendererError, OSError, ValueError, TypeError):
+        report_path.unlink(missing_ok=True)
     _image_scan_check(plan, checks)
     plan.setdefault("after", {})["helm_render"] = checks.get("helm_template", {}).get("status", "UNAVAILABLE")
     validation["status"] = "PASS" if all(checks[name]["status"] in {"PASS", "NOT_APPLICABLE"} for name in validation["required_checks"]) else "FAIL"
@@ -162,11 +167,25 @@ def validate_candidate(candidate_dir: Path, payload: dict, plan: dict, validatio
 def _image_scan_check(plan: dict, checks: dict) -> None:
     if not plan.get("images"):
         checks["vulnerability_rescan"] = {"status": "NOT_APPLICABLE", "detail": "No image references require vulnerability scanning."}
-    elif all(item.get("candidate") and item.get("patch_status") in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}
-             for item in plan.get("images", [])):
-        checks["vulnerability_rescan"] = {"status": "PASS", "detail": "Every staged image completed the existing patch worker's before/after vulnerability scan."}
+    elif all(_image_scan_evidence(item) for item in plan.get("images", [])):
+        checks["vulnerability_rescan"] = {"status": "PASS", "detail": "Every staged image has complete before/after scan receipts bound to its retained archive digest."}
     else:
         checks["vulnerability_rescan"] = {"status": "UNAVAILABLE", "detail": "One or more images have no completed patch-worker scan evidence."}
+
+
+def _image_scan_evidence(item: dict) -> bool:
+    evidence = item.get("scan_evidence")
+    digest = item.get("artifact_sha256")
+    if (not item.get("candidate") or item.get("patch_status") not in {"PATCHED", "PARTIALLY_PATCHED", "NO_APPLICABLE_FIXES"}
+            or not isinstance(evidence, dict) or evidence.get("status") != "complete"
+            or not isinstance(digest, str) or not re.fullmatch(r"(?:sha256:)?[0-9a-f]{64}", digest)
+            or str(evidence.get("candidate_digest", "")).removeprefix("sha256:") != digest.removeprefix("sha256:")):
+        return False
+    return all(isinstance(evidence.get(phase), dict) and isinstance(evidence[phase].get("sha256"), str)
+               and re.fullmatch(r"sha256:[0-9a-f]{64}", evidence[phase]["sha256"])
+               and isinstance(evidence[phase].get("sbom_digest"), str)
+               and re.fullmatch(r"sha256:[0-9a-f]{64}", evidence[phase]["sbom_digest"])
+               for phase in ("before", "after"))
 
 
 

@@ -449,6 +449,7 @@ def test_retention_preserves_active_sibling_and_inventory(api):
 
 def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
     from app import discovery_engine, discovery_renderer
+    monkeypatch.setenv('CATS_DISCOVERY_MAX_RENDERED_BYTES','12345')
     client,db,_=api
     row=DurableJob(id='worker-job',kind='discovery',status='running',payload={},result={})
     db.add(row)
@@ -464,8 +465,9 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
     stages=[]
     checkpoints=[]
     def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None,gitlab_archive=False):
-        assert runner.func is discovery_renderer.isolated_runner
+        assert runner.func is discovery_renderer.render_action
         assert runner.keywords['check_cancelled'] is ctx.check
+        assert runner.keywords['max_output'] == 12345
         assert gitlab_archive is False
         assert source.read_bytes() == data
         progress({'stage':'Normalizing','images':1})

@@ -34,7 +34,7 @@ SCRIPT
 
 cat > "$TEMPORARY_DIRECTORY/fake-bin/docker" <<'SCRIPT'
 #!/usr/bin/env bash
-if [ "${1:-}" = "pull" ]; then
+if [ "${1:-}" = "pull" ] || [ "${1:-} ${2:-}" = "image inspect" ]; then
   exit 1
 fi
 exit 0

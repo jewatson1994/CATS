@@ -318,6 +318,39 @@ def run_worker(
         return __import__("subprocess").CompletedProcess(command, 0, stdout, "")
 
     monkeypatch.setattr(patch_worker, "run_command", fake_run)
+    # Acquisition/build commands remain in the broker; native scanners now run
+    # through the shared isolated action. Fake only that tool boundary here.
+    from app import scanner_actions
+    database = tmp_path / "default-scanner-db"
+    database.mkdir(exist_ok=True)
+    (database / "vulnerability.db").write_bytes(b"retained test database")
+    monkeypatch.setenv("GRYPE_DB_CACHE_DIR", str(database))
+    trivy_cache = tmp_path / "trivy-cache"
+    (trivy_cache / "db").mkdir(parents=True, exist_ok=True)
+    (trivy_cache / "db" / "trivy.db").write_bytes(b"retained test database")
+    monkeypatch.setenv("TRIVY_CACHE_DIR", str(trivy_cache))
+    scan_count = 0
+    def offline(tool, arguments, cwd, **options):
+        nonlocal scan_count
+        if tool == "grype":
+            label = "before" if scan_count < 2 else "after"
+            scan_count += 1
+            path = Path(cwd) / f"{label}.json"
+            fake_run([tool, *arguments], env=options.get("environment", {}), log=lambda _: None,
+                     timeout=10, stdout_path=path)
+            if fail_on == f"grype-{label}":
+                raise RuntimeError(f"{fail_on} failed with password=super-secret")
+            raw = path.read_text()
+        elif tool == "syft":
+            path = Path(cwd) / "inventory-output.json"
+            fake_run([tool, *arguments], env=options.get("environment", {}), log=lambda _: None,
+                     timeout=10, stdout_path=path)
+            raw = path.read_text()
+        else:
+            fake_run([tool, *arguments], env=options.get("environment", {}), log=lambda _: None, timeout=10)
+            raw = "{}"
+        return {"stdout": raw, "version": "test-scanner"}
+    monkeypatch.setattr(scanner_actions, "offline_runner", offline)
     monkeypatch.setattr(sys, "argv", ["patch_worker", str(config_path), str(output)])
     monkeypatch.setenv("CATS_PATCH_SOURCE_USERNAME", source_credentials[0])
     monkeypatch.setenv("CATS_PATCH_SOURCE_PASSWORD", source_credentials[1])
@@ -346,9 +379,9 @@ def test_public_oci_to_download_worker_flow(monkeypatch, tmp_path: Path):
     assert any(command[:2] == ["docker", "pull"] for command, _ in calls)
     assert not any(command[:2] == ["docker", "login"] for command, _ in calls)
     grype_calls = [command for command, _ in calls if command and command[0] == "grype"]
-    assert len(grype_calls) == 2 and all("--only-fixed" in command for command in grype_calls)
-    assert grype_calls[0][1].startswith("dir:") and grype_calls[0][1].endswith("source-rootfs")
-    assert grype_calls[1][1].startswith("dir:")
+    assert len(grype_calls) == 4  # Fixed selection and full evidence on each side.
+    assert sum("--only-fixed" in command for command in grype_calls) == 2
+    assert all("sbom:/source/inventory.json" in command for command in grype_calls)
     assert not any(runtime in grype_calls[1][1] for runtime in ("docker-archive:", "docker:", "podman:", "containerd:", "registry:"))
     assert any(command[:2] == ["docker", "load"] and "patched-image.tar" in " ".join(command) for command, _ in calls)
     assert result["validated_source"] == "flattened-rootfs"
@@ -405,8 +438,8 @@ def test_remediation_worker_creates_fresh_full_grype_report(monkeypatch, tmp_pat
     assert all(result["remediation_evidence"][name] == "complete" for name in ("sbom", "trivy", "dockle"))
     assert (output / "grype-full-after.json").is_file()
     trivy = next(command for command, _ in calls if command[0] == "trivy")
-    assert trivy[1] == "rootfs"
-    assert trivy[-1].endswith("patched-rootfs")
+    assert "rootfs" in trivy
+    assert trivy[-1] == "/inputs/target"
     assert any(command[0] == "grype" and "--only-fixed" not in command for command, _ in calls)
 
 
@@ -447,7 +480,7 @@ def test_uploaded_tar_to_independent_oci_destination(monkeypatch, tmp_path: Path
     assert "destination-secret" not in logins[-1][0]
     assert logins[-1][1] == "destination-secret\n"
     assert any(command[:2] == ["docker", "push"] for command, _ in calls)
-    post_scan = next(index for index, (command, _) in enumerate(calls) if command and command[0] == "grype" and command[1].endswith("patched-rootfs"))
+    post_scan = max(index for index, (command, _) in enumerate(calls) if command and command[0] == "grype")
     destination_tag = next(index for index, (command, _) in enumerate(calls) if command[:2] == ["docker", "tag"] and command[-1] == config["destination_image"])
     assert post_scan < destination_tag
     assert calls[destination_tag][0][2].startswith("cats-canonical-")
@@ -482,12 +515,12 @@ def test_post_patch_rootfs_scan_failure_never_falls_back_to_image_sources(monkey
     config = {"job_id": "job-postscan", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
     code, _, state, calls = run_worker(
         monkeypatch, tmp_path, config, grype_report([("CVE-1", "openssl", ["2"])]) , grype_report([]),
-        fail_on="patched-rootfs --only-fixed", source_credentials=("", ""),
+        fail_on="grype-after", source_credentials=("", ""),
     )
     assert code == 1 and state["failed_stage"] == "scanning_patched"
     assert state["stages"]["patching_image"]["status"] == "success"
-    target = next(command[1] for command, _ in calls if command and command[0] == "grype" and command[1].endswith("patched-rootfs"))
-    assert all(scheme not in target for scheme in ("docker-archive:", "docker:", "podman:", "containerd:", "registry:"))
+    targets = [part for command, _ in calls if command and command[0] == "grype" for part in command if part.startswith("sbom:")]
+    assert targets == ["sbom:/source/inventory.json"] * 3
 
 
 def test_output_archive_must_complete_docker_load_round_trip(monkeypatch, tmp_path: Path):
@@ -571,6 +604,39 @@ def test_worker_binds_trusted_scanner_snapshot_and_records_digest(monkeypatch, t
         grype_report([("CVE-1", "openssl", ["2"])]), grype_report([]))
     assert code == 0
     assert json.loads((output / "patch-result.json").read_text())["scanner_input_digest"] == digest
+
+
+def test_worker_uses_current_published_scanner_generations(monkeypatch, tmp_path):
+    from app.scan_intelligence import publish_generation
+    from app.scanner_inputs import snapshot_digest
+    expected = {}
+    for scanner, filename in (("grype", "6/vulnerability.db"), ("trivy", "db/trivy.db")):
+        source = tmp_path / (scanner + "-published")
+        source.mkdir()
+        # A legacy image database must not override the selected refresh.
+        (source / "old.db").write_bytes(b"old image database")
+        stage = tmp_path / (scanner + "-current")
+        database = stage / filename
+        database.parent.mkdir(parents=True)
+        database.write_bytes((scanner + " current database").encode())
+        expected[scanner] = snapshot_digest(stage)
+        publish_generation(stage, source, scanner, {})
+        monkeypatch.setenv("CATS_SCAN_" + scanner.upper() + "_SOURCE", str(source))
+
+    pin = patch_worker.pin_databases
+    observed = {}
+    def inspect_pinned(environment, workspace):
+        result = pin(environment, workspace)
+        observed["grype"] = snapshot_digest(environment["GRYPE_DB_CACHE_DIR"])
+        observed["trivy"] = snapshot_digest(environment["TRIVY_CACHE_DIR"])
+        return result
+    monkeypatch.setattr(patch_worker, "pin_databases", inspect_pinned)
+    config = {"job_id": "current-db", "source_mode": "oci", "source_image": "docker.io/library/alpine:3.20", "output_mode": "download"}
+    code, output, state, calls = run_worker(monkeypatch, tmp_path, config,
+        grype_report([("CVE-1", "openssl", ["2"])]), grype_report([]))
+    assert code == 0
+    assert observed == expected
+    assert json.loads((output / "patch-result.json").read_text())["scanner_input_digest"] == expected["grype"]
 
 
 def test_worker_rejects_snapshot_mismatch_before_registry_access(monkeypatch, tmp_path):

@@ -1,4 +1,5 @@
 import json
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,9 @@ from app import patch_service as worker
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
     monkeypatch.setattr(worker, "JOB_ROOT", tmp_path)
-    monkeypatch.setattr(worker, "TOKEN", "")
+    monkeypatch.setattr(worker, "TOKEN", "worker-secret")
+    for name in ("start_patch_job", "patch_job_status", "cancel_patch_job"):
+        monkeypatch.setattr(worker, name, partial(getattr(worker, name), x_cats_worker_token="worker-secret"))
     monkeypatch.setattr(worker, "PROCESSES", {})
     monkeypatch.setattr(worker.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: None))
     return tmp_path
@@ -189,7 +192,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 from app import patch_service as worker
 worker.JOB_ROOT = Path(os.environ["ADMISSION_ROOT"])
-worker.TOKEN = ""
+worker.TOKEN = "worker-secret"
 worker.threading.Thread = lambda **kw: SimpleNamespace(start=lambda: None)
 def spawn(*args, **kwargs):
     with (worker.JOB_ROOT / "spawns").open("a") as log:
@@ -199,7 +202,7 @@ worker.subprocess.Popen = spawn
 while not (worker.JOB_ROOT / "go").exists():
     time.sleep(0.01)
 try:
-    worker.start_patch_job("shared", {"config": {"job_id": "shared"}})
+    worker.start_patch_job("shared", {"config": {"job_id": "shared"}}, "worker-secret")
     print("admitted")
 except HTTPException as exc:
     print(exc.status_code)
@@ -301,14 +304,18 @@ def test_real_patch_worker_kill_and_supervisor_restart(tmp_path):
         docker = commands / "docker"
         docker.write_text("#!/bin/sh\nsleep 60\n")
         docker.chmod(0o755)
+    scanner = tmp_path / "scanner-db"
+    scanner.mkdir()
+    (scanner / "vulnerability.db").write_bytes(b"retained fixture database")
     env = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ["PATH"],
                PYTHONPATH=os.pathsep.join(sys.path), CATS_PATCH_JOB_ROOT=str(root.parent),
-               CATS_PATCH_CLEAN_IMAGES="false", CATS_PATCH_WORKER_TOKEN="")
+               CATS_PATCH_GRYPE_DB_SNAPSHOT=str(scanner),
+               CATS_PATCH_CLEAN_IMAGES="false", CATS_PATCH_WORKER_TOKEN="worker-secret")
     interpreter = getattr(sys, "_base_executable", sys.executable)
     process = subprocess.Popen([interpreter, "-m", "app.patch_worker", str(config), str(output)], env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     def restarted_status():
-        result = subprocess.run([interpreter, "-c", "import json; from app.patch_service import patch_job_status; print(json.dumps(patch_job_status('realworker')))"],
+        result = subprocess.run([interpreter, "-c", "import json; from app.patch_service import patch_job_status; print(json.dumps(patch_job_status('realworker', 'worker-secret')))"],
                                 env=env, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         return json.loads(result.stdout)
@@ -325,7 +332,11 @@ def test_real_patch_worker_kill_and_supervisor_restart(tmp_path):
         # Kill the production worker and its controlled command, without its
         # supervisor watcher, exactly the orphan condition being recovered.
         if os.name == "nt":
-            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, check=True)
+            stopped = subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+            if stopped.returncode:
+                # Restricted Windows test sessions may deny tree enumeration;
+                # the process handle still permits terminating our own child.
+                process.kill()
         else:
             os.killpg(process.pid, signal.SIGKILL)
         process.wait(timeout=10)
@@ -343,6 +354,8 @@ def test_real_patch_worker_kill_and_supervisor_restart(tmp_path):
         if process.poll() is None:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True)
+                if process.poll() is None:
+                    process.kill()
             else:
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait(timeout=10)

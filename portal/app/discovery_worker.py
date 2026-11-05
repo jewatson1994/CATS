@@ -67,7 +67,8 @@ def configured_artifact_resolver(settings=None):
 
 def handle(ctx, payload):
     from .discovery_engine import run_discovery, DiscoveryError
-    from .discovery_renderer import isolated_runner, tool_version
+    from .rendering import render_action, tool_version
+    from .discovery_limits import limit
     from .discovery_render_cache import RenderCache
     import tempfile
     token = payload.get('source_id', '')
@@ -92,7 +93,7 @@ def handle(ctx, payload):
             models.PortalSetting.group_id.is_(None),
             models.PortalSetting.key.in_(['oci_registries', 'trusted_ca_certificates'])))}
     artifact_resolver = configured_artifact_resolver(settings)
-    runner = partial(isolated_runner, check_cancelled=ctx.check)
+    runner = partial(render_action, check_cancelled=ctx.check, max_output=limit('RENDERED_BYTES'))
     if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true':
         runner = RenderCache(runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
                              str(payload['group_id']) + ':' + token, tool_version)

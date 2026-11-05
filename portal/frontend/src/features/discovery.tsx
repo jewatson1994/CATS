@@ -192,7 +192,7 @@ export function Page({data}: {data: PageData}) {
   let componentValues: Record<string, string[]> = {};
   try { componentValues = JSON.parse(resolution).component_values || {}; } catch { /* Preserve incomplete advanced edits. */ }
   const chooseComponentValues = (id: string, paths: string[]) => {try {const options = JSON.parse(resolution); setResolution(JSON.stringify({...options, component_values: {...options.component_values, [id]: paths}}, null, 2));} catch {setError('Correct the advanced settings JSON first.');}};
-  const resolutionDiagnostics = inventory?.diagnostics?.filter(item => item.code === 'native_render_failed' || item.component_name) || [];
+  const resolutionDiagnostics = inventory?.diagnostics?.filter(item => item.code === 'native_render_failed' || item.code === 'worker_isolation_unavailable' || item.component_name) || [];
   const needsAttention = Boolean(inventory && (isPartial(inventory.completeness) || !inventory.images.length));
   const partial = inventory ? isPartial(inventory.completeness) || inventory.roots.filter(root => roots.includes(root.id)).some(root => isPartial(root.completeness)) : false;
   const jobGroup = job?.group_id == null ? group : String(job.group_id);

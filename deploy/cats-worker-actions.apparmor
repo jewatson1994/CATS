@@ -1,0 +1,46 @@
+# CATS worker-only policy. Ubuntu 24.04 / AppArmor 4 or later.
+# The container retains its capability bounding set; these rules grant no caps.
+# Bubblewrap mounts only inside a newly created unprivileged user namespace.
+# Its executed tool has no caps and a child seccomp filter denying mount/userns.
+# Load on the Docker host, never from a privileged application container.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile cats-worker-actions flags=(attach_disconnected,mediate_deleted) {
+  network,
+  network unix,
+  deny network raw,
+  deny network packet,
+  deny network vsock,
+  deny network alg,
+  capability,
+  file,
+  userns,
+
+  signal (receive) peer=unconfined,
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  signal (receive) peer=dockerd,
+  signal (send,receive) peer=cats-worker-actions,
+  ptrace (trace,tracedby,read,readby) peer=cats-worker-actions,
+
+  # Namespace setup: propagation, temporary root and the new private tree.
+  # No unrestricted mount rule or writable host /proc/sys is required.
+  mount options=(rw,rslave,silent) -> /,
+  mount fstype=tmpfs -> /tmp/,
+  mount options=(rw,rbind,silent) /tmp/newroot/ -> /tmp/newroot/,
+  mount fstype=(tmpfs,proc,devpts) -> /newroot/{,**},
+  mount options in (rw,ro,bind,rbind,silent,nosuid,nodev,noexec,relatime,noatime,nodiratime) /** -> /newroot/{,**},
+  remount options in (rw,ro,bind,nosuid,nodev,noexec,relatime,noatime,nodiratime,silent) /newroot/{,**},
+  pivot_root /tmp/,
+  pivot_root /newroot/,
+  umount,
+
+  # Protect host-facing pseudo-filesystems, including during root setup.
+  deny /{,oldroot/}proc/sys/** wklx,
+  deny /{,oldroot/}proc/sysrq-trigger rwklx,
+  deny /{,oldroot/}proc/kcore rwklx,
+  deny /{,oldroot/}sys/** wklx,
+  deny /{,oldroot/}sys/firmware/** r,
+  deny /{,oldroot/}sys/kernel/security/** r,
+}

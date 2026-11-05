@@ -51,7 +51,7 @@ produce an image with an empty Grype cache:
 ```bash
 docker build --pull --no-cache \
   --build-arg GRYPE_DB_REFRESH="$(date -u +%Y%m%d%H%M%S)" \
-  -f cats-scanner/Dockerfile -t catscan-base:local cats-scanner
+  -f cats-scanner/Dockerfile -t catscan-base:local .
 python scripts/build-cats-release.py --scanner-base catscan-base:local \
   --cats-version 1.3 --tag cats-portal:local
 ```

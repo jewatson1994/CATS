@@ -456,7 +456,7 @@ def test_flux_chartref_local_artifacts(tmp_path, kind):
     calls = []
     def runner(tool, args, cwd):
         calls.append((tool, args))
-        if args[1] == 'discovery':
+        if args[1] == 'test':
             return ''
         return 'apiVersion: v1\nkind: Pod\nmetadata: {name: app}\nspec: {containers: [{name: app, image: nginx:1}]}'
     result = run_discovery(tmp_path, {'source_map': {'OCIRepository/default/chart': 'artifact', 'GitRepository/default/git': '.'}}, runner=runner)

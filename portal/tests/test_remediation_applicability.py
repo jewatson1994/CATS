@@ -20,8 +20,12 @@ def test_non_kubernetes_candidate_does_not_invoke_render_tools(kind, tmp_path, m
     payload = image_payload(kind)
     plan = build_plan(payload, [], "R-IMAGE")
     for image in plan["images"]:
-        image.update(candidate="harbor.example/api:patched", patch_status="PATCHED")
-    monkeypatch.setattr(candidate_worker.subprocess, "run", lambda *a, **kw: pytest.fail("Must not render, build or start containers"))
+        image.update(candidate="harbor.example/api:patched", patch_status="PATCHED", artifact_sha256="a" * 64,
+            scan_evidence={"status": "complete", "candidate_digest": "sha256:" + "a" * 64,
+                "before": {"sha256": "sha256:" + "b" * 64, "sbom_digest": "sha256:" + "c" * 64},
+                "after": {"sha256": "sha256:" + "d" * 64, "sbom_digest": "sha256:" + "e" * 64}})
+    for name in ("isolated_runner", "helm_template", "scan_configuration"):
+        monkeypatch.setattr(candidate_worker, name, lambda *a, **kw: pytest.fail("Must not render, build or start containers"))
     validation = candidate_worker.validate_candidate(tmp_path, payload, plan, static_validation(payload, plan))
     assert candidate_files(payload, plan) == {}
     for check in ("helm_lint", "helm_template", "yaml_parsing", "expected_resources", "kubernetes_schema"):
@@ -55,7 +59,6 @@ def test_retained_image_configuration_findings_remain_applicable(tmp_path):
 def test_missing_expected_deployment_render_is_not_not_applicable(kind, tmp_path, monkeypatch):
     payload = image_payload(kind)
     plan = build_plan(payload, [], "R-MISSING")
-    monkeypatch.setattr(candidate_worker.shutil, "which", lambda _: None)
     validation = candidate_worker.validate_candidate(tmp_path, payload, plan, static_validation(payload, plan))
     assert validation["checks"]["expected_resources"]["status"] == "FAIL"
     assert classify_static(validation)["status"] == "BLOCKING"
@@ -66,7 +69,10 @@ def test_actual_chart_cannot_be_marked_inapplicable(tmp_path, monkeypatch):
     payload = image_payload()
     plan = build_plan(payload, [], "R-CHART")
     (tmp_path / "Chart.yaml").write_text("apiVersion: v2\nname: api\nversion: 1.0.0\n")
-    monkeypatch.setattr(candidate_worker.shutil, "which", lambda _: None)
+    def unavailable(*args, **kwargs):
+        raise candidate_worker.RendererError("Required isolated renderer is unavailable")
+    monkeypatch.setattr(candidate_worker, "isolated_runner", unavailable)
+    monkeypatch.setattr(candidate_worker, "helm_template", unavailable)
     validation = candidate_worker.validate_candidate(tmp_path, payload, plan, static_validation(payload, plan))
     assert validation["checks"]["helm_template"]["status"] == "FAIL"
     assert validation["applicability"]["helm"] is True

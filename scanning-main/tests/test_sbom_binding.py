@@ -109,14 +109,18 @@ def test_scanner_snapshot_binds_consumed_bytes_and_rejects_replacement(tmp_path,
     sbom, report = tmp_path / "image.json", tmp_path / "result.json"
     sbom.write_bytes(raw)
     sbom.with_suffix(".image").write_text("example:tag")
-    def run(command, stdout):
-        snapshot = Path(command[1].removeprefix("sbom:"))
+    from app import scanner_actions
+    database = tmp_path / "db"
+    database.mkdir()
+    (database / "vulnerability.db").write_bytes(b"retained")
+    monkeypatch.setenv("GRYPE_DB_CACHE_DIR", str(database))
+    def run(tool, command, cwd, **options):
+        snapshot = cwd / "inventory.json"
         assert snapshot.read_bytes() == raw
         assert snapshot != sbom
         sbom.write_bytes(raw + b"\n")
-        stdout.write(b'{"matches": []}')
-        return subprocess.CompletedProcess(command, 0)
-    monkeypatch.setattr(scanner.subprocess, "run", run)
+        return {"stdout": '{"matches": []}', "version": "test"}
+    monkeypatch.setattr(scanner_actions, "offline_runner", run)
     assert scanner.scan(sbom, report) == 0
     binding_path = report.with_suffix(".binding")
     recorded = json.loads(binding_path.read_text())
@@ -139,9 +143,13 @@ def test_failed_scanner_discards_previous_binding(tmp_path, monkeypatch):
     sbom, report = tmp_path / "image.json", tmp_path / "result.json"
     sbom.write_text('{"artifacts": []}')
     report.with_suffix(".binding").write_text('{"stale": true}')
-    def run(command, stdout):
-        stdout.write(b'{"partial": true}')
-        return subprocess.CompletedProcess(command, 2)
-    monkeypatch.setattr(scanner.subprocess, "run", run)
+    from app import scanner_actions
+    database = tmp_path / "db"
+    database.mkdir()
+    (database / "vulnerability.db").write_bytes(b"retained")
+    monkeypatch.setenv("GRYPE_DB_CACHE_DIR", str(database))
+    def run(*args, **kwargs):
+        raise scanner_actions.RendererError("Scanner failed")
+    monkeypatch.setattr(scanner_actions, "offline_runner", run)
     assert scanner.scan(sbom, report) == 2
     assert not report.exists() and not report.with_suffix(".binding").exists()

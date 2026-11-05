@@ -52,7 +52,7 @@ def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
     assert worker["cap_drop"] == ["ALL"]
     assert set(worker["cap_add"]) == {"SETUID", "SETGID", "CHOWN", "KILL"}
     assert worker["read_only"] is True
-    assert worker["security_opt"] == ["no-new-privileges:true"]
+    assert worker["security_opt"] == ["no-new-privileges:true", "seccomp=./deploy/discovery-seccomp.json"]
     assert worker["environment"]["CATS_SCAN_SCANNER_UID"] == "10002"
     assert worker["environment"]["CATS_SCAN_SCANNER_GID"] == "10002"
     assert worker["environment"]["TMPDIR"] == "/var/lib/cats-scan/tmp"
@@ -64,7 +64,8 @@ def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
     assert worker["environment"]["DOCKER_CONFIG"] == auth["target"]
     assert auth["read_only"] is True
     assert auth["bind"]["create_host_path"] is False
-    assert worker["healthcheck"]["test"][-1] == "--readiness"
+    assert "app.scan_worker --readiness &&" in worker["healthcheck"]["test"][-1]
+    assert "app.rendering --probe" in worker["healthcheck"]["test"][-1]
     assert worker["restart"] == "unless-stopped"
     assert worker["environment"]["CATS_SCAN_CONCURRENCY"] == "${CATS_SCAN_CONCURRENCY:-2}"
 

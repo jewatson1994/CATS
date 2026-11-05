@@ -15,14 +15,16 @@ def test_static_classifications(name,status,expected):
     assert result['status']==expected and result['runtime_eligible']==(expected!='BLOCKING')
 
 @pytest.mark.parametrize("has_render", [True, False])
-def test_exact_candidate_manifest_adapter_and_integrity(tmp_path, has_render):
+@pytest.mark.parametrize("chart_prefix", ['', 'charts/api/'])
+def test_exact_candidate_manifest_adapter_and_integrity(tmp_path, has_render, chart_prefix):
     source=tmp_path/'source'; source.mkdir()
-    (source/'Chart.yaml').write_text('apiVersion: v2\nname: demo\nversion: 1.0.0\n')
+    chart=source/chart_prefix; chart.mkdir(parents=True,exist_ok=True)
+    (chart/'Chart.yaml').write_text('apiVersion: v2\nname: demo\nversion: 1.0.0\n')
     for name in ('values.yaml','override.yaml'): (source/name).write_text('enabled: true\n')
     path=tmp_path/'candidate.zip'
     rendered='apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: demo\n' if has_render else ''
     with ZipFile(path,'w') as archive:
-        for name in ('Chart.yaml','values.yaml','override.yaml'): archive.write(source/name,'candidate/'+name)
+        for name in (chart_prefix+'Chart.yaml','values.yaml','override.yaml'): archive.write(source/name,'candidate/'+name)
         archive.writestr('rendered.yaml',rendered)
         archive.writestr('documentation/remediation/summary.json','{}')
     with ZipFile(path,'a') as archive:
@@ -31,6 +33,7 @@ def test_exact_candidate_manifest_adapter_and_integrity(tmp_path, has_render):
     digest=file_digest(path)
     assert validate_bundle(path,expected_type='standard-bundle',expected_digest=digest)==manifest
     assert manifest['deployment']['valuesFiles']==['candidate/values.yaml','candidate/override.yaml']
+    assert manifest['deployment']['chartPath']==('candidate/'+chart_prefix.rstrip('/') if chart_prefix else 'candidate')
     assert 'documentation/remediation/summary.json' in manifest['files']
     with ZipFile(path,'a') as archive: archive.writestr('extra.yaml','unsafe: true')
     for expected in (None,digest):
@@ -38,6 +41,14 @@ def test_exact_candidate_manifest_adapter_and_integrity(tmp_path, has_render):
 
 def result_for(request,status='VERIFIED',cleanup='COMPLETE'):
     return {'request_id':request['request_id'],'validation_type':request['validation_type'],'artifact_digest':request['artifact']['digest'],'service':request['service'],'status':status,'validation_id':'2'*32,'validator_id':'managed','cleanup_status':cleanup,'helm_result':{'install':'PASS','execution_mode':'HELM','release_status':'DEPLOYED','helm_release_verified':True}}
+
+
+@pytest.mark.parametrize('instances', [[{'values': [], 'set': ['enabled=true']}],
+    [{'values': [], 'set': []}, {'values': [], 'set': []}]])
+def test_deployment_adapter_does_not_drop_unrepresentable_render_inputs(tmp_path, instances):
+    (tmp_path / 'Chart.yaml').write_text('apiVersion: v2\nname: demo\nversion: 1.0.0\n')
+    assert deployment_manifest(None, candidate_dir=tmp_path, values_files=[], rendered='',
+        service={'id': 'demo', 'version': '1'}, images=[], render_instances=instances) is None
 
 @pytest.mark.parametrize('field',['request_id','service','artifact_digest','validation_type','cleanup_status','helm_result'])
 def test_success_rejects_swapped_binding_or_missing_deployment_proof(field):

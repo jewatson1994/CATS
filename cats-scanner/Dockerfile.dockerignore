@@ -1,0 +1,19 @@
+# This Dockerfile builds from the repository root. Send only its declared inputs.
+**
+!cats-scanner/
+!cats-scanner/**
+!portal/
+!portal/app/
+!portal/app/rendering.py
+!portal/app/scan_runtime.py
+!portal/app/scanner_actions.py
+!portal/app/scanner_inputs.py
+!scanning-main/
+!scanning-main/scripts/
+!scanning-main/scripts/**
+!deploy/
+!deploy/verify-worker-tools.py
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*

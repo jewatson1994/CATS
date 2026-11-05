@@ -98,6 +98,7 @@ class ExecutionPayload(BaseModel):
     # using non-default values must declare them so runtime validation deploys
     # the exact configuration that static analysis rendered.
     helm_values_files: list[str] = Field(default_factory=list)
+    render_settings: dict | None = None
 
     @model_validator(mode="after")
     def validate_retained_documents(self):
@@ -181,4 +182,7 @@ class ExecutionPayload(BaseModel):
         missing = [name for name in self.helm_values_files if name.replace("\\", "/") not in retained]
         if missing:
             raise ValueError(f"Helm values files are not retained in source evidence: {', '.join(missing)}")
+        if self.render_settings is not None:
+            from .remediation_delivery import checked_render_settings
+            checked_render_settings(self.render_settings, retained, values_files=self.helm_values_files)
         return self

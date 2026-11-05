@@ -18,7 +18,7 @@ def commands(args, assets=None):
     if args.image == 'unified':
         if not args.scanner_base:
             result.append(common + ['--pull', '-f', str(ROOT / 'cats-scanner/Dockerfile'),
-                                   '-t', 'catscan-base:local', str(ROOT / 'cats-scanner')])
+                                   '-t', 'catscan-base:local', str(ROOT)])
         final = common + ['--build-arg', 'CATSCAN_BASE_IMAGE=' + (args.scanner_base or 'catscan-base:local'),
                           '-f', str(ROOT / 'cats-image/Dockerfile.all-in-one')]
         context = ROOT
@@ -53,6 +53,8 @@ def export_discovery(output, reference):
     output.mkdir(parents=True, exist_ok=False)
     (output / 'deploy').mkdir()
     shutil.copyfile(policy, output / 'deploy/discovery-seccomp.json')
+    for name in ('cats-worker-actions.apparmor', 'compose.worker-apparmor.yaml', 'worker-isolation.md'):
+        shutil.copyfile(ROOT / 'deploy' / name, output / 'deploy' / name)
     shutil.copyfile(ROOT / 'deploy/compose.discovery-mirror.yaml', output / 'deploy/compose.discovery-mirror.yaml')
     (output / 'deploy/discovery-mirror').mkdir()
     shutil.copyfile(ROOT / 'deploy/discovery-mirror/manifest.json', output / 'deploy/discovery-mirror/manifest.json')
@@ -61,7 +63,8 @@ def export_discovery(output, reference):
     subprocess.run(['docker', 'tag', row['Id'], saved_reference], check=True)
     subprocess.run(['docker', 'save', '--output', str(output / 'discovery-image.tar'), saved_reference], check=True)
     files = {}
-    for name in ('discovery-image.tar', 'deploy/discovery-seccomp.json', 'deploy/compose.discovery-mirror.yaml', 'deploy/discovery-mirror/manifest.json'):
+    for name in ('discovery-image.tar', 'deploy/discovery-seccomp.json', 'deploy/compose.discovery-mirror.yaml', 'deploy/discovery-mirror/manifest.json',
+                 'deploy/cats-worker-actions.apparmor', 'deploy/compose.worker-apparmor.yaml', 'deploy/worker-isolation.md'):
         with (output / name).open('rb') as handle:
             files[name] = hashlib.file_digest(handle, 'sha256').hexdigest()
     manifest = {'schema_version': 1, 'kind': 'cats-unified-runtime',
@@ -74,6 +77,8 @@ def export_discovery(output, reference):
         'Copy deploy/discovery-seccomp.json and deploy/discovery-mirror/manifest.json into the matching CATS deployment paths.\n'
         'Optionally copy deploy/compose.discovery-mirror.yaml and set CATS_DISCOVERY_MIRROR_DIR to your verified local mirror.\n'
         'Add -f deploy/compose.discovery-mirror.yaml after -f compose.yaml to enable that read-only mirror.\n'
+        'On AppArmor hosts, follow deploy/worker-isolation.md to load cats-worker-actions.apparmor and keep compose.worker-apparmor.yaml enabled.\n'
+        'Run the four isolated-action preflights in that guide before accepting work.\n'
         'Start the matching CATS Compose release with --no-build --pull never.\n', encoding='utf-8')
     return manifest
 
@@ -83,7 +88,7 @@ def main():
     parser.add_argument('--cats-version', default='1.3')
     parser.add_argument('--tag')
     parser.add_argument('--discovery-tag', help='Deprecated compatibility option; Discovery uses --tag')
-    parser.add_argument('--discovery-offline-output', type=pathlib.Path, help='Export Discovery image and approved seccomp policy into a new companion directory')
+    parser.add_argument('--discovery-offline-output', type=pathlib.Path, help='Export the shared image and worker isolation policies into a new companion directory')
     parser.add_argument('--image', choices=['unified', 'portal'], default='unified')
     parser.add_argument('--profile', choices=['release', 'development', 'runtime'], default='release')
     parser.add_argument('--scanner-base', help='Use an already built, offline-capable scanner base')

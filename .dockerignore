@@ -6,6 +6,7 @@
 *.zip
 .release-build
 .release-cache
+.tmp-*
 CATS-*
 portal/.pytest_cache
 **/node_modules

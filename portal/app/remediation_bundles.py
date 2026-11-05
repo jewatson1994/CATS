@@ -14,7 +14,8 @@ from zipfile import ZipFile
 import yaml
 
 from .deployment_bundle import build_bundle, file_digest, dependency_inventory, workload_images, image_archive_identity, safe_path, _untar
-from .remediation_delivery import retained_candidate, checked_inventory, checked_values_files
+from .remediation_delivery import retained_candidate, checked_inventory, checked_helm_render_settings, embedded_instance_values
+from .rendering import helm_template
 
 
 @contextmanager
@@ -245,11 +246,13 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
                     image_archive_identity(target, image["remediated"])
                     images.append({"reference": image["remediated"], "source_path": target,
                                    "archive_path": f"images/{index}.tar"})
-        values = checked_values_files(manifest.get("values_files") or [], sources)
-        charts = [name for name in sources if name.endswith("Chart.yaml") and "charts" not in Path(name).parts[:-1]]
-        if len(charts) != 1:
-            raise ValueError("A deployment bundle requires one explicitly selected root chart")
-        chart_path = str(Path(charts[0]).parent).replace("\\", "/")
+        instances = checked_helm_render_settings(manifest.get("helm_render_settings"), sources,
+            render_settings=manifest.get("render_settings"), values_files=manifest.get("values_files") or [])
+        if len(instances) != 1:
+            raise ValueError("A deployment bundle requires one explicitly selected Helm instance")
+        settings = instances[0]
+        values = settings["values"]
+        chart_path = settings["chart_root"]
         for name, content in sources.items():
             target = workspace / "source" / name
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -258,15 +261,16 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
         if not helm:
             raise ValueError("Helm is required to assemble the final deployment")
         dependencies, acquisition_evidence = _dependencies(workspace / "source" / chart_path, workspace, helm, configuration)
-        command = [helm, "template", "cats-final", str(workspace / "source" / chart_path), "--include-crds"]
-        for name in values:
-            command.extend(["--values", str(workspace / "source" / name)])
-        rendered = _run(command)
-        if rendered.returncode or len(rendered.stdout.encode()) > 16 * 1024 ** 2:
+        from .remediation_jobs import check_worker
+        rendered = helm_template(workspace / "source" / chart_path, source_root=workspace / "source",
+            release=settings["release"], namespace=settings["namespace"],
+            values=[workspace / "source" / name for name in values], set_values=settings["set"],
+            include_crds=settings["include_crds"], check_cancelled=check_worker)["stdout"]
+        if len(rendered.encode()) > 16 * 1024 ** 2:
             raise ValueError("Final deployment render failed")
         from .remediation_safety import assert_sources_safe, assert_source_tree_safe
-        assert_sources_safe({"rendered.yaml": rendered.stdout})
-        required = workload_images(rendered.stdout)
+        assert_sources_safe({"rendered.yaml": rendered})
+        required = workload_images(rendered)
         images = [image for image in images if image["reference"] in required]
         if bundle_type == "offline-bundle":
             for reference in sorted(set(required) - {image["reference"] for image in images}):
@@ -275,11 +279,28 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
                 images.append({"reference": reference, "source_path": target, "archive_path": f"images/{len(images)}.tar"})
         # Use the materialized tree after recursive acquisition; retain values order.
         source_root = workspace / "source"
+        if settings["set"]:
+            # The deployment adapter accepts ordered values files, not CLI set
+            # flags. Helm combines those exact inputs into one equivalent final
+            # override; chart defaults remain in the original chart unchanged.
+            texts = {name: content.decode("utf-8") for name, content in sources.items() if not name.endswith(".tgz")}
+            _, content = embedded_instance_values(texts, settings, include_defaults=False)
+            override = "cats-retained-overrides.yaml"
+            if override in sources:
+                raise ValueError("Retained override file conflicts with chart sources")
+            (source_root / override).write_text(content, encoding="utf-8")
+            values = [override]
         paths = list(source_root.rglob("*"))
         if any(path.is_symlink() for path in paths) or sum(path.stat().st_size for path in paths if path.is_file()) > 200 * 1024 ** 2:
             raise ValueError("Final chart source tree exceeds safe assembly limits")
         sources = {path.relative_to(source_root).as_posix(): path.read_bytes() for path in paths if path.is_file()}
         assert_source_tree_safe(sources)
+        if chart_path == ".":
+            # Bundle paths must name a directory; retain root-chart contents
+            # beneath a concrete prefix without changing their relative paths.
+            sources = {"chart/" + name: content for name, content in sources.items()}
+            values = ["chart/" + name for name in values]
+            chart_path = "chart"
         chart_prefix = chart_path.rstrip("/") + "/" if chart_path != "." else ""
         chart_files = {name: "sha256:" + hashlib.sha256(content).hexdigest() for name, content in sources.items()
                        if not chart_prefix or name.startswith(chart_prefix)}
@@ -292,7 +313,7 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
             {"kind": "embedded-helm-deployment", "reference": chart_path,
              "digest": chart_identity, "identity_type": "source_tree_sha256"},
             {"kind": "rendered-manifests", "reference": "rendered.yaml",
-             "digest": "sha256:" + hashlib.sha256(rendered.stdout.encode("utf-8")).hexdigest(),
+             "digest": "sha256:" + hashlib.sha256(rendered.encode("utf-8")).hexdigest(),
              "identity_type": "file_sha256"},
             *({"kind": "image-archive", "reference": image["archive_path"],
                "digest": file_digest(image["source_path"]), "identity_type": "file_sha256"}
@@ -319,12 +340,14 @@ def assemble(record, root, attempt_id, bundle_type, service_version, configurati
         build_bundle(output, bundle_type=bundle_type,
                      service={"id": record.service.service_key, "version": service_version},
                      source_files=sources, chart_path=chart_path, values_files=values,
-                     rendered_manifests=rendered.stdout, image_archives=images,
-                     evidence={"render": {"tool": "helm", "status": "PASSED", "valuesFiles": values,
+                     rendered_manifests=rendered, image_archives=images, namespace=settings["namespace"],
+                     evidence={"render": {"tool": "helm", "status": "PASSED", "valuesFiles": settings["values"],
+                                           "settings": settings, "materializedValuesFiles": values,
                                            "requiredImages": sorted(required)},
                                "dependencies": dependencies, "acquisitions": acquisition_evidence},
                      provenance={"remediationJob": record.job_key, "sourceExecutionId": record.source_execution_id,
                                  "sourceVersionId": record.source_version_id, "candidateDigest": record.artifact_digest,
+                                 "helmRenderSettings": settings,
                                  "embeddedDeployment": {"type": "helm", "chartPath": chart_path,
                                                         "identityType": "source_tree_sha256", "digest": chart_identity}})
         result = {"validation_type": bundle_type, "materialized_digest": file_digest(output),

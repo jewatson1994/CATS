@@ -18,21 +18,21 @@ from app.remediation_delivery import DeliveryAttempt
 def test_candidate_configuration_scan_uses_only_rendered_manifest(monkeypatch, tmp_path):
     (tmp_path / 'remediated-manifests.yaml').write_text('apiVersion: v1\nkind: Pod\nmetadata:\n  name: test\n')
     calls = []
-    monkeypatch.setattr(main.shutil, 'which', lambda name: 'trivy' if name == 'trivy' else None)
-    def run(command, **kwargs):
-        calls.append(command)
-        return SimpleNamespace(returncode=0, stdout=json.dumps({'SchemaVersion':2,'Results':[]}), stderr='')
-    monkeypatch.setattr(main.subprocess, 'run', run)
+    def scan(source, report, **kwargs):
+        calls.append(source)
+        evidence = {'SchemaVersion': 2, 'Results': []}
+        report.write_text(json.dumps(evidence))
+        return evidence
+    monkeypatch.setattr(candidate_worker, 'scan_configuration', scan)
     plan = {'before':{'resource_identities':[]}, 'after':{}, 'images':[]}
     validation = {'checks':{}, 'required_checks':['trivy_config_rescan']}
     candidate_worker.validate_candidate(tmp_path, {}, plan, validation)
-    assert calls[0][-1] == str(tmp_path / '.cats-rendered.yaml')
+    assert calls == [tmp_path / '.cats-rendered.yaml']
     assert (tmp_path / '.cats-config-scan.json').is_file()
     assert plan['after']['configuration_findings'] == 0
 
 
 def test_candidate_configuration_scan_without_render_fails_closed(monkeypatch, tmp_path):
-    monkeypatch.setattr(main.shutil, 'which', lambda name: 'trivy' if name == 'trivy' else None)
     validation = {'checks':{}, 'required_checks':['trivy_config_rescan']}
     result = candidate_worker.validate_candidate(tmp_path, {}, {'before':{},'after':{},'images':[]}, validation)
     assert result['status'] == 'FAIL'
@@ -761,3 +761,26 @@ def test_remediation_uses_image_defined_default_repositories(workflow, monkeypat
     assert calls[0]['source_image'] == 'ubuntu:latest'
     assert plan['images'][0]['patch_status'] == 'FAILED'
     assert plan['images'][0]['reason'] == ('Source registry unavailable' if worker_failure else 'Package repository unavailable')
+
+
+def test_reused_patch_preserves_full_scan_receipt(workflow, monkeypatch):
+    db, service, _, _, _, root = workflow
+    row = candidate(workflow)
+    row.output_mode = 'bundle'
+    monkeypatch.setattr(main, 'PATCH_JOB_ROOT', root / 'patches')
+    monkeypatch.setattr(main, 'configuration_for_service', lambda *_: {})
+    monkeypatch.setattr(main, '_configured_registry_for_image', lambda *_: None)
+    monkeypatch.setattr(main, '_portal_signing_material', lambda *_: ({}, {}))
+    monkeypatch.setattr(main, '_audit_signing_request', lambda *_: None)
+    calls = []
+    monkeypatch.setattr(main, '_run_patch_job', lambda job, credentials: calls.append(job))
+    receipt = {'status': 'complete', 'candidate_digest': 'sha256:' + 'a' * 64,
+               'before': {'sha256': 'sha256:' + 'b' * 64, 'sbom_digest': 'sha256:' + 'c' * 64},
+               'after': {'sha256': 'sha256:' + 'd' * 64, 'sbom_digest': 'sha256:' + 'e' * 64}}
+    monkeypatch.setattr(main, '_load_patch_job', lambda *_: {'result': {'patch_status': 'PATCHED',
+        'delivery_status': 'download', 'artifact_available': True, 'artifact_sha256': 'a' * 64, 'scan_evidence': receipt}})
+    plan = {'images': [{'original': 'ubuntu:latest'}, {'original': 'ubuntu:latest'}], '_image_only': True}
+    main._run_remediation_image_patches(db, row, service, plan)
+    assert len(calls) == 1
+    for image in plan['images']:
+        assert image['scan_evidence'] == receipt and image['artifact_sha256'] == 'a' * 64

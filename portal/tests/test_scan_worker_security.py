@@ -1,5 +1,8 @@
 """Worker credentials and privileged filesystem processing boundaries."""
 import os
+import io
+import json
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -123,6 +126,24 @@ def test_worker_rejects_scanner_hardlinks_before_provenance_write(worker_harness
     assert any(suffix.endswith("/failure") for _, suffix, _ in calls)
 
 
+def test_worker_returns_reports_without_acquired_image_archives(worker_harness, monkeypatch):
+    module, worker, job, _, _, uploaded, _, _, _ = worker_harness
+    def scanner(command, **kwargs):
+        output = Path(command[-1])
+        for name in ("image-archives", ".cats-images"):
+            (output / name).mkdir()
+            (output / name / "private-image.tar").write_bytes(b"original image layers")
+        (output / "sboms").mkdir()
+        (output / "sboms" / "inventory.json").write_text('{"artifacts":[]}')
+        return SimpleNamespace(poll=lambda: 0, returncode=0, pid=987654321)
+    monkeypatch.setattr(module.subprocess, "Popen", scanner)
+    worker.execute(job)
+    with tarfile.open(fileobj=io.BytesIO(uploaded[0]), mode="r:*") as archive:
+        names = archive.getnames()
+    assert "output/sboms/inventory.json" in names
+    assert not any("private-image.tar" in name for name in names)
+
+
 def test_worker_pins_custom_sources_without_exposing_broker_configuration(worker_harness, monkeypatch):
     module, worker, job, _, _, _, _, _, _ = worker_harness
     monkeypatch.setenv("CATS_SCAN_GRYPE_SOURCE", "custom-grype")
@@ -143,3 +164,22 @@ def test_worker_pins_custom_sources_without_exposing_broker_configuration(worker
     assert snapshots[0]["CATS_SCAN_GRYPE_SOURCE"] == "custom-grype"
     assert snapshots[0]["CATS_SCAN_TRIVY_SOURCE"] == "custom-trivy"
     assert not any(key.startswith("CATS_SCAN_") for key in snapshots[1])
+
+
+def test_worker_records_build_versions_without_native_tool_probes(worker_harness, monkeypatch):
+    module, worker, job, _, _, uploaded, _, _, _ = worker_harness
+    versions = {"syft": "Application: syft\nVersion: 1.31.0", "grype": "unavailable",
+                "trivy": "Version: 0.69.3", "dockle": "dockle version 0.4.15", "helm": "v3.19.0+build"}
+    monkeypatch.setattr(module, "tool_version", versions.__getitem__)
+    native_probe = Mock(side_effect=AssertionError("Native tools must not receive the acquisition environment"))
+    monkeypatch.setattr(module.subprocess, "run", native_probe)
+    monkeypatch.setattr(module.subprocess, "Popen", lambda *args, **kwargs: SimpleNamespace(
+        poll=lambda: 0, returncode=0, pid=987654321))
+    worker.execute(job)
+    native_probe.assert_not_called()
+    with tarfile.open(fileobj=io.BytesIO(uploaded[0]), mode="r:*") as archive:
+        entry = next(member for member in archive.getmembers() if member.name.endswith("/worker-provenance.json"))
+        provenance = json.load(archive.extractfile(entry))
+    assert provenance["tools"]["syft"] == {"status": "available", "source": "image_build_metadata",
+                                           "version": versions["syft"]}
+    assert provenance["tools"]["grype"] == {"status": "unavailable"}

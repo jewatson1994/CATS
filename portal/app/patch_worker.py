@@ -14,7 +14,9 @@ from .admin_config import OS_DEFINITIONS, resolve_policy, write_repository_confi
 from .signing import SECRET_ENV, clean_environment, sign_and_verify
 from .oci_attestations import attest_patch_evidence
 from .remediation import summarize_grype_reports
-from .scanner_inputs import bind_scanner_snapshot, snapshot_digest
+from .scanner_inputs import bind_scanner_snapshot
+from .scan_intelligence import pin_databases
+from .scanner_actions import inventory, scan_sbom, scan_rootfs, scan_image_configuration, digest as evidence_digest
 from .patch_inputs import consume_binding, default_binding_root, system_ca_bundle
 from .patch_ownership import execution_lock, ExecutionAlreadyOwned
 from .patch_publication import publication_error
@@ -71,6 +73,31 @@ def retained_manifest_metadata(run, reference: str) -> dict:
         raise
     except Exception:
         return {}
+
+
+def retained_scan_evidence(output: Path, artifact_digest: str) -> dict:
+    """Receipt is complete only for verified full reports and their inventories."""
+    receipt = {"status": "complete", "candidate_digest": "sha256:" + artifact_digest}
+    databases = set()
+    try:
+        for label in ("before", "after"):
+            report = output / f"grype-full-{label}.json"
+            sbom = output / f"sbom-{label}.json"
+            binding = json.loads(report.with_suffix(".binding").read_bytes())
+            if (binding.get("only_fixed") is not False
+                    or evidence_digest(report.read_bytes()) != binding.get("scanner_report_digest")
+                    or evidence_digest(sbom.read_bytes()) != binding.get("sbom_digest")
+                    or not binding.get("scanner_database_digest")):
+                raise ValueError("Scanner evidence binding is incomplete")
+            databases.add(binding["scanner_database_digest"])
+            receipt[label] = {"sha256": binding["scanner_report_digest"],
+                              "sbom_digest": binding["sbom_digest"]}
+        if len(databases) != 1:
+            raise ValueError("Scanner databases differ between before and after")
+        receipt["scanner_database_digest"] = databases.pop()
+        return receipt
+    except (ValueError, OSError, KeyError, TypeError):
+        return {"status": "incomplete", "candidate_digest": "sha256:" + artifact_digest}
 
 
 def main() -> int:
@@ -197,27 +224,51 @@ def execute() -> int:
 
     def run(command, **kwargs):
         check_cancelled()
-        bound_scan = scanner_binding is not None and command[0] == "grype"
-        if bound_scan:
-            scanner_binding.verify()
-        bound_trivy = execution_binding is not None and command[0] == "trivy"
-        def verify_trivy():
-            for name in ("db", "java-db"):
-                retained = execution_binding.root / "trivy" / name
-                if retained.exists() and snapshot_digest(retained) != snapshot_digest(workspace / "trivy" / name):
-                    raise RuntimeError("Bound Trivy database changed")
-        if bound_trivy:
-            verify_trivy()
+        if command[0] in {"grype", "syft", "trivy", "dockle"}:
+            raise RuntimeError("Scanners must use the shared offline action")
         if execution_binding is not None:
             kwargs["cwd"] = workspace
-            if command[0] in {"grype", "syft", "trivy"}:
-                command = [command[0], "--config", str(workspace / "scanner-config.yaml"), *command[1:]]
         result = run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), checkpoint=check_cancelled, **kwargs)
-        if bound_scan:
-            scanner_binding.verify()
-        if bound_trivy:
-            verify_trivy()
         return result
+
+    def scan_image(reference: str, root: Path, label: str):
+        """Both sides use one native image inventory, fixed/full reports and DB."""
+        check_cancelled()
+        provenance = None
+        inspected = run(["docker", "image", "inspect", reference, "--format", "{{json .}}"])
+        try:
+            metadata = json.loads(inspected.stdout)
+            provenance = {"imageID": metadata.get("Id"), "repoDigests": metadata.get("RepoDigests"),
+                          "architecture": metadata.get("Architecture"), "os": metadata.get("Os"),
+                          "variant": metadata.get("Variant"), "descriptor": metadata.get("Descriptor"),
+                          "labels": (metadata.get("Config") or {}).get("Labels") or {}}
+        except (ValueError, AttributeError):
+            # Missing daemon descriptor metadata never invents registry identity.
+            pass
+        sbom_path = output / f"sbom-{label}.json"
+        inventory(root, sbom_path, image=reference, provenance=provenance, timeout=timeout, check_cancelled=check_cancelled)
+        check_cancelled()
+        if scanner_binding is not None:
+            scanner_binding.verify()
+        report_path = output / f"grype-{label}.json"
+        report = scan_sbom(sbom_path, report_path, environment=env, timeout=timeout, check_cancelled=check_cancelled)
+        check_cancelled()
+        full_status = "failed"
+        full_path = output / f"grype-full-{label}.json"
+        try:
+            full_report = scan_sbom(sbom_path, full_path, environment=env, only_fixed=False,
+                                    timeout=timeout, check_cancelled=check_cancelled)
+            check_cancelled()
+            summarize_grype_reports([full_report], lambda _: (False, None))
+            full_status = "complete"
+        except PatchCancelled:
+            raise
+        except Exception:
+            full_path.unlink(missing_ok=True)
+            full_path.with_suffix(".binding").unlink(missing_ok=True)
+        if scanner_binding is not None:
+            scanner_binding.verify()
+        return report, full_status
 
     def extract_scan_root(reference: str, label: str) -> Path:
         """Use identical filesystem coverage on both sides without starting the image."""
@@ -255,6 +306,15 @@ def execute() -> int:
                 env["TRIVY_CACHE_DIR"] = str(workspace / "trivy")
             env["CATS_PATCH_GRYPE_DB_SNAPSHOT"] = str(execution_binding.scanner_root)
             env["CATS_PATCH_GRYPE_DB_DIGEST"] = execution_binding.identity["scanner_database_digest"]
+        elif not env.get("CATS_PATCH_GRYPE_DB_SNAPSHOT"):
+            # Security-data refresh publishes generations behind an atomic
+            # pointer. Match ordinary Scan's selection before binding this
+            # attempt; the volume root may still contain an older image DB.
+            for scanner, cache_key in (("GRYPE", "GRYPE_DB_CACHE_DIR"), ("TRIVY", "TRIVY_CACHE_DIR")):
+                if env.get(cache_key):
+                    env.setdefault("CATS_SCAN_" + scanner + "_SOURCE", env[cache_key])
+            pin_databases(env, workspace)
+        env.setdefault("CATS_PATCH_GRYPE_DB_SNAPSHOT", env.get("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
         scanner_binding = bind_scanner_snapshot(env, workspace)
         state("running", "acquiring_image")
         source_mode = config.get("source_mode")
@@ -419,20 +479,7 @@ def execute() -> int:
         state("running", "scanning_source", source_image=source_ref)
         source_root = extract_scan_root(source_ref, "source")
         before_path = output / "grype-before.json"
-        run(["grype", f"dir:{source_root}", "--only-fixed", "--output", "json"], stdout_path=before_path)
-        before = json.loads(before_path.read_text(encoding="utf-8"))
-        remediation_full_before = "not_requested"
-        if config.get("remediation_evidence") is True:
-            full_before_path = output / "grype-full-before.json"
-            try:
-                run(["grype", f"dir:{source_root}", "--output", "json"], stdout_path=full_before_path)
-                summarize_grype_reports([json.loads(full_before_path.read_text(encoding="utf-8"))], lambda _: (False, None))
-                remediation_full_before = "complete"
-            except PatchCancelled:
-                raise
-            except Exception:
-                remediation_full_before = "failed"
-                full_before_path.unlink(missing_ok=True)
+        before, remediation_full_before = scan_image(source_ref, source_root, "before")
         inspect = run(["docker", "image", "inspect", source_ref, "--format", "{{.Architecture}}"])
         native_path = workspace / "copa-report.json"
         native = copa_native_report(before, (inspect.stdout or "amd64").strip(), package_ecosystem_name)
@@ -516,49 +563,35 @@ def execute() -> int:
             raise RuntimeError(f"Patched artifact materialization failure: {exc}") from exc
         verification_root = extract_scan_root(canonical_ref, "patched")
         after_path = output / "grype-after.json"
-        run(["grype", f"dir:{verification_root}", "--only-fixed", "--output", "json"], stdout_path=after_path)
-        after = json.loads(after_path.read_text(encoding="utf-8"))
-        full_after_path = output / "grype-full-after.json"
-        remediation_full_scan = "not_requested"
-        if config.get("remediation_evidence") is True:
-            try:
-                run(["grype", f"dir:{verification_root}", "--output", "json"], stdout_path=full_after_path)
-                summarize_grype_reports([json.loads(full_after_path.read_text(encoding="utf-8"))], lambda _: (False, None))
-                remediation_full_scan = "complete"
-            except PatchCancelled:
-                raise
-            except Exception:
-                remediation_full_scan = "failed"
-                full_after_path.unlink(missing_ok=True)
+        after, remediation_full_scan = scan_image(canonical_ref, verification_root, "after")
         comparison = compare_reports(before, after)
         remediation_evidence = {}
         if config.get("remediation_evidence") is True:
             remediation_evidence["grype_full"] = remediation_full_scan
             remediation_evidence["grype_full_before"] = remediation_full_before
-            checks = (
-                ("sbom", "syft", ["syft", f"dir:{verification_root}", "-o", "syft-json"], output / "remediated-sbom.json"),
-                ("trivy", "trivy", ["trivy", "rootfs", "--skip-db-update", "--skip-java-db-update", "--skip-check-update", "--format", "json",
-                                      "--output", str(output / "trivy-after.json"), str(verification_root)], output / "trivy-after.json"),
-                ("dockle", "dockle", ["dockle", "--format", "json", "--output", str(output / "dockle-after.json"),
-                                        "--exit-code", "0", canonical_ref], output / "dockle-after.json"),
-            )
-            for name, binary, command, evidence_path in checks:
-                if not shutil.which(binary):
-                    remediation_evidence[name] = "unavailable"
-                    continue
-                try:
-                    if name == "sbom":
-                        run(command, stdout_path=evidence_path)
-                    else:
-                        run(command)
-                    if not evidence_path.is_file() or not evidence_path.stat().st_size:
-                        raise RuntimeError("Scanner produced no evidence")
-                    remediation_evidence[name] = "complete"
-                except PatchCancelled:
-                    raise
-                except Exception:
-                    remediation_evidence[name] = "failed"
-                    evidence_path.unlink(missing_ok=True)
+            shutil.copyfile(output / "sbom-after.json", output / "remediated-sbom.json")
+            remediation_evidence["sbom"] = "complete"
+            try:
+                check_cancelled()
+                scan_rootfs(verification_root, output / "trivy-after.json",
+                            cache=Path(env.get("TRIVY_CACHE_DIR", "/opt/catscan/trivy-cache")), timeout=timeout,
+                            check_cancelled=check_cancelled)
+                check_cancelled()
+                remediation_evidence["trivy"] = "complete"
+            except PatchCancelled:
+                raise
+            except Exception:
+                remediation_evidence["trivy"] = "failed"
+            try:
+                check_cancelled()
+                scan_image_configuration(patched_archive, output / "dockle-after.json", tool="dockle", timeout=timeout,
+                                         check_cancelled=check_cancelled)
+                check_cancelled()
+                remediation_evidence["dockle"] = "complete"
+            except PatchCancelled:
+                raise
+            except Exception:
+                remediation_evidence["dockle"] = "failed"
         if scanner_binding is not None:
             scanner_binding.verify()
         source_id = run(["docker", "image", "inspect", source_ref, "--format", "{{.Id}}"]).stdout.strip()
@@ -658,6 +691,7 @@ def execute() -> int:
             "artifact_available": artifact_available, "artifact_format": artifact_format,
             "artifact_sha256": artifact_digest, "validated_source": "flattened-rootfs",
             "artifact_validation": "docker-load",
+            "scan_evidence": retained_scan_evidence(output, artifact_digest),
             "delivery_status": "failed" if delivery_error else ("delivered" if output_mode == "push" else "download"),
             "delivery_error": delivery_error,
             "immutable_destination": immutable_destination, "signature_status": signature_status,

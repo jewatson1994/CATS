@@ -29,12 +29,19 @@ def classify_static(validation):
     return validation
 
 
-def deployment_manifest(archive, *, candidate_dir, values_files, rendered, service, images):
+def deployment_manifest(archive, *, candidate_dir, values_files, rendered, service, images, render_instances=None):
     """Describe these ZIP bytes without resolving dependencies or rebuilding sources."""
-    roots = sorted(path.parent for path in Path(candidate_dir).rglob('Chart.yaml')
-                   if 'charts' not in path.relative_to(candidate_dir).parts[:-1])
+    from .remediation_delivery import helm_chart_roots
+    roots = [Path(candidate_dir) / name for name in sorted(helm_chart_roots(
+        path.relative_to(candidate_dir).as_posix() for path in Path(candidate_dir).rglob('Chart.yaml')))]
     if len(roots) != 1 or not service:
         return None
+    if render_instances is not None:
+        # The deployment adapter accepts one chart and ordered values files.
+        # Do not silently drop extra releases or Helm --set overrides.
+        if len(render_instances) != 1 or render_instances[0].get('set'):
+            return None
+        values_files = render_instances[0]['values']
     chart = roots[0]
     chart_path = 'candidate/' + chart.relative_to(candidate_dir).as_posix()
     chart_path = chart_path.removesuffix('/.')

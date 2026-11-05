@@ -1,7 +1,8 @@
 services:
   catscan:
     build:
-      context: .
+      context: ..
+      dockerfile: cats-scanner/Dockerfile
       args:
         BASE_IMAGE: ${CATSCAN_BASE_IMAGE:-alpine:latest}
         CATS_SCANNER_VERSION: ${CATSCAN_VERSION:-0.1.0}
@@ -15,4 +16,9 @@ services:
         GRYPE_DB_UPDATE_URL: ${GRYPE_DB_UPDATE_URL:-https://grype.anchore.io/databases/v6/latest.json}
     image: ${CATSCAN_IMAGE:-catscan:local}
     working_dir: /workspace
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=../deploy/discovery-seccomp.json
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=512m,mode=1777
     command: ["/usr/local/bin/catscan-self-test"]

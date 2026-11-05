@@ -4949,7 +4949,7 @@ def _patch_job_update(job_id: str, **values):
                         "could_not_be_patched", "patched_image", "destination_image",
                         "patch_status", "reason", "image_changed", "delivery_status", "delivery_error",
                         "immutable_destination", "signature_status", "signature", "artifact_sha256",
-                        "stages", "failed_stage", "artifact_receipt", "artifact_validation", "validated_source",
+                        "stages", "failed_stage", "artifact_receipt", "artifact_validation", "validated_source", "scan_evidence",
                     }
                 }
                 if summary:
@@ -4957,7 +4957,8 @@ def _patch_job_update(job_id: str, **values):
                     receipt_keys = {"status", "source_image", "immutable_destination", "patch_status",
                         "delivery_status", "signature_status", "signature", "artifact_validation",
                         "validated_source", "vulnerabilities_before", "vulnerabilities_after",
-                        "media_type", "platform", "source_media_type", "source_platform", "consumed_inputs"}
+                        "media_type", "platform", "source_media_type", "source_platform", "consumed_inputs",
+                        "artifact_sha256", "scan_evidence"}
                     record.summary["artifact_receipt"] = {key: value for key, value in summary.items() if key in receipt_keys}
                 if record.status == "complete" and summary:
                     from .artifact_catalog import register_patch_artifacts
@@ -5588,6 +5589,8 @@ def _candidate_worker_verification(candidate_dir: Path, payload: dict, plan: dic
     attempt_id = uuid.uuid4().hex
     request_payload = {"attempt_id": attempt_id, "remediation_job_id": candidate_dir.parent.name,
                        "files": files, "helm_values_files": payload.get("helm_values_files", []),
+                       "render_settings": payload.get("render_settings"),
+                       "service_overview": {"helm_render_settings": (payload.get("service_overview") or {}).get("helm_render_settings")},
                        "render_only": bool(payload.get("render_only")), "plan": plan, "validation": validation}
     validate_request(request_payload)
     if not PATCH_WORKER_URL or not PATCH_WORKER_TOKEN:
@@ -5723,6 +5726,8 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
         patch_job = _load_patch_job(patch_key)
         result = (patch_job.get("result") or {})
         image["remediation_evidence"] = result.get("remediation_evidence") or {}
+        image["scan_evidence"] = result.get("scan_evidence") or {}
+        image["artifact_sha256"] = result.get("artifact_sha256")
         image["vulnerabilities_before"] = result.get("vulnerabilities_before")
         image["vulnerabilities_after"] = result.get("vulnerabilities_after")
         immutable = result.get("immutable_destination")
@@ -5750,7 +5755,7 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
                          reason=result.get("delivery_error") or result.get("reason") or patch_job.get("error") or "Image patch/publication did not produce an immutable staged reference.")
         patched_by_source[source] = {key: image[key] for key in (
             "candidate", "digest", "patch_status", "signature_status", "patch_job_id", "delivery_status", "remediation_evidence",
-            "vulnerabilities_before", "vulnerabilities_after", "classification", "reason") if key in image}
+            "vulnerabilities_before", "vulnerabilities_after", "classification", "reason", "scan_evidence", "artifact_sha256") if key in image}
 
 
 REMEDIATION_STAGES = ("snapshot", "patch_images", "rewrite_artifacts", "static_validation", "final_rescan", "package", "output", "deployment_validation")
@@ -5953,6 +5958,9 @@ def _run_remediation_job(record_id: int) -> None:
             plan["charts"] = chart_mappings
             _assert_bundle_sources_safe(files)
             values_files = checked_values_files(payload.get("helm_values_files", []), files)
+            from .remediation_delivery import checked_helm_render_settings
+            render_instances = checked_helm_render_settings((payload.get("service_overview") or {}).get("helm_render_settings"), files,
+                render_settings=payload.get("render_settings"), values_files=values_files)
             _remediation_stage(record, "rewrite_artifacts", "success" if files else "not_applicable",
                 "" if files else "No editable deployment source is part of this candidate; image artifacts are retained separately.")
             job_root = REMEDIATION_JOB_ROOT / record.job_key
@@ -6108,12 +6116,14 @@ def _run_remediation_job(record_id: int) -> None:
                     "source_version_id": record.source_version_id,
                     "revision_number": record.revision_number,
                     "values_files": values_files,
+                    "render_settings": payload.get("render_settings"),
+                    "helm_render_settings": (payload.get("service_overview") or {}).get("helm_render_settings"),
                     "images": [{"original": item.get("original"), "original_digest": item.get("original_digest"),
                                 "remediated": item.get("candidate"),
-                                "artifact_sha256": item.get("digest") if record.output_mode == "bundle" else None,
+                                "artifact_sha256": item.get("artifact_sha256") or (item.get("digest") if record.output_mode == "bundle" else None),
                                 "remediated_digest": item.get("digest") if record.output_mode == "publish" else None,
                                 "patch_status": item.get("patch_status"), "signature_status": item.get("signature_status"),
-                                "evidence": item.get("remediation_evidence"),
+                                "evidence": item.get("remediation_evidence"), "scan_evidence": item.get("scan_evidence"),
                                 "archive_path": f"images/{item['patch_job_id']}.tar" if record.output_mode == "bundle" and item.get("patch_job_id") else None,
                                 "loaded_tag": f"cats-canonical-{item['patch_job_id']}:validated" if record.output_mode == "bundle" and item.get("patch_job_id") else None}
                                for item in plan["images"]],
@@ -6166,6 +6176,10 @@ def _run_remediation_job(record_id: int) -> None:
                                                    ("grype-after.json", f"scans/{patch_key}-grype-after.json"),
                                                    ("grype-full-before.json", f"scans/{patch_key}-grype-full-before.json"),
                                                    ("grype-full-after.json", f"scans/{patch_key}-grype-full-after.json"),
+                                                   ("grype-full-before.binding", f"scans/{patch_key}-grype-full-before.binding.json"),
+                                                   ("grype-full-after.binding", f"scans/{patch_key}-grype-full-after.binding.json"),
+                                                   ("sbom-before.json", f"sbom/{patch_key}-before.json"),
+                                                   ("sbom-after.json", f"sbom/{patch_key}-after.json"),
                                                    ("remediated-sbom.json", f"sbom/{patch_key}.json")):
                             if name == "patched-image.tar" and record.output_mode != "bundle":
                                 continue
@@ -6184,7 +6198,7 @@ def _run_remediation_job(record_id: int) -> None:
                     candidate_manifest["deployment_manifest"] = deployment_manifest(bundle, candidate_dir=candidate_dir,
                         values_files=values_files, rendered=rendered_path.read_text(encoding="utf-8") if rendered_path.is_file() else "",
                         service={"id": service.service_key, "version": source_version.version} if source_version and source_version.service_id == record.service_id else None,
-                        images=plan["images"])
+                        images=plan["images"], render_instances=render_instances)
                 except (ValueError, OSError, tarfile.TarError) as exc:
                     candidate_manifest["deployment_manifest"] = None
                     validation["checks"]["candidate_integrity"] = {"status": "FAIL", "detail": "Candidate deployment inventory failed integrity checks."}

@@ -40,14 +40,33 @@ record_daemonless_digest() {
 }
 
 generate_daemonless_sbom() {
-  local image="$1" safe="$2" source mapping
+  local image="$1" safe="$2" source mapping archive
+  local -a acquire
   source="registry:${image}"
   if [ -s image-archive-map.tsv ]; then
     mapping="$(awk -F '\t' -v image="$image" '$1 == image { print $2 ":" $3; exit }' image-archive-map.tsv)"
     [ -n "$mapping" ] && source="$mapping"
   fi
-  echo "Reading image without a Docker daemon: ${source}"
-  if ! syft "$source" -o syft-json > "sboms/${safe}.json"; then
+  if [[ "$source" == registry:* ]]; then
+    mkdir -p .cats-images
+    archive="$(pwd)/.cats-images/$(printf '%s' "$image" | sha256sum | cut -c1-24).tar"
+    # Registry credentials belong only to acquisition. Offline scanner actions
+    # receive an acquired archive, never this auth file or registry environment.
+    acquire=(skopeo copy)
+    if [ -f "${DOCKER_CONFIG:-${HOME}/.docker}/config.json" ]; then
+      acquire+=(--src-authfile "${DOCKER_CONFIG:-${HOME}/.docker}/config.json")
+    fi
+    if ! "${acquire[@]}" "docker://${source#registry:}" "docker-archive:${archive}"; then
+      echo "WARNING: Failed to acquire $image"
+      echo "$image" >> skipped_images.txt
+      rm -f "$archive"
+      return 1
+    fi
+    source="docker-archive:${archive}"
+  fi
+  echo "Reading acquired image without a Docker daemon: ${image}"
+  if ! python3 "${SCRIPT_DIRECTORY}/scanner-action.py" inventory "${source#*:}" \
+      "sboms/${safe}.json" --source-type "${source%%:*}"; then
     echo "WARNING: Failed to read $image"
     echo "$image" >> skipped_images.txt
     rm -f "sboms/${safe}.json"
@@ -201,10 +220,8 @@ while read IMAGE; do
   echo "Scanning materialized image filesystem with Syft"
   # This directory is an extracted image: retain installed language packages
   # that Syft's directory defaults intentionally omit (for example npm).
-  if ! syft "dir:${ROOTFS_DIR}" \
-      --override-default-catalogers image \
-      -o syft-json \
-      > "sboms/${SAFE_NAME}.json"; then
+  if ! python3 "${SCRIPT_DIRECTORY}/scanner-action.py" inventory \
+      "$ROOTFS_DIR" "sboms/${SAFE_NAME}.json"; then
 
     echo "WARNING: Failed to generate SBOM for $IMAGE"
 

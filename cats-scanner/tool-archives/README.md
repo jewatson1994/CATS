@@ -2,6 +2,8 @@
 
 For a disconnected CATScan build, place these official release archives here:
 
+- `syft_1.31.0_linux_amd64.tar.gz`
+- `grype_0.98.0_linux_amd64.tar.gz`
 - `trivy_0.69.3_Linux-64bit.tar.gz`
 - `dockle_0.4.15_Linux-64bit.tar.gz`
 - `helm-v4.2.3-linux-amd64.tar.gz`

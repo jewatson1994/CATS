@@ -15,6 +15,7 @@ import logging
 from datetime import datetime, timezone
 from .scan_intelligence import pin_databases, intelligence_status
 from . import scan_runtime
+from .rendering import tool_version
 from pathlib import Path
 
 import requests
@@ -273,21 +274,15 @@ class Worker:
                         path.chmod(0o770 if path.is_dir() else 0o660)
                         os.chown(path, uid, 0)
             runner = os.getenv("CATS_SCANNER_RUNNER", "cats-scan")
-            for tool, arguments in (("syft", ["version"]), ("grype", ["version"]),
-                                    ("trivy", ["--version"]), ("dockle", ["--version"]),
-                                    ("helm", ["version", "--short"])):
+            for tool in ("syft", "grype", "trivy", "dockle", "helm"):
                 authorized()
-                executable = shutil.which(tool)
-                if not executable:
-                    provenance["tools"][tool] = {"status": "unavailable"}
-                    continue
-                try:
-                    version = subprocess.run([executable, *arguments], env=environment,
-                                             capture_output=True, text=True, timeout=10, **scan_runtime.privileges())
-                    provenance["tools"][tool] = {"exit_code": version.returncode,
-                                                 "version": redact(version.stdout[:4096])}
-                except (OSError, subprocess.TimeoutExpired):
-                    provenance["tools"][tool] = {"status": "unavailable"}
+                # Version commands can load tool configuration before printing.
+                # Read trusted build metadata without invoking a native parser
+                # in the acquisition process's credential environment.
+                version = tool_version(tool)
+                provenance["tools"][tool] = ({"status": "available", "source": "image_build_metadata",
+                                               "version": redact(version)} if version != "unavailable"
+                                              else {"status": "unavailable"})
             authorized()
             # Retain the read handle before the scanner starts. Reopening its
             # path would let a scanner-created link expose broker-readable data.
@@ -344,9 +339,9 @@ class Worker:
             # Uploaded inputs remain immutable; only acquired sources are returned.
             if (components or payload.get("chart_url")) and (inputs / "charts").exists():
                 shutil.copytree(inputs / "charts", evidence / "sources")
-            # Scanner preparation uses working copies; remove original upload bytes
+            # Scanner preparation uses working copies; remove uploaded/acquired images
             # from returned evidence while retaining generated SBOMs/reports.
-            for name in ("image-archives", ".cats-trust", "charts"):
+            for name in ("image-archives", ".cats-images", ".cats-trust", "charts"):
                 candidate = output / name
                 if candidate.is_dir(): shutil.rmtree(candidate)
             results = directory / "results.tar.gz"
