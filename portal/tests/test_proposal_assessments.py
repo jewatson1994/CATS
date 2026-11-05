@@ -54,10 +54,12 @@ def test_isolated_retention_and_freeze_preserve_active_state(case, tmp_path):
     assert assessments.retain(db, proposal.id, ExecutionPayload.model_validate(payload)).id == row.id
     ready = assessments.assess(db, service, proposal.id)
     assert ready['ready'], ready['blockers']
-    frozen = freeze(db, service, SimpleNamespace(), ready, tmp_path)
+    frozen = freeze(db, service, SimpleNamespace(has=lambda permission, _: permission == 'service.export'), ready, tmp_path)
     assert frozen['evidence_scope'] == 'proposed-service-scan'
     assert frozen['version'] == 'proposed'
     assert frozen['proposal_assessment_id'] == row.id
+    assert frozen['service_context_evidence']['evidence_scope'] == 'current-service-context-not-selected-scan'
+    assert any(item['status'] == 'unavailable' for item in frozen['service_context_evidence']['entries'])
     assert service.current_version_id == version
     assert len(list(db.scalars(select(Execution)))) == 1
     assert db.get(revisions.ServiceActiveRelease, service.id).revision_id == proposal.base_revision_id
@@ -504,7 +506,7 @@ def test_replacement_scan_preserves_effective_digest_and_requested_reference(cas
     assert image['requested_reference'] == inputs[0]['reference']
     ready = assessments.assess(db, service, proposal.id)
     assert ready['ready'], ready['blockers']
-    frozen = freeze(db, service, SimpleNamespace(), ready, tmp_path)
+    frozen = freeze(db, service, SimpleNamespace(has=lambda permission, _: permission == 'service.export'), ready, tmp_path)
     assert frozen['proposal_assessment_id'] == retained.id
     assert len(list(db.scalars(select(Execution)))) == 1
     assert db.get(revisions.ServiceActiveRelease, service.id).revision_id == original.base_revision_id

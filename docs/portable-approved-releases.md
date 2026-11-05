@@ -123,6 +123,102 @@ try {
 
 Each successful phase emits a compact JSON result. The successful implementation check used `registry:2.8.3` and Cosign `v2.6.1`; its final verification ran in the lightweight replica image with `CATS_MODE=replica` and the publisher stopped. It verified both image architectures and one Helm chart, preserved the exact digest on retry, and passed the disconnected-source, immutable-signature fallback, standalone revocation, wrong-key and missing-child checks. This synthetic release test does not validate a real scanned/patched nginx approval workflow or Harbor replication. The temporary workspace contains only synthetic test data and ephemeral signing/TLS keys; retain it for inspection or remove that explicitly named workspace after review.
 
+## Repeating the real nginx acceptance workflow
+
+This procedure uses actual Discovery, scanner, patch, approval, publication and replica APIs. The [2026-11-05 acceptance record](real-nginx-acceptance-2026-11-05.json) records a completed run with `nginx:1.28.0-alpine3.21` on linux/amd64. The three drivers are `nginx_workflow_integration.py` (System A), `nginx_replica_acceptance.py` (exact receipt copying and verification helpers), and `nginx_replica_workflow.py` (System B); `nginx_acceptance_stack.py` provisions their isolated environment. Copying between the two `registry:2.8.3` Distribution registries exercises OCI transport, not Harbor replication. Qualify Harbor separately using the procedure above.
+
+The run scanned and published approval 2, completely pulled its original image through the replica, and patched the same immutable source. The patch scanner reported 194 fixable vulnerability findings before patching and 0 afterward. A fresh scan of that exact output produced successor approval 3. Both image and release signatures were verified. Failed scan, approval and patch attempts remain in the private runtime history.
+
+After copying the successor, all System A services and its registry were stopped. System B imported the successor and downloaded its complete 63,708,030-byte image graph. Independent checks recorded zero cached manifest rows and object links for the patched root before that first pull, then one manifest and 14 links afterward. The publisher registry returned HTTP 200 before shutdown and a connection failure from the replica afterward. The old root was denied, an Administrator-only account was denied override creation, and a service-scoped Local Cyber account created an indefinite exact-digest override. Its complete old-image pull generated 10 matching usage records. Revocation restored denial on the next request despite the warm cache; the successor remained accessible. Both evidence archives matched their signed hashes and read-only contexts. An unapproved release-document root also remained denied; that check does not claim coverage of a second superseded image.
+
+Run the following PowerShell commands from the repository root with Docker Compose and a host Python environment containing `requests`. Choose an existing scanner base image and a populated, current Trivy database volume; the example assumes Grype's real database is already in the scanner image. Add `--grype-source-volume` if Grype also needs a source volume. Source volumes are mounted read-only for copying into dedicated project volumes. A database check rejects missing scanner data.
+
+```powershell
+$repository = (Get-Location).Path
+$testRoot = Join-Path $env:TEMP ('cats-nginx-' + [guid]::NewGuid().ToString('N'))
+$project = 'cats-nginx-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+$python = 'python' # Or the repository virtual environment's Python executable.
+$fullImage = "${project}-full:local"
+$replicaImage = "${project}-replica:local"
+$scannerBase = 'catscan-base:local' # Replace with the available scanner base.
+$trivyCache = 'existing-fresh-trivy-cache' # Replace with a populated volume.
+function Invoke-NginxStep {
+    & $python @args
+    if ($LASTEXITCODE -ne 0) { throw 'Acceptance step failed; retain the workspace.' }
+}
+$provision = @('portal/tests/nginx_acceptance_stack.py', '--repo', $repository,
+    '--workspace', $testRoot, '--project', $project, '--full-image', $fullImage,
+    '--replica-image', $replicaImage, '--scanner-base', $scannerBase,
+    '--trivy-source-volume', $trivyCache)
+Invoke-NginxStep @provision # Plan only: no Docker calls or files created.
+Invoke-NginxStep @provision --provision --build
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py setup --workspace $testRoot
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py source --workspace $testRoot `
+    --image docker.io/library/nginx:1.28.0-alpine3.21
+```
+
+`--build` explicitly builds the full `cats-image/Dockerfile.all-in-one` image and the lightweight replica image. Omit it when supplying existing images built from the intended code. Provisioning starts Discovery and the real daemonless scanner, an isolated patch Docker daemon, separate PostgreSQL databases, and TLS registries. Portal ports bind only to loopback (defaults 18886/18887; replica proxy 15887); registry ports remain internal. Clients receive public CA files only. The setup phase configures signing, registry trust and scoped Cyber permissions. The source phase discovers, confirms, scans and approves nginx through normal routes, then requires a verified signed publication receipt.
+
+The isolated patch daemon explicitly enables `--feature containerd-snapshotter=true`, and its health check requires the containerd backend. Copa's Docker BuildKit path needs this image store for its merge/diff operations; classic `overlay2` is insufficient. This changes only the dedicated daemon, not the host Docker settings. Switching an existing test daemon's store retains its old data volume but hides the previous image cache, so a retry may pull images again. See [Copa's BuildKit requirements](https://project-copacetic.github.io/copacetic/website/v0.11.x/custom-address) and [Docker's containerd configuration](https://docs.docker.com/engine/storage/containerd/).
+
+Copy only completed receipts with the following runner. It uses the application code baked into the full image, mounts no private keys or credential files, preserves every referenced digest and signature graph, and exposes the release discovery tag last. Retain its JSON output and copied layouts.
+
+```powershell
+function Copy-NginxReceipt([string] $label) {
+    $copyRoot = Join-Path $testRoot ("copy-" + $label)
+    New-Item -ItemType Directory -Force -Path $copyRoot | Out-Null
+    docker run --rm --pull never --network "${project}_default" --entrypoint python `
+        -e PYTHONPATH=/app -e PYTHONDONTWRITEBYTECODE=1 -e SSL_CERT_FILE=/ca-bundle.crt `
+        --mount "type=bind,source=$repository/portal/tests/nginx_replica_acceptance.py,target=/copy-receipt.py,readonly" `
+        --mount "type=bind,source=$testRoot/$label-receipt.json,target=/receipt.json,readonly" `
+        --mount "type=bind,source=$testRoot/tls/ca-bundle.crt,target=/ca-bundle.crt,readonly" `
+        --mount "type=bind,source=$copyRoot,target=/copy" `
+        $fullImage /copy-receipt.py copy --receipt-file /receipt.json --root /copy `
+        --source-host publisher.test:5000 --target-host replica.test:5000 |
+        Set-Content -Encoding utf8 (Join-Path $testRoot "$label-copy.json")
+    if ($LASTEXITCODE -ne 0) { throw 'Receipt copy failed; retain its output.' }
+}
+Copy-NginxReceipt source
+Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase setup --workspace $testRoot
+Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase sync-source --workspace $testRoot
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py patch --workspace $testRoot
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py patched --workspace $testRoot
+Copy-NginxReceipt patched
+```
+
+Import and completely pull the original approved graph before publishing the successor. The patch phase derives its immutable source from the original receipt; it requires delivered, signed output and actual vulnerability removal. The patched phase rediscovers the immutable patched destination, creates a new distribution, scans it, and approves a successor. Do not substitute a mutable tag, manually constructed receipt or synthetic scanner evidence. The target registry must contain both actual receipt graphs before System A is stopped, but do not pull the patched image through the replica proxy yet.
+
+Stop System A and its publisher registry while retaining System B's portal, proxy, database and target registry. The replica driver probes System A's login URL for connection failure before successor synchronization and verification; HTTP errors or TLS failures do not count as disconnection. Retain the Compose service status as evidence that the internal publisher registry is also stopped.
+
+```powershell
+$compose = Join-Path $testRoot 'compose.json'
+docker compose -p $project -f $compose stop portal portal-control scan-worker discovery-worker `
+    remediation-worker export-worker patch-worker patch-daemon intelligence-init intelligence-db db publisher-registry
+if ($LASTEXITCODE -ne 0) { throw 'System A shutdown failed.' }
+docker compose -p $project -f $compose ps --all --format json |
+    Set-Content -Encoding utf8 (Join-Path $testRoot 'disconnected-services.json')
+# Only replica-db, replica-registry, replica-portal and replica-proxy should remain running.
+Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase sync-patched --workspace $testRoot
+Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase verify --workspace $testRoot
+```
+
+Verification requires old-root denial after supersession, the first complete patched-root pull with System A unavailable, signed evidence matching the source receipts, administrator/Cyber separation, an exact Local Cyber override, recorded override usage, unrelated-digest denial, immediate denial after override revocation despite a warm cache, and continued successor access. An interrupted first pull remains recorded; a later successful retry does not erase the initial attempt. For an independent cache check, query `oci_manifests` by the patched `digest` and `oci_object_links` by its `root_digest` in the replica database immediately before and after verification, without changing rows. Record a successful TLS `/v2/` probe to the publisher registry from the replica before shutdown and a connection failure afterward; an HTTP error or TLS failure does not establish disconnection. The acceptance record includes these queries, counts and timestamps separately from the driver report.
+
+Keep the workspace across failures. Once the underlying cause is corrected, rerun the relevant phase to resume its retained IDs. For an unsuccessful, unapproved scan, add `--retry-scan` to `source` or `patched`. For an unpublished failed approval, add `--replace-failed-publication`; this preserves the failed approval and starts a fresh scan/approval instead of rewriting history. For a failed or cancelled patch, use `patch --retry-patch`; the driver retains the failed job JSON and history before submitting a new patch. These recovery flags reject successful work rather than replacing it.
+
+```powershell
+# Use only the applicable recovery command after correcting the failure:
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py source --workspace $testRoot --retry-scan
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py patched --workspace $testRoot --replace-failed-publication
+Invoke-NginxStep portal/tests/nginx_workflow_integration.py patch --workspace $testRoot --retry-patch
+# After reviewing reports, stop only this script-owned project; retain data by default:
+Invoke-NginxStep portal/tests/nginx_acceptance_stack.py --repo $repository --workspace $testRoot --cleanup
+# Explicitly remove this project's data volumes only when no longer needed:
+Invoke-NginxStep portal/tests/nginx_acceptance_stack.py --repo $repository --workspace $testRoot --cleanup --remove-volumes
+```
+
+Review `source-*`/`patched-*` discovery, scan, readiness, approval and receipt JSON, `patch-result.json`, copy results, and `replica-acceptance.json`. Only a final replica report with `complete: true`, supported by the retained receipts and disconnection evidence, establishes a completed run. Preserve failed-scan/failed-approval files, `failed-patch-*` files and the historical IDs in `workflow-state.json`. Keep credentials, `stack.json`, `signer.json`, `replica-state.json`, `.env`, private keys and raw provisioning logs private. Cleanup requires the helper's ownership record, runs Compose `down` for that project only, never prunes unrelated resources, and leaves the workspace for review.
+
 ## Implementation validation
 
 The following checks ran on 2026-11-05. Suites overlap; their counts must not be added together as a unique-test total.
@@ -138,10 +234,12 @@ The following checks ran on 2026-11-05. Suites overlap; their counts must not be
 | Operating-mode boundary tests | 44 passed |
 | Focused frontend tests | 61 passed; type checking, lint and production build passed |
 | Real TLS OCI registries and Cosign, final verification in the replica image | Passed with the publisher stopped; explicit immutable signatures worked without mutable Cosign tags or referrer discovery |
+| Real nginx scan, patch, approval, replication and disconnected enforcement | Passed; 194 to 0 patch-scanner findings, fresh successor pull, signed evidence, scoped indefinite override and immediate warm-cache denial after revocation |
+| Regression tests for failures found by real nginx acceptance | 23 scanner lifecycle, 18 immutable identity/binding and 95 approval evidence/proposal tests passed |
 | Standalone replica Compose deployment and restart | PostgreSQL, portal and proxy healthy; login, sources and trust pins persisted; unauthorized/CSRF/mutation requests denied; disabled sources queued no jobs; no assessment or intelligence workers started |
 
 The PostgreSQL checks cover additive migration over an existing full-deployment schema, repeated migration, evidence foreign-key remapping, replacement of 23 out of 100 images, immutable history, replay/collision rejection, signed revocation, delayed revocation after a newer release, transaction rollback after projection failure, and preservation of frozen finding decisions. Run them with a dedicated test database URL in `CATS_TEST_REPLICA_POSTGRES_URL`, `PYTHONPATH=portal`, and `python -m pytest portal/tests/test_replica_postgres.py -q`. Each case creates and removes its own UUID-named schema; without that environment variable, these eight tests are explicitly skipped.
 
 Replica enforcement tests cover exact release/digest scope, unchanged artifacts shared across releases, superseded/expired/revoked denials, indefinite overrides, explicit acknowledgement for revoked releases, immediate override revocation, required usage auditing, permission boundaries, mutable-tag substitution, cache reauthorization, tampering and incomplete evidence. Current evidence views remain bound to the approved scan even when the captured history contains a newer unapproved scan. Captured risk/classification decisions remain stable after local policy, feeds or time change.
 
-These checks establish implementation behavior and OCI compatibility with the tested Distribution registries. They do not establish compatibility with an untested Harbor version or production replication rule. Before production rollout, complete the Harbor procedure above and the real service acceptance workflow: scan and approve nginx, replicate it, patch and approve a successor, verify old-digest denial, create and revoke a scoped local override, and repeat while the source environment is disconnected. Multiarchitecture payload verification does not qualify deployment of the current amd64 verifier image on an ARM host.
+These checks establish implementation behavior and OCI compatibility with the tested Distribution registries, including the completed real nginx workflow above. They do not establish compatibility with an untested Harbor version or production replication rule. Before production rollout, complete the Harbor procedure above in the intended environment. Multiarchitecture payload verification does not qualify deployment of the current amd64 verifier image on an ARM host.

@@ -1,0 +1,387 @@
+{
+  "format": "cats-real-nginx-acceptance-summary-v1",
+  "complete": true,
+  "completed_at": "2026-11-05T23:22:30.315321+00:00",
+  "baseline_commit": "16b608a",
+  "branch": "codex/oci-approved-release-replicas",
+  "scope": {
+    "image": "docker.io/library/nginx:1.28.0-alpine3.21",
+    "platform": "linux/amd64",
+    "registries": "two TLS Distribution registry:2.8.3 instances",
+    "replication": "exact-byte copy of actual signed publication receipts; discovery tag copied last",
+    "harbor_qualification": false,
+    "scanner_reports": "real Syft, Grype, Trivy and Dockle execution; no fabricated evidence"
+  },
+  "releases": {
+    "source": {
+      "reference": "docker.io/library/nginx:1.28.0-alpine3.21",
+      "discovery_id": "d3e787335a0d4974a1e879ee0b356538",
+      "distribution_id": "68d5a3904b9d2bac9e6557e904a6c62c",
+      "scan_id": "8a229738026841e596969f501355c2db",
+      "source_execution_id": 3,
+      "approval_id": 2,
+      "scan_summary": {
+        "sboms": 2,
+        "results": 8,
+        "skipped_images": 0,
+        "skipped_charts": 0,
+        "configuration_findings": 7,
+        "formats": []
+      },
+      "image_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+      "scan_identity_retained": true,
+      "release_oci_digest": "sha256:ce3b630631d544eca99109d85ceab3caccd4cded02f1ca80981978cc83999db5",
+      "signer_fingerprint": "sha256:daad1684e8109beb6ed9dbb61f90f63e0769c4f26bbb752c717806f21e27f7d8",
+      "publication_verification": "verified",
+      "signature_status": "verified",
+      "portable": {
+        "format": "cats-replica-release-v1",
+        "kind": "release",
+        "service_uuid": "nginx-replica-acceptance",
+        "release_uuid": "2",
+        "release_sequence": 2,
+        "supersedes_release_uuid": "1",
+        "service_version": "distribution-68d5a3904b9d2bac9e6557e904a6c62c",
+        "approved_at": "2026-11-05T23:07:42.443584+00:00",
+        "expires_at": "2027-02-03T23:07:42.443584+00:00",
+        "validity_days": 90,
+        "owning_group_id": 1,
+        "revoked_at": null
+      },
+      "replica_sync": {
+        "job_id": "10f62afbf78e4943bd99c179a265d6b1",
+        "result": {
+          "discovered": 1,
+          "activated": 0,
+          "revoked": 0,
+          "unchanged": 1,
+          "failed": 0
+        },
+        "release_id": 1,
+        "source_release_id": "2",
+        "manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+        "status": "active"
+      },
+      "evidence": {
+        "release_id": 1,
+        "manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+        "evidence_digest": "sha256:4613a698078480406193a9500dff27de95bfe3f688897d358d74e3d3f026cb82",
+        "evidence_bytes": 2051852,
+        "archive_entries": 10,
+        "read_only": true,
+        "original_evidence_equal": true
+      }
+    },
+    "patched": {
+      "reference": "publisher.test:5000/patched/nginx@sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "discovery_id": "7f0940ca80944a5b92750f96ce7dc541",
+      "distribution_id": "075e8af5c72f927cac5f58f91c760af8",
+      "scan_id": "164c3d81b73145aeb99fc48cdc27a520",
+      "source_execution_id": 4,
+      "approval_id": 3,
+      "scan_summary": {
+        "sboms": 2,
+        "results": 8,
+        "skipped_images": 0,
+        "skipped_charts": 0,
+        "configuration_findings": 7,
+        "formats": []
+      },
+      "image_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "scan_identity_retained": true,
+      "release_oci_digest": "sha256:6bdd4cfdb87d31cc2e08225ccde75afb10626d06f5c137c4b1c43fe440e58162",
+      "signer_fingerprint": "sha256:daad1684e8109beb6ed9dbb61f90f63e0769c4f26bbb752c717806f21e27f7d8",
+      "publication_verification": "verified",
+      "signature_status": "verified",
+      "portable": {
+        "format": "cats-replica-release-v1",
+        "kind": "release",
+        "service_uuid": "nginx-replica-acceptance",
+        "release_uuid": "3",
+        "release_sequence": 3,
+        "supersedes_release_uuid": "2",
+        "service_version": "distribution-075e8af5c72f927cac5f58f91c760af8",
+        "approved_at": "2026-11-05T23:15:02.085954+00:00",
+        "expires_at": "2027-02-03T23:15:02.085954+00:00",
+        "validity_days": 90,
+        "owning_group_id": 1,
+        "revoked_at": null
+      },
+      "replica_sync": {
+        "job_id": "11589f1f36d44d08aa88c859c9de8911",
+        "result": {
+          "discovered": 2,
+          "activated": 1,
+          "revoked": 0,
+          "unchanged": 1,
+          "failed": 0
+        },
+        "release_id": 2,
+        "source_release_id": "3",
+        "manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+        "status": "active"
+      },
+      "evidence": {
+        "release_id": 2,
+        "manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+        "evidence_digest": "sha256:60cfb8137e5ba6618dfaa167f6cd9e7cd6edcf4815fc26f3bf423fcb73acd280",
+        "evidence_bytes": 1986940,
+        "archive_entries": 10,
+        "read_only": true,
+        "original_evidence_equal": true
+      }
+    }
+  },
+  "patch": {
+    "job_id": "52fab68810a941ccab07fa66caa25609",
+    "source_image": "docker.io/library/nginx@sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+    "patch_status": "PATCHED",
+    "vulnerabilities_before": 194,
+    "vulnerabilities_after": 0,
+    "vulnerabilities_removed": 194,
+    "immutable_destination": "publisher.test:5000/patched/nginx@sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+    "delivery_status": "delivered",
+    "signature_status": "verified"
+  },
+  "source_pull": {
+    "release_id": 1,
+    "complete": true,
+    "verified_bytes": 21005326,
+    "graphs": [
+      {
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "manifest_count": 1,
+        "blob_count": 9,
+        "verified_bytes": 21005326,
+        "complete": true
+      }
+    ]
+  },
+  "disconnected_first_patched_pull": {
+    "release_id": 2,
+    "complete": true,
+    "verified_bytes": 63708030,
+    "graphs": [
+      {
+        "root_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+        "manifest_count": 1,
+        "blob_count": 13,
+        "verified_bytes": 63708030,
+        "complete": true
+      }
+    ],
+    "initial_attempt_at": "2026-11-05T23:21:07.405263+00:00"
+  },
+  "runtime_proofs": {
+    "online": {
+      "phase": "online",
+      "checked_at": "2026-11-05T23:10:26.668980+00:00",
+      "publisher_registry": {
+        "reachable": true,
+        "status": 200
+      },
+      "services": {
+        "db": "running",
+        "discovery-worker": "running",
+        "export-worker": "running",
+        "intelligence-db": "running",
+        "intelligence-init": "exited",
+        "patch-daemon": "running",
+        "patch-worker": "running",
+        "portal": "running",
+        "portal-control": "running",
+        "publisher-registry": "running",
+        "remediation-worker": "running",
+        "replica-db": "running",
+        "replica-portal": "running",
+        "replica-proxy": "running",
+        "replica-registry": "running",
+        "scan-worker": "running"
+      }
+    },
+    "offline": {
+      "phase": "offline",
+      "checked_at": "2026-11-05T23:20:31.110592+00:00",
+      "publisher_registry": {
+        "reachable": false,
+        "error_type": "ConnectionError"
+      },
+      "services": {
+        "db": "exited",
+        "discovery-worker": "exited",
+        "export-worker": "exited",
+        "intelligence-db": "exited",
+        "intelligence-init": "exited",
+        "patch-daemon": "exited",
+        "patch-worker": "exited",
+        "portal": "exited",
+        "portal-control": "exited",
+        "publisher-registry": "exited",
+        "remediation-worker": "exited",
+        "replica-db": "running",
+        "replica-portal": "running",
+        "replica-proxy": "running",
+        "replica-registry": "running",
+        "scan-worker": "exited"
+      }
+    },
+    "cold": {
+      "phase": "cold",
+      "checked_at": "2026-11-05T23:20:54.969310+00:00",
+      "patched_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "cache": {
+        "manifest_rows": 0,
+        "object_links": 0
+      }
+    },
+    "warm": {
+      "phase": "warm",
+      "checked_at": "2026-11-05T23:22:30.409821+00:00",
+      "patched_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "cache": {
+        "manifest_rows": 1,
+        "object_links": 14
+      }
+    }
+  },
+  "cache_check_queries": [
+    "SELECT count(*) FROM oci_manifests WHERE digest=:patched_digest",
+    "SELECT count(*) FROM oci_object_links WHERE root_digest=:patched_digest"
+  ],
+  "override": {
+    "administrator_denied": true,
+    "id": 3,
+    "release_id": 1,
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": null,
+    "created_at": "2026-11-05T23:22:21.633837+00:00",
+    "full_pull": {
+      "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+      "complete": true,
+      "manifest_count": 1,
+      "blob_count": 9,
+      "verified_bytes": 21005326
+    },
+    "matching_usage_count": 10,
+    "revoked_at": "2026-11-05T23:22:23.470938+00:00",
+    "final_status": "revoked",
+    "warm_cache_denial": {
+      "allowed": false,
+      "reason": "release_superseded",
+      "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+      "decision_at": "2026-11-05T23:22:23.514496+00:00"
+    },
+    "unapproved_release_document_denial": {
+      "requested_artifact_digest": "sha256:ce3b630631d544eca99109d85ceab3caccd4cded02f1ca80981978cc83999db5",
+      "allowed": false,
+      "denial_stage": "replica_repository_membership",
+      "message": "Artifact does not belong to this verified replica repository"
+    },
+    "successor_still_allowed": {
+      "release_id": 2,
+      "complete": true,
+      "verified_bytes": 63708030,
+      "graphs": [
+        {
+          "root_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+          "manifest_count": 1,
+          "blob_count": 13,
+          "verified_bytes": 63708030,
+          "complete": true
+        }
+      ]
+    }
+  },
+  "disconnection_probes": {
+    "publisher_unavailable_before_successor_sync": [
+      {
+        "url": "http://127.0.0.1:18886/login",
+        "unavailable": true
+      }
+    ],
+    "publisher_unavailable_before_verification": [
+      {
+        "url": "http://127.0.0.1:18886/login",
+        "unavailable": true
+      }
+    ],
+    "publisher_unavailable_after_verification": [
+      {
+        "url": "http://127.0.0.1:18886/login",
+        "unavailable": true
+      }
+    ]
+  },
+  "repairs": [
+    {
+      "area": "scanner",
+      "failure": "Skopeo staged layers in read-only /var/tmp",
+      "fix": "Explicit private job temporary directory"
+    },
+    {
+      "area": "approval evidence",
+      "failure": "First distribution approval required an unrelated current-service baseline",
+      "fix": "Keep selected evidence mandatory; sign explicit availability of supplemental service context"
+    },
+    {
+      "area": "scanner identity",
+      "failure": "Docker archive reconstructed a manifest digest absent from the source registry",
+      "fix": "Preserve original OCI manifest for inventory; derive configuration scanner archive from the acquired bytes"
+    },
+    {
+      "area": "acceptance setup",
+      "failure": "Classic Docker store lacked Copa BuildKit MergeOp/DiffOp support",
+      "fix": "Enable and health-check isolated containerd image store"
+    },
+    {
+      "area": "acceptance assertions",
+      "failure": "Receipt path redaction and pre-policy membership denial differed from test assumptions",
+      "fix": "Bind full signed manifest to exact public projection and immutable release root; check each denial contract"
+    }
+  ],
+  "retained_history": {
+    "failed_scans": [
+      "60a9bca5c582460a979a1d070d22c941"
+    ],
+    "failed_approvals": [
+      {
+        "approval_id": 1,
+        "scan_id": "f34339bff13340cfb9a1040749d34a95",
+        "source_execution_id": 2,
+        "diagnostic": {
+          "stage": "Transferring and verifying artifact 1 of 1",
+          "cause": "The registry image, manifest or repository was not found.",
+          "http_status": 404
+        }
+      }
+    ],
+    "failed_patches": [
+      "8d43cfd467e24f039cb70bcb8e2e7427"
+    ],
+    "revoked_overrides_from_interrupted_checks": [
+      1,
+      2
+    ]
+  },
+  "regressions": {
+    "scanner_shell_lifecycle": 23,
+    "immutable_identity_and_binding": 18,
+    "approval_evidence_and_proposal_assessments": 95,
+    "total_distinct_focused_tests": 136
+  },
+  "private_evidence_sha256": {
+    "source-receipt.json": "f09bf2aa2e71a2dce89330f113911a3bf0965468b60a22bc5cb3acb8a338afd0",
+    "patched-receipt.json": "15dabd806ca3d7dda296ce85d60b9014b91afeb09bd24d76bf03bdf5dc24d40c",
+    "patch-result.json": "9a8c0983c7d93b970067fdc9b8edc27175e4e808d55b9c98bbc3b5d4882472d8",
+    "replica-acceptance.json": "f9674684ba4ab5daaf1df311c4cf6aa088848cd41f95491b7768db191d7849ea",
+    "runtime-proofs.json": "ea264e621ba433531467435298bfaca55ead85a73b03321d9efcdce7d53966d7"
+  },
+  "cleanup": {
+    "all_acceptance_services_stopped": true,
+    "database_and_registry_volumes_retained": true,
+    "private_runtime_evidence_retained_outside_repository": true,
+    "unrelated_docker_resources_unchanged": true
+  }
+}

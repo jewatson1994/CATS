@@ -29,13 +29,19 @@ def retained_reports(images):
 
 
 @pytest.fixture
-def distribution_case(tmp_path, monkeypatch):
+def distribution_case(tmp_path, monkeypatch, request):
     from app import cyber_approvals, main
     from app.discovery_models import DiscoveryConfirmation, DiscoveryInventory
     from app.durable_jobs import DurableJob
-    from app.models import Role, User, UserRoleAssignment
+    from app.models import Group, Role, User, UserRoleAssignment
 
-    seeded()
+    if getattr(request, 'param', None) == 'no-baseline':
+        with SessionLocal() as db:
+            db.add(Service(service_key='payments-service', name='Payments Service',
+                           groups=[Group(name='Test group')]))
+            db.commit()
+    else:
+        seeded()
     client = new_client()
     token = csrf(client)
     monkeypatch.setattr(main, 'PUBLIC_JOB_ROOT', tmp_path / 'scans')
@@ -180,6 +186,51 @@ def test_distribution_scan_through_signed_publication(distribution_case, publica
     manifest = json.loads((output / 'release-manifest.json').read_bytes())
     assert manifest['snapshot']['distribution'] == frozen
     assert [item['source_reference'] for item in manifest['artifacts']] == ['source.example/app@' + pin]
+
+
+@pytest.mark.parametrize('distribution_case', ['no-baseline'], indirect=True)
+def test_first_distribution_approval_preserves_missing_service_context(distribution_case):
+    from hashlib import sha256
+    from app import cyber_approvals
+    from app.service_evidence import current_execution
+
+    case = distribution_case
+    job_id = case.scan([(SELECTED, D)])
+    params = {'distribution_id': case.selected['id']}
+    ready = case.client.get(case.ready, params=params).json()
+    assert ready['ready'], ready['blockers']
+    created = case.client.post('/api/cyber-approvals', headers=case.headers,
+        json={'service_key': 'payments-service', **params,
+              'expected_source_execution_id': ready['source_execution_id']})
+    assert created.status_code == 200, created.text
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        assert current_execution(db, service) is None
+        assert service.current_version_id is None
+        row = db.get(cyber_approvals.CyberApproval, created.json()['id'])
+        snapshot = row.snapshot
+        assert snapshot['source_execution_id'] == ready['source_execution_id']
+        assert snapshot['evidence_scope'] == 'service-distribution-scan'
+        with ZipFile(snapshot['evidence']['path']) as archive:
+            assert json.loads(archive.read('source-scan.json'))['execution_id'] == 'public:' + job_id
+            assert {item['image'] for item in json.loads(archive.read('sbom-components.json'))} == {SELECTED}
+            for name in ('raw-scanner-outputs.zip', 'sboms.zip'):
+                with ZipFile(BytesIO(archive.read(name))) as reports:
+                    manifest = json.loads(reports.read('manifest.json'))
+                    assert manifest['execution_id'] == 'public:' + job_id
+                    assert [item['image'] for item in manifest['entries']] == [SELECTED]
+            context = snapshot['service_context_evidence']
+            assert context['evidence_scope'] == 'current-service-context-not-selected-scan'
+            content = archive.read(context['archive_name'])
+            assert context['digest'] == 'sha256:' + sha256(content).hexdigest()
+            assert json.loads(archive.read('frozen-snapshot.json'))['service_context_evidence'] == context
+            missing = [item for item in context['entries'] if item['status'] == 'unavailable']
+            assert {item['name'] for item in missing} == {
+                'diagrams.zip', 'sbom-components.json', 'raw-scanner-outputs.zip', 'sboms.zip'}
+            with ZipFile(BytesIO(content)) as contextual:
+                for item in missing:
+                    assert item['name'] not in contextual.namelist()
+                    assert contextual.read(item['archive_name']).decode() == item['reason'] + '\n'
 
 
 @pytest.mark.parametrize('images,extra_report_image', [

@@ -523,14 +523,19 @@ def freeze(db, service, auth, readiness, folder: Path):
         raise ValueError('Export All evidence unavailable: ' + ', '.join(unavailable))
     context_evidence = None
     if readiness.get('distribution') or readiness.get('proposal_id') is not None:
-        # Distribution evidence describes the selected deployment. Include the
-        # existing complete service export as context, with its scope explicit.
+        # The selected scan is the approval evidence. A newly discovered service
+        # may have no current-service baseline; retain the contextual export's
+        # explicit unavailable entries instead of requiring an unrelated scan.
+        # Integrity failures still propagate from write_all.
         context_evidence = folder / 'service-context-all.zip'
         with context_evidence.open('wb') as output:
             context_export = write_all(output, service, db, auth)
-        unavailable = [item['name'] for item in context_export.get('entries', []) if item.get('status') != 'included']
-        if unavailable:
-            raise ValueError('Service context Export All evidence unavailable: ' + ', '.join(unavailable))
+        snapshot['service_context_evidence'] = {
+            'archive_name': 'service-context/all.zip',
+            'digest': file_digest(context_evidence),
+            'evidence_scope': 'current-service-context-not-selected-scan',
+            'entries': context_export.get('entries', []),
+        }
     if record:
         shutil.copyfile(readiness['candidate_path'], folder / 'candidate.zip')
         snapshot['candidate'] = {'path': str((folder / 'candidate.zip').resolve()), 'digest': file_digest(folder / 'candidate.zip')}

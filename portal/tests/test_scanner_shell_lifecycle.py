@@ -169,6 +169,97 @@ def test_helper_runtime_failure_is_fatal(bash, scan_fixture):
     assert "helper-runtime-error" in (output / "configuration_scan.log").read_text()
 
 
+@pytest.mark.parametrize("worker_tmp", [True, False])
+@pytest.mark.parametrize("failed_stage", ["none", "acquire", "convert", "identity"])
+def test_registry_acquisition_preserves_identity_and_stages_locally(bash, tmp_path, worker_tmp, failed_stage):
+    (tmp_path / "service.yml").write_text("service: nginx\n")
+    (tmp_path / "images.yml").write_text("images: [nginx:1.27.0-alpine]\n")
+    # Exercise the real phase, replacing network acquisition and inventory only.
+    # Skopeo's default is /var/tmp; TMPDIR alone does not select its layer staging.
+    wrapper = r'''
+export PATH="/usr/bin:/bin:$PATH"
+export CATS_IMAGE_SOURCE=daemonless CI_PROJECT_DIR="$PWD"
+export DOCKER_CONFIG="$PWD/acquisition credentials" FAILED_STAGE="$3"
+mkdir -p "$DOCKER_CONFIG"
+printf '{}\n' > "$DOCKER_CONFIG/config.json"
+if [ "$2" = worker ]; then
+  export TMPDIR="$PWD/job temporary files"
+else
+  unset TMPDIR
+fi
+skopeo() {
+  printf '%s\n' "$@" >> skopeo-args.txt
+  printf '\n' >> skopeo-args.txt
+  [ "$1" = --tmpdir ] && [ "$3" = copy ] && [ -d "$2" ] || return 23
+  printf 'acquired layer\n' > "$2/acquired-layer"
+  if [[ "${@: -2:1}" == docker://* ]]; then
+    [ "$FAILED_STAGE" != acquire ] || return 24
+  else
+    [ "$FAILED_STAGE" != convert ] || return 25
+  fi
+}
+yq() {
+  [ "$1" = -e ] || printf '["nginx:1.27.0-alpine"]\n'
+}
+jq() {
+  if [ "$1" = -er ]; then
+    cat >/dev/null
+    printf 'nginx@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+  else
+    cat >/dev/null
+    printf 'nginx:1.27.0-alpine\n'
+  fi
+}
+python3() {
+  if [[ "$1" == */scanner-action.py ]]; then
+    printf '%s\n' "$@" > inventory-args.txt
+    printf '{"source":{"metadata":{}}}\n' > "$4"
+  elif [[ "$1" == */sbom_identity.py ]]; then
+    [ "$FAILED_STAGE" != identity ] || return 26
+    printf '{"image_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n'
+  fi
+}
+source "$1"
+'''
+    result = subprocess.run(
+        [bash, "-c", wrapper, "scanner-test", str(SCRIPTS / "generate-sboms.sh"),
+         "worker" if worker_tmp else "standalone", failed_stage], cwd=tmp_path,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = [call.splitlines() for call in (tmp_path / "skopeo-args.txt").read_text().strip().split("\n\n")]
+    arguments = calls[0]
+    assert arguments[0] == "--tmpdir"
+    assert arguments[2] == "copy"
+    assert arguments[3] == "--preserve-digests"
+    assert arguments[4] == "--src-authfile"
+    assert arguments[-2] == "docker://nginx:1.27.0-alpine"
+    assert arguments[-1].startswith("oci-archive:")
+    staging = tmp_path / ("job temporary files" if worker_tmp else ".cats-images/tmp")
+    assert (staging / "acquired-layer").read_text().strip() == "acquired layer"
+    if failed_stage == "acquire":
+        assert len(calls) == 1
+    else:
+        assert len(calls) == 2
+        # Configuration tools consume a local derivative of these exact bytes.
+        # No credentials, registry transport, or second tag resolution occurs.
+        assert calls[1][:3] == arguments[:3]
+        assert calls[1][3] == arguments[-1]
+        assert calls[1][4].startswith("docker-archive:")
+        assert len(calls[1]) == 5
+    if failed_stage != "none":
+        assert (tmp_path / "skipped_images.txt").read_text().strip() == "nginx:1.27.0-alpine"
+        assert not (tmp_path / "image-sources.tsv").read_text()
+        assert not list((tmp_path / "sboms").glob("*.json"))
+        return
+    inventory = (tmp_path / "inventory-args.txt").read_text().splitlines()
+    assert inventory[2] == arguments[-1].removeprefix("oci-archive:")
+    assert inventory[-2:] == ["--source-type", "oci-archive"]
+    assert (tmp_path / "sboms/nginx-1.27.0-alpine.digest").read_text().strip() == "nginx@sha256:" + "a" * 64
+    assert not (tmp_path / "skipped_images.txt").read_text().strip()
+    assert "nginx:1.27.0-alpine\tdocker-archive:" in (tmp_path / "image-sources.tsv").read_text()
+
+
 def test_tracked_runtime_shell_scripts_have_lf_and_valid_syntax(bash):
     tracked = subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, capture_output=True,
                              check=True).stdout.decode().split("\0")

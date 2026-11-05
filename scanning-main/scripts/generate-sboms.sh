@@ -25,11 +25,18 @@ if [ "$CATS_IMAGE_SOURCE" = docker ]; then
 fi
 : > image-sources.tsv
 
-# Record the immutable reference Syft resolved, matching what `docker image
-# inspect` reported before: a registry image is pinned to its repository
-# digest, while an archive (which has no registry digest) records its image ID.
+# Registry inventory retains the original manifest bytes in an OCI archive.
+# Verify those bytes and the config before recording their registry digest.
+# Uploaded archives have no registry provenance and retain their image ID.
 record_daemonless_digest() {
   local image="$1" safe="$2" source="$3"
+  if [[ "$source" == registry:* ]]; then
+    python3 "${SCRIPT_DIRECTORY}/sbom_identity.py" "sboms/${safe}.json" "$image" \
+      | jq -er --arg image "$image" 'select(.image_digest | type == "string") |
+          ($image | sub("@.*$"; "") | sub(":[^/:]*$"; "")) + "@" + .image_digest' \
+      > "sboms/${safe}.digest"
+    return
+  fi
   jq -r --arg image "$image" --arg source "$source" '
     (.source.metadata // {}) as $m
     | if ($source | startswith("registry:") | not) and ($m.imageID // "") != "" then $m.imageID
@@ -40,29 +47,49 @@ record_daemonless_digest() {
 }
 
 generate_daemonless_sbom() {
-  local image="$1" safe="$2" source mapping archive
+  local image="$1" safe="$2" source identity_source configuration_source mapping archive configuration_archive acquire_tmp
   local -a acquire
   source="registry:${image}"
   if [ -s image-archive-map.tsv ]; then
     mapping="$(awk -F '\t' -v image="$image" '$1 == image { print $2 ":" $3; exit }' image-archive-map.tsv)"
     [ -n "$mapping" ] && source="$mapping"
   fi
+  identity_source="$source"
+  configuration_source="$source"
   if [[ "$source" == registry:* ]]; then
-    mkdir -p .cats-images
-    archive="$(pwd)/.cats-images/$(printf '%s' "$image" | sha256sum | cut -c1-24).tar"
+    acquire_tmp="${TMPDIR:-$(pwd)/.cats-images/tmp}"
+    mkdir -p .cats-images "$acquire_tmp"
+    configuration_archive="$(pwd)/.cats-images/$(printf '%s' "$image" | sha256sum | cut -c1-24).tar"
+    archive="${configuration_archive%.tar}.oci.tar"
     # Registry credentials belong only to acquisition. Offline scanner actions
     # receive an acquired archive, never this auth file or registry environment.
-    acquire=(skopeo copy)
+    # Skopeo defaults to /var/tmp even when TMPDIR is set. Keep layer
+    # staging inside the worker's private job directory on a read-only root.
+    # Docker archives discard the registry manifest; Syft reconstructs a new
+    # digest for them. Preserve the selected platform's original manifest for
+    # inventory and approval rather than approving a reconstructed manifest or
+    # the multi-platform index (whose other images were never scanned).
+    acquire=(skopeo --tmpdir "$acquire_tmp" copy --preserve-digests)
     if [ -f "${DOCKER_CONFIG:-${HOME}/.docker}/config.json" ]; then
       acquire+=(--src-authfile "${DOCKER_CONFIG:-${HOME}/.docker}/config.json")
     fi
-    if ! "${acquire[@]}" "docker://${source#registry:}" "docker-archive:${archive}"; then
+    if ! "${acquire[@]}" "docker://${source#registry:}" "oci-archive:${archive}"; then
       echo "WARNING: Failed to acquire $image"
       echo "$image" >> skipped_images.txt
       rm -f "$archive"
       return 1
     fi
-    source="docker-archive:${archive}"
+    source="oci-archive:${archive}"
+    # Trivy and Dockle need a Docker archive. Derive it only from the acquired
+    # bytes, without registry access or credentials; never scan a mutable tag
+    # a second time. The derivative's manifest is not used as image identity.
+    if ! skopeo --tmpdir "$acquire_tmp" copy "$source" "docker-archive:${configuration_archive}"; then
+      echo "WARNING: Failed to materialize acquired image configuration for $image"
+      echo "$image" >> skipped_images.txt
+      rm -f "$archive" "$configuration_archive"
+      return 1
+    fi
+    configuration_source="docker-archive:${configuration_archive}"
   fi
   echo "Reading acquired image without a Docker daemon: ${image}"
   if ! python3 "${SCRIPT_DIRECTORY}/scanner-action.py" inventory "${source#*:}" \
@@ -72,8 +99,13 @@ generate_daemonless_sbom() {
     rm -f "sboms/${safe}.json"
     return 1
   fi
-  record_daemonless_digest "$image" "$safe" "$source" || true
-  printf '%s\t%s\n' "$image" "$source" >> image-sources.tsv
+  if ! record_daemonless_digest "$image" "$safe" "$identity_source"; then
+    echo "WARNING: Failed to verify acquired image identity for $image"
+    echo "$image" >> skipped_images.txt
+    rm -f "sboms/${safe}.json" "sboms/${safe}.digest"
+    return 1
+  fi
+  printf '%s\t%s\n' "$image" "$configuration_source" >> image-sources.tsv
 }
 
 serialize_sbom_formats() {
