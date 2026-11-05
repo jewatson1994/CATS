@@ -45,6 +45,10 @@ export function AdminTabs({data, selected}: {data: PageData; selected: string}) 
     {key: 'watchlist', href: '/admin/dependency-watchlist', label: 'Dependency Watchlist', allowed: can(data, 'config.manage')},
     {key: 'release-destinations', href: '/admin/approved-release-destinations', label: 'Release Destinations', allowed: can(data, 'release.destination.manage')},
   ];
+  if (data.cats_mode === 'replica') {
+    items.unshift({key: 'replica', href: '/admin/replica', label: 'Replica synchronization', allowed: can(data, 'replica.admin') || can(data, 'replica.sync')});
+    for (const item of items) if (['general', 'compliance', 'vulnerability', 'risk', 'watchlist'].includes(item.key)) item.allowed = false;
+  }
   return <AdminNav items={items} selected={selected}/>;
 }
 export function Heading({title, description}: {title: string; description?: string}) {

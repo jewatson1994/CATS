@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.replica.example
 !**/.env.example
 *.env.txt
 

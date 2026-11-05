@@ -2,6 +2,7 @@ import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/reac
 import {afterEach, expect, it, vi} from 'vitest';
 import {requestJson} from '../api';
 import {OCIDistribution} from './oci_distribution';
+import {OperatingMode} from '../operatingMode';
 vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.resetAllMocks(); vi.restoreAllMocks();});
 it('creates scoped expiring machine access with CSRF and dismisses the one-time password', async () => {
@@ -69,4 +70,27 @@ it('tests a concrete project repository and identifies project-wide machine gran
   const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
   expect(call?.[0]).toBe('/api/oci/repositories/7/test');
   expect(JSON.parse(String(call?.[1]?.body))).toEqual({repository: 'approved/team/api', reference: 'v2'});
+});
+
+
+it('configures local replica release expiry without scan policy', async () => {
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (options?.method === 'POST') return {} as any;
+    if (url === '/api/oci/upstreams') return [{id: 4, name: 'Local registry', enabled: true}] as any;
+    if (url === '/api/oci/status/overview') return {services: [{id: 1, name: 'Mission'}]} as any;
+    return [] as any;
+  });
+  render(<OperatingMode.Provider value="replica"><OCIDistribution data={{csrf_token: 'csrf'}}/></OperatingMode.Provider>);
+  await screen.findByText('Local registry');
+  fireEvent.click(screen.getByRole('button', {name: 'Add mapping'}));
+  expect(screen.queryByLabelText('Maximum scan age (days)')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Public repository'), {target: {value: 'replica/mission/image'}});
+  fireEvent.change(screen.getByLabelText('Upstream repository'), {target: {value: 'approved/image'}});
+  fireEvent.change(screen.getByLabelText('Upstream'), {target: {value: '4'}});
+  fireEvent.change(screen.getByLabelText('Service'), {target: {value: '1'}});
+  fireEvent.change(screen.getByLabelText('Local maximum release age (days)'), {target: {value: '14'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+  await screen.findByText('Distribution settings saved.');
+  const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
+  expect(JSON.parse(String(call?.[1]?.body)).policy).toEqual({max_approval_age_days: 14});
 });

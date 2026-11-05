@@ -1,0 +1,89 @@
+# Standalone deployment: do not combine this with the full compose.yaml.
+# docker compose --env-file .env.replica -f compose.replica.yaml up -d --build
+name: cats-replica
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cats}
+      POSTGRES_USER: ${POSTGRES_USER:-cats}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - replica_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  portal:
+    image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
+    build:
+      context: ./portal
+      dockerfile: Dockerfile.replica
+    environment: &replica_environment
+      CATS_MODE: replica
+      CATS_ENV: production
+      CATS_DEV_AUTH_BYPASS: "false"
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_BOOTSTRAP_USERNAME: ${CATS_BOOTSTRAP_USERNAME:-admin}
+      CATS_BOOTSTRAP_PASSWORD: ${CATS_BOOTSTRAP_PASSWORD:?Set CATS_BOOTSTRAP_PASSWORD}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+      SESSION_COOKIE_SECURE: "true"
+      CATS_OIDC_ENABLED: ${CATS_OIDC_ENABLED:-false}
+      CATS_OIDC_ISSUER_URL: ${CATS_OIDC_ISSUER_URL:-}
+      CATS_OIDC_CLIENT_ID: ${CATS_OIDC_CLIENT_ID:-}
+      CATS_OIDC_CLIENT_SECRET: ${CATS_OIDC_CLIENT_SECRET:-}
+      CATS_OIDC_REDIRECT_URI: ${CATS_OIDC_REDIRECT_URI:-}
+      CATS_APPROVED_RELEASE_ROOT: /var/lib/cats/releases
+      CATS_REPLICA_STORAGE: /var/lib/cats/replica
+      CATS_OCI_CACHE_DIR: /var/cache/cats-oci
+      CATS_OCI_CACHE_MAX_BYTES: ${CATS_OCI_CACHE_MAX_BYTES:-10737418240}
+      CATS_DEPLOYMENT_VALIDATION_ENABLED: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - replica_evidence:/var/lib/cats
+    ports:
+      - "127.0.0.1:${CATS_PORT:-8080}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  oci-proxy:
+    image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
+    command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers"]
+    environment: *replica_environment
+    volumes:
+      - replica_evidence:/var/lib/cats:ro
+      - replica_cache:/var/cache/cats-oci
+    ports:
+      - "127.0.0.1:${CATS_OCI_PORT:-5000}:5000"
+    depends_on:
+      db:
+        condition: service_healthy
+      portal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 6
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+volumes:
+  replica_db:
+  replica_evidence:
+  replica_cache:

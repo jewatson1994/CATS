@@ -1,11 +1,13 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {requestJson, type PageData} from '../api';
+import {useReplica} from '../operatingMode';
 type Row = Record<string, any>;
 const localDate = (value: string | number) => {const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);};
 type Kind = 'upstreams' | 'repositories' | 'principals';
 const isProjectMapping = (repository?: string) => Boolean(repository?.endsWith('/*'));
 
 function RepositoryFields({row, upstreams, services}: {row: Row; upstreams: Row[]; services: Row[]}) {
+  const replica = useReplica();
   const [publicName, setPublicName] = useState<string>(row.public_repository || '');
   const project = isProjectMapping(publicName);
   const fixedProject = row.id && isProjectMapping(row.public_repository);
@@ -16,13 +18,14 @@ function RepositoryFields({row, upstreams, services}: {row: Row; upstreams: Row[
     <label>Upstream<select name="upstream_id" required disabled={fixedProject} defaultValue={row.upstream_id || ''}><option value="">Select upstream</option>{upstreams.map(upstream => <option key={upstream.id} value={upstream.id}>{upstream.name}</option>)}</select></label>
     {fixedProject && <p>To change either project or the upstream registry, create a mapping with a new public name and grant access to it.</p>}
     {!project && <label>Service<select name="service_id" required defaultValue={row.service_id || ''}><option value="">Select service</option>{services.map(service => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label>}
-    {['max_scan_age_days', 'max_approval_age_days'].map(key => <label key={key}>{key === 'max_scan_age_days' ? 'Maximum scan age (days)' : 'Maximum approval age (days)'}<input type="number" min="1" max="3650" name={key} defaultValue={row.policy?.[key]}/></label>)}
-    <p>Optional age limits only shorten existing compliance and approval validity.</p>
+    {(replica ? ['max_approval_age_days'] : ['max_scan_age_days', 'max_approval_age_days']).map(key => <label key={key}>{key === 'max_scan_age_days' ? 'Maximum scan age (days)' : replica ? 'Local maximum release age (days)' : 'Maximum approval age (days)'}<input type="number" min="1" max="3650" name={key} defaultValue={row.policy?.[key]}/></label>)}
+    <p>{replica ? 'This local limit can shorten release validity. The signed approval expiry always applies; synchronization failures never extend it.' : 'Optional age limits only shorten existing compliance and approval validity.'}</p>
     <label><input type="checkbox" name="suspended" defaultChecked={row.suspended}/>Suspend distribution</label>
   </>;
 }
 
 export function OCIDistribution({data}: {data: PageData}) {
+  const replica = useReplica();
   const [rows, setRows] = useState<Record<Kind, Row[]>>({upstreams: [], repositories: [], principals: []});
   const [status, setStatus] = useState<Row>({}), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [editing, setEditing] = useState<{kind: Kind; row: Row} | null>(null), [busy, setBusy] = useState(false), [secret, setSecret] = useState('');
@@ -58,7 +61,7 @@ export function OCIDistribution({data}: {data: PageData}) {
       body.service_id = form.has('service_id') ? Number(form.get('service_id')) : null;
       body.upstream_id = form.has('upstream_id') ? Number(form.get('upstream_id')) : row.upstream_id;
       body.suspended = form.has('suspended'); body.policy = {};
-      for (const key of ['max_scan_age_days', 'max_approval_age_days']) if (form.get(key)) body.policy[key] = Number(form.get(key));
+      for (const key of (replica ? ['max_approval_age_days'] : ['max_scan_age_days', 'max_approval_age_days'])) if (form.get(key)) body.policy[key] = Number(form.get(key));
     } else {
       body.name = form.get('name'); body.repository_ids = form.getAll('repository_ids').map(Number);
       if (form.get('expires_at')) body.expires_at = new Date(String(form.get('expires_at'))).toISOString();
@@ -66,7 +69,7 @@ export function OCIDistribution({data}: {data: PageData}) {
     if (await action(kind + (row.id ? '/' + row.id : ''), row.id ? 'PUT' : 'POST', body)) setEditing(null);
   }
   return <section className="panel padded"><h2>Approved artifact distribution</h2>
-    <p>Map individual repositories or whole Harbor projects. Pulls require exact digest evidence, a current Cyber approval and current service compliance.</p>
+    <p>{replica ? 'Map local OCI repositories to imported services. Pulls require trusted exact digest evidence and a valid imported approval or a specifically scoped local Cyber override.' : 'Map individual repositories or whole Harbor projects. Pulls require exact digest evidence, a current Cyber approval and current service compliance.'}</p>
     <p>{status.available_repositories ?? '—'} available mappings · {status.active_principals ?? '—'} active machine accounts. {status.proxy_health}</p>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {secret && <div role="status"><p>Save this machine password now. It is shown once; use the machine account name as the registry login username.</p><code>{secret}</code><button type="button" onClick={() => setSecret('')}>Dismiss password</button></div>}

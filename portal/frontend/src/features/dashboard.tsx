@@ -1,3 +1,4 @@
+import {useReplica} from '../operatingMode';
 import {useRef} from 'react';
 import {LifecycleTabs, lifecycleLabels, ServiceSecurityMatrix} from '../components/ServiceSecurityMatrix';
 import {useDashboard} from '../hooks/useDashboard';
@@ -14,11 +15,12 @@ export function Page({data: pageData}: {data: any}) {
 }
 
 function Dashboard({data}: {data: any}) {
+  const replica = useReplica();
   const dialog = useRef<HTMLDialogElement>(null);
   const lifecycle = data.lifecycle || 'active';
   const labels = lifecycleLabels[lifecycle] || lifecycleLabels.active;
   const groups = data.stage_groups || [];
-  const canStage = lifecycle === 'active' && groups.length > 0;
+  const canStage = !replica && lifecycle === 'active' && groups.length > 0;
   const preparing = Number(data.posture_preparing || 0);
   const pending = preparing > 0 && !data.rows?.length && !Number(data.total_count || 0);
   return <>

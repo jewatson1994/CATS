@@ -1,6 +1,7 @@
 import {useEffect, useRef, type KeyboardEvent, type ReactNode} from 'react';
 import {can, type PageData} from '../api';
 import {Icon, type IconName} from './ui';
+import {OperatingMode} from '../operatingMode';
 
 export const PRODUCT_NAME = 'Continuous Assessment & Tracking System';
 
@@ -79,6 +80,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
   const header = useRef<HTMLElement>(null);
   const about = useRef<HTMLDialogElement>(null);
   const user = data.current_user;
+  const replica = data.cats_mode === 'replica';
   const theme = user?.theme || 'cats';
   useEffect(() => {document.body.dataset.theme = theme;}, [theme]);
   useEffect(() => {
@@ -108,17 +110,17 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
   const icon = ['blue', 'red', 'gray', 'light'].includes(theme) ? `/static/cats-icon-${theme}.png` : '/static/cats-icon.png';
   const version = data.cats_deployed_version;
   const pending = Number(data.pending_request_count || 0);
-  const adminHref = data.may_manage_accounts || can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration'
+  const adminHref = replica && (can(data, 'replica.admin') || can(data, 'replica.sync')) ? '/admin/replica' : data.may_manage_accounts || can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration'
     : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : '/admin/approved-release-destinations';
-  const mayAdminister = data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy;
-  return <><a className="skip-link" href="#main-content">Skip to main content</a><header ref={header} className="app-header">
+  const mayAdminister = can(data, 'replica.admin') || can(data, 'replica.sync') || data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy;
+  return <OperatingMode.Provider value={replica ? 'replica' : 'full'}><a className="skip-link" href="#main-content">Skip to main content</a><header ref={header} className="app-header">
     <a className="brand" href={user ? '/' : '/home'} title={`CATS — ${PRODUCT_NAME}${version ? ` · ${version}` : ''}`}>
       <img className="brand-icon" src={icon} alt=""/><span className="brand-name">CATS</span><span className="sr-only">, {PRODUCT_NAME}</span>
       {version && <small className="cats-version"><span className="sr-only">version </span>{version}</small>}</a>
     {user ? <nav className="account-nav" aria-label="Primary navigation">
-      {primaryNav.map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
-      <NavigationGroup label="Cybersecurity" sections={cyberNav} path={path}/>
-      <NavigationGroup label="More" sections={moreNav} path={path}/>
+      {primaryNav.filter(([href]) => !replica || href === '/').map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
+      <NavigationGroup label="Cybersecurity" sections={replica ? cyberNav.map(section => ({...section, items: section.items.filter(([href]) => href !== '/cyber-approvals')})) : cyberNav} path={path}/>
+      <NavigationGroup label="More" sections={replica ? moreNav.map(section => ({...section, items: section.items.filter(([href]) => !['/sbom', '/requests'].includes(href)).map(item => item[0] === '/remediations' ? [item[0], 'POA&Ms and mitigations', item[2], item[3], 'Imported governance evidence'] as NavItem : item)})).filter(section => section.items.length) : moreNav} path={path}/>
       <span className="header-utilities">
         <details className="notification-menu"><summary aria-label={pending ? `Notifications (${pending} pending)` : 'Notifications'} title="Notifications"><Icon name="bell"/>
           {!!pending && <span className="notification-badge" aria-hidden="true">{pending > 99 ? '99+' : pending}</span>}
@@ -144,7 +146,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
             <button className="link-button menu-row menu-row-signout"><Icon name="logout"/><span>Sign out</span></button></form>
         </div></details>
       </span>
-    </nav> : <nav className="public-nav" aria-label="Primary navigation">{publicNav.map(([href, label]) =>
+    </nav> : <nav className="public-nav" aria-label="Primary navigation">{publicNav.filter(([href]) => !replica || ['/home', '/login'].includes(href)).map(([href, label]) =>
       <a key={href} href={href} aria-current={path === href ? 'page' : undefined}>{label}</a>)}</nav>}
   </header>
   <dialog ref={about} className="review-dialog about-dialog" aria-labelledby="about-cats-title">
@@ -152,5 +154,5 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     <dl className="kv-grid kv-cols-1"><div><dt>Deployed version</dt><dd>{version || <span className="muted">Not reported</span>}</dd></div></dl>
     <div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => about.current?.close?.()}>Close</button></div>
   </dialog>
-  <main id="main-content" tabIndex={-1}>{children}</main></>;
+  <main id="main-content" tabIndex={-1}>{replica && <aside className="panel padded" aria-label="Replica mode"><strong>Read-only replica</strong> · Imported evidence and approvals are authoritative. Local Cyber exceptions do not change compliance or approval.</aside>}{children}</main></OperatingMode.Provider>;
 }

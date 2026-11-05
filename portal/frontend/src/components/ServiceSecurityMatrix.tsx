@@ -1,3 +1,4 @@
+import {useReplica} from '../operatingMode';
 import {useMemo, type ReactNode} from 'react';
 import {DataGrid, type GridColumn} from './DataGrid';
 import {FilterChips, FilterDrawer, hrefWithout, QuickSearch, type ActiveFilter} from './FilterDrawer';
@@ -54,6 +55,7 @@ export function LifecycleTabs({data}: {data: any}) {
 }
 
 export function ServiceSecurityMatrix({data}: {data: any}) {
+  const replica = useReplica();
   const lifecycle = data.lifecycle || 'active';
   const base = useMemo(() => {
     const url = new URL(String(data.pagination_base || `/?lifecycle=${lifecycle}`), 'http://cats.invalid');
@@ -124,7 +126,7 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
         {select('attention', 'Attention', ['kev', 'watchlist', 'poam', 'missing', 'kind'], attentionLabels)}
       </FilterDrawer>
     </>}
-    trailingActions={<a className="secondary-button" href="/exports/services.xlsx"><Icon name="download"/>Export Excel</a>}
+    trailingActions={!replica && <a className="secondary-button" href="/exports/services.xlsx"><Icon name="download"/>Export Excel</a>}
     above={<FilterChips filters={filters} clearHref={`/?lifecycle=${lifecycle}`}/>}
     columns={columns} rows={rows} rowKey={row => row.service.service_key}
     // The backend pages this dataset in a fixed order and offers no sort

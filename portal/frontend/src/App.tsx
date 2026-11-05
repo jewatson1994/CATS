@@ -20,6 +20,7 @@ import {Page as ServiceArtifacts} from './features/service-artifacts';
 
 /** Infrequent or administrative pages load as separate local chunks. */
 const loaders: Record<string, () => Promise<any>> = {
+  './features/replica': () => import('./features/replica'),
   './features/patch_campaigns': () => import('./features/patch_campaigns'),
   './features/artifact_catalog': () => import('./features/artifact_catalog'),
   './features/risk_intelligence': () => import('./features/risk_intelligence'),
@@ -70,6 +71,9 @@ export function lazyComponent<P extends object>(module: string, name: string,
 }
 const lazyModules = new Map<ComponentType<any>, () => Promise<unknown>>();
 const lazyPage = (module: string, name: string) => lazyComponent<{data: PageData}>(module, name);
+const ReplicaAdmin = lazyPage('./features/replica', 'Page');
+const ReplicaReleases = lazyPage('./features/replica', 'Releases');
+const CyberOverrides = lazyPage('./features/replica', 'Overrides');
 const PatchCampaigns = lazyPage('./features/patch_campaigns', 'Page');
 const ArtifactCatalog = lazyPage('./features/artifact_catalog', 'Page');
 const ArtifactRecommendations = lazyPage('./features/artifact_catalog', 'Recommendations');
@@ -125,6 +129,7 @@ const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-po
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
 export const isPageRoute = (path: string) => routes.has(path) || [
+  /^\/admin\/replica$/, /^\/services\/[^/]+\/cyber-overrides$/,
   /^\/services\/[^/]+\/(history|definitions|exchange|artifact-recommendations)$/,
   /^\/services\/[^/]+$/, /^\/services\/[^/]+\/(findings|watchlist)\/\d+$/,
   /^\/services\/[^/]+\/remediations\/[^/]+$/, /^\/poam\/services\/[^/]+$/, /^\/poam\/entries\/\d+$/,
@@ -132,7 +137,8 @@ export const isPageRoute = (path: string) => routes.has(path) || [
   /^\/admin\/(configuration|general-policy)\/export-templates\/(poam|ppsm|assets)$/,
 ].some(pattern => pattern.test(path));
 const pages: Record<string, ComponentType<{data: PageData}>> = {
-  cyber_approvals: CyberApprovals, approved_releases: ApprovedReleases, approved_release_destinations: ApprovedReleaseDestinations,
+  replica: ReplicaAdmin, cyber_overrides: CyberOverrides,
+  cyber_approvals: CyberApprovals, approved_releases: ({data}) => data.cats_mode === 'replica' ? <ReplicaReleases data={data}/> : <ApprovedReleases data={data}/>, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
   patch_campaigns: PatchCampaigns, artifact_catalog: ArtifactCatalog, artifact_recommendations: ArtifactRecommendations,
   self_service: SelfService, discovery: Discovery, patch: Patch, cybersecurity: Cybersecurity,
@@ -156,6 +162,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
 
 /** Readable browser tab titles: page name, then the service it concerns, then CATS. */
 const pageNames: Record<string, string> = {
+  replica: 'Replica administration', cyber_overrides: 'Cyber overrides',
   dashboard: 'Services', home: 'Overview', login: 'Sign in', password: 'Change password', appearance: 'Appearance',
   cybersecurity: 'Cybersecurity dashboard', cyber_approvals: 'Approvals', approved_releases: 'Approved Releases',
   approved_release_destinations: 'Release Destinations', patch_campaigns: 'Patch campaigns', artifact_catalog: 'Artifact catalog',
