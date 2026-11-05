@@ -141,6 +141,10 @@ def services(q: str = Query('', max_length=120), after: int = 0, group_id: int |
 @router.get('/services/{key}')
 def service_risk(key: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     item = service(db, auth, key)
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_views import risk_service
+        return risk_service(db, item)
     latest = checked(risk.latest_assessment, db, item.id)
     policy, provenance = checked(risk.resolve_policy, db, item.id)
     history = db.scalars(select(RiskAssessment).options(load_only(RiskAssessment.id,RiskAssessment.policy_id,RiskAssessment.as_of,RiskAssessment.valid_until,RiskAssessment.summary)).where(RiskAssessment.service_id == item.id).order_by(RiskAssessment.id.desc()).limit(20)).all()
@@ -350,12 +354,34 @@ def document(identity:int,auth:AuthContext=Depends(require_user),db=Depends(get_
 
 @router.get('/assessments/{identity}')
 def assessment(identity:int,auth:AuthContext=Depends(require_user),db=Depends(get_db)):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_models import ReplicaEvidenceRecord, ReplicaRelease
+        from .replica_views import captured_assessment
+        item = db.get(ReplicaEvidenceRecord, identity)
+        release = db.get(ReplicaRelease, item.release_id) if item else None
+        if release is None or item.kind != 'risk_assessments' or not auth.has('service.view', release.service_id):
+            raise HTTPException(404, 'Assessment not found')
+        return captured_assessment(db, item)
     item=db.get(RiskAssessment,identity)
     if item is None or not auth.has('service.view',item.service_id): raise HTTPException(404,'Assessment not found')
     return risk.serialize(item)
 
 @router.get('/assessments/{identity}/documents/{document_id}')
 def assessment_document(identity: int, document_id: int, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_models import ReplicaEvidenceRecord, ReplicaRelease
+        from .replica_views import captured_assessment
+        item = db.get(ReplicaEvidenceRecord, identity)
+        release = db.get(ReplicaRelease, item.release_id) if item else None
+        if release is None or item.kind != 'risk_assessments' or not auth.has('service.view', release.service_id):
+            raise HTTPException(404, 'Assessment not found')
+        captured_assessment(db, item)
+        document = next((r for r in release.evidence_state.get('extension', {}).get('vex_documents', []) if r['id'] == document_id), None)
+        if document is None:
+            raise HTTPException(404, 'Original document was not retained in this approved release')
+        return document
     assessment = db.get(RiskAssessment, identity)
     if assessment is None or not auth.has('service.view', assessment.service_id):
         raise HTTPException(404, 'Assessment not found')
@@ -473,6 +499,10 @@ def native_vex_preview(after: int = 0, auth: AuthContext = Depends(require_user)
 @router.get('/services/{key}/native-vex')
 def native_vex_evidence(key: str, after: int = 0, finding_id: int | None = None, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     item = service(db, auth, key)
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_views import native_vex
+        return native_vex(db, item.id, after, finding_id)
     from .native_vex_models import VexDispositionService, VexDispositionEvaluation, VexDispositionPolicy, VexObservationDisposition
     from .native_vex import current_evaluation
     state = db.get(VexDispositionService, item.id)

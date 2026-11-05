@@ -389,6 +389,12 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
 
 
 PERMISSIONS = {
+    "replica.admin": "Administer local replica sources and trust",
+    "replica.sync": "Synchronize approved releases from local registries",
+    "evidence.view": "View imported authoritative release evidence",
+    "local_override.create": "Accept mission risk and create local Cyber overrides",
+    "local_override.revoke": "Revoke local Cyber enforcement overrides",
+    "local_override.view_audit": "View local Cyber enforcement override usage",
     "risk.recommend": "Record informational ISSM risk recommendations",
     "risk.decide": "Record informational delegated risk decisions",
     "risk.authorize": "Record informational AO risk decisions",
@@ -439,10 +445,12 @@ PERMISSIONS = {
 }
 
 SYSTEM_ROLES = {
-    "Administrator": [permission for permission in PERMISSIONS if permission != "scan.ingest"],
-    "Assessor": ["service.view", "service.export", "audit.view"],
-    "Service Manager": ["approval.request", "service.view", "service.export", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
+    "Administrator": [permission for permission in PERMISSIONS if permission != "scan.ingest" and not permission.startswith("local_override.")],
+    "Local Cyber": ["service.view", "service.export", "evidence.view", "audit.view", "local_override.create", "local_override.revoke", "local_override.view_audit"],
+    "Assessor": ["service.view", "service.export", "evidence.view", "audit.view"],
+    "Service Manager": ["approval.request", "service.view", "service.export", "evidence.view", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
     "Cybersecurity": [
+        "evidence.view", "local_override.create", "local_override.revoke", "local_override.view_audit",
         "approval.request", "approval.decide", "risk.recommend",
         "validator.view", "validator.create", "validator.provision", "validator.test",
         "validator.self_test", "validator.rotate_certificate", "validator.upgrade", "validator.remove",
@@ -457,7 +465,7 @@ SYSTEM_ROLES = {
 
 # These operate on shared application state, never one service. config.manage
 # has a separate can_manage_group boundary for explicitly group-owned settings.
-APPLICATION_PERMISSIONS = {"release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
+APPLICATION_PERMISSIONS = {"replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
     permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
 PBKDF2_ITERATIONS = 600_000
@@ -559,6 +567,9 @@ class AuthContext:
         return effective
 
     def has(self, permission: str, service_id: int | None = None) -> bool:
+        from .operating_mode import permission_available
+        if not permission_available(permission):
+            return False
         for assignment in self.effective_assignments:
             if permission == "scan.ingest" and assignment.role.name == "Administrator":
                 continue
@@ -576,6 +587,9 @@ class AuthContext:
         return False
 
     def accessible_service_ids(self, permission: str) -> set[int] | None:
+        from .operating_mode import permission_available
+        if not permission_available(permission):
+            return set()
         matching = [a for a in self.effective_assignments if not (permission == "scan.ingest" and a.role.name == "Administrator") and permission in (a.role.permissions or [])]
         if any(a.service_id is None and a.group_id is None for a in matching):
             return None

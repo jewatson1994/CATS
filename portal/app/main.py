@@ -129,6 +129,8 @@ from . import vex_models, risk_models, intelligence_models, native_vex_models, d
 from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
+from . import replica_models, local_cyber_overrides, replica_routes
+from .service_evidence import view_executions
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .service_image_patches import image_patch_history
 from .remediation_delivery import DeliveryAttempt, attempt_dto, retained_candidate, deliver, checked_values_files
@@ -428,6 +430,12 @@ def _start_read_model_maintenance():
 
 @asynccontextmanager
 async def app_lifespan(_app: FastAPI):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_sync import replica_lifespan
+        async with replica_lifespan():
+            yield
+        return
     # Compose runs imports in a dedicated process. Legacy single-database
     # installations retain their startup behavior until configured to split.
     if not os.getenv('INTELLIGENCE_DATABASE_URL'):
@@ -475,6 +483,8 @@ app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
 app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
+app.include_router(replica_routes.router)
+app.include_router(local_cyber_overrides.router)
 app.include_router(oci_lifecycle.router)
 app.include_router(artifact_catalog_routes.router)
 app.include_router(patch_campaigns.router)
@@ -495,6 +505,8 @@ app.add_middleware(UploadLimitMiddleware)
 # second instance would replace that context and report zero queries.
 app.add_middleware(PerformanceMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
+from .operating_mode import ReplicaModeMiddleware
+app.add_middleware(ReplicaModeMiddleware)
 snapshot_logger = logging.getLogger("cats.snapshot")
 PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))))
 
@@ -1524,6 +1536,10 @@ def remediation_enabled(db: Session) -> bool:
 
 def configuration_for_service(db: Session, service: Service) -> dict[str, str]:
     """Apply the sole owning group's policies; legacy conflicts remain readable."""
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_findings import configuration
+        return configuration(db, service.id, CONFIG_DEFAULTS)
     configuration = get_configuration(db, None)
     for group_id in ([service.groups[0].id] if len(service.groups) == 1 else []):
         for setting in db.scalars(select(PortalSetting).where(PortalSetting.group_id == group_id)):
@@ -1786,6 +1802,9 @@ def workbook_response(workbook: Workbook, filename: str):
 
 def service_view(service: Service, now: datetime, configuration: dict[str, str] | None = None):
     configuration = configuration or CONFIG_DEFAULTS
+    from .replica_findings import evidence_time
+    now = evidence_time(configuration, now)
+    captured_findings = configuration.get('_replica_findings')
     overdue_days = max(1, int(configuration.get("overdue_days", "90")))
     warning_days = max(1, int(configuration.get("warning_days", "14")))
     active_all = [f for f in service.findings if f.active]
@@ -1811,8 +1830,9 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
         elif exception and now < aware(exception.expires_at) <= warning_cutoff:
             warning_items.append({"type": "Exception", "item": finding.cve, "reason": "Exception expires soon", "due": aware(exception.expires_at),
                                   "href": f"/services/{service.service_key}/findings/{finding.id}"})
-    current_executions = [e for e in service.executions if
-                          service.current_version_id is None or e.service_version_id == service.current_version_id]
+    current_executions = [e for e in view_executions(service.executions, configuration) if
+                          '_replica_execution_id' in configuration or service.current_version_id is None
+                          or e.service_version_id == service.current_version_id]
     last_execution = max((aware(e.scanned_at) for e in current_executions), default=None)
     latest_execution = max(current_executions, key=lambda e: (aware(e.scanned_at), e.id), default=None)
     version = (service.current_version.version if service.current_version else None) or service.manual_version or (latest_execution.raw_payload.get("service", {}).get("version") if latest_execution else None)
@@ -1877,7 +1897,11 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
     for finding in active_all:
         observation = max(finding.observations, key=lambda item: item.id, default=None)
         evidence = observation.evidence if observation else {}
-        kev, epss = observation_risk(evidence, risk_metadata(finding.cve))
+        if captured_findings is not None:
+            captured = captured_findings.get(finding.id, {})
+            kev, epss = captured.get('kev', False), captured.get('epss')
+        else:
+            kev, epss = observation_risk(evidence, risk_metadata(finding.cve))
         epss = epss if epss is not None else 0
         risk_metadata_by_finding[finding.id] = {"kev": kev, "epss": epss}
         if compliance_mode != "raw" and configuration.get("kev_enabled") == "true" and kev:
@@ -1900,6 +1924,9 @@ def service_view(service: Service, now: datetime, configuration: dict[str, str] 
                 if severity in {"any", finding.severity.lower()} and epss >= threshold:
                     risk_eligible.add(finding.id)
                     break
+    if captured_findings is not None:
+        risk_eligible = {fid for fid, row in captured_findings.items() if row['eligible']}
+        risk_findings = {fid for fid, row in captured_findings.items() if row['noncompliant']}
     from sqlalchemy.orm import object_session
     from .native_vex import excluded_finding_ids
     vex_excluded_ids = set(getattr(service, '_native_vex_excluded_ids', ()))
@@ -2371,6 +2398,10 @@ def _risk_finding_expressions(
     ``overdue`` replaces the overdue predicate (for example ``true()``: "would
     be non-compliant once overdue"); every other rule is unchanged.
     """
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_findings import predicate
+        return predicate(Finding.id, 'eligible'), predicate(Finding.id, 'noncompliant'), False
     override = overdue
     from .risk_sql import current_epss_match, current_kev, evidence_score, evidence_truth, scoped_epss
     from .sql_sets import member_of
@@ -2616,6 +2647,28 @@ def service_overview_rows(db: Session, auth: AuthContext, now: datetime, configu
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/admin/replica", response_class=HTMLResponse)
+def replica_admin_page(request: Request, auth: AuthContext = Depends(require_user)):
+    from .operating_mode import is_replica
+    if not is_replica():
+        raise HTTPException(404, "Replica mode is not enabled")
+    if not (auth.has("replica.admin") or auth.has("replica.sync")):
+        raise HTTPException(403, "Permission denied")
+    return templates.TemplateResponse(request, "replica.html", page_context(auth))
+
+
+@app.get("/services/{service_key}/cyber-overrides", response_class=HTMLResponse)
+def cyber_override_page(service_key: str, request: Request, db: Session = Depends(get_db),
+                        auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    from .operating_mode import is_replica
+    if not is_replica():
+        raise HTTPException(404, "Replica mode is not enabled")
+    service = db.scalar(select(Service).where(Service.service_key == service_key))
+    if service is None:
+        raise HTTPException(404, "Service not found")
+    return templates.TemplateResponse(request, "cyber_overrides.html", page_context(auth, service=service))
 
 
 @app.get("/login", response_class=HTMLResponse)
@@ -7806,12 +7859,17 @@ def simplified_members(service_key: str, group_id: str, page: int = 1, page_size
         raise HTTPException(403)
     if page_size not in {50, 100, 250}:
         raise HTTPException(422, detail='Page size must be 50, 100, or 250')
-    latest = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+    configuration = configuration_for_service(db, service)
+    if '_replica_execution_id' in configuration:
+        latest = configuration['_replica_execution_id']
+    else:
+        latest = db.scalar(select(Execution.id).where(Execution.service_id == service.id)
+            .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
     from .simplified_queries import member_page
+    from .replica_findings import evidence_time
     try:
-        return member_page(db, service, SimpleNamespace(id=latest) if latest else None, utcnow(),
-            configuration_for_service(db, service), group_id, page=page, page_size=page_size,
+        return member_page(db, service, SimpleNamespace(id=latest) if latest else None, evidence_time(configuration, utcnow()),
+            configuration, group_id, page=page, page_size=page_size,
             state=finding_state, finding_type=finding_type, query=q, resource=resource,
             severities=[part.strip() for value in severity for part in value.split(',') if part.strip()])
     except ValueError as exc:
@@ -7899,6 +7957,8 @@ def service_detail(
         simplified = False
         overview = False
     configuration = configuration_for_service(db, service)
+    from .replica_findings import evidence_time
+    now = evidence_time(configuration, now)
     if narrow_findings and simplified:
         if page_size not in {50, 100, 250}:
             raise HTTPException(422, detail="Page size must be 50, 100, or 250")
@@ -7907,7 +7967,7 @@ def service_detail(
         from .exchange_routes import history_version_choices
         view, service, _ = prepare_service_tab_view(db, service, now, configuration, service_view,
                                                    header_only=True)
-        latest_execution = max(service.executions,
+        latest_execution = max(view_executions(service.executions, configuration),
             key=lambda item: (aware(item.scanned_at), item.id), default=None)
         severity = [part.strip() for value in severity for part in value.split(',') if part.strip()]
         try:
@@ -7954,7 +8014,7 @@ def service_detail(
         from .validation_queries import latest_run
         severity = [part.strip() for value in severity for part in value.split(",") if part.strip()]
         view, service, current_scan = prepare_service_tab_view(db, service, now, configuration, service_view, header_only=True)
-        latest_execution = max(service.executions, key=lambda item: (aware(item.scanned_at), item.id), default=None)
+        latest_execution = max(view_executions(service.executions, configuration), key=lambda item: (aware(item.scanned_at), item.id), default=None)
         if finding_state == "warnings":
             other_items = [item for item in view["warning_items"] if item.get("type") not in {"CVE", "Exception"}]
             if current_scan:
@@ -8093,8 +8153,9 @@ def service_detail(
         view, service, latest_scan = prepare_findings_view(db, service, now, configuration, service_view)
     else:
         view = service_view(service, now, configuration)
-    latest_scan = max((item for item in service.executions if
-                       service.current_version_id is None or item.service_version_id == service.current_version_id),
+    latest_scan = max((item for item in view_executions(service.executions, configuration) if
+                       '_replica_execution_id' in configuration or service.current_version_id is None
+                       or item.service_version_id == service.current_version_id),
                       key=lambda item: (aware(item.scanned_at), item.id), default=None)
     if latest_scan and not (dependencies_only or artifacts_only or remediations_only or activity_only or architecture_only or validation_only or poam_only):
         matches = db.scalars(select(DependencyWatchlistMatch).where(
@@ -8141,7 +8202,7 @@ def service_detail(
                                      execution_payload, latest_working_revision_id)
         from .service_counts import overview_finding_counts
         from .validation_queries import applicable_run, runtime_identity
-        execution_rows = execution_metadata(db, service.id)
+        execution_rows = view_executions(execution_metadata(db, service.id), configuration)
         latest_execution = execution_rows[0] if execution_rows else None
         from .evidence_reads import normalized_overview
         # Reads only the rendered subset of the scan; normalization is content-keyed.
@@ -8200,11 +8261,11 @@ def service_detail(
                                else (validation_records[0] if validation_records else None))
             history_rows, validation_history = history_page(db, service.id, validation_page)
             history_views = [dict(vars(item)) for item in history_rows]
-            eligible_execution = original_helm_execution(execution_metadata(db, service.id))
+            eligible_execution = original_helm_execution(view_executions(execution_metadata(db, service.id), configuration))
         else:
             selected_record = next((item for item in validation_records if item.run_key == validation_run), None) if validation_run else (validation_records[0] if validation_records else None)
             history_views = [deployment_validation_view(item) for item in validation_records]
-            eligible_execution = latest_eligible_helm_execution(service.executions)
+            eligible_execution = latest_eligible_helm_execution(view_executions(service.executions, configuration))
         if validation_run and not selected_record:
             raise HTTPException(404, detail="Deployment Validation run not found")
         validation_unavailable_reason = None
@@ -8270,7 +8331,7 @@ def service_detail(
         from .evidence_reads import architecture_execution as select_architecture_execution
         from .evidence_reads import execution_metadata, execution_payload, latest_working_revision_id
         from .validation_queries import applicable_run, runtime_identity
-        latest_execution = select_architecture_execution(execution_metadata(db, service.id))
+        latest_execution = select_architecture_execution(view_executions(execution_metadata(db, service.id), configuration))
         from .evidence_reads import architecture_metadata
         meta = architecture_metadata(db, latest_execution)
         architecture_state = (
@@ -8311,7 +8372,7 @@ def service_detail(
             now=now, archive_pending=archive_pending,
         ))
     if architecture:
-        latest_execution = latest_architecture_execution(service.executions)
+        latest_execution = latest_architecture_execution(view_executions(service.executions, configuration))
         payload = dict(latest_execution.raw_payload) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         if latest_execution:
             payload["complete"] = latest_execution.complete
@@ -8346,7 +8407,7 @@ def service_detail(
         from .artifact_tab_queries import load_artifact_workspace
         from .evidence_reads import execution_metadata, original_helm_execution
         # Summary metadata selects the original; only its Helm sources are read (untracked).
-        latest_execution = original_helm_execution(execution_metadata(db, service.id))
+        latest_execution = original_helm_execution(view_executions(execution_metadata(db, service.id), configuration))
         original_sources = db.scalar(select(Execution.raw_payload["helm_source_files"]).where(
             Execution.id == latest_execution.id)) if latest_execution else None
         original_files = dict(original_sources or {}) if isinstance(original_sources, dict) else {}
@@ -8561,7 +8622,7 @@ def service_detail(
         findings, displayed_policy_findings = result["findings"], result["policy_findings"]
         total_items, total_pages, page = result["total_items"], result["total_pages"], result["page"]
         displayed_items = findings
-    latest_execution = max(service.executions, key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
+    latest_execution = max(view_executions(service.executions, configuration), key=lambda execution: (aware(execution.scanned_at), execution.id), default=None)
     if overview:
         raw_overview = latest_execution.raw_payload.get("service_overview", {}) if latest_execution and isinstance(latest_execution.raw_payload, dict) else {}
         # Copy: normalization must never edit the tracked, retained evidence.
@@ -8581,7 +8642,7 @@ def service_detail(
         removable_keys = _current_removable_evidence_keys(latest_payload, latest_execution.complete) if latest_execution else set()
         for row in overview_data["missing_evidence"]:
             row["removable"] = _missing_evidence_key(row) in removable_keys
-        architecture_execution = latest_architecture_execution(service.executions)
+        architecture_execution = latest_architecture_execution(view_executions(service.executions, configuration))
         architecture_payload = dict(architecture_execution.raw_payload) if architecture_execution and isinstance(architecture_execution.raw_payload, dict) else {}
         architecture_overview = architecture_payload.get("service_overview") if isinstance(architecture_payload.get("service_overview"), dict) else {}
         declared_resources = architecture_overview.get("rendered_resources") or architecture_payload.get("rendered_resources") or []
@@ -9321,14 +9382,19 @@ def finding_detail(
         raise HTTPException(404)
     now = utcnow()
     configuration = configuration_for_service(db, finding.service)
+    from .replica_findings import evidence_time
+    now = evidence_time(configuration, now)
     risk = service_view(finding.service, now, configuration)["risk_metadata"].get(finding.id, {})
-    latest_execution = max(finding.service.executions, key=lambda execution: aware(execution.scanned_at), default=None)
+    latest_execution = max(view_executions(finding.service.executions, configuration), key=lambda execution: aware(execution.scanned_at), default=None)
     current_observations = [
         observation for observation in finding.observations
         if finding.active and latest_execution and observation.execution_id == latest_execution.id
     ]
+    evidence_observations = [observation for observation in finding.observations
+        if '_replica_execution_id' not in configuration or
+        (latest_execution and observation.execution_id == latest_execution.id)]
     evidence_observation = current_observations[0] if current_observations else (
-        max(finding.observations, key=lambda observation: observation.id, default=None)
+        max(evidence_observations, key=lambda observation: observation.id, default=None)
     )
     evidence = evidence_observation.evidence if evidence_observation else {}
     history = sorted(finding.observations, key=lambda observation: observation.id, reverse=True)

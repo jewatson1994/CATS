@@ -21,6 +21,16 @@ class AuthorizationDecision:
     reason: str
     approval_id: int | None = None
     execution_id: int | None = None
+    service_id: int | None = None
+    artifact_digest: str | None = None
+    release_id: int | None = None
+    override_id: int | None = None
+    authorization_source: str | None = None
+    approval_status: str | None = None
+    decision_at: str | None = None
+    override_url: str | None = None
+    override_status: str | None = None
+    effective_policy: dict | None = None
 
 
 def _artifact_matches(snapshot, repository, digest, *, published=False):
@@ -74,6 +84,10 @@ def _published_artifact_matches(approval, repository, digest):
 
 def candidate_service_ids(db, mapping, digest):
     """Locate potential owners of concrete upstream bytes; authorize each pull separately."""
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_authorization import candidate_service_ids as replica_candidates
+        return replica_candidates(db, mapping, digest)
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
         return set()
     repository = urlsplit(mapping.upstream.endpoint).netloc + '/' + mapping.upstream_repository
@@ -208,6 +222,11 @@ def _distribution_service(db, service, execution):
 
 def project_tag_allowed(db, mapping, tag, digest, now=None):
     """A revision-managed tag must sign this exact route and its current upstream bytes."""
+    from .operating_mode import is_replica
+    if is_replica():
+        # Tag resolution is never an authorization source on a replica. The
+        # resolved manifest digest still must belong to its exact local release.
+        return authorize(db, mapping, digest, now).allowed
     try:
         binding = release_revisions.resolve_distribution_tag(db, mapping, tag, now)
     except ValueError:
@@ -298,6 +317,10 @@ def authorize(db, mapping, digest, now=None):
     Vulnerability thresholds, deadlines and exceptions always come from the
     existing service policy; mapping policy cannot weaken those rules.
     """
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_authorization import authorize as replica_authorize
+        return replica_authorize(db, mapping, digest, now)
     now = utc(now or datetime.now(timezone.utc))
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
         return AuthorizationDecision(False, 'invalid_digest')

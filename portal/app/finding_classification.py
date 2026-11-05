@@ -451,6 +451,10 @@ def status(db, service_id, configuration, now, latest_id=...):
 def is_current(db, service_id, configuration, now, latest_id=...) -> bool:
     """Read-only variant of ``ensure_current``: never writes; schedules a
     background refresh when the rows are not current."""
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_findings import available
+        return available(db, service_id)
     if not enabled():
         return False
     state, _ = status(db, service_id, configuration, now, latest_id)
@@ -468,6 +472,9 @@ def ensure_current(db, service_id, configuration, now, latest_id=...) -> bool:
     commits during the inline refresh leaves its change-log row, so the next
     read refreshes again; this read is served as of the refresh.
     """
+    from .operating_mode import is_replica
+    if is_replica():
+        return is_current(db, service_id, configuration, now, latest_id)
     if not enabled():
         return False
     from .service_posture import background_enabled
@@ -507,6 +514,9 @@ def severity_choices(db, service_id):
 
 def current_services(db, service_ids, configurations, now) -> set[int]:
     """Services whose rows are current, checked without refreshing anything."""
+    from .operating_mode import is_replica
+    if is_replica():
+        return {sid for sid in service_ids if is_current(db, sid, configurations[sid], now)}
     if not enabled() or not service_ids:
         return set()
     cache = db.info.setdefault(_CACHE, {})
@@ -530,6 +540,11 @@ def predicates(configurations, now):
     distributes over the live OR of per-rule terms in three-valued logic); it
     does not include the exception test, exactly like the live expression.
     """
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_findings import predicate
+        return (predicate(FC.finding_id, 'eligible'), predicate(FC.finding_id, 'excepted'),
+                predicate(FC.finding_id, 'noncompliant'))
     from .main import _raw_overdue_expression
     from .native_vex import finding_excluded
     applicable = or_(FC.excepted.is_(True), ~finding_excluded(FC.finding_id, now))
@@ -545,6 +560,9 @@ _queue_lock = Lock()
 
 def schedule(bind, service_ids):
     """Background refresh (single worker, coalesced); never blocks a request."""
+    from .operating_mode import is_replica
+    if is_replica():
+        return None
     from .database import background_bind
     from .service_posture import background_enabled
     if not enabled() or not background_enabled(bind):

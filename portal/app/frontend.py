@@ -30,6 +30,9 @@ MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.h
                             "admin.html", "staging.html", "configuration.html", "validators.html", "audit.html", "general_policy.html", "evidence_policy.html", "workflow_policy.html", "compliance.html", "compliance_frameworks.html", "dependency_watchlist.html"})
 
 
+MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html"}
+
+
 def _field(value, name, default=None):
     return value.get(name, default) if isinstance(value, Mapping) else getattr(value, name, default)
 
@@ -157,17 +160,19 @@ _DATA_ENDPOINT_PAGES = {"/api/dashboard/services": "/", "/api/dashboard/cybersec
 
 
 def page_data(request, name, context, deployed_version=None, formatters=None):
+    from .operating_mode import mode
     user = context.get("current_user")
     can = context.get("can")
     path = request.url.path
     data = {
+        "cats_mode": mode(),
         "may_claim_accounts": bool(context.get("may_claim_accounts")),
         "may_manage_accounts": bool(context.get("may_manage_accounts")),
         "current_user": _fields(user, ("display_name", "theme")) if user is not None else None,
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},
         "permissions": {permission: bool(can(permission)) if callable(can) else False
-                        for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage")},
+                        for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage", "replica.admin", "replica.sync")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
         "pending_poam_count": _scalar(context.get("pending_poam_count", 0)),
         "actionable_notifications": [_fields(item, ("label", "service", "href"))
@@ -177,6 +182,11 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "next_path": _DATA_ENDPOINT_PAGES.get(path, path) + ("?" + request.url.query if request.url.query else ""),
     }
     data["can"] = {permission: {"*": allowed} for permission, allowed in data["permissions"].items()}
+    if name == "cyber_overrides.html":
+        service = context.get("service")
+        data["service"] = _fields(service, ("id", "service_key", "name"))
+        for permission in ("local_override.create", "local_override.revoke", "local_override.view_audit"):
+            data["can"][permission] = {str(service.id): bool(can(permission, service.id))}
     if name == "artifact_recommendations.html":
         data["service"] = _fields(context.get("service", {}), ("service_key", "name"))
     elif name == "patch_campaigns.html":

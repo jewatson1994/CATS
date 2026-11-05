@@ -1,0 +1,150 @@
+"""The replica boundary must remain closed as authoritative APIs evolve."""
+import asyncio
+from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+import yaml
+
+from app import operating_mode as mode
+from app.auth import AuthContext, SYSTEM_ROLES
+
+
+@pytest.mark.parametrize('method,path', [
+    ('POST', '/api/services/example/findings'),
+    ('POST', '/services/example/edit'),
+    ('POST', '/api/services/example/approvals'),
+    ('DELETE', '/api/services/example'),
+    ('PATCH', '/api/replica/sources/1'),
+    ('POST', '/api/future-authoritative-endpoint'),
+    ('POST', '/api/oci/upstreams/1/unrecognized-operation'),
+    ('POST', '/api/services/example/local-overrides/1/edit'),
+    ('POST', '/admin/configuration/signing'),
+    ('POST', '/admin/configuration/scan-settings'),
+    ('GET', '/api/public/jobs/scan-1/results'),
+    ('GET', '/api/public/patch-jobs/patch-1/results'),
+    ('GET', '/services/example/exports/findings.xlsx'),
+    ('GET', '/exports/services.xlsx'), ('GET', '/poam/export.xlsx'),
+    ('GET', '/scan'), ('GET', '/patch'), ('GET', '/discovery'),
+    ('GET', '/risk-intelligence'), ('GET', '/admin/validators'),
+])
+def test_replica_rejects_authoritative_and_unknown_operations(monkeypatch, method, path):
+    monkeypatch.setenv('CATS_MODE', 'replica')
+    assert not mode.request_available(method, path)
+    monkeypatch.setenv('CATS_MODE', 'full')
+    assert mode.request_available(method, path)
+
+
+@pytest.mark.parametrize('method,path', [
+    ('GET', '/services/example'), ('GET', '/api/services/example/findings'),
+    ('GET', '/approved-releases'), ('GET', '/auth/oidc/callback'),
+    ('POST', '/login'), ('POST', '/logout'), ('POST', '/account/password'),
+    ('POST', '/admin/users'), ('POST', '/admin/roles'),
+    ('POST', '/admin/configuration/oidc'), ('POST', '/admin/configuration/trusted-certificates'),
+    ('POST', '/api/replica/sync'), ('POST', '/api/replica/sources'),
+    ('PUT', '/api/replica/sources/1'), ('POST', '/api/oci/upstreams'),
+    ('PUT', '/api/oci/repositories/1'), ('POST', '/api/oci/principals/1/rotate'),
+    ('POST', '/api/services/example/local-overrides'),
+    ('POST', '/api/services/example/local-overrides/1/revoke'),
+])
+def test_replica_permits_only_read_and_identified_local_routes(monkeypatch, method, path):
+    monkeypatch.setenv('CATS_MODE', 'replica')
+    assert mode.request_available(method, path)
+
+
+def test_default_and_invalid_mode(monkeypatch):
+    monkeypatch.delenv('CATS_MODE', raising=False)
+    assert mode.mode() == 'full'
+    monkeypatch.setenv('CATS_MODE', 'replcia')
+    with pytest.raises(RuntimeError, match='CATS_MODE'):
+        mode.ReplicaModeMiddleware(None)
+
+
+def test_http_boundary_prevents_any_handler_side_effect(monkeypatch):
+    monkeypatch.setenv('CATS_MODE', 'replica')
+    app, writes = FastAPI(), []
+    app.add_middleware(mode.ReplicaModeMiddleware)
+
+    @app.post('/future-api')
+    def future():
+        writes.append('authoritative')
+
+    @app.post('/api/replica/sync')
+    def local():
+        writes.append('local')
+        return {'ok': True}
+
+    with TestClient(app) as client:
+        response = client.post('/future-api')
+        assert response.status_code == 403
+        assert response.json()['code'] == 'replica_read_only'
+        assert response.headers['cache-control'] == 'no-store'
+        assert writes == []
+        assert client.post('/api/replica/sync').status_code == 200
+        assert writes == ['local']
+
+
+def context(permissions, service_id=None):
+    assignment = SimpleNamespace(role=SimpleNamespace(name='Explicit role', permissions=permissions),
+        role_id=1, service_id=service_id, group_id=None, group=None)
+    return AuthContext(SimpleNamespace(role_assignments=[assignment]), SimpleNamespace(csrf_token='test'))
+
+
+def test_mode_denies_authoritative_permissions_even_for_existing_roles(monkeypatch):
+    admin = context(['service.view', 'service.edit', 'replica.admin', 'local_override.create'])
+    monkeypatch.setenv('CATS_MODE', 'full')
+    assert admin.has('service.edit', 7)
+    monkeypatch.setenv('CATS_MODE', 'replica')
+    assert not admin.has('service.edit', 7)
+    assert admin.accessible_service_ids('service.edit') == set()
+    assert admin.has('service.view', 7)
+    assert admin.has('replica.admin')
+    assert context(['local_override.create'], service_id=7).has('local_override.create', 7)
+    assert not context(['local_override.create'], service_id=7).has('local_override.create', 8)
+    assert not context(['replica.admin'], service_id=7).has('replica.admin', 7)
+    assert not any(p.startswith('local_override.') for p in SYSTEM_ROLES['Administrator'])
+    assert 'local_override.create' in SYSTEM_ROLES['Local Cyber']
+
+
+def test_replica_lifespan_skips_intelligence_scanning_and_validation(monkeypatch):
+    from app import main, replica_sync
+    monkeypatch.setenv('CATS_MODE', 'replica')
+    steps = []
+
+    @asynccontextmanager
+    async def replica():
+        steps.append('start')
+        yield
+        steps.append('stop')
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('An assessment worker or intelligence installer started in replica mode')
+
+    monkeypatch.setattr(replica_sync, 'replica_lifespan', replica)
+    monkeypatch.setattr(main.validator_management, 'recover_operations', forbidden)
+    monkeypatch.setattr(main, '_start_read_model_maintenance', forbidden)
+    monkeypatch.setattr(main.DEPLOYMENT_VALIDATION_WORKERS, 'submit', forbidden)
+    monkeypatch.setattr(main.scan_protocol, 'maintenance', forbidden)
+    from app import embedded_intelligence
+    monkeypatch.setattr(embedded_intelligence, 'install_package', forbidden)
+
+    async def run():
+        async with main.app_lifespan(main.app):
+            assert steps == ['start']
+    asyncio.run(run())
+    assert steps == ['start', 'stop']
+
+
+def test_replica_compose_has_no_assessment_infrastructure():
+    root = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load((root / 'compose.replica.yaml').read_text())
+    assert set(compose['services']) == {'db', 'portal', 'oci-proxy'}
+    for name in ('portal', 'oci-proxy'):
+        service = compose['services'][name]
+        assert service['environment']['CATS_MODE'] == 'replica'
+        assert 'INTELLIGENCE_DATABASE_URL' not in service['environment']
+        assert 'docker.sock' not in str(service)
+    assert set(compose['services']['portal']['depends_on']) == {'db'}

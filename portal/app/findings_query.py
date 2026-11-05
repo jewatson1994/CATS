@@ -60,22 +60,29 @@ def prepare_findings_view(db, service, now, configuration, service_view_callback
             exception = SimpleNamespace(**dict(row))
             parents[getattr(exception, foreign_key.key)].exceptions.append(exception)
 
+    from .operating_mode import is_replica
     latest_ids = (select(func.max(FindingObservation.id).label("id"))
                   .join(Finding, Finding.id == FindingObservation.finding_id)
-                  .where(Finding.service_id == service.id)
-                  .group_by(FindingObservation.finding_id).subquery())
+                  .where(Finding.service_id == service.id))
+    if is_replica():
+        latest_ids = latest_ids.where(FindingObservation.execution_id == configuration.get('_replica_execution_id'))
+    latest_ids = latest_ids.group_by(FindingObservation.finding_id).subquery()
     for observation in _rows(db, FindingObservation, FindingObservation.id.in_(select(latest_ids.c.id))):
         findings[observation.finding_id].observations = [observation]
 
-    execution_query = select(Execution).where(Execution.service_id == service.id)
-    if service.current_version_id is not None:
-        execution_query = execution_query.where(Execution.service_version_id == service.current_version_id)
-    latest_execution = db.scalar(execution_query.order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
     # The header evaluates the current version, while detail-page evidence has
     # historically used the newest scan across every version. Keep both bounded
     # candidates so callers can retain that distinction without scan history.
-    global_latest = db.scalar(select(Execution).where(Execution.service_id == service.id)
-                              .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if include_global_latest else latest_execution
+    if is_replica():
+        from .service_evidence import current_execution
+        latest_execution = global_latest = current_execution(db, service)
+    else:
+        execution_query = select(Execution).where(Execution.service_id == service.id)
+        if service.current_version_id is not None:
+            execution_query = execution_query.where(Execution.service_version_id == service.current_version_id)
+        latest_execution = db.scalar(execution_query.order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+        global_latest = db.scalar(select(Execution).where(Execution.service_id == service.id)
+                                  .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if include_global_latest else latest_execution
     proxy.executions = list({execution.id: execution for execution in (latest_execution, global_latest)
                              if execution is not None}.values())
     archive_query = (select(*ServiceArchiveEvent.__table__.columns)
@@ -118,10 +125,14 @@ def load_page_support(db, service_id, findings, latest_execution):
         select(FindingObservation.finding_id, FindingObservation.execution_id)
         .join(latest, latest.c.id == FindingObservation.id)
     ).all())
+    from .operating_mode import is_replica
+    replica = is_replica()
     for finding in selected.values():
         # A complete scan observed every active finding. An incomplete one may
         # not have, so its active findings keep their own latest observation.
-        if finding.active and latest_execution and getattr(latest_execution, "complete", True):
+        if finding.active and replica:
+            execution_by_finding[finding.id] = latest_execution.id if latest_execution else -1
+        elif finding.active and latest_execution and getattr(latest_execution, "complete", True):
             execution_by_finding[finding.id] = latest_execution.id
     observations_by_finding = {finding_id: [] for finding_id in selected}
     # Match exact pairs so a page containing several historical executions does
@@ -190,9 +201,12 @@ def load_simplified_support(db, service_id, findings, latest_execution):
     fallbacks = {finding.id: max(finding.observations, key=lambda row: row.id, default=None)
                  for finding in selected.values()}
     load_page_support(db, service_id, selected.values(), latest_execution)
+    from .operating_mode import is_replica
     for finding in selected.values():
         if isinstance(finding, SimpleNamespace) and not finding.observations and fallbacks[finding.id]:
-            finding.observations = [fallbacks[finding.id]]
+            fallback = fallbacks[finding.id]
+            if not is_replica() or (latest_execution and fallback.execution_id == latest_execution.id):
+                finding.observations = [fallback]
 
 
 def group_simplified_findings(findings, latest_execution, due_dates):

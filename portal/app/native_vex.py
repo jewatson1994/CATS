@@ -60,6 +60,10 @@ def current_evaluation(now, *, enabled=True):
 
 def finding_excluded(finding_id, now, *, preview=False):
     """SQL predicate: all observations in the fenced, complete current scan qualify."""
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_findings import predicate
+        return predicate(finding_id, 'vex_excluded').is_(True)
     return select(FindingResult.id).select_from(FindingResult).join(
         Evaluation, Evaluation.id == FindingResult.evaluation_id).join(
         State, State.service_id == Evaluation.service_id).join(Policy, Policy.id == 1).where(
@@ -69,6 +73,11 @@ def finding_excluded(finding_id, now, *, preview=False):
 
 
 def observation_excluded(observation_id, now, *, preview=False):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_models import ReplicaObservationDecision as D, ReplicaServiceState as S
+        return select(D.observation_id).join(S, S.active_release_id == D.release_id).where(
+            D.observation_id == observation_id, D.excluded.is_(True)).correlate_except(D, S).exists()
     return select(ObservationResult.id).select_from(ObservationResult).join(
         Evaluation, Evaluation.id == ObservationResult.evaluation_id).join(
         State, State.service_id == Evaluation.service_id).join(Policy, Policy.id == 1).where(

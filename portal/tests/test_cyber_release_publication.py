@@ -111,8 +111,24 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
     digest = release_oci._digest(content)
     source.data["manifests"][digest] = content
     evidence = tmp_path / "evidence.zip"
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from app import service_transfer
+    from app.database import Base
+    from app.models import Service
+    engine = create_engine('sqlite://')
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        service = Service(id=12, service_key='demo', name='Demo')
+        db.add(service)
+        db.flush()
+        records = service_transfer.snapshot(db, service)
+    engine.dispose()
     with ZipFile(evidence, "w") as archive:
         archive.writestr("findings.json", '{"findings":[]}')
+        archive.writestr('replica-service.json', json.dumps({'format': 'cats-replica-service-v1',
+            'service_key': 'demo', 'relational_schema': service_transfer.schema_signature(), 'records': records,
+            'actors': {}, 'activity': [], 'extension': {}, 'counts': {name: len(rows) for name, rows in records.items()}}))
     chart = tmp_path / "chart.tgz"
     with tarfile.open(chart, "w:gz") as archive:
         data = b"apiVersion: v2\nname: sample\nversion: 1.0.0\n"
@@ -126,6 +142,9 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
     destination = {"id": "saved:3", "endpoint": "https://approved.example", "namespace": "team"}
     decided_at = datetime.now(timezone.utc)
     snapshot.update(destination=destination, signing_fingerprint=fingerprint, approval_validity=release_validity.new_validity(decided_at))
+    snapshot['portable_release'] = {'format': 'cats-replica-release-v1', 'kind': 'release',
+        'service_uuid': 'demo', 'release_uuid': '7', 'release_sequence': 1,
+        'supersedes_release_uuid': None, 'revoked_at': None, **snapshot['approval_validity']}
     approval = SimpleNamespace(id=7, release_key="approval-123", snapshot=snapshot,
                                snapshot_digest=release_oci._digest(publication.canonical(snapshot)),
                                status="approved", decided_by_id=2, decided_at=decided_at,

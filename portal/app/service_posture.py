@@ -542,6 +542,9 @@ def _refresh_log(event, kind, count):
 
 def schedule(bind, service_ids, kinds=KINDS):
     """Coalesce queued AND running work, separately for each database engine."""
+    from .operating_mode import is_replica
+    if is_replica():
+        return None
     from .database import background_bind
     bind = background_bind(getattr(bind, "engine", bind))
     with _queue_lock:
@@ -671,7 +674,12 @@ def services_rows(db, services, configurations, configuration, now):
     from .execution_summaries import CountOnly
     from . import main as m
     ids = [service.id for service in services]
-    stored, meta = _load(db, "services", ids, configurations, now)
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_views import posture_rows
+        stored, meta = posture_rows(db, 'services', ids)
+    else:
+        stored, meta = _load(db, "services", ids, configurations, now)
     rows, poam_counts = [], {}
     for service in services:
         value = stored.get(service.id)
@@ -682,7 +690,7 @@ def services_rows(db, services, configurations, configuration, now):
         row.update(service=service, policy_findings=[], poam=dict(value["poam"]))
         rows.append(row)
         poam_counts[service.id] = dict(value["poam"])
-    if shadow_enabled():
+    if shadow_enabled() and not is_replica():
         direct, _ = m.service_overview_rows_aggregated(db, None, now, configuration, services, configurations)
         _compare("services", {row["service"].id: _services_row(row) for row in direct}, stored)
     return rows, poam_counts, meta
@@ -691,8 +699,13 @@ def services_rows(db, services, configurations, configuration, now):
 def cyber_rows(db, services, configurations, configuration, now):
     """Projection-backed Cybersecurity rows keyed by service id."""
     ids = [service.id for service in services]
-    stored, meta = _load(db, "cyber", ids, configurations, now)
-    if shadow_enabled():
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_views import posture_rows
+        stored, meta = posture_rows(db, 'cyber', ids)
+    else:
+        stored, meta = _load(db, "cyber", ids, configurations, now)
+    if shadow_enabled() and not is_replica():
         from .dashboard_portfolio import compute_rows
         _compare("cyber", {sid: _cyber_row(row) for sid, row in compute_rows(db, services, configurations, configuration, now).items()}, stored)
     return {sid: _restore_cyber(row) for sid, row in stored.items()}, meta
@@ -707,6 +720,9 @@ def _compare(kind, direct, stored):
 
 def background_enabled(bind) -> bool:
     """Background work is skipped for in-memory SQLite (tests, ephemeral tools)."""
+    from .operating_mode import is_replica
+    if is_replica():
+        return False
     url = getattr(bind, "engine", bind).url
     return not (url.get_backend_name() == "sqlite" and url.database in (None, "", ":memory:"))
 

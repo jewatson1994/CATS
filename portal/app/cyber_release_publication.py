@@ -183,7 +183,7 @@ class _Transport:
                       "mediaType": document.get("mediaType") or headers.get_content_type()}
         self.retain(descriptor, data)
         children = document.get("manifests", [])
-        if not isinstance(children, list) or len(children) > 256:
+        if not isinstance(children, list):
             raise PublicationValidationError("Invalid OCI index")
         for child in children:
             _descriptor(child)
@@ -193,8 +193,6 @@ class _Transport:
         blobs = ([document["config"]] if "config" in document else []) + document.get("layers", [])
         if not children and not blobs:
             raise PublicationValidationError("Empty OCI artifact graph")
-        if len(blobs) > 4096:
-            raise PublicationValidationError("OCI layer count exceeds limit")
         for item in blobs:
             check_worker()
             _descriptor(item)
@@ -256,7 +254,7 @@ def _signature(transport, client, reference, config, credentials, env, layout_na
     return {"tag": tag, "digest": digest, "layout_name": layout_name, **result}
 
 
-def _publish_files(client, files):
+def _publish_files(client, files, *, portable=False):
     layers = []
     for name, path in files.items():
         descriptor = client.upload(path.read_bytes(), release_oci._media_type(name))
@@ -264,6 +262,7 @@ def _publish_files(client, files):
         layers.append(descriptor)
     config = client.upload(b"{}", "application/vnd.oci.empty.v1+json")
     content = canonical({"schemaVersion": 2, "mediaType": release_oci.MANIFEST_TYPE,
+                         **({'artifactType': 'application/vnd.cats.approved-release.v1'} if portable else {}),
                          "config": config, "layers": layers,
                          "annotations": {"io.cats.release.type": "cyber-approved-v1"}})
     digest = release_oci._digest(content)
@@ -379,9 +378,17 @@ def publish(db, approval, destination, checkpoint):
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", approval.release_key):
             raise PublicationValidationError("Invalid release identifier")
         evidence = _checked_file(snapshot["evidence"])
+        from .portable_release import evidence_capture, validate_metadata, release_tag
+        try:
+            portable = validate_metadata(snapshot.get('portable_release'))
+            captured = evidence_capture(evidence.read_bytes())
+        except ValueError as exc:
+            raise PublicationValidationError(str(exc)) from None
+        if captured['service_key'] != portable['service_uuid']:
+            raise PublicationValidationError('Frozen service capture differs from the approved portable identity')
         candidate = _checked_file(snapshot["candidate"]) if snapshot.get("candidate") else None
         artifacts = snapshot.get("artifacts")
-        if not artifacts or len(artifacts) > 512:
+        if not artifacts:
             raise PublicationValidationError("Frozen deployable inventory unavailable")
         for item in artifacts:
             if item.get("path") and (item.get("kind") == "chart" or (item.get("kind") == "image" and item.get("format") == "docker-archive")):
@@ -420,6 +427,8 @@ def publish(db, approval, destination, checkpoint):
                 if file_digest(root / "candidate.zip") != snapshot["candidate"]["digest"]:
                     raise PublicationValidationError("Frozen candidate changed during copy")
             documents = {"evidence.zip": evidence_copy}
+            if candidate:
+                documents['candidate.zip'] = root / 'candidate.zip'
             stage = "Signing retained evidence"
             archive_signature = release_signing.sign_release_archive(evidence_copy, root, (config, credentials))
             if archive_signature.get("signature_status") != "verified":
@@ -435,6 +444,36 @@ def publish(db, approval, destination, checkpoint):
                 certificates = json.loads(certificates)
             with registry_environment(destination, certificates or []) as environment, _source_environments(settings) as (source_env, source_envs):
                 env = signing.clean_environment(environment)
+                retained_receipt = output / 'portable-publication.json'
+                if retained_receipt.exists():
+                    from .portable_release import fetch_release
+                    previous = json.loads(retained_receipt.read_bytes())
+                    verified = fetch_release(previous['release']['reference'], env, [config['signing_fingerprint']])
+                    bundle_path = Path(previous['bundle_path'])
+                    if (verified['manifest'].get('snapshot_digest') != approval.snapshot_digest
+                            or verified['manifest'] != previous['manifest']
+                            or not bundle_path.resolve().is_relative_to(output.resolve())
+                            or file_digest(bundle_path) != previous['bundle_digest']):
+                        raise PublicationValidationError('Retained publication integrity mismatch')
+                    with ZipFile(bundle_path) as bundle:
+                        if bundle.read('release-manifest.json') != verified['files']['release-manifest.json']:
+                            raise PublicationValidationError('Retained bundle belongs to a different release')
+                    receipt = previous
+                    # A worker can stop after retaining the complete package but
+                    # before exposing its discovery tag. Reuse its exact signed
+                    # bytes rather than generating a different signature graph.
+                    cached_host, cached_repository, cached_digest = release_oci._reference(previous['release']['reference'])
+                    cached_client = release_oci._Client(cached_host, cached_repository, env)
+                    cached_transport = _Transport(root / 'cached-oci', env)
+                    cached_descriptor = cached_transport.graph(cached_client, cached_digest)
+                    cached_transport.tag(cached_client, cached_descriptor, release_tag(portable))
+                    if snapshot.get('release_revision') is not None and not receipt.get('revision_signature'):
+                        from .release_revisions import publish_manifest
+                        stage = 'Signing immutable release revision'
+                        receipt['revision_signature'] = publish_manifest(db, approval, (config, credentials))
+                        _retain_receipt(retained_receipt, receipt)
+                    save()
+                    return receipt
                 transport = _Transport(root / "oci", env)
                 host = destination["endpoint"].removeprefix("https://").rstrip("/")
                 namespace = destination.get("namespace") or "cyber-approved"
@@ -494,6 +533,7 @@ def publish(db, approval, destination, checkpoint):
                         artifact["signature"] = _signature(transport, target, reference, config, credentials, env, name + "-signature")
                     save()
                 manifest = {"format": "cats-cyber-approved-release-v1", "release_key": approval.release_key,
+                            "portable": portable,
                             "approval_id": approval.id, "snapshot_digest": approval.snapshot_digest,
                             "approval": {"id": approval.id, "status": approval.status,
                                          **snapshot['approval_validity'],
@@ -514,14 +554,14 @@ def publish(db, approval, destination, checkpoint):
                 if signed.get("signature_status") != "verified":
                     raise PublicationValidationError("Release manifest signing failed")
                 documents.update({name: root / name for name in ("release-manifest.json", "release-manifest.sig")})
-                release_repository = prefix + "/releases/" + _repository_component(approval.release_key)
+                release_repository = prefix + "/releases"
                 client = release_oci._Client(host, release_repository, env)
                 stage = "Publishing release documents"
-                digest = _publish_files(client, documents)
+                digest = _publish_files(client, documents, portable=True)
                 descriptor = transport.graph(client, digest)
                 transport.entry(descriptor, "release")
                 reference = f"{host}/{release_repository}@{digest}"
-                receipt["release"] = {"reference": reference, "digest": digest, "layout_name": "release", "repository_suffix": "release"}
+                receipt["release"] = {"reference": reference, "digest": digest, "tag": release_tag(portable), "layout_name": "release", "repository_suffix": "release"}
                 stage = "Signing published release"
                 receipt["release"]["signature"] = _signature(transport, client, reference, config, credentials, env, "release-signature")
                 save()
@@ -566,17 +606,106 @@ def publish(db, approval, destination, checkpoint):
                 receipt.update(status="published", verification_status="verified", signature_status="verified",
                                manifest=manifest, bundle_path=str(target), bundle_digest=bundle_digest,
                                bundle_bytes=target.stat().st_size, signing_fingerprint=config["signing_fingerprint"])
+                # Retain exact signatures before exposing discovery, so an
+                # interrupted attempt resumes the same immutable package.
+                _retain_receipt(retained_receipt, receipt)
+                stage = 'Publishing complete release discovery tag'
+                transport.tag(client, descriptor, release_tag(portable))
                 save()
         if snapshot.get('release_revision') is not None:
             from .release_revisions import publish_manifest
             stage = "Signing immutable release revision"
             receipt['revision_signature'] = publish_manifest(db, approval, (config, credentials))
+            _retain_receipt(retained_receipt, receipt)
             save()
         return receipt
     except Exception as exc:
         diagnostic = failure_diagnostic(exc, stage)
         receipt.update(status="failed", diagnostic=diagnostic, error=f"{stage}: {diagnostic['cause']}")
         save()
+        raise PublicationError(receipt) from exc
+
+
+def _retain_receipt(path, receipt):
+    pending = path.with_suffix('.pending')
+    pending.write_bytes(canonical(receipt))
+    os.replace(pending, path)
+
+
+def publish_revocation(db, approval, destination, metadata, checkpoint):
+    """Publish a standalone signed event through the existing release repository.
+
+    The sequence was reserved in the revocation transaction. No live evidence is
+    rebuilt and the original approval snapshot and publication stay immutable.
+    """
+    from .portable_release import validate_metadata, release_tag, fetch_release
+    from . import release_validity
+    receipt = {'status': 'publishing', 'kind': 'revocation', 'approval_id': approval.id,
+               'portable': metadata}
+    stage = 'Checking signed revocation authorization'
+    try:
+        validate_metadata(metadata)
+        if (metadata.get('kind') != 'revocation' or not approval.revoked_at
+                or metadata.get('target_release_uuid') != str(approval.id)
+                or metadata.get('revoked_at') != release_validity.utc(approval.revoked_at).isoformat()
+                or metadata.get('reason') != approval.revocation_reason):
+            raise PublicationValidationError('Revocation differs from the recorded Cyber decision')
+        settings = {row.key: row.value for row in db.scalars(select(PortalSetting))}
+        config, credentials = signing.job_material(settings, 'push')
+        if config.get('signing_enabled') is not True or config.get('signing_fingerprint') != approval.snapshot.get('signing_fingerprint'):
+            raise PublicationValidationError('Restore the original publisher signing identity to publish this revocation')
+        if any(approval.snapshot.get('destination', {}).get(key) != destination.get(key) for key in ('id', 'endpoint', 'namespace')):
+            raise PublicationValidationError('Revocation destination differs from the approved release')
+        checkpoint(deepcopy(receipt))
+        output = Path(approval.snapshot['evidence']['path']).parent / ('revocation-' + str(metadata['release_sequence']))
+        if any(path.is_symlink() for path in (output, *output.parents)):
+            raise PublicationValidationError('Unsafe revocation output path')
+        output.mkdir(parents=True, exist_ok=True)
+        manifest = {'format': 'cats-cyber-release-v1', 'portable': metadata,
+                    'release_key': approval.release_key, 'snapshot_digest': approval.snapshot_digest,
+                    'approval': {'id': approval.id, 'status': 'approved',
+                                 **approval.snapshot['approval_validity'],
+                                 'decided_by_id': approval.decided_by_id,
+                                 'decided_at': release_validity.utc(approval.decided_at).isoformat()},
+                    'signing_fingerprint': config['signing_fingerprint'], 'artifacts': []}
+        content = canonical(manifest)
+        path = output / 'release-manifest.json'
+        if path.exists() and path.read_bytes() != content:
+            raise PublicationValidationError('Retained revocation event changed')
+        path.write_bytes(content)
+        stage = 'Signing revocation event'
+        signed = release_signing.sign_release_manifest(path, output, (config, credentials))
+        if signed.get('signature_status') != 'verified':
+            raise PublicationValidationError('Revocation signing failed')
+        certificates = settings.get('trusted_ca_certificates', '[]')
+        if isinstance(certificates, str):
+            certificates = json.loads(certificates)
+        with registry_environment(destination, certificates or []) as environment:
+            env = signing.clean_environment(environment)
+            host = destination['endpoint'].removeprefix('https://').rstrip('/')
+            repository = destination['namespace'].strip('/') + '/' + _repository_component(approval.snapshot['service_key']) + '/releases'
+            client = release_oci._Client(host, repository, env)
+            stage = 'Publishing revocation event'
+            digest = _publish_files(client, {name: output / name for name in
+                ('release-manifest.json', 'release-manifest.sig', 'release-public-key.pem')}, portable=True)
+            reference = host + '/' + repository + '@' + digest
+            verified = fetch_release(reference, env, [config['signing_fingerprint']])
+            if verified['manifest'] != manifest:
+                raise PublicationValidationError('Published revocation verification failed')
+            with tempfile.TemporaryDirectory(prefix='.transport-', dir=output) as temporary:
+                transport = _Transport(Path(temporary) / 'oci', env)
+                descriptor = transport.graph(client, digest)
+                checkpoint(deepcopy(receipt))
+                transport.tag(client, descriptor, release_tag(metadata))
+        receipt.update(status='published', signature_status='verified', verification_status='verified',
+                       manifest=manifest, release={'reference': reference, 'digest': digest, 'tag': release_tag(metadata)},
+                       signing_fingerprint=config['signing_fingerprint'])
+        checkpoint(deepcopy(receipt))
+        return receipt
+    except Exception as exc:
+        diagnostic = failure_diagnostic(exc, stage)
+        receipt.update(status='failed', diagnostic=diagnostic, error=f"{stage}: {diagnostic['cause']}")
+        checkpoint(deepcopy(receipt))
         raise PublicationError(receipt) from exc
 
 

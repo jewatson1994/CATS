@@ -165,7 +165,10 @@ def dto(db, row, auth, detail=False):
         can_retry=row.status == 'approved' and row.publish_status == 'failed' and not row.revoked_at and auth.has('approval.decide', row.service_id),
         revoked=bool(row.revoked_at), release_id=row.id)
     result.update(release_validity.summary(row))
-    result['can_retry'] = result['can_retry'] and result['validity_status'] in ('valid', 'expiring_soon')
+    result['can_retry'] = ((result['can_retry'] and result['validity_status'] in ('valid', 'expiring_soon'))
+        or bool(row.revoked_at and row.publish_status == 'failed'
+                and (row.publication or {}).get('revocation', {}).get('portable')
+                and auth.has('approval.decide', row.service_id)))
     if detail:
         result['snapshot'] = _public(row.snapshot)
         if row.status == 'pending' and not row.destination_id:
@@ -321,8 +324,9 @@ def approval(identity: int, db: Session = Depends(get_db), auth: AuthContext = D
     return dto(db, _record(db, auth, identity), auth, True)
 
 
-def _enqueue(db, row, actor):
-    job = submit(db, kind='cyber_release_publish', payload={'approval_id': row.id}, service_id=row.service_id,
+def _enqueue(db, row, actor, revocation=None):
+    job = submit(db, kind='cyber_release_publish', payload={'approval_id': row.id,
+        **({'revocation': revocation} if revocation else {})}, service_id=row.service_id,
         requested_by_id=actor, source_execution_id=row.source_execution_id, version=str(row.snapshot.get('version', '')),
         dedupe_key=f'cyber:{row.id}:{uuid.uuid4().hex}', max_attempts=1, commit=False)
     row.job_id, row.publish_status = job.id, 'queued'
@@ -359,6 +363,9 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
             if not _signing_ready(db):
                 raise HTTPException(409, 'An administrator must enable signing before approving publication')
             snapshot['signing_fingerprint'] = signing.configuration(_settings(db))['fingerprint']
+        from .replica_models import reserve_publication
+        snapshot['portable_release'] = {**reserve_publication(db, db.get(Service, row.service_id), row.id),
+            **snapshot['approval_validity'], 'service_version': snapshot.get('version'), 'revoked_at': None}
         bound.update(snapshot=snapshot, snapshot_digest=digest(snapshot))
     changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id, CyberApproval.status == 'pending').values(
         status=decision, decision_rationale=rationale, decided_by_id=auth.user.id, decided_at=decided_at, **bound)).rowcount
@@ -399,6 +406,19 @@ def retry(identity: int, request: Request, db: Session = Depends(get_db), auth: 
     _csrf(request, auth)
     row = _record(db, auth, identity)
     _permission(auth, 'approval.decide', row.service_id)
+    if row.revoked_at:
+        metadata = (row.publication or {}).get('revocation', {}).get('portable')
+        changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id,
+            CyberApproval.status == 'approved', CyberApproval.publish_status == 'failed',
+            CyberApproval.revoked_at.is_not(None)).values(publish_status='queued')).rowcount if metadata else 0
+        if changed != 1:
+            db.rollback()
+            raise HTTPException(409, 'Only failed signed revocation publications can be retried')
+        db.refresh(row)
+        _enqueue(db, row, auth.user.id, metadata)
+        record_audit(db, auth, 'cyber_release.revocation.retry', 'cyber_approval', row.id)
+        db.commit()
+        return dto(db, row, auth, True)
     try:
         release_validity.require_current(row)
     except ValueError as exc:
@@ -430,6 +450,15 @@ async def revoke(identity: int, request: Request, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(409, 'Only non-revoked releases without active publication can be revoked')
     db.refresh(row)
+    if row.snapshot.get('portable_release') and row.destination_id:
+        from .replica_models import reserve_publication
+        metadata = {**reserve_publication(db, db.get(Service, row.service_id), row.id,
+                    kind='revocation', target_release_id=str(row.id)),
+                    **row.snapshot['approval_validity'],
+                    'revoked_at': release_validity.utc(row.revoked_at).isoformat(),
+                    'revoked_by_id': auth.user.id, 'reason': row.revocation_reason}
+        row.publication = {**(row.publication or {}), 'revocation': {'status': 'queued', 'portable': metadata}}
+        _enqueue(db, row, auth.user.id, metadata)
     record_audit(db, auth, 'cyber_release.revoke', 'cyber_approval', row.id)
     db.commit()
     return dto(db, row, auth, True)
@@ -498,6 +527,8 @@ def publish_job(ctx, payload):
     with delivery_lock(root() / '.locks', int(payload['approval_id'])) as owned:
         if not owned:
             raise JobError('Another publisher still owns this release. Retry after it finishes.')
+        if payload.get('revocation'):
+            return _publish_revocation_job(ctx, payload)
         with ctx.session_factory() as db:
             row = db.get(CyberApproval, payload['approval_id'])
             if not row or row.status != 'approved' or row.revoked_at or row.job_id != ctx.job.id:
@@ -566,12 +597,65 @@ def publish_job(ctx, payload):
                 raise JobError(error) from None
 
 
+def _publish_revocation_job(ctx, payload):
+    from .cyber_release_publication import publish_revocation, PublicationError, failure_diagnostic
+    with ctx.session_factory() as db:
+        row = db.get(CyberApproval, payload['approval_id'])
+        if (not row or row.status != 'approved' or not row.revoked_at or row.job_id != ctx.job.id
+                or (row.publication or {}).get('revocation', {}).get('portable') != payload['revocation']):
+            raise JobError('Recorded revocation publication is unavailable')
+        try:
+            ctx.check()
+            destination = db.get(ApprovedReleaseDestination, row.destination_id)
+            if not destination or not destination.enabled:
+                raise JobError('Approved destination is disabled or unavailable')
+            if (any(getattr(destination, key) != row.destination[key] for key in ('endpoint', 'namespace'))
+                    or hashlib.sha256(destination.ca_pem.encode()).hexdigest() != row.destination['ca_digest']):
+                raise JobError('Restore the approved destination to publish its revocation')
+            def checkpoint(receipt):
+                ctx.check()
+                db.refresh(row)
+                if row.job_id != ctx.job.id or not row.revoked_at:
+                    raise JobError('Revocation publication authorization changed')
+                row.publication = {**(row.publication or {}), 'revocation': dict(receipt)}
+                row.publish_status = 'publishing' if receipt['status'] == 'publishing' else receipt['status']
+                db.commit()
+            ctx.stage('Publishing signed Cyber revocation', 10)
+            private_destination = {**public_destination(destination), 'username': decrypt_secret(destination.username),
+                                   'password': destination.password, 'ca_pem': destination.ca_pem}
+            receipt = publish_revocation(db, row, private_destination, payload['revocation'], checkpoint)
+            if receipt.get('verification_status') != 'verified' or receipt.get('signature_status') != 'verified':
+                raise JobError('Revocation publication did not return a verified event')
+            record_audit(db, None, 'cyber_release.revocation.published', 'cyber_approval', row.id,
+                         release_sequence=payload['revocation']['release_sequence'])
+            db.commit()
+            return {'result_url': f'/approved-releases?id={row.id}', 'approval_id': row.id}
+        except Exception as exc:
+            db.rollback()
+            row = db.get(CyberApproval, payload['approval_id'])
+            diagnostic = exc.receipt.get('diagnostic') if isinstance(exc, PublicationError) else failure_diagnostic(exc, 'Revocation worker checks')
+            error = str(exc) if isinstance(exc, (JobError, PublicationError)) else diagnostic['cause']
+            if row and row.job_id == ctx.job.id:
+                row.publish_status = 'failed'
+                row.publication = {**(row.publication or {}), 'revocation': {
+                    **(row.publication or {}).get('revocation', {}), 'status': 'failed',
+                    'error': error, 'diagnostic': diagnostic, 'correlation_id': ctx.job.id}}
+                db.commit()
+            raise JobError(error) from None
+
+
 def reconcile_jobs(db):
     for row in db.scalars(select(CyberApproval).where(CyberApproval.publish_status.in_(('queued', 'publishing')))):
         job = db.get(DurableJob, row.job_id) if row.job_id else None
         if not job or job.status in ('failed', 'cancelled', 'completed'):
             row.publish_status = 'failed'
-            row.publication = {**(row.publication or {}), 'status': 'failed', 'error': 'Publication worker stopped. Review the retained receipts and retry this exact release.'}
+            receipt = dict(row.publication or {})
+            failure = {'status': 'failed', 'error': 'Publication worker stopped. Review the retained receipts and retry this exact release.'}
+            if row.revoked_at and receipt.get('revocation'):
+                receipt['revocation'] = {**receipt['revocation'], **failure}
+            else:
+                receipt.update(failure)
+            row.publication = receipt
     db.commit()
 
 

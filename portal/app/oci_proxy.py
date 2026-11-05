@@ -5,6 +5,7 @@ import hmac
 import json
 import os
 import re
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
@@ -21,7 +22,8 @@ from .oci_models import (OCIManifest, OCIObjectLink, OCIPrincipal, OCIProjectObj
 from .oci_authorization import authorize, candidate_service_ids, project_tag_allowed
 from .oci_transport import ContentCache, DIGEST, REPOSITORY, RegistryClient, RegistryError
 from .release_validity import utc
-from .release_revisions import resolve_distribution_tag, resolve_distribution_location
+from .release_revisions import (resolve_distribution_tag as _full_distribution_tag,
+                                resolve_distribution_location as _full_distribution_location)
 from .secrets import decrypt_secret
 from .oci_signatures import legacy_subject, discover_legacy_signature, verify_legacy_signature
 
@@ -34,8 +36,9 @@ MANIFEST_TYPES = {'application/vnd.oci.image.manifest.v1+json', 'application/vnd
 
 
 class Denied(Exception):
-    def __init__(self, reason, status=403, code='DENIED'):
+    def __init__(self, reason, status=403, code='DENIED', decision=None):
         self.reason, self.status, self.code = reason, status, code
+        self.decision = asdict(decision) if is_dataclass(decision) else None
 
 
 @app.exception_handler(Denied)
@@ -43,14 +46,18 @@ async def denied(request, exc):
     try:
         with SessionLocal() as db:
             record_audit(db, None, 'oci.denied', 'oci_repository', getattr(request.state, 'repository_id', None),
-                         principal_id=getattr(request.state, 'principal_id', None), reason=exc.reason)
+                         principal_id=getattr(request.state, 'principal_id', None), reason=exc.reason,
+                         decision=exc.decision)
             db.commit()
     except SQLAlchemyError:
         pass  # Unavailable audit storage never converts a denial to permission.
     headers = dict(V2)
     if exc.status == 401:
         headers['WWW-Authenticate'] = 'Basic realm="CATS OCI"'
-    return JSONResponse({'errors': [{'code': exc.code, 'message': exc.reason}]}, status_code=exc.status, headers=headers)
+    error = {'code': exc.code, 'message': exc.reason}
+    if exc.decision:
+        error['detail'] = exc.decision
+    return JSONResponse({'errors': [error]}, status_code=exc.status, headers=headers)
 
 
 @app.exception_handler(RegistryError)
@@ -137,6 +144,19 @@ class EffectiveMapping:
         return getattr(self._mapping, name)
 
 
+def resolve_distribution_tag(db, mapping, tag):
+    from .operating_mode import is_replica
+    return None if is_replica() else _full_distribution_tag(db, mapping, tag)
+
+
+def resolve_distribution_location(db, mapping, digest):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_authorization import distribution_location
+        return distribution_location(db, mapping, digest)
+    return _full_distribution_location(db, mapping, digest)
+
+
 def effective_mapping(db, mapping, digest, binding=None):
     if isinstance(mapping, ProjectMapping):
         return mapping
@@ -169,10 +189,17 @@ def save_signature(db, mapping, subject, signature):
 
 
 def require(db, mapping, digest):
-    decision = authorize(db, service_mapping(db, getattr(mapping, '_mapping', mapping), digest), digest)
+    owner = service_mapping(db, getattr(mapping, '_mapping', mapping), digest)
+    decision = authorize(db, owner, digest)
     if not decision.allowed:
-        raise Denied(decision.reason)
+        raise Denied(decision.reason, decision=decision)
+    remember_decision(db, owner, digest, decision)
     return decision
+
+
+def remember_decision(db, mapping, digest, decision):
+    if getattr(decision, 'authorization_source', None):
+        db.info.setdefault('oci_pull_decisions', {})[(mapping.service_id, digest)] = (mapping, decision)
 
 
 def save_unique(db, model, where, **values):
@@ -276,6 +303,7 @@ def authorize_object(db, mapping, digest, kind):
     mapping = getattr(mapping, '_mapping', mapping)
     model, scope = link_scope(mapping)
     roots = db.scalars(select(model.root_digest).filter_by(**scope, object_digest=digest, kind=kind)).all()
+    last_denial = None
     for root in roots:
         try:
             owner = service_mapping(db, mapping, root)
@@ -283,17 +311,52 @@ def authorize_object(db, mapping, digest, kind):
             continue
         decision = authorize(db, owner, root)
         if not decision.allowed:
+            last_denial = decision
             continue
         # Index children must remain authorized after graph construction too.
         members = db.scalars(select(model.object_digest).filter_by(**scope, root_digest=root, kind='manifest')).all()
-        if all(authorize(db, owner, member).allowed for member in members):
+        decisions = [(member, authorize(db, owner, member)) for member in members]
+        if all(item.allowed for _, item in decisions):
+            remember_decision(db, owner, root, decision)
+            for member, member_decision in decisions:
+                remember_decision(db, owner, member, member_decision)
             return root
-    raise Denied('Object has no currently authorized image association')
+    raise Denied('Object has no currently authorized image association', decision=last_denial)
 
 
 def audit(db, machine, mapping, digest, outcome):
+    effective = []
+    remembered = db.info.pop('oci_pull_decisions', {})
+    if outcome in {'allowed', 'referrers'}:
+        from .local_cyber_overrides import lock_for_use
+        for owner, previous in remembered.values():
+            override_id = getattr(previous, 'override_id', None)
+            if override_id is not None:
+                try:
+                    lock_for_use(db, override_id)
+                except ValueError as exc:
+                    raise Denied(str(exc)) from None
+            current = authorize(db, owner, previous.artifact_digest)
+            if not current.allowed:
+                raise Denied(current.reason, decision=current)
+            detail = dict(service_id=current.service_id, digest=current.artifact_digest,
+                release_id=current.release_id, override_id=current.override_id,
+                authorization_source=current.authorization_source, approval_status=current.approval_status,
+                override_status=current.override_status, effective_policy=current.effective_policy,
+                reason=current.reason, decision_at=current.decision_at)
+            effective.append(detail)
+            if current.override_id is not None:
+                # A new override discovered during reauthorization also gets the
+                # final row lock before its use and the response are committed.
+                try:
+                    lock_for_use(db, current.override_id)
+                except ValueError as exc:
+                    raise Denied(str(exc)) from None
+                record_audit(db, None, 'local_override.used', 'local_cyber_override', current.override_id,
+                    principal_id=machine.id, repository=mapping.public_repository, **detail)
     record_audit(db, None, 'oci.pull', 'oci_repository', mapping.id,
-                 principal_id=machine.id, repository=mapping.public_repository, digest=digest, outcome=outcome)
+                 principal_id=machine.id, repository=mapping.public_repository, digest=digest,
+                 outcome=outcome, decisions=effective)
     db.commit()
 
 

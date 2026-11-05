@@ -161,6 +161,79 @@ def test_retry_only_failed_approved_release_and_no_duplicate_job(db):
     assert len(list(db.scalars(select(DurableJob)))) == 2
 
 
+def revoked_portable(db):
+    from app.models import User
+    reviewer = User(username='portable-reviewer', display_name='Portable reviewer')
+    db.add(reviewer)
+    db.commit()
+    actor = auth()
+    actor.user.id = reviewer.id
+    identity = create(db, actor)['id']
+    decide(db, identity, actor=actor)
+    row = db.get(approvals.CyberApproval, identity)
+    row.publish_status = 'published'
+    row.publication = {'status': 'published', 'release': {'digest': 'sha256:original'}}
+    db.commit()
+    asyncio.run(approvals.revoke(identity, request({'rationale': 'Withdraw reviewed release'}), db, actor))
+    return row, actor
+
+
+def test_portable_revocation_recovery_preserves_identity_and_original_receipt(db):
+    row, actor = revoked_portable(db)
+    event = copy.deepcopy(row.publication['revocation']['portable'])
+    assert event['kind'] == 'revocation'
+    assert event['target_release_uuid'] == str(row.id)
+    assert event['release_sequence'] == row.snapshot['portable_release']['release_sequence'] + 1
+    job = db.get(DurableJob, row.job_id)
+    assert job.payload == {'approval_id': row.id, 'revocation': event}
+    job.status = 'failed'
+    db.commit()
+    approvals.reconcile_jobs(db)
+    assert row.publish_status == 'failed'
+    assert row.publication['status'] == 'published'
+    assert row.publication['release']['digest'] == 'sha256:original'
+    assert row.publication['revocation']['status'] == 'failed'
+    retry = approvals.retry(row.id, request(), db, actor)
+    assert retry['publish_status'] == 'queued'
+    assert db.get(DurableJob, row.job_id).payload['revocation'] == event
+    with pytest.raises(HTTPException) as duplicate:
+        approvals.retry(row.id, request(), db, actor)
+    assert duplicate.value.status_code == 409
+
+
+@pytest.mark.parametrize('failed', [False, True])
+def test_portable_revocation_worker_records_signed_event_or_retryable_failure(db, monkeypatch, failed):
+    from app import cyber_release_publication as publication
+    row, _ = revoked_portable(db)
+    job = db.get(DurableJob, row.job_id)
+    payload, identity = copy.deepcopy(job.payload), row.id
+    original = copy.deepcopy(row.publication['release'])
+    def publish(session, approval, destination, metadata, checkpoint):
+        assert metadata == payload['revocation']
+        assert destination['endpoint'] == 'https://registry.example'
+        checkpoint({'status': 'publishing', 'portable': metadata})
+        if failed:
+            raise ValueError('Registry unavailable')
+        receipt = {'status': 'published', 'portable': metadata,
+                   'verification_status': 'verified', 'signature_status': 'verified'}
+        checkpoint(receipt)
+        return receipt
+    monkeypatch.setattr(publication, 'publish_revocation', publish)
+    context = SimpleNamespace(session_factory=lambda: Session(db.get_bind()),
+        job=SimpleNamespace(id=job.id), check=lambda: None, stage=lambda *args: None)
+    if failed:
+        with pytest.raises(approvals.JobError):
+            approvals.publish_job(context, payload)
+    else:
+        assert approvals.publish_job(context, payload)['approval_id'] == identity
+    db.expire_all()
+    row = db.get(approvals.CyberApproval, identity)
+    assert row.publication['release'] == original
+    assert row.publication['revocation']['portable'] == payload['revocation']
+    assert row.publish_status == ('failed' if failed else 'published')
+    assert row.publication['revocation']['status'] == row.publish_status
+
+
 @pytest.mark.parametrize('actor,expected', [(auth(2), 404), (auth(1, ('service.view',)), 403), (auth(), 200)])
 def test_http_request_scope_and_permission(db, actor, expected):
     app = FastAPI()

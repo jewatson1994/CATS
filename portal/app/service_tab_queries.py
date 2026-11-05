@@ -53,12 +53,17 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
         .order_by(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc()).limit(1)).mappings()]
     proxy.current_version = next(iter(_rows(db, ServiceVersion,
         ServiceVersion.id == service.current_version_id)), None) if service.current_version_id else None
-    scan_query = select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id)
-    if service.current_version_id is not None:
-        scan_query = scan_query.where(Execution.service_version_id == service.current_version_id)
-    current = db.scalar(scan_query.order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
-    latest = db.scalar(select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id)
-        .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if include_global_latest else current
+    from .operating_mode import is_replica
+    if is_replica():
+        from .service_evidence import current_execution
+        current = latest = current_execution(db, service, defer_payload=True)
+    else:
+        scan_query = select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id)
+        if service.current_version_id is not None:
+            scan_query = scan_query.where(Execution.service_version_id == service.current_version_id)
+        current = db.scalar(scan_query.order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1))
+        latest = db.scalar(select(Execution).options(defer(Execution.raw_payload)).where(Execution.service_id == service.id)
+            .order_by(Execution.scanned_at.desc(), Execution.id.desc()).limit(1)) if include_global_latest else current
     view = prepare_summary_header(db, proxy, current, latest, now, configuration, service_view_callback)
     configs = {service.id: configuration}
     from . import finding_classification as classification

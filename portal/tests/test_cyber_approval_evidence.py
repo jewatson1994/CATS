@@ -225,6 +225,34 @@ def fake_export(output, service, db, auth):
     return {'entries': [{'name': 'findings.xlsx', 'status': 'included'}]}
 
 
+def test_portable_capture_freezes_canonical_decisions_without_local_secrets():
+    from app import portable_release_capture as capture
+    from app.models import Finding, FindingClassification, PortalSetting
+    seeded()
+    with SessionLocal() as db:
+        service, execution = db.scalar(select(Service)), db.scalar(select(Execution))
+        # No classification cache is needed to produce authoritative evidence.
+        for row in db.scalars(select(FindingClassification)):
+            db.delete(row)
+        db.add(PortalSetting(key='oidc_configuration', value='{"client_secret":"private-source-only"}'))
+        db.add(PortalSetting(key='compliance_mode', value='raw'))
+        db.flush()
+        state = capture.capture(db, service, {'source_execution_id': execution.id,
+            'evidence': {'path': 'C:\\private-publisher\\evidence.zip', 'digest': 'sha256:retained'}})
+        extension = state['extension']
+        ids = set(db.scalars(select(Finding.id).where(Finding.service_id == service.id)))
+        assert {row['finding_id'] for row in extension['finding_classifications']} == ids
+        assert {row['finding_id'] for row in extension['finding_decisions']} == ids
+        assert all(row['eligible'] is True for row in extension['finding_decisions'])
+        assert extension['display']['configuration']['compliance_mode'] == 'raw'
+        assert 'oidc_configuration' not in extension['display']['configuration']
+        assert 'private-source-only' not in json.dumps(state)
+        assert 'private-publisher' not in json.dumps(state)
+        assert extension['approval_context']['evidence']['digest'] == 'sha256:retained'
+        assert extension['observation_decisions'] == []
+        assert db.scalar(select(FindingClassification)) is None
+
+
 def test_ready_uses_exact_scan_and_preserves_chart_values_and_inventory(tmp_path, monkeypatch):
     seeded()
     monkeypatch.setattr('app.service_exports.write_all', fake_export)

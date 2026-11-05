@@ -521,11 +521,23 @@ def freeze(db, service, auth, readiness, folder: Path):
     unavailable = [item['name'] for item in exported.get('entries', []) if item.get('status') != 'included']
     if unavailable:
         raise ValueError('Export All evidence unavailable: ' + ', '.join(unavailable))
+    context_evidence = None
+    if readiness.get('distribution') or readiness.get('proposal_id') is not None:
+        # Distribution evidence describes the selected deployment. Include the
+        # existing complete service export as context, with its scope explicit.
+        context_evidence = folder / 'service-context-all.zip'
+        with context_evidence.open('wb') as output:
+            context_export = write_all(output, service, db, auth)
+        unavailable = [item['name'] for item in context_export.get('entries', []) if item.get('status') != 'included']
+        if unavailable:
+            raise ValueError('Service context Export All evidence unavailable: ' + ', '.join(unavailable))
     if record:
         shutil.copyfile(readiness['candidate_path'], folder / 'candidate.zip')
         snapshot['candidate'] = {'path': str((folder / 'candidate.zip').resolve()), 'digest': file_digest(folder / 'candidate.zip')}
         snapshot['current_service_evidence'] = {'path': str(baseline.resolve()), 'digest': file_digest(baseline), 'evidence_scope': 'current-service-baseline-not-candidate'}
     with ZipFile(evidence, 'w' if record else 'a', ZIP_DEFLATED) as archive:
+        if context_evidence:
+            archive.write(context_evidence, 'service-context/all.zip')
         if record:
             archive.write(baseline, 'current-service-baseline/all.zip')
             archive.write(folder / 'candidate.zip', 'candidate/candidate.zip')
@@ -545,6 +557,8 @@ def freeze(db, service, auth, readiness, folder: Path):
             workbook.close()
             archive.writestr('candidate/evidence.xlsx', stream.getvalue())
         archive.writestr('frozen-snapshot.json', _json(snapshot))
+        from .portable_release_capture import encode_capture
+        archive.writestr('replica-service.json', encode_capture(db, service, snapshot))
         archive.writestr('source-scan.json', _json(readiness['payload']))
         archive.writestr('scan-values-files.json', _json(readiness['values_files']))
         archive.writestr('rendered.yaml', readiness['rendered'])
