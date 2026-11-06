@@ -5,6 +5,7 @@ or substitutes scanner reports. Secrets and resumable state live in --workspace.
 The companion nginx_replica_acceptance module verifies replicated OCI graphs.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,10 @@ from urllib3.util.retry import Retry
 
 
 PAGE = 'application/vnd.cats.page+json'
+HARDENING_CHECKS = (
+    'immutable_identity', 'inherited_layers', 'inherited_history', 'nonroot_uid',
+    'restricted_runtime', 'http_content', 'healthy', 'unhealthy_on_outage', 'recovered',
+)
 
 
 class API:
@@ -221,6 +226,8 @@ def discover_scan(api, root, state, label, reference, retry_scan=False, replace_
 
 def approve(api, root, state, label):
     checkpoint = state[label]
+    if label == 'patched':
+        immutable_patch, _, _ = patched_scan_reference(root, state)
     if not checkpoint.get('approval_id'):
         approval = api.post('/api/cyber-approvals', {
             'service_key': state['service_key'], 'variant': 'current_service',
@@ -253,7 +260,6 @@ def approve(api, root, state, label):
                 or not re.fullmatch(r'sha256:[0-9a-f]{64}', (artifact.get('signature') or {}).get('digest', ''))):
             raise RuntimeError(f'{label} publication is missing immutable artifact or signature identities')
     if label == 'patched':
-        immutable_patch = patched_reference(load(root, 'patch-result.json', {}))
         patch_digest = immutable_patch.rsplit('@', 1)[1]
         images = [item for item in receipt['artifacts'] if item.get('kind') == 'image']
         if (len(images) != 1 or not images[0].get('scan_identity_retained')
@@ -275,6 +281,66 @@ def patched_reference(result):
             or not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', reference)):
         raise RuntimeError('Patch did not provide a signed, delivered, immutable image with actual vulnerability remediation; inspect patch-result.json')
     return reference
+
+
+def validate_hardening_receipt(receipt, source_reference):
+    """Bind successful runtime evidence to the real package patch and derivative."""
+    if not isinstance(receipt, dict) or receipt.get('format') != 'cats-nginx-hardening-runtime-v1':
+        raise RuntimeError('Hardening requires a supported runtime receipt')
+    checks = receipt.get('checks')
+    if (receipt.get('complete') is not True or not isinstance(checks, dict)
+            or any(checks.get(name) is not True for name in HARDENING_CHECKS)):
+        raise RuntimeError('Hardening requires every runtime verification check to succeed')
+    final = receipt.get('hardened_reference')
+    if (receipt.get('source_reference') != source_reference
+            or not isinstance(final, str)
+            or not re.fullmatch(r'[^\s@]+@sha256:[0-9a-f]{64}', final)
+            or any(marker in final for marker in ('://', '?', '#', '\\'))
+            or final.rsplit('@', 1)[1] == source_reference.rsplit('@', 1)[1]):
+        raise RuntimeError('Hardening receipt must bind the actual package patch to a new immutable image')
+    identities = ('source_manifest_digest', 'source_config_digest', 'hardened_manifest_digest',
+                  'hardened_config_digest', 'docker_image_id', 'execution_image', 'recipe_sha256')
+    if any(not isinstance(receipt.get(name), str)
+           or not re.fullmatch(r'sha256:[0-9a-f]{64}', receipt[name]) for name in identities):
+        raise RuntimeError('Hardening receipt has malformed immutable runtime identities')
+    if (receipt['source_manifest_digest'] != source_reference.rsplit('@', 1)[1]
+            or receipt['hardened_manifest_digest'] != final.rsplit('@', 1)[1]
+            or receipt['execution_image'] != receipt['docker_image_id']
+            or receipt['execution_image'] not in (
+                receipt['hardened_manifest_digest'], receipt['hardened_config_digest'])):
+        raise RuntimeError('Hardening runtime identities do not match the supplied immutable images')
+    content_hash = hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return final, {'format': 'cats-nginx-hardening-validation-v1',
+                   'source_reference': source_reference, 'hardened_reference': final,
+                   'receipt_content_sha256': content_hash, 'runtime_verified': True}
+
+
+def patched_scan_reference(root, state, receipt_file=None):
+    """Read-only preflight; never let resumed work change its accepted evidence."""
+    source = patched_reference(load(root, 'patch-result.json', {}))
+    retained = load(root, 'hardening-result.json')
+    binding = state.get('hardening')
+    receipt = None
+    if receipt_file is not None:
+        receipt = json.loads(receipt_file.read_text(encoding='utf-8-sig'))
+    elif binding is not None:
+        receipt = retained
+    elif retained is not None:
+        raise RuntimeError('Unbound hardening evidence requires its explicit --hardened-receipt')
+    if receipt is not None or receipt_file is not None:
+        reference, validation = validate_hardening_receipt(receipt, source)
+        if binding is not None and binding != validation:
+            raise RuntimeError('Hardening receipt conflicts with the retained workspace binding')
+        if retained is not None and retained != receipt:
+            raise RuntimeError('Hardening receipt conflicts with the retained runtime evidence')
+    elif binding is not None:
+        raise RuntimeError('Retained hardening binding is missing its runtime evidence')
+    else:
+        reference, validation = source, None
+    checkpoint = state.get('patched')
+    if checkpoint and checkpoint.get('reference') != reference:
+        raise RuntimeError('The retained patched scan belongs to a different immutable input')
+    return reference, receipt, validation
 
 
 def patch(api, root, state, reference, retry_patch=False):
@@ -313,12 +379,16 @@ def main():
     parser.add_argument('phase', choices=('setup', 'source', 'patch', 'patched'))
     parser.add_argument('--workspace', type=Path, required=True)
     parser.add_argument('--service-key', help='Unique service identity for a new workspace; defaults to nginx-replica-acceptance')
+    parser.add_argument('--hardened-receipt', type=Path,
+        help='Patched phase only: verified hardening derivative of the actual package patch')
     parser.add_argument('--image', default='docker.io/library/nginx:1.28.0-alpine3.21')
     parser.add_argument('--retry-scan', action='store_true', help='Resubmit a retained unsuccessful scan after correcting its cause')
     parser.add_argument('--retry-patch', action='store_true', help='Resubmit a retained unsuccessful patch after correcting its cause')
     parser.add_argument('--replace-failed-publication', action='store_true',
         help='Keep an unpublished failed approval in history and scan again for a fresh approval')
     args = parser.parse_args()
+    if args.hardened_receipt is not None and args.phase != 'patched':
+        parser.error('--hardened-receipt is only valid for the patched phase')
     root = args.workspace.resolve()
     stack = load(root, 'stack.json')
     state = load(root, 'workflow-state.json', {})
@@ -328,6 +398,12 @@ def main():
         if state.get('service_key') and state['service_key'] != args.service_key:
             parser.error('--service-key differs from the retained workspace identity; use a fresh workspace')
         state['service_key'] = args.service_key
+    if args.phase == 'patched':
+        reference, hardening, validation = patched_scan_reference(root, state, args.hardened_receipt)
+        if hardening is not None:
+            save(root, 'hardening-result.json', hardening)
+            state['hardening'] = validation
+            save(root, 'workflow-state.json', state)
     api = API(stack['full_url'])
     password = stack['admin_new_password'] if state.get('password_changed') else stack['admin_password']
     api.login(stack['admin_username'], password, stack['admin_new_password'])
@@ -349,8 +425,6 @@ def main():
         save(root, 'workflow-state.json', state)
         patch(api, root, state, reference, args.retry_patch)
     elif args.phase == 'patched':
-        patch_result = load(root, 'patch-result.json', {})
-        reference = patched_reference(patch_result)
         discover_scan(api, root, state, 'patched', reference, args.retry_scan, args.replace_failed_publication)
         approve(api, root, state, 'patched')
 

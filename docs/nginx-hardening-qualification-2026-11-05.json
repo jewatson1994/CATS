@@ -1,0 +1,820 @@
+{
+  "format": "cats-nginx-hardening-qualification-public-v1",
+  "qualification_date_local": "2026-11-05",
+  "timestamps_timezone": "Each timestamp retains its explicit offset; the run completed on 2026-11-06 UTC / 2026-11-05 America/New_York",
+  "complete": true,
+  "completion_scope": "Runtime and distribution qualification passed; removal of all seven raw configuration findings remains incomplete.",
+  "scope": "Isolated nginx image hardening, real scanners, signed publication, actual Harbor replication, disconnected replica pulls and restart replay.",
+  "result": {
+    "configuration_findings_before": 7,
+    "configuration_findings_after": 3,
+    "fixed": 4,
+    "raw_findings_retained": 3,
+    "all_seven_fixed": false,
+    "vulnerability_count_scope": "Retained approval snapshot finding rows; scanner/database snapshot specific."
+  },
+  "findings": [
+    {
+      "finding": "CIS-DI-0006",
+      "title": "Add HEALTHCHECK instruction to the container image",
+      "scanner": "Dockle",
+      "severity": "Low",
+      "present_in_source": true,
+      "present_in_final": false,
+      "disposition": "fixed",
+      "reason": "Image HEALTHCHECK detects a deliberately induced outage and then recovers."
+    },
+    {
+      "finding": "CIS-DI-0005",
+      "title": "Enable Content trust for Docker",
+      "scanner": "Dockle",
+      "severity": "Low",
+      "present_in_source": true,
+      "present_in_final": true,
+      "disposition": "retained_raw_unverified_environment_control",
+      "reason": "Dockle 0.4.15 checks its own DOCKER_CONTENT_TRUST environment variable in archive mode. The offline scan does not establish Docker Content Trust verification. Separate signed-release verification is recorded without claiming this check was fixed."
+    },
+    {
+      "finding": "CIS-DI-0010",
+      "title": "Do not store credential in environment variables/files",
+      "scanner": "Dockle",
+      "severity": "Critical",
+      "present_in_source": true,
+      "present_in_final": true,
+      "disposition": "retained_raw_false_positive",
+      "reason": "The sole raw alert names inherited KEY_SHA512, a public checksum used to verify the nginx signing public key, not a credential. This disposition is limited to the retained image histories and this exact alert."
+    },
+    {
+      "finding": "CIS-DI-0001",
+      "title": "Create a user for the container",
+      "scanner": "Dockle",
+      "severity": "High",
+      "present_in_source": true,
+      "present_in_final": false,
+      "disposition": "fixed",
+      "reason": "Image config selects UID 101; restricted runtime confirms nonroot execution."
+    },
+    {
+      "finding": "DS-0026",
+      "title": "No HEALTHCHECK defined",
+      "scanner": "Trivy",
+      "severity": "Low",
+      "present_in_source": true,
+      "present_in_final": false,
+      "disposition": "fixed",
+      "reason": "Image HEALTHCHECK detects a deliberately induced outage and then recovers."
+    },
+    {
+      "finding": "DS-0002",
+      "title": "Image user should not be 'root'",
+      "scanner": "Trivy",
+      "severity": "High",
+      "present_in_source": true,
+      "present_in_final": false,
+      "disposition": "fixed",
+      "reason": "Image config selects UID 101; restricted runtime confirms nonroot execution."
+    },
+    {
+      "finding": "DS-0013",
+      "title": "'RUN cd ...' to change directory",
+      "scanner": "Trivy",
+      "severity": "Medium",
+      "present_in_source": true,
+      "present_in_final": true,
+      "disposition": "retained_raw_inherited_history",
+      "reason": "RUN cd occurs in inherited upstream build history. The derivative preserves that history; this check is not reported as fixed."
+    }
+  ],
+  "images_and_publications": {
+    "source": {
+      "scan": {
+        "job_id": "64ca7b425b704f7384c3da376f1791b8",
+        "status": "complete",
+        "started_at": "2026-11-06T03:33:22.626908+00:00",
+        "finished_at": "2026-11-06T03:35:06.304442+00:00"
+      },
+      "execution_id": 1,
+      "approval_id": 1,
+      "configuration_finding_count": 7,
+      "vulnerability_finding_rows": 194,
+      "snapshot_digest": "sha256:b057666a987dce72264028247410ad0987d7be52b1edb1ce8a5c5350f9a39797",
+      "image": {
+        "source_reference": "docker.io/library/nginx@sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "source_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "reference": "publisher.test:5000/approved/nginx-hardening-20261105/nginx@sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "scan_identity_retained": true,
+        "verification_status": "verified"
+      },
+      "release": {
+        "reference": "publisher.test:5000/approved/nginx-hardening-20261105/releases@sha256:eb18714a7762a2e71e33f559d9b1e86f41a1fa6f94c7d7a0e3152592d7ec74cc",
+        "digest": "sha256:eb18714a7762a2e71e33f559d9b1e86f41a1fa6f94c7d7a0e3152592d7ec74cc"
+      },
+      "publication": {
+        "status": "published",
+        "release_key": "1a4f83b41606417a972594c277ed412e",
+        "verification_status": "verified",
+        "signature_status": "verified",
+        "bundle_digest": "sha256:79227a8f6ad0dc882be8fbd7ec4065d7f5c1ce95292f3c48cafdecd4591fe4bc",
+        "bundle_bytes": 24058645,
+        "signing_fingerprint": "sha256:2ce4d1b115913d6962d9534ad73063fa2130c4eeedd6c960b09a8a5289b0542f"
+      },
+      "raw_scanner_files": [
+        {
+          "path": "raw-scanner-evidence/source/001-..json",
+          "sha256": "2d8f53deefaed25421f2fa464e0e3c023786e6c1d49e4e40ec0e638990352fec",
+          "bytes": 203
+        },
+        {
+          "path": "raw-scanner-evidence/source/image-docker.io-library-nginx-sha256-09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c-dockle.json",
+          "sha256": "f04dee4ece7ed2afb1afc2a72da9770553eb54fcf5993a445ea56beae456a0bb",
+          "bytes": 4689
+        },
+        {
+          "path": "raw-scanner-evidence/source/image-docker.io-library-nginx-sha256-09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c.json",
+          "sha256": "bf47f2974d0edc7e9ee23e09f6e9228ea8bb97582dcfc7c973a3b2592ac79b4e",
+          "bytes": 167792
+        }
+      ]
+    },
+    "patched": {
+      "scan": {
+        "job_id": "f423df809f5548cd8ad057adc5d61821",
+        "status": "complete",
+        "started_at": "2026-11-06T03:50:27.990324+00:00",
+        "finished_at": "2026-11-06T03:50:58.573163+00:00"
+      },
+      "execution_id": 2,
+      "approval_id": 2,
+      "configuration_finding_count": 3,
+      "vulnerability_finding_rows": 0,
+      "snapshot_digest": "sha256:e8cb7c45ed4172110e5fec81085b65942f5ccdeb4a003b19d3046b6184f6425d",
+      "image": {
+        "source_reference": "publisher.test:5000/hardened/nginx@sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+        "source_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+        "reference": "publisher.test:5000/approved/nginx-hardening-20261105/nginx@sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+        "digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+        "scan_identity_retained": true,
+        "verification_status": "verified"
+      },
+      "release": {
+        "reference": "publisher.test:5000/approved/nginx-hardening-20261105/releases@sha256:2da158ca2cbbb207d292f4188db8affeee78642a1162c5e761cb5162d2256e47",
+        "digest": "sha256:2da158ca2cbbb207d292f4188db8affeee78642a1162c5e761cb5162d2256e47"
+      },
+      "publication": {
+        "status": "published",
+        "release_key": "e7e73af91b374177989fc53dacf7ffd6",
+        "verification_status": "verified",
+        "signature_status": "verified",
+        "bundle_digest": "sha256:01de6b29baea52c7ea4a5ec70bf5e5e9f669e97d137a2f6c5d90dd87b2432cfe",
+        "bundle_bytes": 29628410,
+        "signing_fingerprint": "sha256:2ce4d1b115913d6962d9534ad73063fa2130c4eeedd6c960b09a8a5289b0542f"
+      },
+      "raw_scanner_files": [
+        {
+          "path": "raw-scanner-evidence/patched/001-..json",
+          "sha256": "80cf5faebd66d05a264794a78572144c489616271ff7cbfccd5749fb7964aad8",
+          "bytes": 203
+        },
+        {
+          "path": "raw-scanner-evidence/patched/image-publisher.test-5000-hardened-nginx-sha256-2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2-dockle.json",
+          "sha256": "9fde387298e20b67089fa9dffbae5e5d7f78a2a4b2388e582639d59b8cbf7194",
+          "bytes": 4307
+        },
+        {
+          "path": "raw-scanner-evidence/patched/image-publisher.test-5000-hardened-nginx-sha256-2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2.json",
+          "sha256": "07dd83a867cd2ce4552087e3d4819c8ca482edcc9949d630d45f1263e540cb45",
+          "bytes": 173039
+        }
+      ]
+    }
+  },
+  "patch_job_id": "3f05de01d7594f3b9c5d6d29c527f970",
+  "package_patched_base_reference": "publisher.test:5000/patched/nginx@sha256:eb007132ae918972f2de3ba02e45bc330460058472b13ba5fe4aa3e838c13663",
+  "runtime": {
+    "complete": true,
+    "checks": {
+      "immutable_identity": true,
+      "inherited_layers": true,
+      "inherited_history": true,
+      "healthy": true,
+      "restricted_runtime": true,
+      "nonroot_uid": true,
+      "http_content": true,
+      "unhealthy_on_outage": true,
+      "recovered": true
+    },
+    "recipe_sha256": "sha256:bd286366360d5a8f59581d9d11b9a67b3f4730ab51f62d82c77b3d0830b2ab20",
+    "started_at": "2026-11-06T03:49:22.507769+00:00",
+    "finished_at": "2026-11-06T03:49:58.611755+00:00",
+    "cleanup_complete": true,
+    "source_manifest_digest": "sha256:eb007132ae918972f2de3ba02e45bc330460058472b13ba5fe4aa3e838c13663",
+    "source_config_digest": "sha256:3f8675c47c543efad1a197003355ac507b147b0f010d6a8ee02a724365d03e21",
+    "hardened_manifest_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+    "hardened_config_digest": "sha256:2617b62548847039f4f4bf12d515232a76bd73299e0c06dab7dd4d357aca8b25",
+    "uid": "101",
+    "host_config": {
+      "ReadonlyRootfs": true,
+      "CapDrop": [
+        "ALL"
+      ],
+      "SecurityOpt": [
+        "no-new-privileges"
+      ],
+      "NetworkMode": "none",
+      "Tmpfs": {
+        "/tmp": "rw,noexec,nosuid,nodev,size=16777216,mode=1777"
+      },
+      "Memory": 134217728,
+      "PidsLimit": 64
+    },
+    "ancestry": {
+      "inherited_layer_count": 12,
+      "inherited_history_count": 23
+    },
+    "http_content": {
+      "http_content_sha256": "sha256:fb47468a2cd3953c7131431991afcc6a2703f14640520102eea0a685a7e8d6de",
+      "http_content_bytes": 615
+    },
+    "health_transitions": [
+      "healthy",
+      "unhealthy",
+      "healthy"
+    ]
+  },
+  "public_checksum_disposition_evidence": {
+    "variable": "KEY_SHA512",
+    "sha512": "e09fa32f0a0eab2b879ccbbc4d0e4fb9751486eedda75e35fac65802cc9faa266425edf83e261137a2f4d16281ce2c1a5f4502930fe75154723da014214f0655",
+    "purpose": "Integrity checksum for https://nginx.org/keys/nginx_signing.rsa.pub",
+    "bound_to_retained_source_and_derivative_history": true,
+    "official_immutable_source": "https://github.com/nginx/docker-nginx/blob/4b9f658be76820b24e4ef4605413a5c08707a512/stable/alpine-slim/Dockerfile#L29",
+    "public_key_download_independently_rehashed": false,
+    "dockle_source": "https://github.com/goodwithtech/dockle/blob/v0.4.15/pkg/assessor/manifest/manifest.go",
+    "dockle_content_trust_source": "https://github.com/goodwithtech/dockle/blob/v0.4.15/pkg/assessor/contentTrust/contentTrust.go"
+  },
+  "harbor": {
+    "complete": true,
+    "executions": [
+      {
+        "label": "hardening-source",
+        "id": 16,
+        "policy_id": 6,
+        "status": "Succeed",
+        "succeed": 2,
+        "failed": 0,
+        "total": 2,
+        "start_time": "2026-11-06T03:39:50.735Z",
+        "end_time": "2026-11-06T03:39:53.000Z",
+        "tasks": [
+          {
+            "id": 41,
+            "execution_id": 16,
+            "status": "Succeed",
+            "operation": "copy",
+            "resource_type": "artifact"
+          },
+          {
+            "id": 40,
+            "execution_id": 16,
+            "status": "Succeed",
+            "operation": "copy",
+            "resource_type": "artifact"
+          }
+        ]
+      },
+      {
+        "label": "hardening-patched",
+        "id": 17,
+        "policy_id": 6,
+        "status": "Succeed",
+        "succeed": 2,
+        "failed": 0,
+        "total": 2,
+        "start_time": "2026-11-06T03:54:12.959Z",
+        "end_time": "2026-11-06T03:54:15.000Z",
+        "tasks": [
+          {
+            "id": 43,
+            "execution_id": 17,
+            "status": "Succeed",
+            "operation": "copy",
+            "resource_type": "artifact"
+          },
+          {
+            "id": 42,
+            "execution_id": 17,
+            "status": "Succeed",
+            "operation": "copy",
+            "resource_type": "artifact"
+          }
+        ]
+      }
+    ],
+    "online": {
+      "checked_at": "2026-11-06T03:53:23.496415+00:00",
+      "probes": [
+        {
+          "name": "source_harbor",
+          "reachable": true,
+          "status": 401
+        },
+        {
+          "name": "original_registry",
+          "reachable": true,
+          "status": 200
+        },
+        {
+          "name": "original_cats",
+          "reachable": true,
+          "status": 200
+        },
+        {
+          "name": "target_harbor",
+          "reachable": true,
+          "status": 401
+        }
+      ]
+    },
+    "disconnected_checks": {
+      "offline_before_successor_sync": {
+        "checked_at": "2026-11-06T03:55:38.459417+00:00",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_before_first_pull": {
+        "checked_at": "2026-11-06T03:55:57.701944+00:00",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_after_verification": {
+        "checked_at": "2026-11-06T03:56:17.451959+00:00",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_after_restart": {
+        "checked_at": "2026-11-06T03:56:31.015893+00:00",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      }
+    },
+    "cold_cache": {
+      "checked_at": "2026-11-06T03:55:52.741912+00:00",
+      "patched_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+      "manifest_rows": 0,
+      "object_links": 0,
+      "patched_only_blob_count": 16,
+      "patched_only_blobs_present": 0
+    },
+    "warm_cache": {
+      "checked_at": "2026-11-06T03:56:12.850105+00:00",
+      "patched_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+      "manifest_rows": 1,
+      "object_links": 17,
+      "patched_only_blob_count": 16,
+      "patched_only_blobs_present": 16
+    },
+    "cold_cache_scope": "First request for the hardened root; patched-only blobs were absent. The prior source pull may have warmed shared blobs. This is not a claim of a globally empty cache.",
+    "source_sync": {
+      "job_id": "e0a485ca4dd04fdc8c651b8033d47116",
+      "result": {
+        "discovered": 1,
+        "activated": 1,
+        "revoked": 0,
+        "unchanged": 0,
+        "failed": 0
+      },
+      "release_id": 1,
+      "source_release_id": "1",
+      "manifest_digest": "sha256:92cdd9b641ff1b4d8d08ed023f756b55750313ab36362f62e93ab29d9aacead4",
+      "status": "active"
+    },
+    "successor_sync": {
+      "job_id": "aa7e1208622a49589e9e6f743a9c1c5c",
+      "result": {
+        "discovered": 2,
+        "activated": 1,
+        "revoked": 0,
+        "unchanged": 1,
+        "failed": 0
+      },
+      "release_id": 2,
+      "source_release_id": "2",
+      "manifest_digest": "sha256:c033300ef097b1bcce0dfc5bc762a9a7e8b30d65e0ecee577ec40684cf52c07d",
+      "status": "active"
+    },
+    "source_full_graph": {
+      "release_id": 1,
+      "verified_bytes": 21005326,
+      "complete": true,
+      "graphs": [
+        {
+          "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+          "verified_bytes": 21005326,
+          "manifest_count": 1,
+          "blob_count": 9,
+          "complete": true
+        }
+      ]
+    },
+    "disconnected_first_patched_full_graph": {
+      "release_id": 2,
+      "verified_bytes": 63712607,
+      "complete": true,
+      "graphs": [
+        {
+          "root_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+          "verified_bytes": 63712607,
+          "manifest_count": 1,
+          "blob_count": 16,
+          "complete": true
+        }
+      ],
+      "first_proxy_request_for_patched_roots": true
+    },
+    "superseded_denial": {
+      "allowed": false,
+      "reason": "release_superseded",
+      "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+      "release_id": 1,
+      "authorization_source": "denied",
+      "approval_status": "superseded",
+      "override_status": "no_applicable_override"
+    },
+    "override": {
+      "id": 1,
+      "release_id": 1,
+      "digests": [
+        "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+      ],
+      "denial_condition": "superseded",
+      "manifest_digest": "sha256:92cdd9b641ff1b4d8d08ed023f756b55750313ab36362f62e93ab29d9aacead4",
+      "created_status": "active",
+      "final_status": "revoked",
+      "administrator_override_denied": true,
+      "full_graph": {
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "verified_bytes": 21005326,
+        "manifest_count": 1,
+        "blob_count": 9,
+        "complete": true
+      },
+      "matching_usage_count": 10,
+      "unrelated_digest_denial": {
+        "allowed": false,
+        "requested_artifact_digest": "sha256:eb18714a7762a2e71e33f559d9b1e86f41a1fa6f94c7d7a0e3152592d7ec74cc",
+        "denial_stage": "replica_repository_membership"
+      },
+      "unrelated_digest_kind": "actual signed release-document OCI root outside approved image inventory",
+      "revoked_warm_cache_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "release_id": 1,
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "override_status": "no_applicable_override"
+      }
+    },
+    "patched_remains_allowed": {
+      "release_id": 2,
+      "verified_bytes": 63712607,
+      "complete": true,
+      "graphs": [
+        {
+          "root_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+          "verified_bytes": 63712607,
+          "manifest_count": 1,
+          "blob_count": 16,
+          "complete": true
+        }
+      ]
+    },
+    "publisher_status_preserved": {
+      "source": "superseded",
+      "patched": "active"
+    },
+    "evidence_preservation": {
+      "source": {
+        "release_id": 1,
+        "manifest_digest": "sha256:92cdd9b641ff1b4d8d08ed023f756b55750313ab36362f62e93ab29d9aacead4",
+        "evidence_digest": "sha256:be2c2b2bc36b2cea7394eb2fd226369858fcf111eb2286a18578e2d701cbccac",
+        "evidence_bytes": 1458266,
+        "archive_entries": 10,
+        "read_only": true,
+        "original_evidence_equal": true
+      },
+      "patched": {
+        "release_id": 2,
+        "manifest_digest": "sha256:c033300ef097b1bcce0dfc5bc762a9a7e8b30d65e0ecee577ec40684cf52c07d",
+        "evidence_digest": "sha256:dba47c15ebb3a139610ee151e1719eec2857ff2b4227f7e2c45c6bcf959a87eb",
+        "evidence_bytes": 1402721,
+        "archive_entries": 10,
+        "read_only": true,
+        "original_evidence_equal": true
+      }
+    },
+    "restart_replay": {
+      "checked_at": "2026-11-06T03:56:40.034890+00:00",
+      "job_id": "f9843ba5d123458f9bdad89218988a31",
+      "result": {
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 2,
+        "failed": 0
+      },
+      "release_count": 2,
+      "revoked_override_id": 1,
+      "first_pull_evidence_preserved": true,
+      "complete": true,
+      "warm_superseded_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "release_id": 1,
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "override_status": "no_applicable_override"
+      },
+      "patched_full_graph": {
+        "release_id": 2,
+        "verified_bytes": 63712607,
+        "complete": true,
+        "graphs": [
+          {
+            "root_digest": "sha256:2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+            "verified_bytes": 63712607,
+            "manifest_count": 1,
+            "blob_count": 16,
+            "complete": true
+          }
+        ]
+      }
+    }
+  },
+  "tests": {
+    "focused_passed": 121,
+    "existing_regression_passed": 174,
+    "shared_nginx_workflow_cases": 61,
+    "unique_passed": 234,
+    "regression_duration_seconds": 7.41,
+    "environment_note": "Windows TestClient initially stalled creating its internal socket pair under restricted networking; unchanged tests passed with local socket permission."
+  },
+  "cleanup": {
+    "complete": true,
+    "completed_at": "2026-11-06T03:58:02.7793202Z",
+    "projects": [
+      {
+        "project": "cats-nginx-hardening-20261105",
+        "running_container_count": 0,
+        "volumes_retained": true
+      },
+      {
+        "project": "cats-harbor-replica-1238cdf4f6",
+        "running_container_count": 0,
+        "volumes_retained": true
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "running_container_count": 0,
+        "volumes_retained": true
+      }
+    ]
+  },
+  "private_evidence": {
+    "workspace_name": "nginx-hardening-qualification",
+    "path_base": "Relative to the private qualification workspace; contents intentionally not published.",
+    "files": [
+      {
+        "path": "cleanup.json",
+        "sha256": "6061aa7a49a7cfce5de80e65de7eef6342cec9b49bc165699dc3cd70c8b980c2",
+        "bytes": 507
+      },
+      {
+        "path": "harbor/harbor-replication.json",
+        "sha256": "7165e75ded8d0f72b75c6c9332e788d8c150c8d5a1c9dd16c80f8683f92f8f8d",
+        "bytes": 5178
+      },
+      {
+        "path": "harbor/logs/execution-16-task-40.log",
+        "sha256": "d489919bd5391c0c86005e2494ad2b8db018beb5a7cacaeb07dcc4fe873712eb",
+        "bytes": 7698
+      },
+      {
+        "path": "harbor/logs/execution-16-task-41.log",
+        "sha256": "ba95c51ebe617c3e4d1dc96d3eaea303e9a7b006533cc75c2b530ff6731ed6ad",
+        "bytes": 10823
+      },
+      {
+        "path": "harbor/logs/execution-17-task-42.log",
+        "sha256": "913074fb93717484635166cd3444738a0083c4177ef5b3895f62a4d274d83858",
+        "bytes": 10272
+      },
+      {
+        "path": "harbor/logs/execution-17-task-43.log",
+        "sha256": "b23390c741a47e41dc454999f73b199f4398b8d97e187022d210edb85aebf2e6",
+        "bytes": 15376
+      },
+      {
+        "path": "nginx-harbor-replica/harbor-qualification.json",
+        "sha256": "d48458f8024e1853fad54538b0d6d74ad96ec5a7819ea584180cc57e2c584c4e",
+        "bytes": 15727
+      },
+      {
+        "path": "nginx-harbor-replica/replica-acceptance.json",
+        "sha256": "5446ea874835f4fb42e4ef0e3407daff1c9ad3f261ecec41ecac85a42641a1c7",
+        "bytes": 27734
+      },
+      {
+        "path": "nginx/hardening-result.json",
+        "sha256": "0694e78e84d91880e5c1b208a6621026a5d9ca3acef2f7dee74e4f593c77537a",
+        "bytes": 20512
+      },
+      {
+        "path": "nginx/patch-result.json",
+        "sha256": "b499c7a5da0d6132494179c09d7f6ac4a16efcb8afcf5af082aac7e6585a67ee",
+        "bytes": 114551
+      },
+      {
+        "path": "nginx/patched-approval.json",
+        "sha256": "ac1575bcdcb50e68b38c18e162f648e49c4dbbcabedf303947f8b949249db846",
+        "bytes": 56019
+      },
+      {
+        "path": "nginx/patched-receipt.json",
+        "sha256": "9abf592c0b047fb79fab3c5d53168e268c8ae838d28c2a842c6008a8b2b7b8cf",
+        "bytes": 30552
+      },
+      {
+        "path": "nginx/patched-scan.json",
+        "sha256": "94ec5bc86df8aecde6631de2729aa2bfa32c06146bdd19c23826fa16f3c80a7c",
+        "bytes": 868
+      },
+      {
+        "path": "nginx/source-approval.json",
+        "sha256": "76acff31463d224926687a2889e2761df80d95d20c04505a7be54aa68ca2459a",
+        "bytes": 4529105
+      },
+      {
+        "path": "nginx/source-receipt.json",
+        "sha256": "c0c70deae66f58d0cb7372490449f201ac5fc401c9f6f416f91ca2ca436ed37c",
+        "bytes": 2236176
+      },
+      {
+        "path": "nginx/source-scan.json",
+        "sha256": "74930c3ae426ed9872536be5fa68637e8620d2c3d74d911d16a27a107560ea8f",
+        "bytes": 868
+      },
+      {
+        "path": "nginx/workflow-state.json",
+        "sha256": "c3f5a1058f9b7942bac2bf5c0edcca10aa745b00c230414ea4bcf581b43c68c4",
+        "bytes": 1926
+      },
+      {
+        "path": "offline-input/export-proof.json",
+        "sha256": "89601e6901b9b7671afb780b81bf2c73506f15a21c53013d4df799f1d75ec4d2",
+        "bytes": 1004
+      },
+      {
+        "path": "offline-input/hardened-history.jsonl",
+        "sha256": "22941048fc0ec42c778b49c4d121e06fdb8f689b8d33d5acf5d974a452f46f00",
+        "bytes": 15147
+      },
+      {
+        "path": "offline-input/hardened-manifest.json",
+        "sha256": "2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2",
+        "bytes": 3192
+      },
+      {
+        "path": "offline-input/source-history.jsonl",
+        "sha256": "9f10b0d8cc127d2531c2d729559a530ffa2883acfc84ed09301d0f3c7001edb5",
+        "bytes": 11936
+      },
+      {
+        "path": "offline-input/source-manifest.json",
+        "sha256": "eb007132ae918972f2de3ba02e45bc330460058472b13ba5fe4aa3e838c13663",
+        "bytes": 2859
+      },
+      {
+        "path": "raw-scanner-evidence/patched-index.json",
+        "sha256": "c7fc9a7f4d0eb567991f1c370963fb5f6ce5596fd5fca334c35c450a4cf3922c",
+        "bytes": 662
+      },
+      {
+        "path": "run-cd-evidence.json",
+        "sha256": "7795231588d7c632639663caa355e97a6ba71950a2830741341375189dfe365a",
+        "bytes": 11265
+      },
+      {
+        "path": "runtime-final/hardening-runtime.json",
+        "sha256": "27de333c2baccc1d1c30c12cc26d61f436ab041afe5772dbf665357a97bd0dcb",
+        "bytes": 8535
+      },
+      {
+        "path": "runtime-host/hardening-runtime.json",
+        "sha256": "069d3f37b596c8e60f5ecf470aa00511d799576269d9e85f17602bb4bb70d383",
+        "bytes": 20514
+      },
+      {
+        "path": "runtime-launch-diagnostic.txt",
+        "sha256": "37db8194fdb9ddb641102c625359a9d263cb8f0c54d1814aed6b8a400a838f01",
+        "bytes": 437
+      },
+      {
+        "path": "runtime/hardening-runtime.json",
+        "sha256": "759808a574627c0c3a0547b9f46d8ecfc8a51dfb76e6ddb13e5c90de760f4b9c",
+        "bytes": 628
+      }
+    ],
+    "incomplete_runtime_attempts_preserved": [
+      {
+        "path": "runtime/hardening-runtime.json",
+        "complete": false
+      },
+      {
+        "path": "runtime-final/hardening-runtime.json",
+        "complete": false
+      }
+    ]
+  }
+}
