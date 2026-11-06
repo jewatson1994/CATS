@@ -312,6 +312,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('phase', choices=('setup', 'source', 'patch', 'patched'))
     parser.add_argument('--workspace', type=Path, required=True)
+    parser.add_argument('--service-key', help='Unique service identity for a new workspace; defaults to nginx-replica-acceptance')
     parser.add_argument('--image', default='docker.io/library/nginx:1.28.0-alpine3.21')
     parser.add_argument('--retry-scan', action='store_true', help='Resubmit a retained unsuccessful scan after correcting its cause')
     parser.add_argument('--retry-patch', action='store_true', help='Resubmit a retained unsuccessful patch after correcting its cause')
@@ -321,6 +322,12 @@ def main():
     root = args.workspace.resolve()
     stack = load(root, 'stack.json')
     state = load(root, 'workflow-state.json', {})
+    if args.service_key is not None:
+        if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,199}', args.service_key):
+            parser.error('--service-key must be a nonempty service identifier of at most 200 characters')
+        if state.get('service_key') and state['service_key'] != args.service_key:
+            parser.error('--service-key differs from the retained workspace identity; use a fresh workspace')
+        state['service_key'] = args.service_key
     api = API(stack['full_url'])
     password = stack['admin_new_password'] if state.get('password_changed') else stack['admin_password']
     api.login(stack['admin_username'], password, stack['admin_new_password'])

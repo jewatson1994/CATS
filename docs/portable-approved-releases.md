@@ -87,6 +87,8 @@ Separately labeled synthetic releases verified both image architectures, a Helm 
 
 Both public projects used scoped one-day robots and had no retention configured. Anonymous and scoped-robot catalog access returned 401, so the qualified replica uses exact release repositories. All 21 qualification services were stopped afterward, retaining private evidence and volumes. The controller's 25 focused tests passed. These results apply to this pair and configuration; repeat qualification for the intended production versions and rules.
 
+The separate [staging qualification](staging-qualification-2026-11-05.md) follows a fresh 100-image baseline and its 77-retained/23-new/23-retired successor through Harbor executions 14 and 15, with all 123 distinct images verified runnable offline. Its inventory assessments are synthesized; the separate fresh nginx workflow uses actual scans showing 194 package vulnerability observations reduced to zero, with seven configuration findings remaining. Consult that report for recovery and final disconnected pull/override outcomes; these follow-up phases do not change the historical qualification scope above.
+
 ### Repeating the isolated Harbor qualification
 
 The opt-in drivers use a dedicated private workspace and disposable Harbor projects. Keep the workspace outside the repository: it contains temporary robot credentials, signing keys, database state, logs and retained receipts. Use the pinned local images in `tests/harbor/images.lock.json`, Docker Compose, and Python with requests, PyYAML and cryptography. The stack helper verifies the official installer checksum and starts separate source and target Harbor instances; its default action only prints a plan.

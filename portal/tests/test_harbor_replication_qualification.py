@@ -11,6 +11,122 @@ from harbor_replication_qualification import Harbor
 import harbor_replication_qualification as controller
 
 
+@pytest.mark.parametrize(('alias', 'prefix'), [
+    ('approved', 'approved/service'), ('qualification', 'qualification/service'),
+    ('interruption', 'qualification/service'), ('Bad', 'approved/service'),
+    ('new/path', 'approved/service'), ('new', 'approved'), ('new', 'approved/'),
+    ('new', '/approved/service'), ('new', 'approved/service/'), ('new', 'other/service'),
+    ('new', 'approved/**'), ('new', 'approved/service?'), ('new', 'approved/../service'),
+    ('new', 'approved/service//releases'), ('new', 'approved/service\\releases'),
+    ('new', 'approved/service%2fother'), ('new', 'approved/service@sha256:123'),
+])
+def test_scoped_policy_rejects_broad_or_ambiguous_paths_without_network(tmp_path, monkeypatch, alias, prefix):
+    monkeypatch.setattr(controller, 'clients', lambda _: pytest.fail('Invalid scope must not contact Harbor'))
+    with pytest.raises(ValueError):
+        controller.setup_scoped(tmp_path, alias, prefix)
+
+
+@pytest.fixture
+def scoped_policy(tmp_path, monkeypatch):
+    controller.save(tmp_path, 'replication-state.json', {'registry_id': 8, 'policies': {'approved': 2}})
+    controller.save(tmp_path, 'harbor-replication.json', {'executions': [{'label': 'preserved'}]})
+
+    class API:
+        def __init__(self):
+            self.created = []
+            self.executions = []
+            self.policy = None
+
+        def post(self, path, value):
+            accepted = response(201)
+            if path == '/replication/policies':
+                self.created.append(copy.deepcopy(value))
+                self.policy = {**copy.deepcopy(value), 'id': 12, 'secret': 'never-report'}
+                accepted.headers['Location'] = '/api/v2.0/replication/policies/12'
+            else:
+                assert path == '/replication/executions'
+                self.executions.append(copy.deepcopy(value))
+                accepted.headers['Location'] = '/api/v2.0/replication/executions/20'
+            return accepted
+
+        def get(self, path):
+            if path == '/replication/policies/12':
+                return copy.deepcopy(self.policy)
+            assert path == '/replication/executions/20'
+            return {'id': 20, 'status': 'Succeed'}
+
+        def pages(self, path):
+            if path == '/replication/policies':
+                return [copy.deepcopy(self.policy)] if self.policy else []
+            assert path == '/replication/executions/20/tasks'
+            return [{'id': 30, 'status': 'Succeed'}]
+
+        def request(self, method, path):
+            assert method == 'GET' and path == '/replication/executions/20/tasks/30/log'
+            return response(200, 'copied service subtree')
+
+    api = API()
+    monkeypatch.setattr(controller, 'clients', lambda _: ({}, {'source': api}))
+    return tmp_path, api
+
+
+def test_scoped_setup_is_idempotent_preserves_history_and_refuses_alias_reuse(scoped_policy):
+    root, api = scoped_policy
+    for _ in range(2):
+        controller.setup_scoped(root, 'staging-nginx', 'approved/nginx-unique')
+    assert len(api.created) == 1
+    assert api.created[0]['filters'] == [{'type': 'name', 'value': 'approved/nginx-unique/**'}]
+    report = controller.load(root, 'harbor-replication.json')
+    assert report['executions'] == [{'label': 'preserved'}]
+    assert report['policy_scopes'] == {'staging-nginx': 'approved/nginx-unique'}
+    assert 'never-report' not in json.dumps(report)
+    with pytest.raises(ValueError, match='repurposed'):
+        controller.setup_scoped(root, 'staging-nginx', 'approved/another-service')
+    with pytest.raises(ValueError, match='configured policy alias'):
+        controller.replicate(root, 'not-configured', 'unexpected')
+    assert not api.executions
+
+
+@pytest.mark.parametrize('selector', ['staging-inventory', 'qualification/staging-inventory-unique'])
+def test_replication_accepts_scoped_alias_or_exact_prefix(scoped_policy, selector):
+    root, api = scoped_policy
+    controller.setup_scoped(root, 'staging-inventory', 'qualification/staging-inventory-unique')
+    controller.replicate(root, selector, 'fresh-source')
+    assert api.executions == [{'policy_id': 12}]
+    execution = controller.load(root, 'harbor-replication.json')['executions'][-1]
+    assert execution['namespace'] == 'staging-inventory'
+    assert execution['tasks'] == [{'id': 30, 'status': 'Succeed'}]
+
+
+def test_scoped_policy_adopts_matching_policy_after_lost_local_state_and_harbor_omits_false(scoped_policy):
+    root, api = scoped_policy
+    controller.setup_scoped(root, 'fresh', 'qualification/service')
+    del api.policy['replicate_deletion']
+    del api.policy['dest_namespace']
+    controller.save(root, 'replication-state.json', {'registry_id': 8, 'policies': {'approved': 2}})
+    controller.setup_scoped(root, 'fresh', 'qualification/service')
+    assert len(api.created) == 1
+    assert controller.load(root, 'replication-state.json')['policies']['fresh'] == 12
+    controller.replicate(root, 'fresh', 'recovered-policy')
+    assert api.executions == [{'policy_id': 12}]
+
+
+@pytest.mark.parametrize('mutation', [
+    {'filters': [{'type': 'name', 'value': 'qualification/**'}]},
+    {'filters': [{'type': 'name', 'value': 'qualification/service/**', 'decoration': 'excludes'}]},
+    {'dest_registry': {'id': 9}}, {'dest_namespace': 'elsewhere'},
+    {'dest_namespace_replace_count': 1}, {'replicate_deletion': True},
+    {'enabled': False}, {'override': False}, {'trigger': {'type': 'scheduled'}},
+])
+def test_changed_scoped_policy_is_rejected_before_execution(scoped_policy, mutation):
+    root, api = scoped_policy
+    controller.setup_scoped(root, 'fresh', 'qualification/service')
+    api.policy.update(mutation)
+    with pytest.raises(RuntimeError, match='exact subtree'):
+        controller.replicate(root, 'fresh', 'should-not-run')
+    assert not api.executions
+
+
 CSRF = {'errors': [{'code': 'FORBIDDEN', 'message': 'CSRF token not found in request'}]}
 
 

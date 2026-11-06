@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 import hashlib
 import os
 from pathlib import Path
+import re
 import time
 from urllib.parse import quote
 
@@ -242,10 +243,85 @@ def setup(root):
     print('Healthy Harbor pair, scoped robots, TLS-verified endpoint and complete-subtree rules configured.')
 
 
-def replicate(root, namespace, label, interrupt_after=None):
+def scoped_arguments(alias, repository_prefix):
+    if (not re.fullmatch(r'[a-z][a-z0-9-]{0,62}', alias)
+            or alias in {'approved', 'qualification', 'interruption'}):
+        raise ValueError('Scoped policy requires a new lowercase alias, distinct from the built-in policies')
+    segment = r'[a-z0-9]+(?:[._-][a-z0-9]+)*'
+    if (len(repository_prefix) > 240
+            or not re.fullmatch(r'(?:approved|qualification)/' + segment + r'(?:/' + segment + r')*', repository_prefix)):
+        raise ValueError('Repository prefix must be a literal service subtree in approved/ or qualification/')
+
+
+def verify_scoped_policy(policy, registry_id, repository_prefix):
+    filters = [fields(item, ('type', 'value')) for item in policy.get('filters', [])]
+    if (filters != [{'type': 'name', 'value': repository_prefix + '/**'}]
+            or any(item.get('decoration') not in (None, '', 'matches') for item in policy.get('filters', []))
+            or (policy.get('dest_registry') or {}).get('id') != registry_id
+            or policy.get('dest_namespace') not in ('', None)
+            or policy.get('dest_namespace_replace_count', 0) != 0
+            # Harbor omits false-valued optional fields from policy responses.
+            or policy.get('replicate_deletion', False) is not False
+            or policy.get('enabled') is not True
+            or policy.get('override') is not True
+            or (policy.get('trigger') or {}).get('type') != 'manual'):
+        raise RuntimeError('Scoped Harbor policy no longer matches its retained exact subtree and destination')
+
+
+def setup_scoped(root, alias, repository_prefix):
+    """Add one isolated subtree policy using the already configured project robots."""
+    scoped_arguments(alias, repository_prefix)
+    state = load(root, 'replication-state.json')
+    policies, scopes = state['policies'], state.setdefault('policy_scopes', {})
+    if alias in policies and scopes.get(alias) != repository_prefix:
+        raise ValueError('Existing policy alias must not be repurposed for another subtree')
     _, apis = clients(root)
     source = apis['source']
+    if alias not in policies:
+        suffix = hashlib.sha256(repository_prefix.encode()).hexdigest()[:12]
+        name = f'cats-scoped-{alias}-{suffix}'
+        existing = [item for item in source.pages('/replication/policies') if item.get('name') == name]
+        if len(existing) > 1:
+            raise RuntimeError('Scoped Harbor policy name unexpectedly matches multiple policies')
+        policy = {'name': name,
+                  'description': 'Isolated qualification subtree, all tags and Cosign signatures',
+                  'dest_registry': {'id': state['registry_id']}, 'dest_namespace': '',
+                  'dest_namespace_replace_count': 0, 'trigger': {'type': 'manual'},
+                  'filters': [{'type': 'name', 'value': repository_prefix + '/**'}],
+                  'replicate_deletion': False, 'override': True, 'enabled': True}
+        if existing:
+            identity = int(existing[0]['id'])
+            verify_scoped_policy(source.get('/replication/policies/' + str(identity)),
+                                 state['registry_id'], repository_prefix)
+        else:
+            response = source.post('/replication/policies', policy)
+            identity = int(response.headers['Location'].rsplit('/', 1)[1])
+        policies[alias] = identity
+        scopes[alias] = repository_prefix
+        save(root, 'replication-state.json', state)
+    actual = source.get('/replication/policies/' + str(int(policies[alias])))
+    verify_scoped_policy(actual, state['registry_id'], repository_prefix)
+    report = load(root, 'harbor-replication.json', {'executions': []})
+    report.setdefault('policies', {})[alias] = policy_report(actual)
+    report.setdefault('policy_scopes', {})[alias] = repository_prefix
+    save(root, 'harbor-replication.json', report)
+    print(f'Harbor scoped policy {alias} verified for {repository_prefix}/**.')
+
+
+def replicate(root, namespace, label, interrupt_after=None):
     state = load(root, 'replication-state.json')
+    if namespace not in state['policies']:
+        matches = [alias for alias, prefix in state.get('policy_scopes', {}).items() if prefix == namespace]
+        if len(matches) != 1:
+            raise ValueError('Replication requires a configured policy alias or exact scoped repository prefix')
+        namespace = matches[0]
+    _, apis = clients(root)
+    source = apis['source']
+    prefix = state.get('policy_scopes', {}).get(namespace)
+    if prefix is not None:
+        scoped_arguments(namespace, prefix)
+        actual = source.get('/replication/policies/' + str(int(state['policies'][namespace])))
+        verify_scoped_policy(actual, state['registry_id'], prefix)
     response = source.post('/replication/executions', {'policy_id': state['policies'][namespace]})
     identity = int(response.headers['Location'].rsplit('/', 1)[1])
     deadline = time.monotonic() + 1800
@@ -363,9 +439,10 @@ def verify_probe(root, harbor_host):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('phase', choices=('setup', 'inspect', 'replicate', 'seed', 'transfer-probe', 'verify-probe'))
+    parser.add_argument('phase', choices=('setup', 'setup-scoped', 'inspect', 'replicate', 'seed', 'transfer-probe', 'verify-probe'))
     parser.add_argument('--workspace', type=Path, required=True)
-    parser.add_argument('--namespace', choices=('approved', 'qualification', 'interruption'), default='approved')
+    parser.add_argument('--namespace', default='approved', help='Configured policy alias or exact scoped repository prefix')
+    parser.add_argument('--repository-prefix', help='Literal approved/ or qualification/ service subtree for setup-scoped')
     parser.add_argument('--label', default='source')
     parser.add_argument('--interrupt-after', type=float,
                         help='Stop this execution after N seconds; requires incomplete tasks, never reports success')
@@ -375,6 +452,10 @@ def main():
     args = parser.parse_args()
     if args.phase == 'setup':
         setup(args.workspace)
+    elif args.phase == 'setup-scoped':
+        if not args.repository_prefix:
+            parser.error('setup-scoped requires --namespace ALIAS and --repository-prefix PROJECT/SERVICE')
+        setup_scoped(args.workspace, args.namespace, args.repository_prefix)
     elif args.phase == 'inspect':
         inspect_configuration(args.workspace)
     elif args.phase == 'replicate':

@@ -1,0 +1,4840 @@
+{
+  "format": "cats-isolated-staging-qualification-v1",
+  "complete": true,
+  "recorded_at": "2026-11-06T03:21:03.519682+00:00",
+  "runtime": {
+    "format": "cats-staging-runtime-v1",
+    "started_at": "2026-11-06T02:18:55.7307322Z",
+    "branch": "codex/oci-approved-release-replicas",
+    "base_commit": "40f1af0c13c5aed78e35a63609daa6e65b69f122",
+    "qualification_scope": "Isolated local staging Harbor source/target, fresh CATS full workflow, fresh PostgreSQL replicas; no production endpoint supplied",
+    "harbor_version": "v2.15.4-d8841742",
+    "trusted_tls": true,
+    "replica_image": "sha256:2c3d975b3f98d9cc3e4d8edbb1f145dcf641dcef27e652b8bd993a3763f54e67",
+    "initial_cache": "New empty per-run Docker cache volume",
+    "scoped_policy_compatibility_failure": "Harbor omitted false replicate_deletion; strict checker corrected and55 focused tests passed",
+    "push_or_merge": false,
+    "temporary_helper_correction": "Cold-cache helper initially probed an absent /api/auth/status endpoint. Corrected to the compose-defined /health endpoint, replaced the cache again, and verified zero files before the first successor pull."
+  },
+  "scope": "Isolated local staging; real runnable OCI corpus, real Harbor jobservice and live PostgreSQL replicas. Inventory assessments are synthesized; nginx assessments and approvals are fresh.",
+  "harbor": {
+    "versions": {
+      "source": "v2.15.4-d8841742",
+      "target": "v2.15.4-d8841742"
+    },
+    "adapter": "harbor",
+    "policy_scopes": {
+      "staging-inventory": "qualification/staging-inventory-20261105",
+      "staging-nginx": "approved/nginx-staging-20261105-fresh"
+    },
+    "scoped_policies": {
+      "staging-inventory": {
+        "id": 4,
+        "name": "cats-scoped-staging-inventory-aff40045128b",
+        "description": "Isolated qualification subtree, all tags and Cosign signatures",
+        "enabled": true,
+        "override": true,
+        "dest_namespace_replace_count": 0,
+        "speed": 0,
+        "copy_by_chunk": false,
+        "single_active_replication": false,
+        "creation_time": "2026-11-06T02:16:05.217Z",
+        "update_time": "2026-11-06T02:16:05.217Z",
+        "filters": [
+          {
+            "type": "name",
+            "value": "qualification/staging-inventory-20261105/**"
+          }
+        ],
+        "trigger": {
+          "type": "manual"
+        },
+        "src_registry": {
+          "id": 0,
+          "name": "Local",
+          "type": "harbor",
+          "url": "http://core:8080",
+          "status": "healthy",
+          "insecure": true,
+          "creation_time": "0001-01-01T00:00:00.000Z",
+          "update_time": "0001-01-01T00:00:00.000Z",
+          "ca_configured": false,
+          "ca_certificate_sha256": null,
+          "insecure_field_present": true,
+          "credential_type": "secret"
+        },
+        "dest_registry": {
+          "id": 1,
+          "name": "cats-target",
+          "type": "harbor",
+          "url": "https://harbor-target.test:8443",
+          "status": "healthy",
+          "creation_time": "2026-11-06T00:19:16.251Z",
+          "update_time": "2026-11-06T00:19:16.251Z",
+          "ca_configured": true,
+          "ca_certificate_sha256": "6b2a786ea404534d28825775bef929fa8b3283bb62650c848d3bdbf7e8a7cbf5",
+          "insecure_field_present": false,
+          "credential_type": "basic"
+        }
+      },
+      "staging-nginx": {
+        "id": 5,
+        "name": "cats-scoped-staging-nginx-af777cab57f6",
+        "description": "Isolated qualification subtree, all tags and Cosign signatures",
+        "enabled": true,
+        "override": true,
+        "dest_namespace_replace_count": 0,
+        "speed": 0,
+        "copy_by_chunk": false,
+        "single_active_replication": false,
+        "creation_time": "2026-11-06T02:16:05.586Z",
+        "update_time": "2026-11-06T02:16:05.586Z",
+        "filters": [
+          {
+            "type": "name",
+            "value": "approved/nginx-staging-20261105-fresh/**"
+          }
+        ],
+        "trigger": {
+          "type": "manual"
+        },
+        "src_registry": {
+          "id": 0,
+          "name": "Local",
+          "type": "harbor",
+          "url": "http://core:8080",
+          "status": "healthy",
+          "insecure": true,
+          "creation_time": "0001-01-01T00:00:00.000Z",
+          "update_time": "0001-01-01T00:00:00.000Z",
+          "ca_configured": false,
+          "ca_certificate_sha256": null,
+          "insecure_field_present": true,
+          "credential_type": "secret"
+        },
+        "dest_registry": {
+          "id": 1,
+          "name": "cats-target",
+          "type": "harbor",
+          "url": "https://harbor-target.test:8443",
+          "status": "healthy",
+          "creation_time": "2026-11-06T00:19:16.251Z",
+          "update_time": "2026-11-06T00:19:16.251Z",
+          "ca_configured": true,
+          "ca_certificate_sha256": "6b2a786ea404534d28825775bef929fa8b3283bb62650c848d3bdbf7e8a7cbf5",
+          "insecure_field_present": false,
+          "credential_type": "basic"
+        }
+      }
+    },
+    "executions": [
+      {
+        "label": "staging-nginx-baseline",
+        "namespace": "staging-nginx",
+        "execution": {
+          "end_time": "2026-11-06T02:17:42.000Z",
+          "failed": 0,
+          "id": 12,
+          "in_progress": 0,
+          "policy_id": 5,
+          "start_time": "2026-11-06T02:17:39.020Z",
+          "status": "Succeed",
+          "status_text": "",
+          "stopped": 0,
+          "succeed": 2,
+          "total": 2,
+          "trigger": "manual"
+        },
+        "tasks": [
+          {
+            "dst_resource": "approved/nginx-staging-20261105-fresh/nginx [2 item(s) in total]",
+            "end_time": "2026-11-06T02:17:42.000Z",
+            "execution_id": 12,
+            "id": 31,
+            "job_id": "48effc68167779aae970ce15",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "approved/nginx-staging-20261105-fresh/nginx [2 item(s) in total]",
+            "start_time": "2026-11-06T02:17:39.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "approved/nginx-staging-20261105-fresh/releases [2 item(s) in total]",
+            "end_time": "2026-11-06T02:17:42.000Z",
+            "execution_id": 12,
+            "id": 30,
+            "job_id": "0a70d1aa5fdfcd01aee89978",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "approved/nginx-staging-20261105-fresh/releases [2 item(s) in total]",
+            "start_time": "2026-11-06T02:17:39.000Z",
+            "status": "Succeed"
+          }
+        ]
+      },
+      {
+        "label": "staging-nginx-patched",
+        "namespace": "staging-nginx",
+        "execution": {
+          "end_time": "2026-11-06T02:24:59.000Z",
+          "failed": 0,
+          "id": 13,
+          "in_progress": 0,
+          "policy_id": 5,
+          "start_time": "2026-11-06T02:24:57.334Z",
+          "status": "Succeed",
+          "status_text": "",
+          "stopped": 0,
+          "succeed": 2,
+          "total": 2,
+          "trigger": "manual"
+        },
+        "tasks": [
+          {
+            "dst_resource": "approved/nginx-staging-20261105-fresh/nginx [4 item(s) in total]",
+            "end_time": "2026-11-06T02:24:59.000Z",
+            "execution_id": 13,
+            "id": 33,
+            "job_id": "d61c2efa337e2427ae5e3f98",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "approved/nginx-staging-20261105-fresh/nginx [4 item(s) in total]",
+            "start_time": "2026-11-06T02:24:57.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "approved/nginx-staging-20261105-fresh/releases [4 item(s) in total]",
+            "end_time": "2026-11-06T02:24:59.000Z",
+            "execution_id": 13,
+            "id": 32,
+            "job_id": "30b101dc1e93b9c8f0f2c3ae",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "approved/nginx-staging-20261105-fresh/releases [4 item(s) in total]",
+            "start_time": "2026-11-06T02:24:57.000Z",
+            "status": "Succeed"
+          }
+        ]
+      },
+      {
+        "label": "staging-inventory-baseline",
+        "namespace": "staging-inventory",
+        "execution": {
+          "end_time": "2026-11-06T02:29:36.000Z",
+          "failed": 0,
+          "id": 14,
+          "in_progress": 0,
+          "policy_id": 4,
+          "start_time": "2026-11-06T02:29:01.880Z",
+          "status": "Succeed",
+          "status_text": "",
+          "stopped": 0,
+          "succeed": 3,
+          "total": 3,
+          "trigger": "manual"
+        },
+        "tasks": [
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/inputs/corpus [100 item(s) in total]",
+            "end_time": "2026-11-06T02:29:29.000Z",
+            "execution_id": 14,
+            "id": 36,
+            "job_id": "e80439f7f2eb43086270755e",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/inputs/corpus [100 item(s) in total]",
+            "start_time": "2026-11-06T02:29:02.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus [200 item(s) in total]",
+            "end_time": "2026-11-06T02:29:36.000Z",
+            "execution_id": 14,
+            "id": 35,
+            "job_id": "34a6cfcb840d3fac8ee5f301",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus [200 item(s) in total]",
+            "start_time": "2026-11-06T02:29:02.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases [2 item(s) in total]",
+            "end_time": "2026-11-06T02:29:05.000Z",
+            "execution_id": 14,
+            "id": 34,
+            "job_id": "7ae9d63dfd61bc947067095a",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases [2 item(s) in total]",
+            "start_time": "2026-11-06T02:29:02.000Z",
+            "status": "Succeed"
+          }
+        ]
+      },
+      {
+        "label": "staging-inventory-successor",
+        "namespace": "staging-inventory",
+        "execution": {
+          "end_time": "2026-11-06T02:41:16.000Z",
+          "failed": 0,
+          "id": 15,
+          "in_progress": 0,
+          "policy_id": 4,
+          "start_time": "2026-11-06T02:40:40.033Z",
+          "status": "Succeed",
+          "status_text": "",
+          "stopped": 0,
+          "succeed": 3,
+          "total": 3,
+          "trigger": "manual"
+        },
+        "tasks": [
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/inputs/corpus [123 item(s) in total]",
+            "end_time": "2026-11-06T02:40:51.000Z",
+            "execution_id": 15,
+            "id": 39,
+            "job_id": "db6fab20d4959e1f85532dcc",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/inputs/corpus [123 item(s) in total]",
+            "start_time": "2026-11-06T02:40:40.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus [400 item(s) in total]",
+            "end_time": "2026-11-06T02:41:16.000Z",
+            "execution_id": 15,
+            "id": 38,
+            "job_id": "46c68239accb25c04fe94e07",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus [400 item(s) in total]",
+            "start_time": "2026-11-06T02:40:40.000Z",
+            "status": "Succeed"
+          },
+          {
+            "dst_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases [4 item(s) in total]",
+            "end_time": "2026-11-06T02:40:42.000Z",
+            "execution_id": 15,
+            "id": 37,
+            "job_id": "609f7ebf990e85f7058906a0",
+            "operation": "copy",
+            "resource_type": "artifact",
+            "src_resource": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases [4 item(s) in total]",
+            "start_time": "2026-11-06T02:40:40.000Z",
+            "status": "Succeed"
+          }
+        ]
+      }
+    ],
+    "source_outage": {
+      "checked_at": "2026-11-06T02:42:02.8025918+00:00",
+      "project": "cats-harbor-acceptance-20261105",
+      "source": [
+        {
+          "service": "source-jobservice",
+          "name": "cats-harbor-acceptance-20261105-source-jobservice-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-proxy",
+          "name": "cats-harbor-acceptance-20261105-source-proxy-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-core",
+          "name": "cats-harbor-acceptance-20261105-source-core-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-registryctl",
+          "name": "cats-harbor-acceptance-20261105-source-registryctl-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-postgresql",
+          "name": "cats-harbor-acceptance-20261105-source-postgresql-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-portal",
+          "name": "cats-harbor-acceptance-20261105-source-portal-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-registry",
+          "name": "cats-harbor-acceptance-20261105-source-registry-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-redis",
+          "name": "cats-harbor-acceptance-20261105-source-redis-1",
+          "status": "exited",
+          "running": false
+        },
+        {
+          "service": "source-log",
+          "name": "cats-harbor-acceptance-20261105-source-log-1",
+          "status": "exited",
+          "running": false
+        }
+      ],
+      "target": [
+        {
+          "service": "target-jobservice",
+          "name": "cats-harbor-acceptance-20261105-target-jobservice-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-proxy",
+          "name": "cats-harbor-acceptance-20261105-target-proxy-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-core",
+          "name": "cats-harbor-acceptance-20261105-target-core-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-registryctl",
+          "name": "cats-harbor-acceptance-20261105-target-registryctl-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-redis",
+          "name": "cats-harbor-acceptance-20261105-target-redis-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-postgresql",
+          "name": "cats-harbor-acceptance-20261105-target-postgresql-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-registry",
+          "name": "cats-harbor-acceptance-20261105-target-registry-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-portal",
+          "name": "cats-harbor-acceptance-20261105-target-portal-1",
+          "status": "running",
+          "running": true
+        },
+        {
+          "service": "target-log",
+          "name": "cats-harbor-acceptance-20261105-target-log-1",
+          "status": "running",
+          "running": true
+        }
+      ]
+    }
+  },
+  "inventory": {
+    "label": "SYNTHESIZED assessment evidence for real runnable OCI inventory qualification; not scanned or production-approved",
+    "service_key": "harbor-inventory-staging-20261105",
+    "namespace": "qualification/staging-inventory-20261105",
+    "base_image": "harbor-source.test:8443/approved/nginx-replica-acceptance/nginx@sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+    "trusted_fingerprint": "sha256:b3384d678fafe55cf80869028b14dadccac4ad1ef3b90ec126e86a98456aa414",
+    "releases": {
+      "first": {
+        "release": {
+          "digest": "sha256:b08118f999905601f38955f38f95ae94803fd44ded508c681b4ec8b3896c1e85",
+          "layout_name": "release",
+          "reference": "harbor-source.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:b08118f999905601f38955f38f95ae94803fd44ded508c681b4ec8b3896c1e85",
+          "repository_suffix": "release",
+          "signature": {
+            "digest": "sha256:d670c13b266b4e4d54e5aac1a04312699b41ac28379b3c440d35b4b5fcae9320",
+            "layout_name": "release-signature",
+            "signature": {
+              "generator": "cosign",
+              "generator_version": "v2.6.1",
+              "image": "harbor-source.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:b08118f999905601f38955f38f95ae94803fd44ded508c681b4ec8b3896c1e85",
+              "key_fingerprint": "sha256:b3384d678fafe55cf80869028b14dadccac4ad1ef3b90ec126e86a98456aa414",
+              "transparency_log": false,
+              "verified_at": "2026-11-06T02:24:42.265169+00:00"
+            },
+            "signature_status": "verified",
+            "tag": "sha256-b08118f999905601f38955f38f95ae94803fd44ded508c681b4ec8b3896c1e85.sig"
+          },
+          "tag": "release-00000000000000000001-1"
+        },
+        "target_reference": "harbor-target.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:b08118f999905601f38955f38f95ae94803fd44ded508c681b4ec8b3896c1e85",
+        "signature_status": "verified",
+        "verification_status": "verified",
+        "signing_fingerprint": "sha256:b3384d678fafe55cf80869028b14dadccac4ad1ef3b90ec126e86a98456aa414",
+        "image_count": 100,
+        "portable": {
+          "approved_at": "2026-11-06T02:22:43.869401+00:00",
+          "expires_at": "2027-02-04T02:22:43.869401+00:00",
+          "format": "cats-replica-release-v1",
+          "kind": "release",
+          "release_sequence": 1,
+          "release_uuid": "1",
+          "revoked_at": null,
+          "service_uuid": "harbor-inventory-staging-20261105",
+          "supersedes_release_uuid": null,
+          "validity_days": 90
+        },
+        "bundle_digest": "sha256:39d34ed21edbac73680252283b42cd8dbd0c7b68fd7b1a0f086bd7898800ec9c"
+      },
+      "successor": {
+        "release": {
+          "digest": "sha256:75ed0e1dec9806f6fad47788362967e794550274cfb3c11840fadf7494684766",
+          "layout_name": "release",
+          "reference": "harbor-source.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:75ed0e1dec9806f6fad47788362967e794550274cfb3c11840fadf7494684766",
+          "repository_suffix": "release",
+          "signature": {
+            "digest": "sha256:4d36829161da9476e6bd29f2e76f09d7531076efb6db53d55afa599c45b28e4f",
+            "layout_name": "release-signature",
+            "signature": {
+              "generator": "cosign",
+              "generator_version": "v2.6.1",
+              "image": "harbor-source.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:75ed0e1dec9806f6fad47788362967e794550274cfb3c11840fadf7494684766",
+              "key_fingerprint": "sha256:b3384d678fafe55cf80869028b14dadccac4ad1ef3b90ec126e86a98456aa414",
+              "transparency_log": false,
+              "verified_at": "2026-11-06T02:37:52.762503+00:00"
+            },
+            "signature_status": "verified",
+            "tag": "sha256-75ed0e1dec9806f6fad47788362967e794550274cfb3c11840fadf7494684766.sig"
+          },
+          "tag": "release-00000000000000000002-2"
+        },
+        "target_reference": "harbor-target.test:8443/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/releases@sha256:75ed0e1dec9806f6fad47788362967e794550274cfb3c11840fadf7494684766",
+        "signature_status": "verified",
+        "verification_status": "verified",
+        "signing_fingerprint": "sha256:b3384d678fafe55cf80869028b14dadccac4ad1ef3b90ec126e86a98456aa414",
+        "image_count": 100,
+        "portable": {
+          "approved_at": "2026-11-06T02:36:00.253463+00:00",
+          "expires_at": "2027-02-04T02:36:00.253463+00:00",
+          "format": "cats-replica-release-v1",
+          "kind": "release",
+          "release_sequence": 2,
+          "release_uuid": "2",
+          "revoked_at": null,
+          "service_uuid": "harbor-inventory-staging-20261105",
+          "supersedes_release_uuid": "1",
+          "validity_days": 90
+        },
+        "bundle_digest": "sha256:ab29288f82878e9ff82fd27adc583bd46b860060a41c1a82b0371e6958da5fc5"
+      }
+    },
+    "first_indices": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99
+    ],
+    "successor_indices": [
+      23,
+      24,
+      25,
+      26,
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42,
+      43,
+      44,
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56,
+      57,
+      58,
+      59,
+      60,
+      61,
+      62,
+      63,
+      64,
+      65,
+      66,
+      67,
+      68,
+      69,
+      70,
+      71,
+      72,
+      73,
+      74,
+      75,
+      76,
+      77,
+      78,
+      79,
+      80,
+      81,
+      82,
+      83,
+      84,
+      85,
+      86,
+      87,
+      88,
+      89,
+      90,
+      91,
+      92,
+      93,
+      94,
+      95,
+      96,
+      97,
+      98,
+      99,
+      100,
+      101,
+      102,
+      103,
+      104,
+      105,
+      106,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      118,
+      119,
+      120,
+      121,
+      122
+    ],
+    "images": [
+      {
+        "index": 0,
+        "digest": "sha256:039fffbef7baa97a0184bcc12816f20793615240f5a8e32956aa3a4bf25261d2",
+        "config": {
+          "digest": "sha256:751d588132f63de46c31758b01309d2a3872370090b814c89d4e8350976eb3e3",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:260c5639f895c43e973328fd5819176129a5516749374b0563f71a0b8d97cf78",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-000\n"
+      },
+      {
+        "index": 1,
+        "digest": "sha256:6722ebdbd49443e8bc72fb8c866eacbfe4c967085d8b95b8be7a45223b988fcc",
+        "config": {
+          "digest": "sha256:72344e9786efcdca293faa87a9142e816213489858bbfbcd291e134f5977d971",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:2069170b2e7f697c8f433fb2e27b0d065437219341269c7ecdc4287b90dbe1aa",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-001\n"
+      },
+      {
+        "index": 2,
+        "digest": "sha256:3cb269c867c01e9c19e36fed05a8301315bed8f9f6f4054daab3021eb4a95373",
+        "config": {
+          "digest": "sha256:e7556bfeede9fd22c51a36bbc2e06319a877e2acede3a065d9429ed927d728e6",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:7dab5ed5390823ef55a0da6c8c1098f8d101a832cc2505a6f87787a2640d3e21",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-002\n"
+      },
+      {
+        "index": 3,
+        "digest": "sha256:50375875d8455ba86729eceec36c8fbd56ed93b7e7cde28f77e14f1ba341330c",
+        "config": {
+          "digest": "sha256:d123e21ba05c216ad58dfbb9cf1132ca2aec74970bf512f25d5376619b00936c",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:30e7b651585f7289e400a60047685322829ca23a6f540caf8658630c2b16b9e4",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-003\n"
+      },
+      {
+        "index": 4,
+        "digest": "sha256:f44228d59e9113c6cbf0cd9100531506d3fbe84661d6d884d35c1bc1a24b50ea",
+        "config": {
+          "digest": "sha256:f9366743578f4fe9c4964c3c1dcbd5fd22741fefad04fd8dc467611849e5f11e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:0d6736bffc286fa1c04eab0561f0fe0f3fe5ba9b5798be3ed27076953a6bccac",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-004\n"
+      },
+      {
+        "index": 5,
+        "digest": "sha256:255a950ed0c4ba0a7b467c6635c1ee87e50813f9f5439cd6d51071b2994d3538",
+        "config": {
+          "digest": "sha256:d8b3f26b69253313d0d6cc71dcc15eafe58f4170dd04bb026407c39f38540501",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:bca19fcd1b0c48abe20ebe62a573733c22baaca59ad79b42dc259ad3cdd4fbce",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-005\n"
+      },
+      {
+        "index": 6,
+        "digest": "sha256:cf16b4a34c5ef6cbf31ef6f97a38b4725e85d71d132310f6329f47c374825a7f",
+        "config": {
+          "digest": "sha256:45660224e8e21994e3db35f0e7efd6d67869df2e94fcbd0b9b7b7cc52cfbab9f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:4e364e3bb64097aa9b1737128076893ffe2efbe67020cd08c8b90ee3f8638c7b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-006\n"
+      },
+      {
+        "index": 7,
+        "digest": "sha256:86d6552ad6f46f98483579f7db66f9825bf2659de88ebc15b9926c656bb366ba",
+        "config": {
+          "digest": "sha256:0789b026dd022ca6cfc4db535c742325420c22ec9291ecb7d6a4bdee0161061a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:eeeaa76cbb9f72d401985ae83adf23c3bab817d43ad6dc6e8c25d03f7c9af16f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-007\n"
+      },
+      {
+        "index": 8,
+        "digest": "sha256:353000d65d28279d160a70415231cfb4d65f6ada694db3227ed945c5ddc38203",
+        "config": {
+          "digest": "sha256:d9c8c77acb943b1ba4403d64fd73ac224b8f914c129e4f6550ad99e288036c98",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:8000ff6b8efce6f135df13fa4de2a7f28c174062ce1f9d527115cb66079a21de",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-008\n"
+      },
+      {
+        "index": 9,
+        "digest": "sha256:82e9a070600eda7e60e8831342de67be984585bf510e42925c7e40552b1d33fb",
+        "config": {
+          "digest": "sha256:994cf5285e5e051e87fb3abba52de144e502d9578180a3354a269f6aca4ffefe",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10611
+        },
+        "marker_layer": {
+          "digest": "sha256:d58d9cf71678b576b7abefb23af051c7035687b9975af6f17e29e09faccacec0",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-009\n"
+      },
+      {
+        "index": 10,
+        "digest": "sha256:dba688cb7527f26502e68418fef9e96b1dbb6b53b6b39ae0f866257ac4293066",
+        "config": {
+          "digest": "sha256:e7c7c32b9615aa75695079d0e3898c71d692c6e2be92d1e32d598c628a5bdace",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:ed04a35eb073f0dc267f29f62603f7a78606c0f3e67432a000fe533c87266807",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-010\n"
+      },
+      {
+        "index": 11,
+        "digest": "sha256:ac4f421d985abf3da86f10bbd53ae1b18ea6eb28c2c692c344fdedbedd3b50e2",
+        "config": {
+          "digest": "sha256:5e0fc2576157bbe6b8b4b477e762e8816e165d83ab02e68de428fe915789f5a2",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:48aa4ee70f83ea98e21d32920a4645e0d124aa370e3aa0c49ff00082c1d7e795",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-011\n"
+      },
+      {
+        "index": 12,
+        "digest": "sha256:7b1e45bb7c07c201aea513e983794c3ba4c0744139ece2228a7359e562384b4d",
+        "config": {
+          "digest": "sha256:de0282f27c8a38c7e0fddfdd89d2724b40d176879c4a8b61abf93a19b304d24b",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:44b8c818a966d51938733f0971db11633acb7e0720514fefa28539442a801cfe",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-012\n"
+      },
+      {
+        "index": 13,
+        "digest": "sha256:7636eff4e01fc71ffd3ad5fa2d5cdae4d40fa5efb24bb535e2cd8993df349570",
+        "config": {
+          "digest": "sha256:a74cce4d819f24dda9ad212f0414191c60bbf3e9a0316240ebae5714c147ac38",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:4f9875bed02951ac84f90816b08d554c14fae643b40a1f71e44105ccc25f1f20",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-013\n"
+      },
+      {
+        "index": 14,
+        "digest": "sha256:b8cc9cbb983f68b7296526a11df805d9d6ca0521b7a33c38e8bb2ad807eb0fe6",
+        "config": {
+          "digest": "sha256:826d9331cc65ab1c1f1d65607b2b69309be63063f2398c1f6c56d4f08321f5d2",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:969ad49ffbfdc2510c27df2c2dc95d2ff0a8fbf254d2b43de86835bc91de1653",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-014\n"
+      },
+      {
+        "index": 15,
+        "digest": "sha256:b9719f430700bdc74a09c1d339fd96e1ec9a8389e6f2c79b9da31e2f0044c74a",
+        "config": {
+          "digest": "sha256:c581d646f34d28a387e3062f3298aa7c60ed547f0e0acf9cbe2c17b901cb1dc1",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:708aa6bdbee26ad324048f6562dbb62e1151f041c440fbc4280f73e593b494e9",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-015\n"
+      },
+      {
+        "index": 16,
+        "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+        "config": {
+          "digest": "sha256:627ecf07c63a8e923d2fd49f3e0d4131dc28f4c06428137c5990262afe1a5071",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:31e05b71ae6a6ec492f397033853afb9f8f3842a23eb8d8507db4f7f1c30d749",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-016\n"
+      },
+      {
+        "index": 17,
+        "digest": "sha256:2163d3b73258a4df217d9364a85650143aaa31adb0bc19daf1a80146ee941c8f",
+        "config": {
+          "digest": "sha256:778aff652991b41d164f6c7fbb4a3a8b1da3c4df3e9f20dd2e959c754123396e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:9750f001ae92e221831a5e0779ba0959d260eecfc33469590a0660f1bb1f8dca",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-017\n"
+      },
+      {
+        "index": 18,
+        "digest": "sha256:fa78bc444d3346967578f7aa3394e1728558e3469bac3cdf841f6f1a31d2c4e6",
+        "config": {
+          "digest": "sha256:d34b6207337ea6ece1cd3a87f40837cdaade7ffb346319b5360d482873ca5472",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:a952f6abfa966b29750289e778c14962f33640b49fdb6a7ddfda0a10a7dae842",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-018\n"
+      },
+      {
+        "index": 19,
+        "digest": "sha256:d0c0621823247ce019ac8e5dee7c8a98ecbfd44ca045b3119ceb49e9234f425a",
+        "config": {
+          "digest": "sha256:571c1dbca84c06450e57cd1b2fdd03744d76972488f56af20ff20232b490e539",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:70c1c90620e98aae7349efe6c38a2f1f591a68163261337615a9fbfa14ba5236",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-019\n"
+      },
+      {
+        "index": 20,
+        "digest": "sha256:ef5088ecb7a18a82ba51f7e7d03391738b2739e7ce84874909384790fd5cf287",
+        "config": {
+          "digest": "sha256:6083d86fe2dfab5ac48107e2238a897720146ace1f4c1a6c1f9d1024ae804032",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:43991413bef47d5065e86e0eb426c38c08779a15a6596029563e3877ecf710f7",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-020\n"
+      },
+      {
+        "index": 21,
+        "digest": "sha256:72a3e59a5f88da40503aa5f129bd2edc7d49f8da189b476870e8b3b0094fe827",
+        "config": {
+          "digest": "sha256:1e29e418ba87a600f0941eff95ac546ef2a0d58bd1fce62411cb871b15c09433",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:2e1e09b556605e67de91b3779b7a33b0c46ad6bce1ffb44f7f8552e88f2d16db",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-021\n"
+      },
+      {
+        "index": 22,
+        "digest": "sha256:db65ef3b05ffa655bafcdbc1c171c79cf6eeb86a2399cf392087610a44e6d930",
+        "config": {
+          "digest": "sha256:7b25bed2bc1c46ad0daf9b9b4a0e18c326ff8fe91ad66596f55fe8cec8a96c17",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:1ac813c8edd0ec77cc32c304bed1b6b57ad321af6b48fc5ce305cc6275e71b4e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-022\n"
+      },
+      {
+        "index": 23,
+        "digest": "sha256:aebedeccfecf472ce07acf415f591987c8bc9fa91278e5af505910363f3d2c01",
+        "config": {
+          "digest": "sha256:68624a87a8dd7bafe09f9ab5d82fc12fc2f103d790e93a69a43013e2c5eafd06",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:4c14784d2878466e6f40bab0f36734364f6366fb5e020ef334b76774de896e17",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-023\n"
+      },
+      {
+        "index": 24,
+        "digest": "sha256:7be3dc4df37b655b925f3c67a9e2887b1d15ac44929947331ed16617169624a1",
+        "config": {
+          "digest": "sha256:35d4a4437b3d8af6dd21a52a03a4c45a9cdd941ba61b49dd7b7121877dbcf53c",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:50e6f6096af68d65fa249b1a5c02306f02c1d9d0dee5630b92847cc1a73dc43f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-024\n"
+      },
+      {
+        "index": 25,
+        "digest": "sha256:d6b1d33b25bb596c43bf22c3e23358a82599b3e5d836adcdf3721f7c0f80268b",
+        "config": {
+          "digest": "sha256:7eaf19bd05aff7a31b2cee268cda7ba3a1fbc250173c8d16dc40e3ea429e8f05",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:b2b4c0ae025d29b28138710899ee8eaa000af0828a78a2e0a790730dbb026326",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-025\n"
+      },
+      {
+        "index": 26,
+        "digest": "sha256:28ba2a88116e63c28163485cdbff9344012a06e401ae33d5e60a30c7f8c559f1",
+        "config": {
+          "digest": "sha256:606f703b8a888618b2dfcb6c48c69f5dee022e66cdf15f7f05adbd6c3dccb2c8",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:1a54008968b620dac927a4036f368e0b88d262979951e816f110d73eefc924e3",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-026\n"
+      },
+      {
+        "index": 27,
+        "digest": "sha256:a1cd059ba12f9f4199ea935d1a4a33518dfbc175df32ff0dde7e8f1485c2102f",
+        "config": {
+          "digest": "sha256:f1b6e2b297001e6993b2cd21cf15cce1bb9cdf3bf4fa9bef9c4b49db85cc7c24",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:4031e3efdfb416e81d839540106056408440a50a222bb6378265ae86a756d42e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-027\n"
+      },
+      {
+        "index": 28,
+        "digest": "sha256:4ddcf7e40d41ce287a864e8942f3236011e51cb4bd2c772a426a02aaed93c0d6",
+        "config": {
+          "digest": "sha256:6acfa1950beef5a461e15ac4ca6e290bf2882f68dc7d279eb20398ccd67d70c8",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:6d8892ffb7435104cd1d36c32cd6c7ecc15a95cf94bb5b547b4ebe682bc79b44",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-028\n"
+      },
+      {
+        "index": 29,
+        "digest": "sha256:ee9871394e00b696a5cea7d3f872631ffd6fdb69ba89943188ca61c2dbe59b87",
+        "config": {
+          "digest": "sha256:11434097658f0f4e65f48da7aee86a0afcbfb4828302051db73afe1650864b28",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:dbef6c3ba7b1feb94e2fb8644d7e22d09fe2431d6bc0eb0b0f845183b17fa875",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-029\n"
+      },
+      {
+        "index": 30,
+        "digest": "sha256:8c1e9cce08d876abd7a256528952e717e5960761741109cc3cac0607892ed6db",
+        "config": {
+          "digest": "sha256:d6a0d522a8ba6ef0629f8c73b55041ab6a1ff636cc52aa326db7d6eada6832aa",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:227cb72de6f20ceb0f617849b1798ad357ad2ae41a55155caee72a501ac13bab",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-030\n"
+      },
+      {
+        "index": 31,
+        "digest": "sha256:b8402eedbb4692d840a83f24828f84ac02311135caaeb4f2e990f96703662455",
+        "config": {
+          "digest": "sha256:b8e2100dde1d285d39eb388383f27447bebe67e86ed9e5e5d14c7dc66d20657e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:fa6eb17d93a7081c82c82d339e33484add0f01063b4b3123459c6d15d6ba6f3c",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-031\n"
+      },
+      {
+        "index": 32,
+        "digest": "sha256:a61b420f888fa5bf99c89ef4c77284652e24abfcbb89bb2032cd478c1f3e5f91",
+        "config": {
+          "digest": "sha256:d3153aaced059804094069f10a5b4db5c835b4b8de5ab638de85b20b27fde56b",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:83c13c54d7b559d7784bdf27032a55d586e009a018d056d3a1d271d17ad5637e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-032\n"
+      },
+      {
+        "index": 33,
+        "digest": "sha256:bf4347f036e6989460e66a5f7204e093ae1445bac13ea891faad4de0a691c9ab",
+        "config": {
+          "digest": "sha256:1b9831b5e325ac25e4982541aecd6454695287e219b448d6e6ad2760979e42ab",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c99151107178261e0b054ed9ed7195b629f36e78cbbe918d82be5ddd67e8b97e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-033\n"
+      },
+      {
+        "index": 34,
+        "digest": "sha256:5b228869da9b9257d34c743ee8460ebc541c8f20bcf96068dbee001b8c9c470a",
+        "config": {
+          "digest": "sha256:a29f29798ec64635e04501911a0d7d20b4096fbbc15519fc8a179050e4e4a075",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c024cc7a18006edd4244577d821a32ff7083e5693dfacc9ed7593537954c3da2",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-034\n"
+      },
+      {
+        "index": 35,
+        "digest": "sha256:6a93bebede931e77f2962b11f5e9085a43a7072650596e0a7611d124b4411a30",
+        "config": {
+          "digest": "sha256:bfa41bb33eac16cd7bf25ef26d371575e3858307c850b637af34a96766db0e49",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:f5b9a6a671e1d37053850a437c3201009f86d88e7e62025a631700715c34d1ca",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-035\n"
+      },
+      {
+        "index": 36,
+        "digest": "sha256:2eab7110cae647455f8e1c3dd807140b00cd82e58d12e0864448c35b8dff325e",
+        "config": {
+          "digest": "sha256:8fdca1f7612705fd5b39a8c76c564e687830f337cf99b003271edcccbb08d08a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:ad10d12b6b721ec25f1798952563fc071601f0d07bf261f3ed3decd9b62f75b1",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-036\n"
+      },
+      {
+        "index": 37,
+        "digest": "sha256:bb22c972b692c101c9216338b0aecb0210d6e2b8130d81f9e41219a2834f4368",
+        "config": {
+          "digest": "sha256:80c5c463b96edf3b93341d012d71c1159158447fc2cb4713acb14d430c396719",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:561211eb40f666e6efaed4255a75437cbd87bc4aa758088d7a0af2f9cde23cce",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-037\n"
+      },
+      {
+        "index": 38,
+        "digest": "sha256:2d5dd2313e349198e8b2f11a73d18d5d21de7ff0752376b566b795a00c3aa8ce",
+        "config": {
+          "digest": "sha256:5ca32f61403b679e3385ae0e732e6f449d75fe35558f912a23f288c39c46f6bb",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:66a4f2fcabd93752143016f39d91494d608fd75d36e63edd33f0da912963a38c",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-038\n"
+      },
+      {
+        "index": 39,
+        "digest": "sha256:5bad0691e821547130dc3771c467ea37b16ce569489d0186a4f19a9b3c79987a",
+        "config": {
+          "digest": "sha256:0c08953ef02d8e847449f9a921829c7d843bafac4fe3c5fa7a04779d2890546f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:b80190a2c06ce1b6781aa770c2fdc75fb5c49063c4477483c38d7aa1d7655306",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-039\n"
+      },
+      {
+        "index": 40,
+        "digest": "sha256:3cf0fafadce825f6a4710b997c7234b85c2e164397b4ec42202175279ce7cf45",
+        "config": {
+          "digest": "sha256:7f10daac72f2d7f1d36873797e14ac5db8723f825e4e00457ae62728142697f6",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:298058d3183748394403b4f2615cdc58596f582786d5338fb558c39d6ab067a0",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-040\n"
+      },
+      {
+        "index": 41,
+        "digest": "sha256:43bcb9994c68fd52d3660fcd843c32640715f6fc64dd9d4628b6ad11e4c1b5f4",
+        "config": {
+          "digest": "sha256:ac16a398bb50146af264c78c4c5b37d9ada2397f54a24e1d795f122e4c25f2fb",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:6f0f37df8b9187e3e6bac58307f318a616601be19c9991be903d3c73dbc0c156",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-041\n"
+      },
+      {
+        "index": 42,
+        "digest": "sha256:9a6cc556cb8b27c62c84b3bac6a8b7abf473be1d825f45f86321f4b12b7b5a27",
+        "config": {
+          "digest": "sha256:bcc4d5a0b37594cd76b9ee3ae25199f3bacdc4a3564f72606cee7e8a29a1c97a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:12e2b76c4a1727baa788c7a2e81a71ae03f347c1b4916e2fae8750f6f5846f43",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-042\n"
+      },
+      {
+        "index": 43,
+        "digest": "sha256:795c179d80be371559a7fe7bca05ce0a35a3e9ce1b279e7091aec402477cfd1d",
+        "config": {
+          "digest": "sha256:552c2d6c834cb826a1f44c3686b8bd16dc7cac8af04d864b710759e6d988c9f2",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:3ce649fc6f860279cbd1d649283b45b77358763e5d06f052d295a853d13f6003",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-043\n"
+      },
+      {
+        "index": 44,
+        "digest": "sha256:f3aac3f05826e6baa0d37a348b87439778f228443af705a561f071309a887609",
+        "config": {
+          "digest": "sha256:799b33c9d6355eb04a68633ed325fcc576bfc386367fb1c47c127c4f5fced62f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:31c1a47cdb6ab3ed18c02b09afb714e9f0c62865ac499dcfe371ca64c5eddd71",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-044\n"
+      },
+      {
+        "index": 45,
+        "digest": "sha256:a8c86eae4a6892b8317f676bf4cefdc2523673116f275c8363c762f0b3e887cb",
+        "config": {
+          "digest": "sha256:bb0469ac42f4b6c7cfe969256905a43c3815ec36f390978c4b884b2140ba56ff",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:7ff110d5c88a686f7d39dc969f2ba89c359c39b62b2445bce82b15605c7ecf3f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-045\n"
+      },
+      {
+        "index": 46,
+        "digest": "sha256:685df94236122085267a4600cb0ff7af78afe87096e51a6e1d92ad42fb8430d2",
+        "config": {
+          "digest": "sha256:600f300d17f1914dfb46152bb657832b7b06c5632fe68550d190e734a936a25a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:9ca0992da390ac67151c729d9b587b8c1747f00772b303c9ba9d582e479a8bab",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-046\n"
+      },
+      {
+        "index": 47,
+        "digest": "sha256:562ba4ae48be1a68a83e6e98c91382fe2e9de761b929dff100f93b37a628726d",
+        "config": {
+          "digest": "sha256:50c51d55d03bd9409e243d6037c7248afabccd702878bd69bddaee9b954ab3dd",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:38f765d67c651e166cf0ba75636a27707d09dd1655603c481fbd9e9f8b531c85",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-047\n"
+      },
+      {
+        "index": 48,
+        "digest": "sha256:14eabe6d82e04c74d84bcffb889aa4fa1b4eb4591fc7c80e0ebbf83e7ff84ec7",
+        "config": {
+          "digest": "sha256:b6734457cda6b53de65eae2ffea03034cc80b5c3c165d77b37560df523779a07",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:2bb6389970cd9820c026bb9bd61eaea8570dcad9ee93eb484825dfac747c2833",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-048\n"
+      },
+      {
+        "index": 49,
+        "digest": "sha256:c27c08e04df782f1b7c971d16a5fc9d2236939757d156711470358eed9dd5356",
+        "config": {
+          "digest": "sha256:cc9fe196ee431086f9ae6aee983cc66a4887fe92d6cdc158a1ae3fa40e07945a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:4821711bb0f17594a67aeaffab66a6b62ba4cb3db059ce9f6c6983ff3b2796d0",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-049\n"
+      },
+      {
+        "index": 50,
+        "digest": "sha256:b23da5c180d512fc41199a8b46102ecb3747d7fd83623b3d47b460975ee04973",
+        "config": {
+          "digest": "sha256:9c2ebac3467d8d89f8614362255c5c5f53c78d10f44e5032e3dd8288904c8366",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:9aa5f06dd33ba845d0a9073e7e91b624f5d298d56cb2f96df391e0738d447f3b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-050\n"
+      },
+      {
+        "index": 51,
+        "digest": "sha256:01565b8a4d394dd45514f2dfc1e9a4835b816112d5fa9e7de9abb914f28d48ed",
+        "config": {
+          "digest": "sha256:62fee2c64679d3c05eef6fca369a896ebb0060f272a9e7daf0cd14833c2e8ef1",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:4e725db8bf44669063b55fbf8f5debd7f8558a7691dd508b45110c0ac254b793",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-051\n"
+      },
+      {
+        "index": 52,
+        "digest": "sha256:249db395952417163572b018b95d61adb7623ca954e0cd7f5c9b8b3bf84df781",
+        "config": {
+          "digest": "sha256:5ce39c6c9a928111fb21f764f275730ffcb6f9fd50fefb1858287451186c9443",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:0404f8acea02168f1f537bb38bd219cc8b06d0c10d3a6bc2883732e639919662",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-052\n"
+      },
+      {
+        "index": 53,
+        "digest": "sha256:048f75b8174013234f0f95768038ba19936bc8368c0beafd4a86c15d7569dc23",
+        "config": {
+          "digest": "sha256:30771ff12e3e52f5aa59139207d2dda8608c49d912fbd391ec599aee23764203",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:43d7f45e2849ce7d80ea2f8155194da25839f984b1e50adcc411650373724f62",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-053\n"
+      },
+      {
+        "index": 54,
+        "digest": "sha256:ad4206776c08b6af0b5fd260a96c8a536a5e8ac4ddfdd004a18a8fe2950a4cc9",
+        "config": {
+          "digest": "sha256:aef7602a0ca1d83f36c4d98d928e5fec889c2348fd694cd5ce2416d8386eda78",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:212be571d8e23f65afa270e2e2501ecbed0e77e45392d6ff34b46354b9454b02",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-054\n"
+      },
+      {
+        "index": 55,
+        "digest": "sha256:1f26253c9978fdf29f044096aa9caf262cf6ed55b4e5285c6ead7d5436c26ce9",
+        "config": {
+          "digest": "sha256:b213c3070b11aaef148c93d58fee5eaee66a5c08e8e9dfeadf1d8103e7836b61",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:22d2f834bc4b0fe1404bf3713d5a2327a4b88e6510ff501f899aaf779e438aac",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-055\n"
+      },
+      {
+        "index": 56,
+        "digest": "sha256:a8d38f63effbe583c9b03200e95c53c9175437244d2c883e274738e5fb7a53ad",
+        "config": {
+          "digest": "sha256:18f5109cca9667229b29464427d2ccb02eeafc49b0e080e97bd368fbb665aef0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:981854738eade24d8bafad17ced325bd6c35da75b99bc3f6103651415ff08ea9",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-056\n"
+      },
+      {
+        "index": 57,
+        "digest": "sha256:5ee46bfec1b16c80eaa46d937f70c6f5581fbdf4fa5130626262dc5a12107e5a",
+        "config": {
+          "digest": "sha256:9b90647f7ee2f57c7bf92cd958f81b95caf696a7babd894523de116faf40d5ac",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:8c0b90f9adad9abb9316603e3d87639968d541200cb0938d1458a247a49cb40d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-057\n"
+      },
+      {
+        "index": 58,
+        "digest": "sha256:777b55740a6c4feb7de76cf4cabb7ea4f2e662f6a1ce6447fe234ba3fb9ddef4",
+        "config": {
+          "digest": "sha256:414bcfe18a852180a8d1c576d28b8853d88dc55371386138009a8486d79f10dc",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:e593f32aa0a92c0cd6df598831012f82d8eb88e2d5536edcffaa3ad2ee31655a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-058\n"
+      },
+      {
+        "index": 59,
+        "digest": "sha256:66ee22710549da0433b8c3f9cbbe1759a6bec712c67223aa71129228be68f851",
+        "config": {
+          "digest": "sha256:4e28b371c9b9a4be25e6d6ffbd3e5eed950bf9f35e5ba59b50732aac10156624",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:ff037be80dc831f8418ccad926024c4d2fdba8f369999f92635fb4415f9c5140",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-059\n"
+      },
+      {
+        "index": 60,
+        "digest": "sha256:70923d8d1ea4dff35be1222378b630bea6691552d78331231980c51eda2114d6",
+        "config": {
+          "digest": "sha256:54600af291ca46cf415965759e536fbbb461a741331b6a993394905507a720e2",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:5ec6cd32d98b060cab87d23d8ba5852310353392e66aba92823fad5d17ea4adb",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-060\n"
+      },
+      {
+        "index": 61,
+        "digest": "sha256:fd4ec9b336222104a635acc25153f7a6da9db6b919c4aa67491087126a798a03",
+        "config": {
+          "digest": "sha256:bd1658438174ba07f1d189aaf12c6b7e3e5e050cb33ccbf65cf94ece4a23c97a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:1e6f13156a01089c124952172c04809a3b69c98d3411d7d8795fd1e190f1b75a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-061\n"
+      },
+      {
+        "index": 62,
+        "digest": "sha256:2212ceecb6d6a56e5a704fd6c2bde62e132d4032084479ca4ee6237f8ee213c5",
+        "config": {
+          "digest": "sha256:e1abfec7714667aba2428e16a00d9bb1558289c8715f64f26c7ba30aaa2bfb71",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:f1511b166577c718da1bafcbbf0676a984cd0bb4f1d46a0b337e9ad25d3b0deb",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-062\n"
+      },
+      {
+        "index": 63,
+        "digest": "sha256:2823cfc8ffe1999dac4dae7142627ad290ec866d721d28ad3ad8a42670309321",
+        "config": {
+          "digest": "sha256:217e2f45694591e82a42742ed9033d7a689aee99d51cd5e4217a515b949f81f7",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:efe9e48d4caa9025d001eec437a914e9b4e66410f66991c477bbe134efe8725e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-063\n"
+      },
+      {
+        "index": 64,
+        "digest": "sha256:beb938767d2c7845d78c34636019d62ba0168144ae2831abb18534588516e731",
+        "config": {
+          "digest": "sha256:5f30c321d91d56c59ccfbce3952f775d6093aa7188fde2750b29ccd28ad282b0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:da3954ce1865da81a7a51f4e9eb950644a57e27172ad01d97ef289b0e93c7a23",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-064\n"
+      },
+      {
+        "index": 65,
+        "digest": "sha256:a7d9f193c62f68d8960fef9ae1f4832b843792949c74040acb553700b321ac40",
+        "config": {
+          "digest": "sha256:98186158956d3fb3cffc32b4e33196345f936f9f98fb85216206789bcc3ad961",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:2a0320a0617003f7784cfdb2d3b0bb4800d0bdfacc63dfed3ea0cdfb459feac0",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-065\n"
+      },
+      {
+        "index": 66,
+        "digest": "sha256:806834c64f6b3f56591b838a590e1de43cb6e98f573c98c43def0bf950dbd0b2",
+        "config": {
+          "digest": "sha256:a88402aa98a8836ae2b96d24f8c8fd4cd7d1fe8e77588d9a1f386695513faec4",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:88b41b4b73356fb0d812fbc2bb6f41eed7b1e5b3f01df6008baf10c2375909e5",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-066\n"
+      },
+      {
+        "index": 67,
+        "digest": "sha256:1005069082cfa33f4949a2c22492890f52b2bd1eac1fa50a98f9cc77dcdf7025",
+        "config": {
+          "digest": "sha256:f59fe640236541bfd3b67f7cee07a57ead534365fc12883c5f232cdcd91ff942",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:ea9866bc94778605340778fd3a03123b67e5f6b3c386ad95a875c8bcdeb82003",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-067\n"
+      },
+      {
+        "index": 68,
+        "digest": "sha256:cbd4956a995f781e78e0d0f6a14a739dd2adbb4ec0c6f0e28a3bb9be24679d63",
+        "config": {
+          "digest": "sha256:6fd0191ae014e747310ec57c9c9a8b5f49665bdbdf250f9ed5d33bfda68fb40e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c2ebd2b032f4ded67544ab91a4e6309f7c4363b97fe079e5c18c5ecf710f7cd5",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-068\n"
+      },
+      {
+        "index": 69,
+        "digest": "sha256:a63b3ff7e1c6015b5f947b2ba9b77893b411a89e29c925d16c79751db126177c",
+        "config": {
+          "digest": "sha256:01312ee7ea05ddf12e603a5eb0ee4205f9736c09266e5205a43c59286c8717dc",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:1463866bd056a194277b1ae8c354af1fed7931663363137c47e9c6a5ac7b070c",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-069\n"
+      },
+      {
+        "index": 70,
+        "digest": "sha256:839e53f002abddd4c47480865f68eb7a92bc961b2eff2661ac82f826c0e92ed8",
+        "config": {
+          "digest": "sha256:833ec804c76f481f8f0ed3b338295958a0b0c700b74080ae020357c43c1f5d94",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:a7712ca97fccf78cec5b8d17d68184a9f980da9f554b5e5e2378b8d85aa9e14b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-070\n"
+      },
+      {
+        "index": 71,
+        "digest": "sha256:5816db84da4b7449dad51f9045d38a72c213fdbff11c6fe0c43fd1b9b777f793",
+        "config": {
+          "digest": "sha256:b8bc17637f0d5bd4e63facf890b72b4036a2ee45f275e3a4c51217852ae8aed7",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:9619b48eb8a86c8550a2d3f64cffef2489c2aa8e2940f0713527fedd6e0d088e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-071\n"
+      },
+      {
+        "index": 72,
+        "digest": "sha256:3d2da862f6fdf244b580ea29745982620b56f1216c9b0c9151e6efb6aa743091",
+        "config": {
+          "digest": "sha256:ed8748041cdbc8aa80edc13e0fd4c67adbd0efef13aa56119a2a5282ebf90239",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:904832db59769a22643e6f3cc6868a99065d3e0d282126bedbf4ff45ad67dbf8",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-072\n"
+      },
+      {
+        "index": 73,
+        "digest": "sha256:499073cc9db705a1bfd24845113fe1d3b5e779918fd2215eecb1c8161442e470",
+        "config": {
+          "digest": "sha256:82aae5284aa8dc7d96963064109660eda1aa0d057fab74883350cfb49de5644d",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:6a1a636707995791643329146024d897bccb1dcc8c95c23e8a919d6f5b0695c2",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-073\n"
+      },
+      {
+        "index": 74,
+        "digest": "sha256:a591d03f2ffed8a0fb0687aa2181ec2491e3799fe8c3c245272d7c1bbd45d2af",
+        "config": {
+          "digest": "sha256:5145fcd8a861ab0d50bfe6dd58d005d8609952b547b5f8054bb140ef71bb8ccd",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:cc32f2f58622578650975ec488da4f310bf1be30946439c6039443beeb905b72",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-074\n"
+      },
+      {
+        "index": 75,
+        "digest": "sha256:10674a63d2fa336b2e68514e7a2e1e8a5f58e89b72acd87389dfa8107567c611",
+        "config": {
+          "digest": "sha256:41f12f051afd223978b1d993520911432d0c4703496da40a89a4504d54bc4717",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:bc6b398ef93ea251ad17c755726192c23482e602ea8b799b4d7150d442a6f4e8",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-075\n"
+      },
+      {
+        "index": 76,
+        "digest": "sha256:0dfdeda4e05064eada33d1b060ce40f7cbe3d2eb8064e52515204a0d81da10fa",
+        "config": {
+          "digest": "sha256:bd887fcc3334eda74a726cc1e37e9a9d6858bd08484b615fb29982f61fa4bf6f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:9dcaaafdc7718f95cce0439effe194240e898042fe108f35aa837d6fc5907b8b",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-076\n"
+      },
+      {
+        "index": 77,
+        "digest": "sha256:1d5b2f14aee733169e5876ccd4bddeabbc44b0edc94eeb1e4a3c1083d0d975c7",
+        "config": {
+          "digest": "sha256:b0e403916b34ea35316bf283c907b2c49393ff1fd43fa97fe30a61937d28c2a0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:1d44e9d1fe9d060a6199973d2f8bfa9f98f65fc76019aac64022242624336c27",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-077\n"
+      },
+      {
+        "index": 78,
+        "digest": "sha256:dedda1dbe63b734376f798441353f1b73f78e57394b2125e48171cafc0275e68",
+        "config": {
+          "digest": "sha256:ec782965cca1cc1ecde8feb5dfb23fb559e405fafcafaecaf0bfb110c676cd97",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:419442b0b8f394ea6cb0d9904098358dcd87add76795bf140586e048bdc79d3a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-078\n"
+      },
+      {
+        "index": 79,
+        "digest": "sha256:9bce946503d064742ab0d3fb05a5f512abddc373dab89a5c324285a94c406ab4",
+        "config": {
+          "digest": "sha256:1454f1b561e7f5f6f66a13f495c1acd97e9b744a188e7e2995ab9b2a83bdcfe8",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:7e4c24c03035934f59eb4700302561a03e5e6f9f7752c26a1234df7f2f28efe4",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-079\n"
+      },
+      {
+        "index": 80,
+        "digest": "sha256:6a0261b08865c90343d6013a94505c0b8fb00e52442083c6c3887afc7e2bc191",
+        "config": {
+          "digest": "sha256:d933611cb634e2d89ee0eea9c5d137aaa3995a409c0f08e6f88d67a9849616f9",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:b20773120e68ff1b036cdd4ab3893eb213b3c74ad7bb0aa928f26177068d0f65",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-080\n"
+      },
+      {
+        "index": 81,
+        "digest": "sha256:3b43f3988088090f0b7a0dc5afe7bb55e77a51453684937b6d9855ffea313126",
+        "config": {
+          "digest": "sha256:641ccd7e27cf05af560a66894584dcccc94d2d9029db19d2c968346b1cc7083a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:e0bab517568a018ffa7ab03c341b3660ac94349120242dc46d85f06331d1ef5f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-081\n"
+      },
+      {
+        "index": 82,
+        "digest": "sha256:66d53e0a3a483def1cad06c4a4e1a7ed802b8ff0608c7cba88c7f77d159e648b",
+        "config": {
+          "digest": "sha256:8f8bad57bc51130313c72ad956e5d09d2eb48eb069b92f01f7f50ace6cf45c99",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c5b8184cc343b12c207ad14576581fd20005b0bd83bd3289031a506140208499",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-082\n"
+      },
+      {
+        "index": 83,
+        "digest": "sha256:e84a5eb5e2bed89cbbe988818cecfd97f58ca2251cf1af861a168586c14873d7",
+        "config": {
+          "digest": "sha256:9ff8201a287508a2796f88a3e1af4622406aac86fd72aee6cd20623924b769e6",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:92e127ac5af38d0e74f499914a82d748736b3b0088599e2ae048e1decce8b1bf",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-083\n"
+      },
+      {
+        "index": 84,
+        "digest": "sha256:8d947d69aa9456dc3fa0603d8ca9b329e770314b3b438a0c30308988ea2e5c1f",
+        "config": {
+          "digest": "sha256:c930d93d4603d73d32e10ba7d64d8c77c2bd4d192c0d4c9798a7fb3f44b28cc4",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c451ced6bbe15e915e43c450d224935be9cd1bc96d9f973c4214a1b9d3cbc0dd",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-084\n"
+      },
+      {
+        "index": 85,
+        "digest": "sha256:d9c8a659b247838d849da2379474333470a03ee82dc6af5c34f4a908023537fa",
+        "config": {
+          "digest": "sha256:6087b365815f8bfbdf15938a82f6dfede5a98fe0799dc3482403503096a49e83",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:a9e1a9b549dd54fd786a76325e989d7e065d8a9d606651f07a93291551502284",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-085\n"
+      },
+      {
+        "index": 86,
+        "digest": "sha256:bd21d1299f752591ae29ab3a965215fd75c637ec84d9515af116b673c78dda71",
+        "config": {
+          "digest": "sha256:d7218f61dbc840a4a1018826fdc294b78cb8e07cc57a73c40acd9ce7506b151f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:d61d424929e61d005c22d8ce1ac58856b6ca46185ba5809d7e6be5818ade9719",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-086\n"
+      },
+      {
+        "index": 87,
+        "digest": "sha256:4822f0922b19759410cd6ebac04f3c292d36f8450e09d0547c0809898388f0f4",
+        "config": {
+          "digest": "sha256:696d29b59cf831567e28d62f4ff09aeed27bda4dc5999ccb39f257ddca058b20",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:5fe7e4feae086a90579cdea89c7f3dcafcb59e8f16584f7ee288263041244096",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-087\n"
+      },
+      {
+        "index": 88,
+        "digest": "sha256:e04e86da5d623bffbb659db4a4cea02e95a73babbe861aa77c963a10c13c8f89",
+        "config": {
+          "digest": "sha256:ad3ab5d5d5549a0d146b108acf456684ec1999aa9cdf23ef72f8d5ea0cebfa8a",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:affcc41195ab13f74e09b441a9215f47bf4a9b40988f29cfa279cc59ad57fc0c",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-088\n"
+      },
+      {
+        "index": 89,
+        "digest": "sha256:db512cd0110950b2931bdcb5fcd3c2ec4bd491d136bbe74aca2a64eab8b37deb",
+        "config": {
+          "digest": "sha256:192ddd36ac20e186a68600549424dd9d344b7e2001f0b6c9c0a6cb39bf452e44",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:eeb6910f98ff95c95175ba4ac73d05962768f313c0ffb30b5c73d6f56659ad37",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-089\n"
+      },
+      {
+        "index": 90,
+        "digest": "sha256:afd287af0b05930b70916781e75d51f241942eb822725d1cb098c98935479020",
+        "config": {
+          "digest": "sha256:4619cb6428ecb37ec5acdab922bb88b0be7f4a81e74532c384cbf0d8b83055e0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:08134aef9d0b6c6b69a8728b3f408baa8738c5475c9bde6c2deefac3592f5a47",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-090\n"
+      },
+      {
+        "index": 91,
+        "digest": "sha256:53ce62d810be0960c55d417b3986ce58da055ed9b16272038513477ec6bc0065",
+        "config": {
+          "digest": "sha256:bfd55f4a9b956b4abba0d57ea26fdbd8db8a8394029718bf97823b51882f8ebb",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:2373da956881e5f3169c19f81156db26e53a1c6e1b7c26040b7bf3944623e53c",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-091\n"
+      },
+      {
+        "index": 92,
+        "digest": "sha256:58f5b02ed989224e7531aa7ed6061635ee8d8b181a970f0dc9c9f1d17e8a6b0e",
+        "config": {
+          "digest": "sha256:4c7e7482b3b16a36575b0aa79ca920dc62537d11ed4a425d4e27c0d490a238a1",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:578ca929edaf1e1b2d1e63bb8599d6ec8e9ba7549cbaa5315d289a0dee3a9f86",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-092\n"
+      },
+      {
+        "index": 93,
+        "digest": "sha256:9b825506d1ec55a2a7e8c6ec83e05913a07c5dafbd06a5b932df6a8eaaec5ae5",
+        "config": {
+          "digest": "sha256:91b5859848ed77ceb555ea74cd4aa26ff5e04afad42fff177d5a4193cee8d593",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:66460e4fe802b8e4f4e9dcc67ccc62aefae86780ed2a91d155db5376a52c06f7",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-093\n"
+      },
+      {
+        "index": 94,
+        "digest": "sha256:d312960717537b7d94f45144816d460d51bd4fc4aacf1a8c9965514c1acafc07",
+        "config": {
+          "digest": "sha256:3a65f695a8e20940945cee8714246ae4baf188a9baf73d828af517ea94b60d48",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:caaafb1466b3a005d2a45665db7828aac144754302de4cdd50d53bb02f5e94d9",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-094\n"
+      },
+      {
+        "index": 95,
+        "digest": "sha256:4fad80a6ac97a3ccffbc6f226860c4961664300f95379d0fe0c8d4a3705917ac",
+        "config": {
+          "digest": "sha256:236ee6071c29a1af6c3d1224d3f06586b54ab1e719312ba99ea80fd529b61c14",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:00992d4f43d17e34a152cb1240006f4ff9eafe9f166cb3348c1125ceb05d9e78",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-095\n"
+      },
+      {
+        "index": 96,
+        "digest": "sha256:83853d3a3e96e7598545ba32b1546e049904e646d5bc683004484eab8b2faee7",
+        "config": {
+          "digest": "sha256:9970908f7a5a02da341c69a34696a61249de428caa2e392501a39f0b64c2042d",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:7fe23c3361511869bbcf583e15518169c9238a57b1584554e344b93a7439b623",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-096\n"
+      },
+      {
+        "index": 97,
+        "digest": "sha256:c87a84528fb19cef123190cd3dd17b188b3efecf2a7709a5b0e2fa4077da5089",
+        "config": {
+          "digest": "sha256:b8bf3d3915f88a6879d841f9b957a71c8cb742d39abb4b1f3d51508ab62ade05",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:369a9ddd0f5f5f9259a833480b2318da18e29e0596a8c477431ea10d050e6782",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-097\n"
+      },
+      {
+        "index": 98,
+        "digest": "sha256:d28483b76028e68777f1b5d9cc0abcec6d4767b8d7abe5045b28d895011f9c9d",
+        "config": {
+          "digest": "sha256:c46f9128225c1fd5d8e215a95ca6529792134c3ff111b8f42547600a83dbe68b",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:c097c47d069853f6f5c114b2129632adfccff5fb84dc58d559010e9e979965db",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-098\n"
+      },
+      {
+        "index": 99,
+        "digest": "sha256:a9566d3b70c84d2811be333f333cead502cb3d1b26b874169026f63a37f00bb7",
+        "config": {
+          "digest": "sha256:ad9c7b7e30dfafd2c62755c7813046b0233e05222f96263db290ac9d3c2d96ec",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10612
+        },
+        "marker_layer": {
+          "digest": "sha256:5734daf4df9485acfedbca39d4ee7697efa930b77c1b1dab5ea5c10ce2a11ac5",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-099\n"
+      },
+      {
+        "index": 100,
+        "digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c",
+        "config": {
+          "digest": "sha256:2ea77b2fcd241619f78f08eb0cfe994f36b1315648cde24d11785e1b075ab4b1",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:5e103bea2293c20676a713240428fd3fad5bcdf5077b6bd755eb15aa27e16b4f",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-100\n"
+      },
+      {
+        "index": 101,
+        "digest": "sha256:be669a1bb4aad2726b85274bd272feef4c8715aa74312ac8d0809374bcdaf44d",
+        "config": {
+          "digest": "sha256:e8d2c4d046a93ae232a2d7609f0fc51dac578587ef0d521fb55ba921b841819e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:bbaa061f2dc1af23d28ebf3fd6911ca7ce53cb14e951bc78c7002b726c69159d",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-101\n"
+      },
+      {
+        "index": 102,
+        "digest": "sha256:3014a58ae6c036738aa7ca4db4e3f77f80125caedae0291aa32f2a035caef4c7",
+        "config": {
+          "digest": "sha256:daeaed3b33cea331073b8a0633abdcc8258e7b2e66c0e8959c4a241832cd752f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:56ace5d2eb4f09832ad0ee0c08ac5e74f504944cfdc9fac180b8f13aaca0f1e6",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-102\n"
+      },
+      {
+        "index": 103,
+        "digest": "sha256:b4bf070b4f6e972eb7c99e940e2d6c731795b72776d79d21728adee84ff097bc",
+        "config": {
+          "digest": "sha256:062775bc3443dc0af9f0837bf7f3d86f8945f24bc9d368b5ac2d3b888914dcc6",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:5a8776a4c7fe4b23272ff9d42c2d72138ed444cda12f409cfece20252066d646",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-103\n"
+      },
+      {
+        "index": 104,
+        "digest": "sha256:7cd24e9ae5eef8f1605c46e39068a69449f745acadde921098d2ae66c1f16bb4",
+        "config": {
+          "digest": "sha256:297cdb4bc604118eef838160a1c46360c88e8a09e5fde654f79a43dff960fb4f",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:adbc053e3d699d22b05ab721320f570ca66ff945b35744dc6a0414f492a74b52",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-104\n"
+      },
+      {
+        "index": 105,
+        "digest": "sha256:ec935a3c9861ddfd902c0d50a7a638a2f10de7c6b3d876c072a5b905dfdec389",
+        "config": {
+          "digest": "sha256:1df0ee66e7411f982b98ea999d48ec4136452412b0cd92fe979e515745e5ae93",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:736228e0de6d6dddb34a5ae426b9ec7dedea0d551d116917e49c8fa0775c0600",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-105\n"
+      },
+      {
+        "index": 106,
+        "digest": "sha256:e6f9e25b8de476857697b637868c07ba45ad30f8210297870742405517385dab",
+        "config": {
+          "digest": "sha256:a3a11ba574532ba10f44195717a51d8bafa4eaa3681e5751fe2c75b49bd03fd1",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:c2ea7e6238e3f8a2f14ecab7c0690532257e51849c5588b084e61e25da1736ca",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-106\n"
+      },
+      {
+        "index": 107,
+        "digest": "sha256:c91bf4feafa11a23c14651df22640aee8f9891773c01f437b78cac9bfa8186fb",
+        "config": {
+          "digest": "sha256:d2e558df6a32492240c937aa6566898b166418ab64eebb4ceed6236afaa10ac0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:4bdfb10654751af0c832e3c1e32fceb3932923f6d939983b4c439c133332d976",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-107\n"
+      },
+      {
+        "index": 108,
+        "digest": "sha256:8a7607b80c11637d01e2f880e51d10e7d14edf79a7b0744d87a085be45798313",
+        "config": {
+          "digest": "sha256:8206c62c4922c31ecff8d697d522e9cb1ffd33fd16e1136ed1884936937223b0",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:b24a06dd4c9b21c13f2d7549a72a28d4bf52e7fd8bf06bb9f21f8d8dd111bca3",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-108\n"
+      },
+      {
+        "index": 109,
+        "digest": "sha256:b8668cda60a03004f290d46006ac89a8d567d34c95c66e75dc6485c702d113f2",
+        "config": {
+          "digest": "sha256:448cb7dfb4360058b18f56e2415e11db640da6e904392d017a5ecbe7a16b53e8",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:27b3590cf7fc728d9278a045bfe3bce0bb2d45a395a31b31a523053c0bd052da",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-109\n"
+      },
+      {
+        "index": 110,
+        "digest": "sha256:c1941c2d4609077134a713cce08e17eb0125a9051a56948053c20ce230c20cdf",
+        "config": {
+          "digest": "sha256:44fad7cb4963c0ceecce4ea4fcd083beed69673413d9533558ad8a6e1727e430",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:24fe2cceea4395439c277dcab5a02e687447486812ff5188f3a937578c26db3e",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-110\n"
+      },
+      {
+        "index": 111,
+        "digest": "sha256:8eadcc2c414a810180b6c35ea90043497594db4fb3096bf8cc9fe92af8d7ff39",
+        "config": {
+          "digest": "sha256:1e0d05ad23ca5b4bf4f2cd9524891545b83beea357144383267f269238d88c8e",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:a61aee7501f1ebb3d31085826fe19554e16c7d261a49196622fa1ed51943452a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-111\n"
+      },
+      {
+        "index": 112,
+        "digest": "sha256:de7715afcb9c80bfb287e1f6b83377833d39a3a41bfe34c85aaf4be2012a09f0",
+        "config": {
+          "digest": "sha256:b33aa9a44799c61a48457fd9105ccc804d17394745cbff098435073448a0adc5",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:f85e4e12ee4e625b3a6815ffa260f67075c9ab222e5484ae197ea36598065ca5",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-112\n"
+      },
+      {
+        "index": 113,
+        "digest": "sha256:e81c0a403d8a026ca646c73f19f60c1495be21cc0c42d1454ab859e796eaf225",
+        "config": {
+          "digest": "sha256:9b10ad097a6daec59f7ed6b805bc95501b0f497e3256331b85f6b3dd30cc1163",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:a58b9cc1a2403b7be54b7659d91e5c0f5ecc6a113ba7dc4da107011596604b2a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-113\n"
+      },
+      {
+        "index": 114,
+        "digest": "sha256:71870b41a3b905b2dba27736ce3d4dcd7723cb33d35fd3b933b14688179dbaf6",
+        "config": {
+          "digest": "sha256:730cb419b3a33579d5af38495b70cfb133d54c55a068de8d3afd760bff166abe",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:fa4122790a5663f2ae4fa26e502f31900fbd54443d10a73d354f26d02aa20db0",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-114\n"
+      },
+      {
+        "index": 115,
+        "digest": "sha256:93b8316bfe927342b873c2a9dada6ba8421c610f4aad51d3234f3563d9655621",
+        "config": {
+          "digest": "sha256:5f5a86d19cd64c61ed9046f93cf7a114891cb4d6587921762a8885d06310dc16",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:dcbb0da492114f97dbd666f9905a2088a28470a9d7b03723aa817f38eb0a6f31",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-115\n"
+      },
+      {
+        "index": 116,
+        "digest": "sha256:182394472e0d3c48557ad84d89cadd22bf7f03dd08c9a0f123285cf880382ab4",
+        "config": {
+          "digest": "sha256:401885595e7d945ad60ee0110a48bcaddca96a31e12ede3e8d921aaf18bf82a3",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:492c302b3bcc9657809531ea19081b06902d0d34c1c7068d973959319f607338",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-116\n"
+      },
+      {
+        "index": 117,
+        "digest": "sha256:134dbf36b328d215cd7728b102c20646091d6e73be9a6c53b0613a5bd3099161",
+        "config": {
+          "digest": "sha256:388d88e980967cbea882b8fc66a918fa036d602cc77392af1a07866a44b2e800",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:776470bb2d1432fc816d517bc506fc4db1bad7cd61325aa6048b3b9e2fe926bf",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-117\n"
+      },
+      {
+        "index": 118,
+        "digest": "sha256:b2793e670a79d72da822986508ee532cb7e565b7303e6e7d2b71605a4a234bc9",
+        "config": {
+          "digest": "sha256:0af43678bedc9c725b6c668832a83f26e15b3e4deae26be4bdb3daf950feab52",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:68ae40c18c1d18f19cc65b59040f6becb85a0326523b9d78bb71c645978e04f7",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-118\n"
+      },
+      {
+        "index": 119,
+        "digest": "sha256:19547f4166e87f8bcc1df9b250d769a520f6d48876c02ea315de729eaadbeceb",
+        "config": {
+          "digest": "sha256:a54dd83ac370561af8e1300746a6da34023d7be1b60bccfa2717789019ad3202",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:0ab37a9a19cda6bb8defc7602644e2324fda6f29f49e4460944c5b2f3b31117a",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-119\n"
+      },
+      {
+        "index": 120,
+        "digest": "sha256:f91685f7f3da4788267101f82fad7e9d72dc165fe987b2447f4752543c184470",
+        "config": {
+          "digest": "sha256:9e9e2bc71f480eb93fc82dc39b0a04d898777d41f6317dab5021aa3a2e05ee6d",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:86b46a9f3f2378ec4c6d7977368e0f2e47b422fdf2c914013bb74768c912ed69",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-120\n"
+      },
+      {
+        "index": 121,
+        "digest": "sha256:6932f743adf6ffae422926b20fe39202abe40d3d45cabe44ff3f2be36046a99e",
+        "config": {
+          "digest": "sha256:4c90c94a23856723ba027abedc7e97d2bec880b9df9b0ad3ff72a0dd1f454dde",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:86d2196786fbb65af902894e538eb41e5e1b813154d67cd7006c8db42fe50164",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-121\n"
+      },
+      {
+        "index": 122,
+        "digest": "sha256:f9277faf0af9494dc6082e06570aa957cbbf3337ea3d89c68c7f884336d1ac32",
+        "config": {
+          "digest": "sha256:c665d4c7633f1732093ee920fbce2b6b49341d2e92dbf29305dc1568cff4b8a5",
+          "mediaType": "application/vnd.oci.image.config.v1+json",
+          "size": 10613
+        },
+        "marker_layer": {
+          "digest": "sha256:273386fd770f51dbfd4f8defef4de11a4fb943269868eca452c061f1f834cec5",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "size": 10240
+        },
+        "expected_stdout": "cats-harbor-inventory-122\n"
+      }
+    ],
+    "baseline": {
+      "service_id": 1,
+      "active_release_id": 1,
+      "active_image_count": 100,
+      "history_count": 1,
+      "history": [
+        {
+          "id": 1,
+          "service_id": 1,
+          "source_release_id": "1",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "status": "active"
+        }
+      ]
+    },
+    "successor": {
+      "service_id": 1,
+      "active_release_id": 2,
+      "active_image_count": 100,
+      "history_count": 2,
+      "history": [
+        {
+          "id": 2,
+          "service_id": 1,
+          "source_release_id": "2",
+          "manifest_digest": "sha256:93b71ed12ec56592154752e836b9a24caf3344c960c0bb0e26856e6c11a4c6b8",
+          "status": "active"
+        },
+        {
+          "id": 1,
+          "service_id": 1,
+          "source_release_id": "1",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "status": "superseded"
+        }
+      ]
+    },
+    "baseline_pull": {
+      "release_id": 1,
+      "complete": true,
+      "image_count": 100,
+      "verified_bytes": 2101456490,
+      "completed_at": "2026-11-06T02:35:15.962898+00:00"
+    },
+    "disconnected_successor_pull": {
+      "release_id": 2,
+      "complete": true,
+      "image_count": 100,
+      "verified_bytes": 2101456523,
+      "completed_at": "2026-11-06T03:19:38.768112+00:00"
+    },
+    "replacement": {
+      "retained": 77,
+      "retired": 23,
+      "new": 23
+    },
+    "sync_jobs": {
+      "baseline_sync": {
+        "id": "94203b48b167485f93defa584e1073c4",
+        "status": "completed",
+        "result": {
+          "discovered": 1,
+          "activated": 0,
+          "revoked": 0,
+          "unchanged": 1,
+          "failed": 0
+        },
+        "error": null,
+        "created_at": "2026-11-06T02:31:38.555186+00:00",
+        "completed_at": "2026-11-06T02:31:41.094977+00:00"
+      },
+      "incomplete_sync": {
+        "id": "01ed693daaa049b6a81d0c9e4a6b9e2e",
+        "status": "failed",
+        "result": {
+          "discovered": 2,
+          "activated": 0,
+          "revoked": 0,
+          "unchanged": 1,
+          "failed": 1
+        },
+        "error": "Operation failed; inspect worker configuration and retry. Reference: d4ca833967c1410eb5acf81839489526",
+        "created_at": "2026-11-06T02:43:59.014450+00:00",
+        "completed_at": "2026-11-06T02:46:11.865478+00:00"
+      },
+      "recovery_sync": {
+        "id": "c880f19f65944a0e98726122cfb0300b",
+        "status": "completed",
+        "result": {
+          "discovered": 2,
+          "activated": 1,
+          "revoked": 0,
+          "unchanged": 1,
+          "failed": 0
+        },
+        "error": null,
+        "created_at": "2026-11-06T02:49:25.873122+00:00",
+        "completed_at": "2026-11-06T02:50:06.441810+00:00"
+      }
+    },
+    "incomplete_preserved_baseline": true,
+    "target_omission_proof": {
+      "checked_at": "2026-11-06T02:43:27.724535+00:00",
+      "target": "https://harbor-target.test:8443",
+      "object": {
+        "digest": "sha256:5e103bea2293c20676a713240428fd3fad5bcdf5077b6bd755eb15aa27e16b4f",
+        "index": 100,
+        "kind": "blob",
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "parent_digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c",
+        "repository": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+        "size": 10240
+      },
+      "parent": {
+        "status": 200,
+        "bytes": 1647,
+        "digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c"
+      },
+      "source_reads": 0,
+      "blob": {
+        "status": 200,
+        "bytes": 0,
+        "digest": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "content_length": "10240",
+        "empty_body_for_nonempty_blob": true
+      },
+      "production_verification": {
+        "rejected": true,
+        "reason": "Incomplete or corrupt replicated OCI content"
+      },
+      "sync_error_scope": "The job API sanitizes error text; content cause is independently verified here."
+    },
+    "restored_fault": {
+      "bytes": 10240,
+      "format": "cats-staging-inventory-omission-v1",
+      "mechanism": "same-directory reversible layer rename",
+      "object": {
+        "digest": "sha256:5e103bea2293c20676a713240428fd3fad5bcdf5077b6bd755eb15aa27e16b4f",
+        "index": 100,
+        "kind": "blob",
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "parent_digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c",
+        "repository": "qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+        "size": 10240
+      },
+      "owned_repository_link_count": 2,
+      "prepared_at": "2026-11-06T02:43:26.391956+00:00",
+      "quarantined_at": "2026-11-06T02:43:26.394452+00:00",
+      "restored_at": "2026-11-06T02:46:16.105381+00:00",
+      "target": "https://harbor-target.test:8443"
+    },
+    "source_probes": {
+      "source_online": {
+        "checked_at": "2026-11-06T02:31:38.529544+00:00",
+        "urls": [
+          "https://harbor-source.test:8443/v2/"
+        ],
+        "reachable": true,
+        "probes": [
+          {
+            "url": "https://harbor-source.test:8443/v2/",
+            "status": 401
+          }
+        ]
+      },
+      "offline_before_incomplete": {
+        "checked_at": "2026-11-06T02:43:27.628898+00:00",
+        "urls": [
+          "https://harbor-source.test:8443/v2/"
+        ],
+        "reachable": false,
+        "probes": [
+          {
+            "url": "https://harbor-source.test:8443/v2/",
+            "unavailable": true
+          }
+        ]
+      },
+      "offline_before_recovery": {
+        "checked_at": "2026-11-06T02:49:25.836614+00:00",
+        "urls": [
+          "https://harbor-source.test:8443/v2/"
+        ],
+        "reachable": false,
+        "probes": [
+          {
+            "url": "https://harbor-source.test:8443/v2/",
+            "unavailable": true
+          }
+        ]
+      },
+      "offline_before_complete": {
+        "checked_at": "2026-11-06T03:08:33.816368+00:00",
+        "urls": [
+          "https://harbor-source.test:8443/v2/"
+        ],
+        "reachable": false,
+        "probes": [
+          {
+            "url": "https://harbor-source.test:8443/v2/",
+            "unavailable": true
+          }
+        ]
+      },
+      "offline_after_complete": {
+        "checked_at": "2026-11-06T03:19:53.847279+00:00",
+        "urls": [
+          "https://harbor-source.test:8443/v2/"
+        ],
+        "reachable": false,
+        "probes": [
+          {
+            "url": "https://harbor-source.test:8443/v2/",
+            "unavailable": true
+          }
+        ]
+      }
+    },
+    "cold_blob_cache": {
+      "format": "cats-inventory-cold-cache-v1",
+      "checked_at": "2026-11-06T03:07:57.526753+00:00",
+      "replica_project": "cats-inventory-staging-20261105",
+      "cache_volume": "cats-inventory-staging-20261105_cold_cache_030745",
+      "cache_directory": "/var/cache/cats-oci",
+      "file_count": 0,
+      "prior_volume_retained": true,
+      "proof_sha256": "61e09c889258beb7a160c8fb1a3d45bb97d4d131c4ff678b18eb919198d26de0",
+      "scope": "Empty blob cache; PostgreSQL manifest cache is retained and may serve previously pulled manifests."
+    },
+    "retired_denials": 23,
+    "administrator_separation": {
+      "administrator_override_denied": true
+    },
+    "overrides": [
+      {
+        "duration": "fixed",
+        "created": {
+          "created_at": "2026-11-06T03:19:39.045988+00:00",
+          "created_by_display_name": "Nginx acceptance Local Cyber",
+          "created_by_id": 2,
+          "created_by_username": "nginx-local-cyber-b1f07586d9",
+          "denial_condition": "superseded",
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "elevated_risk_acknowledged": false,
+          "expires_at": "2026-11-06T04:19:39.025579+00:00",
+          "id": 3,
+          "justification": "Exercise exact release and digest scope while all other retired images remain denied.",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "mission_impact": "Verify disconnected continuity for one retired image in the isolated 100-image qualification.",
+          "release_id": 1,
+          "review_at": null,
+          "risk_acceptance": "Local Cyber accepts superseded-release risk for this isolated check and revokes immediately.",
+          "service_id": 1,
+          "status": "active",
+          "revocation": null,
+          "last_usage_at": null
+        },
+        "pull": {
+          "complete": true,
+          "verified_bytes": 21014565,
+          "manifest_count": 1,
+          "blob_count": 10,
+          "root_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+        },
+        "uses": {
+          "override_id": 3,
+          "matching_uses": [
+            {
+              "id": 3548,
+              "created_at": "2026-11-06T03:19:44.970499+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:44.956909+00:00"
+            },
+            {
+              "id": 3546,
+              "created_at": "2026-11-06T03:19:43.891432+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:43.877592+00:00"
+            },
+            {
+              "id": 3544,
+              "created_at": "2026-11-06T03:19:43.363072+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:43.349474+00:00"
+            },
+            {
+              "id": 3542,
+              "created_at": "2026-11-06T03:19:42.840832+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:42.826882+00:00"
+            },
+            {
+              "id": 3540,
+              "created_at": "2026-11-06T03:19:42.316007+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:42.301866+00:00"
+            },
+            {
+              "id": 3538,
+              "created_at": "2026-11-06T03:19:41.753789+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:41.740198+00:00"
+            },
+            {
+              "id": 3536,
+              "created_at": "2026-11-06T03:19:41.232456+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:41.218308+00:00"
+            },
+            {
+              "id": 3534,
+              "created_at": "2026-11-06T03:19:40.607028+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:40.592979+00:00"
+            },
+            {
+              "id": 3532,
+              "created_at": "2026-11-06T03:19:39.858862+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:39.843916+00:00"
+            },
+            {
+              "id": 3530,
+              "created_at": "2026-11-06T03:19:39.329810+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:39.315830+00:00"
+            },
+            {
+              "id": 3528,
+              "created_at": "2026-11-06T03:19:39.198691+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 3,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:39.183119+00:00"
+            }
+          ]
+        },
+        "other_retired_denials": 22,
+        "other_retired_denial_reasons": [
+          "release_superseded"
+        ],
+        "revoked": {
+          "created_at": "2026-11-06T03:19:39.045988+00:00",
+          "created_by_display_name": "Nginx acceptance Local Cyber",
+          "created_by_id": 2,
+          "created_by_username": "nginx-local-cyber-b1f07586d9",
+          "denial_condition": "superseded",
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "elevated_risk_acknowledged": false,
+          "expires_at": "2026-11-06T04:19:39.025579+00:00",
+          "id": 3,
+          "justification": "Exercise exact release and digest scope while all other retired images remain denied.",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "mission_impact": "Verify disconnected continuity for one retired image in the isolated 100-image qualification.",
+          "release_id": 1,
+          "review_at": null,
+          "risk_acceptance": "Local Cyber accepts superseded-release risk for this isolated check and revokes immediately.",
+          "service_id": 1,
+          "status": "revoked",
+          "revocation": {
+            "reason": "Isolated inventory qualification finished; restore successor-only enforcement.",
+            "revoked_at": "2026-11-06T03:19:46.164068+00:00",
+            "revoked_by_id": 2
+          },
+          "last_usage_at": "2026-11-06T03:19:44.970499+00:00"
+        },
+        "warm_cache_denied_after_revocation": {
+          "allowed": false,
+          "reason": "release_superseded",
+          "approval_id": null,
+          "execution_id": null,
+          "service_id": 1,
+          "artifact_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+          "release_id": 1,
+          "override_id": null,
+          "authorization_source": "denied",
+          "approval_status": "superseded",
+          "decision_at": "2026-11-06T03:19:46.240896+00:00",
+          "override_url": "/services/harbor-inventory-staging-20261105/cyber-overrides?release_id=1&digest=sha256%3A01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353&denial_condition=superseded",
+          "override_status": "no_applicable_override",
+          "effective_policy": {
+            "mode": "replica",
+            "exact_digest": true,
+            "trusted_publisher_required": true,
+            "repository_policy": {}
+          }
+        }
+      },
+      {
+        "duration": "indefinite",
+        "created": {
+          "created_at": "2026-11-06T03:19:46.324680+00:00",
+          "created_by_display_name": "Nginx acceptance Local Cyber",
+          "created_by_id": 2,
+          "created_by_username": "nginx-local-cyber-b1f07586d9",
+          "denial_condition": "superseded",
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "elevated_risk_acknowledged": false,
+          "expires_at": null,
+          "id": 4,
+          "justification": "Exercise exact release and digest scope while all other retired images remain denied.",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "mission_impact": "Verify disconnected continuity for one retired image in the isolated 100-image qualification.",
+          "release_id": 1,
+          "review_at": null,
+          "risk_acceptance": "Local Cyber accepts superseded-release risk for this isolated check and revokes immediately.",
+          "service_id": 1,
+          "status": "active",
+          "revocation": null,
+          "last_usage_at": null
+        },
+        "pull": {
+          "complete": true,
+          "verified_bytes": 21014565,
+          "manifest_count": 1,
+          "blob_count": 10,
+          "root_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+        },
+        "uses": {
+          "override_id": 4,
+          "matching_uses": [
+            {
+              "id": 3618,
+              "created_at": "2026-11-06T03:19:52.134529+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:52.121426+00:00"
+            },
+            {
+              "id": 3616,
+              "created_at": "2026-11-06T03:19:51.089225+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:51.075232+00:00"
+            },
+            {
+              "id": 3614,
+              "created_at": "2026-11-06T03:19:50.574126+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:50.560720+00:00"
+            },
+            {
+              "id": 3612,
+              "created_at": "2026-11-06T03:19:50.078307+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:50.064673+00:00"
+            },
+            {
+              "id": 3610,
+              "created_at": "2026-11-06T03:19:49.577946+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:49.564952+00:00"
+            },
+            {
+              "id": 3608,
+              "created_at": "2026-11-06T03:19:49.076355+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:49.062786+00:00"
+            },
+            {
+              "id": 3606,
+              "created_at": "2026-11-06T03:19:48.545842+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:48.532359+00:00"
+            },
+            {
+              "id": 3604,
+              "created_at": "2026-11-06T03:19:47.881883+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:47.867740+00:00"
+            },
+            {
+              "id": 3602,
+              "created_at": "2026-11-06T03:19:47.134862+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:47.120237+00:00"
+            },
+            {
+              "id": 3600,
+              "created_at": "2026-11-06T03:19:46.592352+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:46.577559+00:00"
+            },
+            {
+              "id": 3598,
+              "created_at": "2026-11-06T03:19:46.479833+00:00",
+              "principal_id": 1,
+              "repository": "services/1/qualification/staging-inventory-20261105/harbor-inventory-staging-20261105/corpus",
+              "service_id": 1,
+              "digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+              "release_id": 1,
+              "override_id": 4,
+              "authorization_source": "local_override",
+              "approval_status": "superseded",
+              "override_status": "active",
+              "effective_policy": {
+                "mode": "replica",
+                "exact_digest": true,
+                "trusted_publisher_required": true,
+                "repository_policy": {}
+              },
+              "reason": "local_cyber_override",
+              "decision_at": "2026-11-06T03:19:46.465627+00:00"
+            }
+          ]
+        },
+        "other_retired_denials": 22,
+        "other_retired_denial_reasons": [
+          "release_superseded"
+        ],
+        "revoked": {
+          "created_at": "2026-11-06T03:19:46.324680+00:00",
+          "created_by_display_name": "Nginx acceptance Local Cyber",
+          "created_by_id": 2,
+          "created_by_username": "nginx-local-cyber-b1f07586d9",
+          "denial_condition": "superseded",
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "elevated_risk_acknowledged": false,
+          "expires_at": null,
+          "id": 4,
+          "justification": "Exercise exact release and digest scope while all other retired images remain denied.",
+          "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+          "mission_impact": "Verify disconnected continuity for one retired image in the isolated 100-image qualification.",
+          "release_id": 1,
+          "review_at": null,
+          "risk_acceptance": "Local Cyber accepts superseded-release risk for this isolated check and revokes immediately.",
+          "service_id": 1,
+          "status": "revoked",
+          "revocation": {
+            "reason": "Isolated inventory qualification finished; restore successor-only enforcement.",
+            "revoked_at": "2026-11-06T03:19:53.360015+00:00",
+            "revoked_by_id": 2
+          },
+          "last_usage_at": "2026-11-06T03:19:52.134529+00:00"
+        },
+        "warm_cache_denied_after_revocation": {
+          "allowed": false,
+          "reason": "release_superseded",
+          "approval_id": null,
+          "execution_id": null,
+          "service_id": 1,
+          "artifact_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+          "release_id": 1,
+          "override_id": null,
+          "authorization_source": "denied",
+          "approval_status": "superseded",
+          "decision_at": "2026-11-06T03:19:53.499045+00:00",
+          "override_url": "/services/harbor-inventory-staging-20261105/cyber-overrides?release_id=1&digest=sha256%3A01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353&denial_condition=superseded",
+          "override_status": "no_applicable_override",
+          "effective_policy": {
+            "mode": "replica",
+            "exact_digest": true,
+            "trusted_publisher_required": true,
+            "repository_policy": {}
+          }
+        }
+      }
+    ],
+    "evidence": {
+      "first": {
+        "release_id": 1,
+        "manifest_digest": "sha256:16ee6dedbe2e1fbdd2a9a1739bc92a3f2532c6fff15da0ebac4f5d25a78ed6af",
+        "evidence_digest": "sha256:ddff6305fed1fd599a045c9e743d906a3dbca03aca67db602f1f49f9619858de",
+        "evidence_bytes": 155278,
+        "archive_entries": 3,
+        "record_counts": {
+          "dependency_watchlist_entries": 0,
+          "dependency_watchlist_matches": 0,
+          "deployment_validation_runs": 0,
+          "exceptions": 0,
+          "executions": 1,
+          "finding_observations": 0,
+          "findings": 0,
+          "inventory_records": 0,
+          "patch_executions": 0,
+          "poam_change_requests": 0,
+          "poam_entries": 0,
+          "poam_history": 0,
+          "policy_exceptions": 0,
+          "policy_findings": 0,
+          "remediation_executions": 0,
+          "service_archive_events": 0,
+          "service_artifact_revisions": 0,
+          "service_artifacts": 0,
+          "service_images": 100,
+          "service_metadata": 0,
+          "service_transfer_provenance": 0,
+          "service_versions": 1,
+          "services": 1,
+          "workflow_requests": 0
+        },
+        "read_only": true,
+        "original_evidence_equal": true
+      },
+      "successor": {
+        "release_id": 2,
+        "manifest_digest": "sha256:93b71ed12ec56592154752e836b9a24caf3344c960c0bb0e26856e6c11a4c6b8",
+        "evidence_digest": "sha256:888e47330ed4056dd8d751e476102915cae984bd4810671a0e5ab09fdc6f4b21",
+        "evidence_bytes": 212104,
+        "archive_entries": 3,
+        "record_counts": {
+          "dependency_watchlist_entries": 0,
+          "dependency_watchlist_matches": 0,
+          "deployment_validation_runs": 0,
+          "exceptions": 0,
+          "executions": 2,
+          "finding_observations": 0,
+          "findings": 0,
+          "inventory_records": 0,
+          "patch_executions": 0,
+          "poam_change_requests": 0,
+          "poam_entries": 0,
+          "poam_history": 0,
+          "policy_exceptions": 0,
+          "policy_findings": 0,
+          "remediation_executions": 0,
+          "service_archive_events": 0,
+          "service_artifact_revisions": 0,
+          "service_artifacts": 0,
+          "service_images": 123,
+          "service_metadata": 0,
+          "service_transfer_provenance": 0,
+          "service_versions": 2,
+          "services": 1,
+          "workflow_requests": 0
+        },
+        "read_only": true,
+        "original_evidence_equal": true
+      }
+    },
+    "completed_at": "2026-11-06T03:19:53.886546+00:00",
+    "runtime_execution": {
+      "archive_digest": "sha256:8eb4ffdfeba8d34aaadd8bfc21f81ec754dce8c0e8abc1ea50750272a3038451",
+      "image_count": 123,
+      "passed": true,
+      "network": "none",
+      "read_only": true,
+      "capabilities": [],
+      "no_new_privileges": true,
+      "image_reference_policy": "validated-immutable-id",
+      "docker_identity_kinds": [
+        "oci-manifest"
+      ],
+      "archive_bytes": 76564480,
+      "distinct_execution_ids": 123,
+      "exact_marker_passes": 123,
+      "zero_exit_codes": 123,
+      "scope": "Executed the local archive bound to the published OCI corpus; target graphs separately verified through HTTP."
+    }
+  },
+  "nginx": {
+    "format": "cats-fresh-nginx-harbor-staging-qualification-v1",
+    "complete": true,
+    "generated_at": "2026-11-06T02:45:54.092279+00:00",
+    "base_commit": "40f1af0",
+    "service_key": "nginx-staging-20261105-fresh",
+    "runtime_images": [
+      {
+        "image": "cats:nginx-staging-20261105",
+        "id": "sha256:e877aa98a9ed00ec9c1efdb27e428a42f15464c790decf1f4e9697a95aeb4251"
+      },
+      {
+        "image": "cats-replica:nginx-staging-20261105",
+        "id": "sha256:09b77d6336d145feecdaebd4db83f14c00a127b2bb2ad63e5cf591a56d487039"
+      }
+    ],
+    "releases": {
+      "source": {
+        "workflow": {
+          "reference": "docker.io/library/nginx:1.28.0-alpine3.21",
+          "discovery_id": "4b85b4be994b4e4bb0a00d2ae1551c8e",
+          "confirmation_id": "d1d2a55fcead42f2b30f3841d47a20d0",
+          "distribution_id": "85de3a8b9080051e008c5be6cec264cf",
+          "scan_id": "16952160945e471d9ced94d0041cd40a",
+          "source_execution_id": 2,
+          "approval_id": 1
+        },
+        "portable": {
+          "format": "cats-replica-release-v1",
+          "kind": "release",
+          "service_uuid": "nginx-staging-20261105-fresh",
+          "release_uuid": "1",
+          "release_sequence": 1,
+          "supersedes_release_uuid": null,
+          "service_version": "distribution-85de3a8b9080051e008c5be6cec264cf",
+          "approved_at": "2026-11-06T02:15:17.611285+00:00",
+          "expires_at": "2027-02-04T02:15:17.611285+00:00",
+          "validity_days": 90,
+          "owning_group_id": 1,
+          "revoked_at": null
+        },
+        "release_oci_digest": "sha256:f2d77243de099e82ba7681114b218aa3723286369cc3e9abb4e673e811f7b797",
+        "image_digests": [
+          "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+        ],
+        "signing_fingerprint": "sha256:f6dbec04a6c8012d2c19a4ec626b7fadea9266c647ad0a394f1b67bf0008a9cf",
+        "evidence_digest": "sha256:019f9d73d23440201acb075276750c88d107b38761805fcab691aca5c23daf37",
+        "signed_manifest_digest": "sha256:32286fb784d3f6e22090c2a882d48a0465f02b807b51cd5ee1773d3d0674fa91",
+        "scan_summary": {
+          "sboms": 2,
+          "results": 8,
+          "skipped_images": 0,
+          "skipped_charts": 0,
+          "configuration_findings": 7,
+          "formats": []
+        },
+        "vulnerability_observations": 194,
+        "configuration_findings": 7,
+        "boe": {
+          "evidence_bytes": 1456820,
+          "archive_entries": 10,
+          "read_only": true,
+          "original_evidence_equal": true
+        }
+      },
+      "patched": {
+        "workflow": {
+          "reference": "publisher.test:5000/patched/nginx@sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+          "discovery_id": "1edffa0e7c89480d9a4f646412a99776",
+          "confirmation_id": "cdd12c321693474f9fdfe7f0d8ad9943",
+          "distribution_id": "f33328d742b9df19b839b408a8eabe5c",
+          "scan_id": "f8a327b68a4947678164c2779648abf7",
+          "source_execution_id": 3,
+          "approval_id": 2
+        },
+        "portable": {
+          "format": "cats-replica-release-v1",
+          "kind": "release",
+          "service_uuid": "nginx-staging-20261105-fresh",
+          "release_uuid": "2",
+          "release_sequence": 2,
+          "supersedes_release_uuid": "1",
+          "service_version": "distribution-f33328d742b9df19b839b408a8eabe5c",
+          "approved_at": "2026-11-06T02:18:48.005024+00:00",
+          "expires_at": "2027-02-04T02:18:48.005024+00:00",
+          "validity_days": 90,
+          "owning_group_id": 1,
+          "revoked_at": null
+        },
+        "release_oci_digest": "sha256:a79a558bff6d1beb3aba27d86fdad8e42321e143aa1d71b3e292d4169df1d840",
+        "image_digests": [
+          "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a"
+        ],
+        "signing_fingerprint": "sha256:f6dbec04a6c8012d2c19a4ec626b7fadea9266c647ad0a394f1b67bf0008a9cf",
+        "evidence_digest": "sha256:5ed519de8858529eb71f634a731dfa839a033473cbcedd7c685043a1c9f3b355",
+        "signed_manifest_digest": "sha256:a740c340f19b1d009e5a7af48d29e4db7da54feb5a2e2b78272c3854e52389d6",
+        "scan_summary": {
+          "sboms": 2,
+          "results": 8,
+          "skipped_images": 0,
+          "skipped_charts": 0,
+          "configuration_findings": 7,
+          "formats": []
+        },
+        "vulnerability_observations": 0,
+        "configuration_findings": 7,
+        "boe": {
+          "evidence_bytes": 1390647,
+          "archive_entries": 10,
+          "read_only": true,
+          "original_evidence_equal": true
+        }
+      }
+    },
+    "patch": {
+      "job_id": "0c6f282a459d46c7bbe01d9b2664cc58",
+      "patch_status": "PATCHED",
+      "vulnerabilities_before": 194,
+      "vulnerabilities_after": 0,
+      "vulnerabilities_removed": 194,
+      "image_changed": true,
+      "immutable_destination": "publisher.test:5000/patched/nginx@sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+      "signature_status": "verified"
+    },
+    "local_distribution": {
+      "complete": true,
+      "source_pull": {
+        "release_id": 1,
+        "complete": true,
+        "verified_bytes": 21005326,
+        "graphs": [
+          {
+            "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "manifest_count": 1,
+            "blob_count": 9,
+            "verified_bytes": 21005326,
+            "complete": true
+          }
+        ]
+      },
+      "patched_first_pull": {
+        "release_id": 2,
+        "complete": true,
+        "verified_bytes": 63708035,
+        "graphs": [
+          {
+            "root_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+            "manifest_count": 1,
+            "blob_count": 13,
+            "verified_bytes": 63708035,
+            "complete": true
+          }
+        ],
+        "first_proxy_request_for_patched_roots": true,
+        "initial_attempt_at": "2026-11-06T02:22:20.631831+00:00"
+      },
+      "cold_cache": {
+        "root_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+        "manifests": 0,
+        "links": 0,
+        "project_links": 0,
+        "checked_at": "2026-11-06T02:22:03.409966+00:00"
+      },
+      "warm_cache": {
+        "root_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+        "manifests": 1,
+        "links": 14,
+        "project_links": 0,
+        "checked_at": "2026-11-06T02:22:57.210266+00:00"
+      },
+      "disconnected_probes": [
+        {
+          "name": "publisher",
+          "url": "https://publisher.test:5000/v2/",
+          "checked_at": "2026-11-06T02:22:08.664907+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "target",
+          "url": "https://replica.test:5000/v2/",
+          "checked_at": "2026-11-06T02:22:08.676443+00:00",
+          "reachable": true,
+          "status": 200
+        }
+      ]
+    },
+    "harbor": {
+      "complete": true,
+      "replication_executions": [
+        {
+          "label": "staging-nginx-baseline",
+          "id": 12,
+          "status": "Succeed",
+          "tasks": [
+            {
+              "id": 31,
+              "status": "Succeed"
+            },
+            {
+              "id": 30,
+              "status": "Succeed"
+            }
+          ],
+          "logs": [
+            "execution-12-task-31.log",
+            "execution-12-task-30.log"
+          ]
+        },
+        {
+          "label": "staging-nginx-patched",
+          "id": 13,
+          "status": "Succeed",
+          "tasks": [
+            {
+              "id": 33,
+              "status": "Succeed"
+            },
+            {
+              "id": 32,
+              "status": "Succeed"
+            }
+          ],
+          "logs": [
+            "execution-13-task-33.log",
+            "execution-13-task-32.log"
+          ]
+        }
+      ],
+      "online": {
+        "checked_at": "2026-11-06T02:24:10.704889+00:00",
+        "from_service": "replica-proxy",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "url": "https://harbor-source.test:8443/v2/",
+            "checked_at": "2026-11-06T02:24:10.433853+00:00",
+            "reachable": true,
+            "status": 401
+          },
+          {
+            "name": "original_registry",
+            "url": "https://publisher.test:5000/v2/",
+            "checked_at": "2026-11-06T02:24:10.449522+00:00",
+            "reachable": true,
+            "status": 200
+          },
+          {
+            "name": "original_cats",
+            "url": "http://portal:8000/login",
+            "checked_at": "2026-11-06T02:24:10.464885+00:00",
+            "reachable": true,
+            "status": 200
+          },
+          {
+            "name": "target_harbor",
+            "url": "https://harbor-target.test:8443/v2/",
+            "checked_at": "2026-11-06T02:24:10.469082+00:00",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_before_successor_sync": {
+        "checked_at": "2026-11-06T02:42:50.638545+00:00",
+        "from_service": "replica-proxy",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "url": "https://harbor-source.test:8443/v2/",
+            "checked_at": "2026-11-06T02:42:46.407609+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "url": "https://publisher.test:5000/v2/",
+            "checked_at": "2026-11-06T02:42:46.427214+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "url": "http://portal:8000/login",
+            "checked_at": "2026-11-06T02:42:46.433327+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "url": "https://harbor-target.test:8443/v2/",
+            "checked_at": "2026-11-06T02:42:50.395334+00:00",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_before_first_pull": {
+        "checked_at": "2026-11-06T02:43:04.765794+00:00",
+        "from_service": "replica-proxy",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "url": "https://harbor-source.test:8443/v2/",
+            "checked_at": "2026-11-06T02:43:00.562028+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "url": "https://publisher.test:5000/v2/",
+            "checked_at": "2026-11-06T02:43:00.573269+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "url": "http://portal:8000/login",
+            "checked_at": "2026-11-06T02:43:00.578211+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "url": "https://harbor-target.test:8443/v2/",
+            "checked_at": "2026-11-06T02:43:04.530961+00:00",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "offline_after_verification": {
+        "checked_at": "2026-11-06T02:43:23.781359+00:00",
+        "from_service": "replica-proxy",
+        "probes": [
+          {
+            "name": "source_harbor",
+            "url": "https://harbor-source.test:8443/v2/",
+            "checked_at": "2026-11-06T02:43:19.561626+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_registry",
+            "url": "https://publisher.test:5000/v2/",
+            "checked_at": "2026-11-06T02:43:19.571950+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "original_cats",
+            "url": "http://portal:8000/login",
+            "checked_at": "2026-11-06T02:43:19.577649+00:00",
+            "reachable": false,
+            "error_type": "ConnectionError"
+          },
+          {
+            "name": "target_harbor",
+            "url": "https://harbor-target.test:8443/v2/",
+            "checked_at": "2026-11-06T02:43:23.540677+00:00",
+            "reachable": true,
+            "status": 401
+          }
+        ]
+      },
+      "cold_cache": {
+        "checked_at": "2026-11-06T02:42:59.834025+00:00",
+        "patched_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+        "manifest_rows": 0,
+        "object_links": 0,
+        "patched_only_blobs": [
+          {
+            "digest": "sha256:175e2db137afa2578c9b33acb48080dda76a6699bc2488f6ab226a16ffa92c7c",
+            "present": false
+          },
+          {
+            "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+            "present": false
+          },
+          {
+            "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+            "present": false
+          },
+          {
+            "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+            "present": false
+          },
+          {
+            "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+            "present": false
+          },
+          {
+            "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+            "present": false
+          },
+          {
+            "digest": "sha256:83ef3bdba3400ca911a8f892fd28f32b6a264dc36a9c4a0d962ce337877f7e4c",
+            "present": false
+          },
+          {
+            "digest": "sha256:8986a5634bd58d8247afd1ab2ae5160c8376c07526160103166e0cb944a6ee18",
+            "present": false
+          },
+          {
+            "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+            "present": false
+          },
+          {
+            "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+            "present": false
+          },
+          {
+            "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+            "present": false
+          },
+          {
+            "digest": "sha256:c0079b8839adeb5cc0ce02e2f7f9c88a164910151a797d6e13db60f5589691cf",
+            "present": false
+          },
+          {
+            "digest": "sha256:e30b4a2a975e48574e339e5f0a8b98f8793ed7909eb27ee959ca03673c3909bf",
+            "present": false
+          }
+        ]
+      },
+      "warm_cache": {
+        "checked_at": "2026-11-06T02:43:19.178125+00:00",
+        "patched_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+        "manifest_rows": 1,
+        "object_links": 14,
+        "patched_only_blobs": [
+          {
+            "digest": "sha256:175e2db137afa2578c9b33acb48080dda76a6699bc2488f6ab226a16ffa92c7c",
+            "present": true
+          },
+          {
+            "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+            "present": true
+          },
+          {
+            "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+            "present": true
+          },
+          {
+            "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+            "present": true
+          },
+          {
+            "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+            "present": true
+          },
+          {
+            "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+            "present": true
+          },
+          {
+            "digest": "sha256:83ef3bdba3400ca911a8f892fd28f32b6a264dc36a9c4a0d962ce337877f7e4c",
+            "present": true
+          },
+          {
+            "digest": "sha256:8986a5634bd58d8247afd1ab2ae5160c8376c07526160103166e0cb944a6ee18",
+            "present": true
+          },
+          {
+            "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+            "present": true
+          },
+          {
+            "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+            "present": true
+          },
+          {
+            "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+            "present": true
+          },
+          {
+            "digest": "sha256:c0079b8839adeb5cc0ce02e2f7f9c88a164910151a797d6e13db60f5589691cf",
+            "present": true
+          },
+          {
+            "digest": "sha256:e30b4a2a975e48574e339e5f0a8b98f8793ed7909eb27ee959ca03673c3909bf",
+            "present": true
+          }
+        ]
+      },
+      "source_pull": {
+        "release_id": 1,
+        "complete": true,
+        "verified_bytes": 21005326,
+        "graphs": [
+          {
+            "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "manifest_count": 1,
+            "blob_count": 9,
+            "verified_bytes": 21005326,
+            "complete": true
+          }
+        ]
+      },
+      "patched_first_pull": {
+        "release_id": 2,
+        "complete": true,
+        "verified_bytes": 63708035,
+        "graphs": [
+          {
+            "root_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+            "manifest_count": 1,
+            "blob_count": 13,
+            "verified_bytes": 63708035,
+            "complete": true
+          }
+        ],
+        "first_proxy_request_for_patched_roots": true,
+        "initial_attempt_at": "2026-11-06T02:43:07.845129+00:00"
+      },
+      "superseded_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "release_id": 1,
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "authorization_source": "denied"
+      },
+      "administrator_override_denied": true,
+      "exact_local_cyber_override": {
+        "id": 1,
+        "release_id": 1,
+        "digests": [
+          "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+        ],
+        "denial_condition": "superseded",
+        "expires_at": null,
+        "status": "active",
+        "created_by_id": 2
+      },
+      "override_pull": {
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "manifest_count": 1,
+        "blob_count": 9,
+        "verified_bytes": 21005326,
+        "complete": true
+      },
+      "override_audit": {
+        "count": 10,
+        "use_ids": [
+          70,
+          68,
+          66,
+          64,
+          62,
+          60,
+          58,
+          56,
+          54,
+          52
+        ],
+        "override_id": 1,
+        "principal_ids": [
+          1
+        ],
+        "authorization_sources": [
+          "local_override"
+        ]
+      },
+      "unrelated_digest_denial": {
+        "requested_artifact_digest": "sha256:f2d77243de099e82ba7681114b218aa3723286369cc3e9abb4e673e811f7b797",
+        "allowed": false,
+        "denial_stage": "replica_repository_membership",
+        "message": "Artifact does not belong to this verified replica repository"
+      },
+      "revoked_override": {
+        "id": 1,
+        "release_id": 1,
+        "status": "revoked"
+      },
+      "revoked_warm_cache_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "release_id": 1,
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "authorization_source": "denied"
+      },
+      "publisher_status_preserved": {
+        "source": "superseded",
+        "patched": "active"
+      },
+      "restart": {
+        "checked_at": "2026-11-06T02:43:44.962182+00:00",
+        "job_id": "b4b183a1edbc477db1a2624787d4dae8",
+        "result": {
+          "discovered": 2,
+          "activated": 0,
+          "revoked": 0,
+          "unchanged": 2,
+          "failed": 0
+        },
+        "release_count": 2,
+        "revoked_override_id": 1,
+        "first_pull_evidence_preserved": true,
+        "complete": true,
+        "warm_superseded_denial": {
+          "allowed": false,
+          "reason": "release_superseded",
+          "authorization_source": "denied"
+        },
+        "patched_pull": {
+          "release_id": 2,
+          "complete": true,
+          "verified_bytes": 63708035,
+          "graphs": [
+            {
+              "root_digest": "sha256:678e18543d28dbdfbb706532ae5ab42b1e3783bcc5914250ed46730bdba66b3a",
+              "manifest_count": 1,
+              "blob_count": 13,
+              "verified_bytes": 63708035,
+              "complete": true
+            }
+          ]
+        },
+        "offline_probes": {
+          "checked_at": "2026-11-06T02:43:36.140200+00:00",
+          "from_service": "replica-proxy",
+          "probes": [
+            {
+              "name": "source_harbor",
+              "url": "https://harbor-source.test:8443/v2/",
+              "checked_at": "2026-11-06T02:43:31.934144+00:00",
+              "reachable": false,
+              "error_type": "ConnectionError"
+            },
+            {
+              "name": "original_registry",
+              "url": "https://publisher.test:5000/v2/",
+              "checked_at": "2026-11-06T02:43:31.936637+00:00",
+              "reachable": false,
+              "error_type": "ConnectionError"
+            },
+            {
+              "name": "original_cats",
+              "url": "http://portal:8000/login",
+              "checked_at": "2026-11-06T02:43:31.940864+00:00",
+              "reachable": false,
+              "error_type": "ConnectionError"
+            },
+            {
+              "name": "target_harbor",
+              "url": "https://harbor-target.test:8443/v2/",
+              "checked_at": "2026-11-06T02:43:35.907226+00:00",
+              "reachable": true,
+              "status": 401
+            }
+          ]
+        }
+      }
+    },
+    "cleanup": {
+      "checked_at": "2026-11-06T02:45:31.0121486+00:00",
+      "action": "docker compose stop",
+      "volumes_and_logs_retained": true,
+      "nginx_project": "cats-nginx-staging-20261105",
+      "nginx_services": [
+        {
+          "Service": "db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "discovery-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "export-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "intelligence-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "intelligence-init",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "patch-daemon",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "patch-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "portal-control",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "publisher-registry",
+          "State": "exited",
+          "ExitCode": 2
+        },
+        {
+          "Service": "remediation-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-proxy",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-registry",
+          "State": "exited",
+          "ExitCode": 2
+        },
+        {
+          "Service": "scan-worker",
+          "State": "exited",
+          "ExitCode": 0
+        }
+      ],
+      "harbor_replica_project": "cats-harbor-replica-43800dcf38",
+      "harbor_replica_services": [
+        {
+          "Service": "replica-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-proxy",
+          "State": "exited",
+          "ExitCode": 0
+        }
+      ],
+      "shared_harbor_pair_and_inventory_replica": "untouched"
+    },
+    "focused_cli_validation": {
+      "test": "portal/tests/test_nginx_workflow_integration.py",
+      "passed": 16,
+      "diff_check": "passed"
+    },
+    "limitations": [
+      "New real scans, approval decisions and patch; cached vulnerability databases were reused.",
+      "194 package vulnerability observations became zero; seven configuration findings remain.",
+      "This nginx fixture has no populated mission, POAM or PPSM records; it does not replace separate rich reconstruction proof.",
+      "An initial default-key discovery/scan was retained unapproved before the unique service identity was selected.",
+      "Restart proof retains revoked exception state; this run does not test holding an active indefinite exception across restart."
+    ],
+    "raw_file_sha256": [
+      {
+        "path": "nginx/source-scan.json",
+        "sha256": "9d44d57fe5e16333b1fc029a4c92bbbf2bd83ec0a01d56defb42b5057ee088a9",
+        "bytes": 868
+      },
+      {
+        "path": "nginx/patched-scan.json",
+        "sha256": "3ebea8d47dccfb132ec15c6377f920b2367d98a29d33f2a1db249625ef6009f4",
+        "bytes": 868
+      },
+      {
+        "path": "nginx/source-receipt.json",
+        "sha256": "09a4e0d4b19968d094ffad759cf177ed0aabcc2d49cce238287b0a524e77360f",
+        "bytes": 2225110
+      },
+      {
+        "path": "nginx/patched-receipt.json",
+        "sha256": "5ccff8fe3b807199decc1f3126e17c86be3b6805d2a3b4b87eaf9244b6a1c955",
+        "bytes": 34245
+      },
+      {
+        "path": "nginx/patch-result.json",
+        "sha256": "8a8084d5cac69c46519eb5debea3f79b04f47dcc7df1ab47f2b164b6457f0d5c",
+        "bytes": 114555
+      },
+      {
+        "path": "nginx/source-copy.json",
+        "sha256": "2411c3e1abc29e85e9ac867759ae373a692c61974b1f15ff15e445f319084276",
+        "bytes": 1205
+      },
+      {
+        "path": "nginx/patched-copy.json",
+        "sha256": "752a9930447fae7167d47093924cae5cd9c8a45805f5f63f59788b633af5d672",
+        "bytes": 1205
+      },
+      {
+        "path": "nginx/replica-acceptance.json",
+        "sha256": "9d80d27273c2be2daa16b1ead3ec1621016f751792710d90bb9fe407aa75fcaa",
+        "bytes": 26912
+      },
+      {
+        "path": "nginx/patched-cache-before.json",
+        "sha256": "aecceb7b80e7155962c549e7e2f922c3c6f0d1f7614ed79f7219b6d2c4128236",
+        "bytes": 195
+      },
+      {
+        "path": "nginx/patched-cache-after.json",
+        "sha256": "eb46d443fafd5a5849ebdb50e793927143d4bc6da6fdd38c8917a1735fef4ff6",
+        "bytes": 196
+      },
+      {
+        "path": "nginx/connectivity-during-disconnection.json",
+        "sha256": "006644ad017e0679f5721570a2ee5581225214305a0f9287c677b2b83c8d29a2",
+        "bytes": 314
+      },
+      {
+        "path": "nginx/pytest-service-key.log",
+        "sha256": "3782e57067e136c835f81424846b99745a4f3a1d6fb8cbfed58a7df14923e879",
+        "bytes": 101
+      },
+      {
+        "path": "nginx/runtime-image-identities.json",
+        "sha256": "e0ca0f1317e8170dfbbcddaba9e990c0775eff16cefb119f82a7e32ebf8a8260",
+        "bytes": 295
+      },
+      {
+        "path": "nginx/cleanup-proof.json",
+        "sha256": "bf084644e9ed1e27675bbe6e3eef4d1663b5406e53c58f3e0794a0fbfed51e85",
+        "bytes": 2212
+      },
+      {
+        "path": "nginx-harbor-replica/harbor-qualification.json",
+        "sha256": "92c3b9935da54c8faf843add6f320d27d9f6e4567cea700e8dc286b0b38402ba",
+        "bytes": 14421
+      },
+      {
+        "path": "nginx-harbor-replica/replica-acceptance.json",
+        "sha256": "2adeb3fbde4a4971931624440235ce54f162dd20e566ff724f4a17c8183b80e2",
+        "bytes": 26888
+      },
+      {
+        "path": "harbor/source-seed.json",
+        "sha256": "e33fbcc017b3c4be54e64a2760b87a26f1206cfbdc0635f574098824b381bcb4",
+        "bytes": 1258
+      },
+      {
+        "path": "harbor/patched-seed.json",
+        "sha256": "44d7a249536e7095ed387c5ab87b9b4a3e345e0d508e5221737f0d56e9a7052f",
+        "bytes": 1258
+      },
+      {
+        "path": "harbor/harbor-replication.json",
+        "sha256": "a1734f285b334d357276b1b024adcb3ad14265a54a1280d0f9259864b1d5a6f1",
+        "bytes": 27248
+      }
+    ]
+  },
+  "focused_tests": {
+    "tests": "129",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "8.404"
+  },
+  "limitations": [
+    "The 123 distinct image graphs share a real nginx base; this is not a 100-application capacity benchmark.",
+    "Inventory assessment evidence is synthesized; it is not a fresh scan of 123 production applications.",
+    "The cold inventory blob cache is empty; PostgreSQL manifest cache remains intact.",
+    "Public disposable Harbor projects allow anonymous target reads; no private target robot scenario is claimed.",
+    "Fresh nginx package-vulnerability observations fell from 194 to 0; seven configuration findings remain.",
+    "Runtime execution loads a local archive with the published OCI identities; target graphs are separately downloaded and verified through HTTP.",
+    "No external production environment, cross-version Harbor, ARM execution or high availability is qualified."
+  ],
+  "cleanup": {
+    "checked_at": "2026-11-06T03:20:38.986324+00:00",
+    "restoration": {
+      "restored_blob_sha256": "5e103bea2293c20676a713240428fd3fad5bcdf5077b6bd755eb15aa27e16b4f",
+      "bytes": 10240,
+      "quarantine_absent": true
+    },
+    "projects": {
+      "cats-harbor-acceptance-20261105": {
+        "stopped_now": 9,
+        "all_stopped": true,
+        "containers": [
+          {
+            "service": "target-jobservice",
+            "state": "exited"
+          },
+          {
+            "service": "target-proxy",
+            "state": "exited"
+          },
+          {
+            "service": "target-core",
+            "state": "exited"
+          },
+          {
+            "service": "source-jobservice",
+            "state": "exited"
+          },
+          {
+            "service": "source-proxy",
+            "state": "exited"
+          },
+          {
+            "service": "source-core",
+            "state": "exited"
+          },
+          {
+            "service": "target-registryctl",
+            "state": "exited"
+          },
+          {
+            "service": "source-registryctl",
+            "state": "exited"
+          },
+          {
+            "service": "target-redis",
+            "state": "exited"
+          },
+          {
+            "service": "source-postgresql",
+            "state": "exited"
+          },
+          {
+            "service": "target-postgresql",
+            "state": "exited"
+          },
+          {
+            "service": "source-portal",
+            "state": "exited"
+          },
+          {
+            "service": "source-registry",
+            "state": "exited"
+          },
+          {
+            "service": "target-registry",
+            "state": "exited"
+          },
+          {
+            "service": "target-portal",
+            "state": "exited"
+          },
+          {
+            "service": "source-redis",
+            "state": "exited"
+          },
+          {
+            "service": "target-log",
+            "state": "exited"
+          },
+          {
+            "service": "source-log",
+            "state": "exited"
+          }
+        ],
+        "retained_volumes": [
+          "cats-harbor-acceptance-20261105_source-database",
+          "cats-harbor-acceptance-20261105_source-jobs",
+          "cats-harbor-acceptance-20261105_source-redis",
+          "cats-harbor-acceptance-20261105_source-registry",
+          "cats-harbor-acceptance-20261105_target-database",
+          "cats-harbor-acceptance-20261105_target-jobs",
+          "cats-harbor-acceptance-20261105_target-redis",
+          "cats-harbor-acceptance-20261105_target-registry"
+        ]
+      },
+      "cats-inventory-staging-20261105": {
+        "stopped_now": 3,
+        "all_stopped": true,
+        "containers": [
+          {
+            "service": "replica-proxy",
+            "state": "exited"
+          },
+          {
+            "service": "replica-portal",
+            "state": "exited"
+          },
+          {
+            "service": "replica-db",
+            "state": "exited"
+          }
+        ],
+        "retained_volumes": [
+          "cats-inventory-staging-20261105_cold_cache_025059",
+          "cats-inventory-staging-20261105_cold_cache_025206",
+          "cats-inventory-staging-20261105_cold_cache_030745",
+          "cats-inventory-staging-20261105_replica_cache",
+          "cats-inventory-staging-20261105_replica_db",
+          "cats-inventory-staging-20261105_replica_evidence"
+        ]
+      }
+    },
+    "nginx_cleanup": {
+      "checked_at": "2026-11-06T02:45:31.0121486+00:00",
+      "action": "docker compose stop",
+      "volumes_and_logs_retained": true,
+      "nginx_project": "cats-nginx-staging-20261105",
+      "nginx_services": [
+        {
+          "Service": "db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "discovery-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "export-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "intelligence-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "intelligence-init",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "patch-daemon",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "patch-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "portal-control",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "publisher-registry",
+          "State": "exited",
+          "ExitCode": 2
+        },
+        {
+          "Service": "remediation-worker",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-proxy",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-registry",
+          "State": "exited",
+          "ExitCode": 2
+        },
+        {
+          "Service": "scan-worker",
+          "State": "exited",
+          "ExitCode": 0
+        }
+      ],
+      "harbor_replica_project": "cats-harbor-replica-43800dcf38",
+      "harbor_replica_services": [
+        {
+          "Service": "replica-db",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-portal",
+          "State": "exited",
+          "ExitCode": 0
+        },
+        {
+          "Service": "replica-proxy",
+          "State": "exited",
+          "ExitCode": 0
+        }
+      ],
+      "shared_harbor_pair_and_inventory_replica": "untouched"
+    },
+    "scope": "Stopped only owned qualification services; no volume deletion, global prune, push or merge."
+  },
+  "raw_evidence_sha256": [
+    {
+      "path": "runtime.json",
+      "bytes": 996,
+      "sha256": "2c2d4207d6b899bab0657d91b602b68ccde1fdbb40155027a9ae45cb7ffd4bab"
+    },
+    {
+      "path": "source-harbor-offline.json",
+      "bytes": 3186,
+      "sha256": "9e990e9e3657d4df4033d6b42e9d5aaf82924f2782963e4f6dd7da033a3c2924"
+    },
+    {
+      "path": "harbor/harbor-replication.json",
+      "bytes": 27248,
+      "sha256": "a1734f285b334d357276b1b024adcb3ad14265a54a1280d0f9259864b1d5a6f1"
+    },
+    {
+      "path": "inventory/expected.json",
+      "bytes": 1039783,
+      "sha256": "1552b6c3fe3a218d2ed9d78d39ce208243f9574c597cca8fd8341605975c9c70"
+    },
+    {
+      "path": "inventory/first/publication.json",
+      "bytes": 426388,
+      "sha256": "9997fdd24ff5d612bca3bf9fb00f730cbf06efef77ac1bef7327e8d19371d883"
+    },
+    {
+      "path": "inventory/successor/publication.json",
+      "bytes": 426390,
+      "sha256": "96b01c191eb5c305d809c7c29d2be8d750d1bf28f6c195f49ca15337b9aabf1e"
+    },
+    {
+      "path": "inventory/http/replica-acceptance.json",
+      "bytes": 571059,
+      "sha256": "2e3c2a6da4546e7554cd7aacf7cac9c2f7d35950221c81b6bd9c43f50393a9b8"
+    },
+    {
+      "path": "inventory/target-omission.json",
+      "bytes": 795,
+      "sha256": "4b231c06938bd7a77fcf6ac0f0b1244bddeaf09aac2f8e35ac56ee809a0098f4"
+    },
+    {
+      "path": "inventory/cold-cache-proof.json",
+      "bytes": 503,
+      "sha256": "61e09c889258beb7a160c8fb1a3d45bb97d4d131c4ff678b18eb919198d26de0"
+    },
+    {
+      "path": "inventory/cold-cache-proof-before-route-fix.json",
+      "bytes": 503,
+      "sha256": "bd12a6b161895757b5db19c81f1082233e509bdfb227e15b891c7218fe4103bd"
+    },
+    {
+      "path": "inventory/runtime-images.json",
+      "bytes": 42515,
+      "sha256": "7712f75fada6fcd3f720e5ea3d0bac3a6c558924f3834a0c7aa5c676a2fe3d0e"
+    },
+    {
+      "path": "inventory/runtime-verification.json",
+      "bytes": 83968,
+      "sha256": "98d1e24046e63ff73a1e8d429dd681c4716bcef9f20914e453184422f543a0cb"
+    },
+    {
+      "path": "inventory/runtime-verification.log",
+      "bytes": 125,
+      "sha256": "4cebc3ab89a94e1126917bbb784a9cf5cbef66d552d2ec01b93bb90b0e514ea2"
+    },
+    {
+      "path": "inventory/publish-first.log",
+      "bytes": 4158,
+      "sha256": "eac14ca0ff1f5829cfb7a6db5fb1738f4b501baf6d9fd1c6bd7b6ca695a5fad1"
+    },
+    {
+      "path": "inventory/publish-successor.log",
+      "bytes": 1190,
+      "sha256": "fbea6074d04e9b99ee4c2f529e90d876b661596441a1a491eef58afc85de5a2d"
+    },
+    {
+      "path": "inventory/http-baseline-url-preflight-failure.log",
+      "bytes": 653,
+      "sha256": "a68771eaca5acda40981136ae5c4cd1bc7602f773a98dfd740d9289a34f9c63e"
+    },
+    {
+      "path": "inventory/http-baseline.log",
+      "bytes": 802,
+      "sha256": "e860fb759beaadcf721473046e00f10dc8a1e943adc62b7b6c834a01cf54d3bb"
+    },
+    {
+      "path": "inventory/http-incomplete.log",
+      "bytes": 467,
+      "sha256": "39af2d5ac53adc39f02c62ada2ad34e8ed0d5e4927b098e29ae8bae9a28cfa75"
+    },
+    {
+      "path": "inventory/http-recover.log",
+      "bytes": 227,
+      "sha256": "64475c096723aaa49296ff63893ce694ce070fcbb5ec989070701624c60d9cb2"
+    },
+    {
+      "path": "inventory/http-complete.log",
+      "bytes": 727,
+      "sha256": "ca0ff1965d0109f39cf5d1cf3d2689ef6a67cd64894423f36ab81241618ffe62"
+    },
+    {
+      "path": "inventory/http-complete-override-route-failure.json",
+      "bytes": 486074,
+      "sha256": "c0dd1f4b1cfe3768bdeeaa9074e5a6a5c0f18b1e61dc63481c8a309653d2ec3e"
+    },
+    {
+      "path": "inventory/http-complete-override-route-failure.log",
+      "bytes": 1642,
+      "sha256": "9a02328499e6f39d843b8981ee0878d49c9b63842b1fd97c5cdf9521d66f41ad"
+    },
+    {
+      "path": "inventory/http-override-preflight.json",
+      "bytes": 559597,
+      "sha256": "f0dd41b59828a845d0ad6bba26cd5cb1a782315ce660e29fc65f4bc0cdffa925"
+    },
+    {
+      "path": "inventory/http-override-preflight.log",
+      "bytes": 95,
+      "sha256": "62ceeb23166ef7425991f554f4a6b44afc52d4b9ff524757203fa3a723059c15"
+    },
+    {
+      "path": "inventory/evidence-preflight.json",
+      "bytes": 3041,
+      "sha256": "30f41b16e0b25a70e10595b1aef034fb73f1b7ce8ee082019f957775c89d3733"
+    },
+    {
+      "path": "inventory/runtime-verification-initial-failed.log",
+      "bytes": 2051,
+      "sha256": "7695e84818e0ef216a32128a28a5ddc4faeffff1f886f5c981cfe5e270bd3e5c"
+    },
+    {
+      "path": "inventory/runtime-verification-pre-identity-pin.json",
+      "bytes": 71490,
+      "sha256": "6848f43c01416bef24f054e066fc7c756af9bc6fd48b79359988352d4b3c86ec"
+    },
+    {
+      "path": "inventory/runtime-verification-pre-identity-pin.log",
+      "bytes": 125,
+      "sha256": "4cebc3ab89a94e1126917bbb784a9cf5cbef66d552d2ec01b93bb90b0e514ea2"
+    },
+    {
+      "path": "nginx/fresh-nginx-harbor-summary.json",
+      "bytes": 28235,
+      "sha256": "2c835457fe50d0878609bb1f125c259c095c1fb1f96ec11c1e231cd4a6f96519"
+    },
+    {
+      "path": "focused-tests.xml",
+      "bytes": 21487,
+      "sha256": "df4550761205382e974eb32a04801889f0aab63f43b73585a15f53aacdf78b87"
+    },
+    {
+      "path": "focused-tests.log",
+      "bytes": 333,
+      "sha256": "5626b8b02c076e1fe51ea5f11ee10cacad9bf85f3af04eb384732bc21f7b8b7e"
+    },
+    {
+      "path": "cleanup.json",
+      "bytes": 5901,
+      "sha256": "7e2c97c9fc75b996c38f14958970bce84a1176eb037ac634b3f69308db22fd3e"
+    }
+  ]
+}
