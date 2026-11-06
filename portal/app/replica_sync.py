@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 import asyncio
 import logging
+import hashlib
+from pathlib import Path
 import os
 import threading
 import uuid
@@ -13,13 +15,28 @@ from .database import SessionLocal
 from .auth import record_audit
 from . import durable_jobs as jobs, portable_release
 from .oci_models import OCIUpstream
-from .replica_models import ReplicaSource, ReplicaRelease
+from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState
+from .replica_integrity import verify_record, digest
 from .replica_import import reconcile
 from .release_documentation import registry_environment
 from .release_validity import utc
 from .secrets import decrypt_secret
 
 KIND = 'replica_sync'
+
+
+def retained_complete(release):
+    """Skip registry work only while the retained, verified evidence is intact."""
+    try:
+        archive = Path(release.evidence_path)
+        expected = release.manifest.get('evidence', {}).get('digest')
+        if (not verify_record(release) or digest(release.evidence_state) != release.evidence_state_digest
+                or not archive.is_file() or archive.is_symlink()):
+            return False
+        with archive.open('rb') as stream:
+            return 'sha256:' + hashlib.file_digest(stream, 'sha256').hexdigest() == expected
+    except (OSError, TypeError, ValueError, AttributeError):
+        return False
 
 
 def enqueue(db, source, actor_id=None):
@@ -51,10 +68,14 @@ def sync(ctx, payload):
         realms, origins = upstream.token_realms, upstream.redirect_origins
         repository, trusted = source.repository, list(source.trusted_publishers)
         host = upstream.endpoint.removeprefix('https://').rstrip('/')
-        # Only immutable references already verified under still-trusted keys
-        # can be skipped. Changed tag targets produce new immutable references.
-        known = set(db.scalars(select(ReplicaRelease.source_reference).where(
-            ReplicaRelease.publisher.in_(trusted))))
+        # A known registry digest does not prove our retained local evidence is
+        # still present or intact. Re-fetch damaged/missing content for recovery
+        # or a fail-closed import error, and never borrow another source's state.
+        known = {release.source_reference for release in db.scalars(select(ReplicaRelease)
+            .join(ReplicaServiceState, ReplicaServiceState.service_id == ReplicaRelease.service_id)
+            .where(ReplicaServiceState.source_id == source.id,
+                   ReplicaServiceState.upstream_id == source.upstream_id,
+                   ReplicaRelease.publisher.in_(trusted))) if retained_complete(release)}
     result = {'discovered': 0, 'activated': 0, 'revoked': 0, 'unchanged': 0, 'failed': 0}
     try:
         ctx.stage('Discovering signed releases in the local registry', 5)

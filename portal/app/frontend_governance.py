@@ -28,18 +28,27 @@ def service(value):
     return result
 
 
-def entry(value, formatters):
+def entry(value, formatters, actor_names=None):
+    if actor_names is None:
+        from .replica_views import actor_labels
+        actor_names = actor_labels([value]).get(id(value), {})
     result = fields(value, ("id", "item_type", "title", "description", "remediation", "ticket", "status", "service_version", "detail_url", "source_type", "exception_status"))
     result["service"] = service(field(value, "service"))
     result["finding"] = fields(field(value, "finding"), ("id", "cve", "severity")) if field(value, "finding") else None
     result["policy_finding"] = fields(field(value, "policy_finding"), ("id", "finding", "severity")) if field(value, "policy_finding") else None
-    result["created_by"] = scalar(field(field(value, "created_by"), "display_name"))
-    result["approved_by"] = scalar(field(field(value, "approved_by"), "display_name"))
+    result["created_by"] = actor_names.get("created_by", scalar(field(field(value, "created_by"), "display_name")))
+    result["approved_by"] = actor_names.get("approved_by", scalar(field(field(value, "approved_by"), "display_name")))
     result["approved_at"] = formatted(field(value, "approved_at"), formatters, "cats_datetime")
     due = field(value, "due_date")
     result["due_date"] = formatted(due, formatters)
     result["due_input"] = due.strftime("%Y-%m-%dT%H:%M") if isinstance(due, datetime) else ""
     return result
+
+
+def entries(values, formatters):
+    from .replica_views import actor_labels
+    names = actor_labels(values)
+    return [entry(item, formatters, names.get(id(item), {})) for item in values]
 
 
 def project_governance(data, name, context, can, formatters):
@@ -77,7 +86,7 @@ def project_governance(data, name, context, can, formatters):
         data["view"] = fields(context.get("view"), ("version",))
         data.update(fields(context, ("embedded", "can_create_poam", "status_filter", "sort_by", "page", "page_size", "page_count", "total_items", "pagination_base")))
         data["overdue_entry_ids"] = [scalar(item) for item in context.get("overdue_entry_ids", [])]
-        data["entries"] = [entry(item, formatters) for item in context.get("entries", [])]
+        data["entries"] = entries(context.get("entries", []), formatters)
         sid = data["service"]["id"]
         may = lambda permission: bool(can(permission, sid)) if callable(can) else False
         data["review_import_kinds"] = (["poams", "mitigations"] if may("poam.request") or may("poam.import") else [])
@@ -88,9 +97,12 @@ def project_governance(data, name, context, can, formatters):
         data.update(fields(context, ("can_change", "is_overdue")))
         data["pending_change"] = fields(context.get("pending_change"), ("request_type",)) if context.get("pending_change") else None
         data["history"] = []
+        from .replica_views import actor_labels
+        names = actor_labels(context.get("history", []), ('actor',),
+                             service_id=field(context.get("entry"), "service_id"))
         for item in context.get("history", []):
             row = fields(item, ("action", "note"))
-            row["actor"] = scalar(field(field(item, "actor"), "display_name"))
+            row["actor"] = names.get(id(item), {}).get("actor", scalar(field(field(item, "actor"), "display_name")))
             row["created_at"] = formatted(field(item, "created_at"), formatters, "cats_datetime")
             details = field(item, "detail", {})
             row["detail"] = {key: scalar(details[key]) for key in ("title", "description", "remediation", "due_date", "ticket", "closure_note", "evidence_reference", "version", "reason", "decision") if isinstance(details, Mapping) and key in details}

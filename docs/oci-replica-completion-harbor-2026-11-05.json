@@ -1,0 +1,1212 @@
+{
+  "audit_date_local": "2026-11-05",
+  "audit_timezone": "America/New_York",
+  "branch": "codex/oci-approved-release-replicas",
+  "checks": [
+    {
+      "active_after_replay": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "case": "complete",
+      "changed_sequence_signature_rejected": true,
+      "completed_at": "2026-11-06T01:12:55.457060+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 3,
+        "release_uuid": "2",
+        "revoked_at": "2026-11-06T01:09:24.540908+00:00",
+        "sequence": 2
+      },
+      "exact_repository_discoveries": [
+        "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/releases@sha256:359a875963074ffb05a1de83d29e86c123f7f67a0a8c09a210507bb5be657fb6",
+        "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/releases@sha256:b84a56c72afbfb8b8c39d56d1199e7eac06b8af1e3a416e22658be95fda1c78d",
+        "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/releases@sha256:e1c33e974114d512f868743bedbbebfc39c35d956fab519b239d7c33160392e4"
+      ],
+      "final_active": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 3,
+        "release_uuid": "2",
+        "revoked_at": "2026-11-06T01:09:24.540908+00:00",
+        "sequence": 2
+      },
+      "first_import": {
+        "release_id": 1,
+        "sequence": 1,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "graphs": {
+        "first": [
+          {
+            "blobs": [
+              "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+              "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+              "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+              "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+              "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+              "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "blobs": [
+              "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+              "sha256:ec9eb5fc30616d05d257aa0f46e18d1fe597d02bc0c3e2db0991fe195fa5332a"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+          }
+        ],
+        "successor": [
+          {
+            "blobs": [
+              "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+              "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+              "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+              "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+              "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+              "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "blobs": [
+              "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+              "sha256:cf53d72b91f06c4a0fe4a7b82e4b1dbffd1bcde78533943ebe951742ff5577ce"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+          }
+        ]
+      },
+      "older_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "post_revocation_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\complete.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/complete.json",
+        "sha256": "c8e574c593e20ba68a3c21bbcada5876e4b9385a0520d6b434bed76a6ba7a0a3"
+      },
+      "revocation_import": {
+        "sequence": 3,
+        "status": "revoked"
+      },
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "signed_evidence": {
+        "first": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:b8a8a0e11e365162e5314ca08a61f7c7f974de1f5db47ba8c7c789dffd30d80a"
+        },
+        "successor": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b"
+        }
+      },
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:12:46.816992+00:00",
+      "status": "passed",
+      "successor_import": {
+        "release_id": 2,
+        "sequence": 2,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "tamper_scope": "local mutation of actual fetched signed bytes; Harbor storage was not changed",
+      "target": "https://harbor-target.test:8443",
+      "wrong_trust_pin_rejected": true
+    },
+    {
+      "active": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "active_preserved": true,
+      "case": "missing-child",
+      "completed_at": "2026-11-06T01:13:45.647179+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "first_import": {
+        "release_id": 1,
+        "sequence": 1,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "omission": {
+        "digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+        "kind": "manifest",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "observed_http_status": 404,
+        "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+        "platform": {
+          "architecture": "amd64",
+          "os": "linux"
+        },
+        "repository": "qualification/synthetic-harbor-completion-audit/application",
+        "size": 398
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\missing-child.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/missing-child.json",
+        "sha256": "9ca34869fb5bd00876206f8c5eafc2e71232433969b99e55bbbe8279026f84f0"
+      },
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:13:38.388701+00:00",
+      "status": "passed",
+      "target": "https://harbor-target.test:8443",
+      "verification_rejected_http_status": 404
+    },
+    {
+      "active": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "active_preserved": true,
+      "case": "missing-evidence",
+      "completed_at": "2026-11-06T01:14:30.841831+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "first_import": {
+        "release_id": 1,
+        "sequence": 1,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "omission": {
+        "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b",
+        "empty_body_for_nonempty_blob": true,
+        "kind": "blob",
+        "mediaType": "application/zip",
+        "observed_body_bytes": 0,
+        "observed_content_length": "4880",
+        "observed_http_status": 200,
+        "parent_digest": "sha256:359a875963074ffb05a1de83d29e86c123f7f67a0a8c09a210507bb5be657fb6",
+        "repository": "qualification/synthetic-harbor-completion-audit/releases",
+        "size": 4880
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\missing-evidence.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/missing-evidence.json",
+        "sha256": "cf40f105dfac3c7020e715888e8ce23e2f57dc4c7ac6e724ee5115e76c665662"
+      },
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:24.541283+00:00",
+      "status": "passed",
+      "target": "https://harbor-target.test:8443",
+      "verification_rejected_incomplete_content": true
+    },
+    {
+      "active": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "active_preserved": true,
+      "case": "missing-layer",
+      "completed_at": "2026-11-06T01:14:08.580747+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "first_import": {
+        "release_id": 1,
+        "sequence": 1,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "omission": {
+        "digest": "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+        "empty_body_for_nonempty_blob": true,
+        "kind": "blob",
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "observed_body_bytes": 0,
+        "observed_content_length": "10240",
+        "observed_http_status": 200,
+        "parent_digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+        "repository": "qualification/synthetic-harbor-completion-audit/application",
+        "size": 10240
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\missing-layer.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/missing-layer.json",
+        "sha256": "ca118f2d21bfbc16e0e16e46cb64223e8d17ad9da66be73776214124887bc6e6"
+      },
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:01.555306+00:00",
+      "status": "passed",
+      "target": "https://harbor-target.test:8443",
+      "verification_rejected_incomplete_content": true
+    },
+    {
+      "active": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "active_preserved": true,
+      "case": "missing-signature",
+      "completed_at": "2026-11-06T01:14:53.541824+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:10.078251+00:00",
+        "expires_at": "2027-02-04T01:09:10.078251+00:00",
+        "high_sequence": 1,
+        "release_uuid": "1",
+        "revoked_at": null,
+        "sequence": 1
+      },
+      "first_import": {
+        "release_id": 1,
+        "sequence": 1,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "omission": {
+        "digest": "sha256:2ebccea445ce5318efaaaf5599a2b4b7fe2c55cce417fccf634a159682013ca9",
+        "kind": "manifest",
+        "observed_http_status": 404,
+        "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+        "repository": "qualification/synthetic-harbor-completion-audit/application"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\missing-signature.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/missing-signature.json",
+        "sha256": "546806e631f759969f4373b3e2b81c789ebb0066c29a3c417d325290bd98dce2"
+      },
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:46.770904+00:00",
+      "status": "passed",
+      "target": "https://harbor-target.test:8443",
+      "verification_rejected_http_status": 404
+    },
+    {
+      "active_after_replay": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "case": "recover",
+      "completed_at": "2026-11-06T01:13:53.626706+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "failed_case": "missing-child",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "graphs": {
+        "first": [
+          {
+            "blobs": [
+              "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+              "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+              "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+              "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+              "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+              "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "blobs": [
+              "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+              "sha256:ec9eb5fc30616d05d257aa0f46e18d1fe597d02bc0c3e2db0991fe195fa5332a"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+          }
+        ],
+        "successor": [
+          {
+            "blobs": [
+              "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+              "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+              "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+              "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+              "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+              "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "blobs": [
+              "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+              "sha256:cf53d72b91f06c4a0fe4a7b82e4b1dbffd1bcde78533943ebe951742ff5577ce"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+          }
+        ]
+      },
+      "older_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\recover-missing-child.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/recover-missing-child.json",
+        "sha256": "a3a70ef9d48d03b4075285ec161b0cd9c9a30df7b03d075d71156ad8b86b1a36"
+      },
+      "recovered_after_content_restored": true,
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "signed_evidence": {
+        "first": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:b8a8a0e11e365162e5314ca08a61f7c7f974de1f5db47ba8c7c789dffd30d80a"
+        },
+        "successor": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b"
+        }
+      },
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:13:50.364384+00:00",
+      "status": "passed",
+      "successor_import": {
+        "release_id": 2,
+        "sequence": 2,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "active_after_replay": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "case": "recover",
+      "completed_at": "2026-11-06T01:14:38.742782+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "failed_case": "missing-evidence",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "graphs": {
+        "first": [
+          {
+            "blobs": [
+              "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+              "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+              "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+              "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+              "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+              "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "blobs": [
+              "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+              "sha256:ec9eb5fc30616d05d257aa0f46e18d1fe597d02bc0c3e2db0991fe195fa5332a"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+          }
+        ],
+        "successor": [
+          {
+            "blobs": [
+              "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+              "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+              "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+              "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+              "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+              "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "blobs": [
+              "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+              "sha256:cf53d72b91f06c4a0fe4a7b82e4b1dbffd1bcde78533943ebe951742ff5577ce"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+          }
+        ]
+      },
+      "older_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\recover-missing-evidence.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/recover-missing-evidence.json",
+        "sha256": "f71f0c4aaffa5fe64f7b0b212fb260402e92e18d0cc9451015842c4128ce4078"
+      },
+      "recovered_after_content_restored": true,
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "signed_evidence": {
+        "first": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:b8a8a0e11e365162e5314ca08a61f7c7f974de1f5db47ba8c7c789dffd30d80a"
+        },
+        "successor": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b"
+        }
+      },
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:35.507590+00:00",
+      "status": "passed",
+      "successor_import": {
+        "release_id": 2,
+        "sequence": 2,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "active_after_replay": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "case": "recover",
+      "completed_at": "2026-11-06T01:14:16.574296+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "failed_case": "missing-layer",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "graphs": {
+        "first": [
+          {
+            "blobs": [
+              "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+              "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+              "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+              "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+              "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+              "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "blobs": [
+              "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+              "sha256:ec9eb5fc30616d05d257aa0f46e18d1fe597d02bc0c3e2db0991fe195fa5332a"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+          }
+        ],
+        "successor": [
+          {
+            "blobs": [
+              "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+              "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+              "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+              "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+              "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+              "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "blobs": [
+              "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+              "sha256:cf53d72b91f06c4a0fe4a7b82e4b1dbffd1bcde78533943ebe951742ff5577ce"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+          }
+        ]
+      },
+      "older_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\recover-missing-layer.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/recover-missing-layer.json",
+        "sha256": "1f215db1d88a2a2f7fe5d08fd3ab3279e6911842684b51f1291bb14e459876c5"
+      },
+      "recovered_after_content_restored": true,
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "signed_evidence": {
+        "first": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:b8a8a0e11e365162e5314ca08a61f7c7f974de1f5db47ba8c7c789dffd30d80a"
+        },
+        "successor": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b"
+        }
+      },
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:13.220736+00:00",
+      "status": "passed",
+      "successor_import": {
+        "release_id": 2,
+        "sequence": 2,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "active_after_replay": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "case": "recover",
+      "completed_at": "2026-11-06T01:15:01.421789+00:00",
+      "durable_state_reopened": {
+        "approved_at": "2026-11-06T01:09:17.736997+00:00",
+        "expires_at": "2027-02-04T01:09:17.736997+00:00",
+        "high_sequence": 2,
+        "release_uuid": "2",
+        "revoked_at": null,
+        "sequence": 2
+      },
+      "failed_case": "missing-signature",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "graphs": {
+        "first": [
+          {
+            "blobs": [
+              "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+              "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+              "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+              "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+              "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+              "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "blobs": [
+              "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+              "sha256:ec9eb5fc30616d05d257aa0f46e18d1fe597d02bc0c3e2db0991fe195fa5332a"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:6507828345785b05bc77678b64e50aeff032150abe7ebc909fdfbe39ab6091b1"
+          }
+        ],
+        "successor": [
+          {
+            "blobs": [
+              "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+              "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+              "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+              "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c"
+            ],
+            "kind": "image",
+            "manifests": [
+              "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+              "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+              "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "blobs": [
+              "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+              "sha256:cf53d72b91f06c4a0fe4a7b82e4b1dbffd1bcde78533943ebe951742ff5577ce"
+            ],
+            "kind": "chart",
+            "manifests": [
+              "sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+            ],
+            "reference": "harbor-target.test:8443/qualification/synthetic-harbor-completion-audit/charts/application@sha256:7786affed17906c2c5fb8f408f3cd4dbab4b6017fcc2c51a5e2eb9785b35341d"
+          }
+        ]
+      },
+      "older_replay": {
+        "sequence": 1,
+        "status": "unchanged"
+      },
+      "raw_report": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\reports\\recover-missing-signature.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/reports/recover-missing-signature.json",
+        "sha256": "b8d7c06417c802afbcb304e46ed33461e9b045452053d44fca0d3aea391cc01c"
+      },
+      "recovered_after_content_restored": true,
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "signed_evidence": {
+        "first": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:b8a8a0e11e365162e5314ca08a61f7c7f974de1f5db47ba8c7c789dffd30d80a"
+        },
+        "successor": {
+          "archive_files": [
+            "SYNTHETIC-QUALIFICATION.txt",
+            "replica-service.json",
+            "sbom.json",
+            "scanner-output.json"
+          ],
+          "bytes": 4880,
+          "detached_signature_verified": true,
+          "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b"
+        }
+      },
+      "source_reads": 0,
+      "started_at": "2026-11-06T01:14:58.207643+00:00",
+      "status": "passed",
+      "successor_import": {
+        "release_id": 2,
+        "sequence": 2,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "target": "https://harbor-target.test:8443"
+    }
+  ],
+  "format": "cats-oci-replica-completion-harbor-v1",
+  "generated_at": "2026-11-06T01:31:11.577553+00:00",
+  "implementation_head_before_completion_commit": "d8055227fb270706d5e4aebbf8ebea85f3c33846",
+  "preservation": {
+    "current_execution_count": 9,
+    "independent_prior_raw_hash_audit": {
+      "all_matches_at_prior_audit": true,
+      "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\completion-audit\\prior-harbor-hash-audit.json",
+      "record_count": 18,
+      "relative_to_evidence_root": "completion-audit/prior-harbor-hash-audit.json",
+      "scope": "Cross-reference to the root agent independent pre-run audit; prior raw report contents are not duplicated here.",
+      "sha256": "3978da6c9572f7a53fc89e4650a94718386393f1b430050b94d95f75bac46ec3"
+    },
+    "prior_execution_count": 8,
+    "prior_execution_records_unchanged": true,
+    "prior_replication_snapshot": {
+      "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\completion-audit\\prior-harbor-replication.json",
+      "relative_to_evidence_root": "completion-audit/prior-harbor-replication.json",
+      "sha256": "84dad430f21a17c6876c5385aa1298e9639c34d2672f90239db6fa5b3f7e87f1"
+    }
+  },
+  "replication": {
+    "execution": {
+      "end_time": "2026-11-06T01:11:52.000Z",
+      "failed": 0,
+      "id": 11,
+      "in_progress": 0,
+      "policy_id": 2,
+      "start_time": "2026-11-06T01:11:48.945Z",
+      "status": "Succeed",
+      "stopped": 0,
+      "succeed": 11,
+      "total": 11,
+      "trigger": "manual"
+    },
+    "fresh_fixture_task_ids": [
+      19,
+      20,
+      21
+    ],
+    "label": "completion-audit",
+    "namespace": "qualification",
+    "raw_report": {
+      "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\harbor-replication.json",
+      "relative_to_evidence_root": "harbor-acceptance/harbor-replication.json",
+      "sha256": "fbff204e1c0efc04560e5cfc20385fa7e2c6cc53a95051d7dc06b3632c135815"
+    },
+    "task_logs": [
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-19.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-19.log",
+        "sha256": "70d14f00d532330eade09890fef533b871751c22880d49157b1b5ff8235d6c6a"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-20.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-20.log",
+        "sha256": "b0af00939ee7a71da4fd53aa3cd5c27c73c1c4741ae1b4e912e46bc88016d89e"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-21.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-21.log",
+        "sha256": "e55e7fa81ea039bcdba1510a6fd5c6e785d31811a79ab14a6eacc75abdfd9951"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-22.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-22.log",
+        "sha256": "e0488460d0a2a7a41d262b53d2c809c8084be6d65ecfb25764f7caa82f649734"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-23.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-23.log",
+        "sha256": "4d7c0b579e9dbb92ee5d265e2b554de3c264075b98aeab4051f39419e4e8c1aa"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-24.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-24.log",
+        "sha256": "5b019ce234664800275d9cd3ae4f9c8f4b304be59c2be1811376760aef514d3f"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-25.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-25.log",
+        "sha256": "1816e07c8fb21bd3a8a001338385a2d5a3f02335f64f810c5126e038a3e797a8"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-26.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-26.log",
+        "sha256": "6856c4a022347721cf8f2d911eade445b1d07030fad05abff08d33c229a7d03d"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-27.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-27.log",
+        "sha256": "e9f3b913b03311a0a679c15d2615881f9455f31117a61959fd07450ce0bfdaca"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-28.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-28.log",
+        "sha256": "3f2436963c3c310fef2a86eac3182f9ebcef03cfec5c8f4d605fa5390a580fc4"
+      },
+      {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\logs\\execution-11-task-29.log",
+        "relative_to_evidence_root": "harbor-acceptance/logs/execution-11-task-29.log",
+        "sha256": "8582b887140143867b35e03eafb348c3dbdba1b4bdec0b93e509605d326c59ef"
+      }
+    ],
+    "tasks": [
+      {
+        "dst_resource": "qualification/synthetic-harbor-completion-audit/releases [5 item(s) in total]",
+        "end_time": "2026-11-06T01:11:51.000Z",
+        "execution_id": 11,
+        "id": 19,
+        "job_id": "1da02106f95008bb13aa12a8",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-completion-audit/releases [5 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-completion-audit/charts/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:51.000Z",
+        "execution_id": 11,
+        "id": 20,
+        "job_id": "6ec73682f400badc4a8dc85c",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-completion-audit/charts/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-completion-audit/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 21,
+        "job_id": "77092d5c50904a1b4d5e976b",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-completion-audit/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/interruption [3 item(s) in total]",
+        "end_time": "2026-11-06T01:11:51.000Z",
+        "execution_id": 11,
+        "id": 22,
+        "job_id": "aeafa1605936d6d00a0049c8",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/interruption [3 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph-qualified/releases [5 item(s) in total]",
+        "end_time": "2026-11-06T01:11:51.000Z",
+        "execution_id": 11,
+        "id": 23,
+        "job_id": "f3e416f2500e59e0e31dbb47",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph-qualified/releases [5 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph-qualified/charts/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 24,
+        "job_id": "1613d629e8c396dba6d3e808",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph-qualified/charts/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph-qualified/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 25,
+        "job_id": "13766436cc9fabe6a2a4374c",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph-qualified/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph/releases [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 26,
+        "job_id": "b21e67c04489f01e0c7309f1",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph/releases [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph/charts/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 27,
+        "job_id": "ef6edf4cc976ce46abf6eef0",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph/charts/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/synthetic-harbor-graph/application [4 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 28,
+        "job_id": "565797fc415c4152ace83316",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/synthetic-harbor-graph/application [4 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      },
+      {
+        "dst_resource": "qualification/fixtures/application [2 item(s) in total]",
+        "end_time": "2026-11-06T01:11:52.000Z",
+        "execution_id": 11,
+        "id": 29,
+        "job_id": "363942f2643bc8e70cede3a0",
+        "operation": "copy",
+        "resource_type": "artifact",
+        "src_resource": "qualification/fixtures/application [2 item(s) in total]",
+        "start_time": "2026-11-06T01:11:49.000Z",
+        "status": "Succeed"
+      }
+    ]
+  },
+  "restorations": [
+    {
+      "bytes": 398,
+      "case": "missing-child",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "mechanism": "same-directory reversible fixture blob rename",
+      "object": {
+        "digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+        "kind": "manifest",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+        "repository": "qualification/synthetic-harbor-completion-audit/application",
+        "size": 398
+      },
+      "prepared_at": "2026-11-06T01:13:35.241488+00:00",
+      "quarantined_at": "2026-11-06T01:13:35.245744+00:00",
+      "raw_record": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\injections\\missing-child.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/injections/missing-child.json",
+        "sha256": "2f596d5c77afde6c685c238c8579e421c741d0b614c3cf9906fabbd5d17874f8"
+      },
+      "restored_at": "2026-11-06T01:13:47.252085+00:00",
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "bytes": 4880,
+      "case": "missing-evidence",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "mechanism": "same-directory reversible fixture blob rename",
+      "object": {
+        "digest": "sha256:7659d9a4a823982df8ac7398d5dd10df2aca6d499155cca2ed2a9f7dc800132b",
+        "kind": "blob",
+        "mediaType": "application/zip",
+        "parent_digest": "sha256:359a875963074ffb05a1de83d29e86c123f7f67a0a8c09a210507bb5be657fb6",
+        "repository": "qualification/synthetic-harbor-completion-audit/releases",
+        "size": 4880
+      },
+      "prepared_at": "2026-11-06T01:14:21.343537+00:00",
+      "quarantined_at": "2026-11-06T01:14:21.346935+00:00",
+      "raw_record": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\injections\\missing-evidence.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/injections/missing-evidence.json",
+        "sha256": "2626adea503d4aa22448c61ddc7115460ec258a2d1d48a78b98777654d568a18"
+      },
+      "restored_at": "2026-11-06T01:14:32.408578+00:00",
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "bytes": 10240,
+      "case": "missing-layer",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "mechanism": "same-directory reversible fixture blob rename",
+      "object": {
+        "digest": "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+        "kind": "blob",
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "parent_digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+        "repository": "qualification/synthetic-harbor-completion-audit/application",
+        "size": 10240
+      },
+      "prepared_at": "2026-11-06T01:13:58.425181+00:00",
+      "quarantined_at": "2026-11-06T01:13:58.428953+00:00",
+      "raw_record": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\injections\\missing-layer.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/injections/missing-layer.json",
+        "sha256": "e903634c4aab83f28efc24ea963e874ebebbc18474b1e640bd11013ee9863a69"
+      },
+      "restored_at": "2026-11-06T01:14:10.136830+00:00",
+      "target": "https://harbor-target.test:8443"
+    },
+    {
+      "bytes": 558,
+      "case": "missing-signature",
+      "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+      "mechanism": "same-directory reversible fixture blob rename",
+      "object": {
+        "digest": "sha256:2ebccea445ce5318efaaaf5599a2b4b7fe2c55cce417fccf634a159682013ca9",
+        "kind": "manifest",
+        "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+        "repository": "qualification/synthetic-harbor-completion-audit/application"
+      },
+      "prepared_at": "2026-11-06T01:14:43.564253+00:00",
+      "quarantined_at": "2026-11-06T01:14:43.568710+00:00",
+      "raw_record": {
+        "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\harbor-acceptance\\graph-completion-audit\\injections\\missing-signature.json",
+        "relative_to_evidence_root": "harbor-acceptance/graph-completion-audit/injections/missing-signature.json",
+        "sha256": "43b188073466499ea42d335622b4fbc0f9439eb5b5b9b16ac911fdf0760951ce"
+      },
+      "restored_at": "2026-11-06T01:14:55.132900+00:00",
+      "target": "https://harbor-target.test:8443"
+    }
+  ],
+  "scope": {
+    "database": "Production importer with isolated per-case SQLite ledgers and database reopening checks.",
+    "fixture": "Synthetic two-architecture image graph, Helm chart, signed evidence, release/supersession/revocation events. Synthetic evidence uses the production capture and publication paths; it is not a real scan or Cyber approval.",
+    "fresh_fixture_prefix": "qualification/synthetic-harbor-completion-audit",
+    "limits": [
+      "This local Harbor pair and configured namespace policy only.",
+      "Fresh nginx HTTP authorization, local overrides, PostgreSQL restart and disconnected checks are separate evidence.",
+      "Multiarchitecture graph content was verified; execution on ARM hardware was not tested.",
+      "Wrong trust pin and changed sequence rejection mutate locally fetched signed bytes, not Harbor storage."
+    ],
+    "namespace": "qualification",
+    "replication_policy_scope": "The namespace policy also transferred prior qualification repositories. Tasks 19, 20 and 21 are the new fixture; all 11 namespace tasks are retained below.",
+    "reported_source_reads": [
+      0
+    ],
+    "source_read_claim": "The driver fetches exclusively from the target and reports source_reads=0; this is not a packet capture or a source-off test.",
+    "source_was_running_during_graph_checks": true,
+    "target": "https://harbor-target.test:8443",
+    "transport": "Actual Harbor jobservice replication between local TLS source and target registries; no direct source-to-target copy helper."
+  },
+  "status": "passed"
+}

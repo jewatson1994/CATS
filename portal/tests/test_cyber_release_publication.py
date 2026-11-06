@@ -113,7 +113,7 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
     evidence = tmp_path / "evidence.zip"
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
-    from app import service_transfer
+    from app import main, portable_release_capture
     from app.database import Base
     from app.models import Service
     engine = create_engine('sqlite://')
@@ -122,13 +122,11 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
         service = Service(id=12, service_key='demo', name='Demo')
         db.add(service)
         db.flush()
-        records = service_transfer.snapshot(db, service)
+        state = portable_release_capture.capture(db, service, {})
     engine.dispose()
     with ZipFile(evidence, "w") as archive:
         archive.writestr("findings.json", '{"findings":[]}')
-        archive.writestr('replica-service.json', json.dumps({'format': 'cats-replica-service-v1',
-            'service_key': 'demo', 'relational_schema': service_transfer.schema_signature(), 'records': records,
-            'actors': {}, 'activity': [], 'extension': {}, 'counts': {name: len(rows) for name, rows in records.items()}}))
+        archive.writestr('replica-service.json', publication.canonical(state))
     chart = tmp_path / "chart.tgz"
     with tarfile.open(chart, "w:gz") as archive:
         data = b"apiVersion: v2\nname: sample\nversion: 1.0.0\n"

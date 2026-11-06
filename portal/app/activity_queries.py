@@ -23,6 +23,10 @@ def global_activity_page(db, *, cutoff=None, action='', page=1, page_size=50):
 
 
 def service_activity_page(db, service_id, page=1, page_size=50):
+    from .operating_mode import is_replica
+    if is_replica():
+        from .replica_views import service_activity
+        return service_activity(db, service_id, page=page, page_size=page_size)
     page_size = max(1, min(int(page_size), 200))
     scalar_id = AuditEvent.detail["service_id"]
     if db.get_bind().dialect.name == "postgresql":

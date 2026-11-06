@@ -11,18 +11,19 @@ from cryptography.fernet import Fernet
 import pytest
 from sqlalchemy import Boolean, DateTime, Integer, JSON, create_engine, event, func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.pool import StaticPool
 
 from app import models as m, service_transfer as transfer
 from app.database import Base
 from app.oci_models import OCIRepository, OCIUpstream
-from app.replica_authorization import ensure_repository_mappings, release_denial
+from app.replica_authorization import authorize, ensure_repository_mappings, release_denial
 from app.replica_import import ReplicaImportError, _projection, reconcile
 from app.replica_integrity import verify_record
 from app.replica_models import ReplicaEvent, ReplicaRecordMap, ReplicaRelease, ReplicaServiceState, ReplicaSource
 
 
 def engine():
-    result = create_engine('sqlite://')
+    result = create_engine('sqlite://', connect_args={'check_same_thread': False}, poolclass=StaticPool)
     @event.listens_for(result, 'connect')
     def foreign_keys(connection, _):
         connection.execute('PRAGMA foreign_keys=ON')
@@ -171,12 +172,26 @@ def test_all_evidence_domains_remap_foreign_keys_and_preserve_assessments(replic
 
 
 def test_complete_snapshot_replaces_23_of_100_images_and_keeps_history(replica_import):
+    """Synthetic verified manifests: exact 100/23 inventories, no registry claim."""
     f = replica_import
     images = [m.ServiceImage(service_id=f.service.id, image_reference=f'registry/app-{i}:1',
         image_digest='sha256:' + f'{i:064x}', scan_status='completed') for i in range(100)]
     f.origin.add_all(images)
-    first = reconcile(f.db, f.source, verified(f), now=f.now)
+    def inventory():
+        return [{'repository': image.image_reference.split(':')[0], 'digest': image.image_digest,
+            'kind': 'image', 'manifests': [], 'blobs': []} for image in f.origin.scalars(
+                select(m.ServiceImage).where(m.ServiceImage.lifecycle_status == 'active'))]
+    original_inventory = inventory()
+    incoming = verified(f, artifacts=original_inventory)
+    historical_evidence = deepcopy(incoming['state'])
+    first = reconcile(f.db, f.source, incoming, now=f.now)
     f.db.commit()
+    def decision(artifact):
+        mapping = f.db.scalar(select(OCIRepository).where(OCIRepository.service_id == first['service_id'],
+            OCIRepository.upstream_repository == artifact['repository']))
+        return authorize(f.db, mapping, artifact['digest'], now=f.now)
+    assert len(original_inventory) == 100
+    assert all(decision(artifact).allowed for artifact in original_inventory)
     original_maps = {row.source_id: row.local_id for row in f.db.scalars(
         select(ReplicaRecordMap).where(ReplicaRecordMap.table_name == 'service_images'))}
     for image in images[:23]:
@@ -185,9 +200,28 @@ def test_complete_snapshot_replaces_23_of_100_images_and_keeps_history(replica_i
             image_digest='sha256:' + f'{1000 + image.id:064x}', replacement_of_id=image.id,
             scan_status='completed'))
     f.service.manual_version = '2.0'
-    second = reconcile(f.db, f.source, verified(f, 2), now=f.now)
+    replacement_inventory = inventory()
+    next_release = verified(f, 2, artifacts=replacement_inventory)
+    assert len(replacement_inventory) == 100
+    unchanged = {row['digest'] for row in original_inventory} & {row['digest'] for row in replacement_inventory}
+    assert len(unchanged) == 77
+    # Missing replicated content cannot move any active membership or evidence.
+    with pytest.raises(ReplicaImportError, match='verification'):
+        reconcile(f.db, f.source, {**next_release, 'complete': False}, now=f.now)
+    f.db.rollback()
+    assert f.db.get(ReplicaServiceState, first['service_id']).active_release_id == first['release_id']
+    assert all(decision(artifact).allowed for artifact in original_inventory)
+    assert f.db.get(ReplicaRelease, first['release_id']).evidence_state == historical_evidence
+    second = reconcile(f.db, f.source, next_release, now=f.now)
     f.db.commit()
     assert first['service_id'] == second['service_id']
+    assert f.db.scalar(select(func.count()).select_from(m.Service).where(
+        m.Service.service_key == f.service.service_key)) == 1
+    assert all(decision(artifact).allowed for artifact in replacement_inventory)
+    for artifact in original_inventory:
+        result = decision(artifact)
+        assert result.allowed is (artifact['digest'] in unchanged)
+        assert result.reason == ('active_approved_release' if artifact['digest'] in unchanged else 'release_superseded')
     assert f.db.scalar(select(func.count()).select_from(m.ServiceImage).where(
         m.ServiceImage.service_id == first['service_id'], m.ServiceImage.lifecycle_status == 'active')) == 100
     assert f.db.scalar(select(func.count()).select_from(m.ServiceImage).where(
@@ -197,7 +231,29 @@ def test_complete_snapshot_replaces_23_of_100_images_and_keeps_history(replica_i
     state = f.db.get(ReplicaServiceState, first['service_id'])
     assert state.active_release_id == second['release_id']
     assert release_denial(f.db.get(ReplicaRelease, first['release_id']), state, f.now) == 'superseded'
-    assert f.db.get(ReplicaRelease, first['release_id']).evidence_state['records']['services'][0]['manual_version'] is None
+    assert f.db.get(ReplicaRelease, first['release_id']).evidence_state == historical_evidence
+    assert f.db.get(ReplicaRelease, second['release_id']).evidence_state['records']['services'][0]['manual_version'] == '2.0'
+
+
+def test_duplicate_import_restores_missing_archive_but_rejects_changed_retained_state(replica_import):
+    from pathlib import Path
+    f = replica_import
+    incoming = verified(f)
+    first = reconcile(f.db, f.source, incoming, now=f.now)
+    f.db.commit()
+    retained = f.db.get(ReplicaRelease, first['release_id'])
+    Path(retained.evidence_path).unlink()
+    assert reconcile(f.db, f.source, incoming, now=f.now)['status'] == 'unchanged'
+    f.db.commit()
+    assert Path(retained.evidence_path).read_bytes() == incoming['evidence']
+    assert f.db.get(ReplicaServiceState, first['service_id']).active_release_id == first['release_id']
+    damaged = deepcopy(retained.evidence_state)
+    damaged['records']['services'][0]['name'] = 'Changed locally'
+    retained.evidence_state = damaged
+    f.db.flush()
+    with pytest.raises(ReplicaImportError, match='integrity'):
+        reconcile(f.db, f.source, incoming, now=f.now)
+    f.db.rollback()
 
 
 def test_replay_collision_rollback_and_incomplete_import_do_not_move_active_release(replica_import):

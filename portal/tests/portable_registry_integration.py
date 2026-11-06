@@ -49,7 +49,7 @@ def context(root):
 
 def publish(root):
     oci, signing, publication, portable, env = context(root)
-    from app import release_validity, service_transfer
+    from app import main, release_validity, portable_release_capture
     from app.models import Service
     from app.database import Base
     from sqlalchemy import create_engine
@@ -81,10 +81,8 @@ def publish(root):
         service = Service(service_key='registry-integration', name='Registry integration evidence')
         session.add(service)
         session.flush()
-        records = service_transfer.snapshot(session, service)
-    state = {'format': 'cats-replica-service-v1', 'service_key': 'registry-integration',
-        'relational_schema': service_transfer.schema_signature(), 'records': records,
-        'counts': {name: len(rows) for name, rows in records.items()}, 'actors': {}, 'activity': [], 'extension': {}}
+        state = portable_release_capture.capture(session, service, {})
+    engine.dispose()
     evidence = root / 'evidence.zip'
     with ZipFile(evidence, 'w') as archive:
         archive.writestr('replica-service.json', portable.canonical(state))

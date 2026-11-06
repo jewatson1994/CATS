@@ -49,6 +49,11 @@ def capture(db, service, approval_snapshot):
             raw['service']['groups'] = []
     activity = [transfer.record(row) for row in db.scalars(select(m.AuditEvent).where(
         m.AuditEvent.target_type == 'service', m.AuditEvent.target_id == str(service.id)))]
+    for row in activity:
+        identity = row.get('actor_user_id')
+        if identity is not None and str(identity) not in actors:
+            user = db.get(m.User, identity)
+            actors[str(identity)] = user.username if user else 'Unavailable original identity'
     extension = _extensions(db, service.id)
     # Preserve identities used only by approval/risk/provenance history too.
     for name, rows in extension.items():
@@ -120,18 +125,38 @@ def _extensions(db, service_id):
         (VexFindingDisposition, VexFindingDisposition.evaluation_id.in_([r['id'] for r in result['vex_disposition_evaluations']])),
         (ReleaseRevisionState, ReleaseRevisionState.revision_id.in_([r['id'] for r in result['release_revisions']])),
     ]
-    artifact_ids = [r['artifact_id'] for r in result['service_artifact_assignments']]
+    # Assigned outputs can have unassigned parents (including several patch
+    # generations). Retain the entire ancestry, not only the final edge.
+    artifact_ids = {r['artifact_id'] for r in result['service_artifact_assignments']}
+    frontier, lineage = set(artifact_ids), {}
+    while frontier:
+        rows = db.scalars(select(ArtifactPatchLineage).where(
+            ArtifactPatchLineage.output_artifact_id.in_(frontier))).all()
+        lineage.update({row.id: transfer.record(row) for row in rows})
+        parents = {row.source_artifact_id for row in rows} - artifact_ids
+        artifact_ids.update(parents)
+        frontier = parents
+        if len(artifact_ids) + len(lineage) > transfer.bound('CATS_BUNDLE_MAX_RECORDS', 100000):
+            raise ValueError('Artifact ancestry exceeds configured bundle record count')
+    result['artifact_patch_lineage'] = [lineage[key] for key in sorted(lineage)]
     queries.extend([(GlobalArtifact, GlobalArtifact.id.in_(artifact_ids)),
-                    (ArtifactLocation, ArtifactLocation.artifact_id.in_(artifact_ids)),
-                    (ArtifactPatchLineage, ArtifactPatchLineage.output_artifact_id.in_(artifact_ids))])
+                    (ArtifactLocation, ArtifactLocation.artifact_id.in_(artifact_ids))])
     for model, predicate in queries:
         result[model.__tablename__] = [transfer.record(row) for row in db.scalars(select(model).where(predicate))]
     from .vex_models import VexDocument, VexSource, VexStatement
     from .vex_intelligence import MAX_BYTES
-    document_ids = {candidate['document_id'] for assessment in result['risk_assessments']
-        for finding in assessment.get('details', []) for observation in finding.get('observations', [])
-        for key in ('statements', 'rejected_candidates') for candidate in observation.get('vex', {}).get(key, [])
-        if candidate.get('document_id') is not None}
+    # Native VEX can determine exclusions without any informational risk
+    # assessment. Preserve original documents referenced by either evidence path.
+    document_ids = set()
+    pending = [result['risk_assessments'], result['vex_observation_dispositions']]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if type(value.get('document_id')) is int:
+                document_ids.add(value['document_id'])
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
     # Enforce the same storage-byte limit as the authoritative original-document
     # endpoint before loading text. Referenced missing evidence fails the freeze.
     size = (func.octet_length(VexDocument.raw_text) if db.get_bind().dialect.name == 'postgresql'
@@ -182,8 +207,17 @@ def _finding_decisions(db, service_id, configuration, captured_at, execution_id)
     observation_decisions = [{'observation_id': identity, 'excluded': True} for identity in db.scalars(
         select(O.id).join(F, F.id == O.finding_id).where(F.service_id == service_id,
             observation_excluded(O.id, captured_at)))]
+    from .native_vex import current_evaluation
+    from .native_vex_models import (VexDispositionEvaluation as Evaluation,
+        VexDispositionPolicy as Policy, VexDispositionService as State)
+    state, policy = db.get(State, service_id), db.get(Policy, 1)
+    current = bool(db.scalar(select(Evaluation.id).join(State,
+        State.service_id == Evaluation.service_id).join(Policy, Policy.id == 1).where(
+        Evaluation.service_id == service_id, *current_evaluation(captured_at, enabled=False)).limit(1)))
     return {'finding_classifications': classifications, 'finding_decisions': decisions,
-            'observation_decisions': observation_decisions}
+            'observation_decisions': observation_decisions,
+            'native_vex_context': {'evaluation_id': state.evaluation_id if state else None,
+                'current': current, 'enabled': bool(policy and policy.enabled), 'pending': not current}}
 
 
 def encode_capture(db, service, approval_snapshot):

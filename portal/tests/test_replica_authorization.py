@@ -348,3 +348,117 @@ def test_override_cannot_serve_content_when_mandatory_usage_audit_fails(replica,
     assert replica.raw not in response.content
     with replica.sessions() as db:
         assert db.scalar(select(AuditEvent.id).where(AuditEvent.action == 'local_override.used')) is None
+
+
+def test_expiration_is_enforced_offline_at_the_exact_signed_deadline(replica, monkeypatch):
+    def network_forbidden(*args, **kwargs):
+        raise AssertionError('Offline authorization must not contact an upstream')
+    monkeypatch.setattr(proxy, 'client', network_forbidden)
+    with replica.sessions() as db:
+        expiration = db.get(ReplicaRelease, replica.new_id).expires_at.replace(tzinfo=timezone.utc)
+    assert decision(replica, replica.new, expiration - timedelta(microseconds=1)).allowed
+    assert decision(replica, replica.new, expiration).reason == 'release_expired'
+    assert decision(replica, replica.new, expiration + timedelta(days=365)).reason == 'release_expired'
+
+
+def test_indefinite_review_date_does_not_expire_an_override(replica):
+    identity = grant(replica, review_at=(replica.now + timedelta(days=1)).isoformat())
+    assert decision(replica, timestamp=replica.now + timedelta(days=3650)).override_id == identity
+
+
+@pytest.mark.parametrize('revoked', ['override', 'route', 'principal'])
+def test_revocation_during_blob_retrieval_rechecks_cached_authority(replica, monkeypatch, revoked):
+    identity = grant(replica)
+    class Transport:
+        def fetch_manifest(self, repository, reference):
+            return replica.raw, 'application/vnd.oci.image.manifest.v1+json', replica.old
+        def fetch_blob(self, repository, reference, cache):
+            path = cache.get(reference) or cache.store(reference, io.BytesIO(replica.blob))
+            with replica.sessions() as db:
+                if revoked == 'override':
+                    revoke_override(db, replica.auth, replica.service_id, identity, 'Revoked during retrieval')
+                elif revoked == 'route':
+                    db.get(OCIRepository, replica.mapping_id).suspended = True
+                else:
+                    db.scalar(select(OCIPrincipal)).enabled = False
+                db.commit()
+            return path
+    monkeypatch.setattr(proxy, 'SessionLocal', replica.sessions)
+    monkeypatch.setattr(proxy, 'client', lambda mapping: Transport())
+    with TestClient(proxy.app) as client:
+        client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
+        assert client.get('/v2/replica/nginx/manifests/' + replica.old).status_code == 200
+        response = client.get('/v2/replica/nginx/blobs/' + replica.blob_digest)
+        assert response.status_code == (401 if revoked == 'principal' else 403)
+        assert replica.blob not in response.content
+    with replica.sessions() as db:
+        usages = list(db.scalars(select(AuditEvent).where(AuditEvent.action == 'local_override.used')))
+        assert len(usages) == 1  # The earlier manifest; the rejected blob has no usage grant.
+
+
+def test_same_digest_in_another_service_cannot_reuse_override(replica):
+    grant(replica)
+    with replica.sessions() as db:
+        other = Service(service_key='another-service', name='Another service')
+        db.add(other)
+        db.flush()
+        original = db.get(ReplicaRelease, replica.old_id)
+        release = ReplicaRelease(service_id=other.id, publisher=original.publisher,
+            source_release_id='another-release', sequence=1, manifest=original.manifest,
+            manifest_digest=original.manifest_digest, artifacts=original.artifacts, evidence_state={},
+            key_fingerprint=original.key_fingerprint, verified=True, complete=True,
+            approved_at=original.approved_at, expires_at=original.expires_at, source_reference=original.source_reference)
+        seal_record(release)
+        db.add(release)
+        db.add(ReplicaServiceState(service_id=other.id, publisher=original.publisher, source_service_id='another-service',
+            upstream_id=db.get(OCIRepository, replica.mapping_id).upstream_id,
+            source_id=replica.source_id, high_sequence=1))
+        mapping = OCIRepository(public_repository='another/nginx', upstream_id=db.get(OCIRepository, replica.mapping_id).upstream_id,
+            upstream_repository='team/nginx', service_id=other.id)
+        db.add(mapping)
+        db.commit()
+        result = authorize(db, mapping, replica.old)
+        assert not result.allowed and result.reason == 'release_superseded'
+
+
+@pytest.mark.parametrize('role_name,scope,allowed', [
+    ('Local Cyber', 'service', True), ('Cybersecurity', 'service', True),
+    ('Assessor', 'service', False), ('Administrator', 'global', False),
+    ('Local Cyber', 'other', False),
+])
+def test_override_api_enforces_real_persisted_roles_and_sessions(replica, role_name, scope, allowed):
+    from app.auth import SESSION_COOKIE, SYSTEM_ROLES, token_hash
+    from app.database import get_db
+    from app.local_cyber_overrides import router
+    from app.models import Role, UserRoleAssignment, UserSession
+    from app.operating_mode import ReplicaModeMiddleware
+    with replica.sessions() as db:
+        user = User(username='role-test-user', display_name='Role Test User')
+        role = Role(name=role_name, permissions=SYSTEM_ROLES[role_name], system=True)
+        other = Service(service_key='scope-other', name='Other scope')
+        db.add_all([user, role, other])
+        db.flush()
+        db.add(UserRoleAssignment(user_id=user.id, role_id=role.id,
+            service_id=None if scope == 'global' else other.id if scope == 'other' else replica.service_id))
+        db.add(UserSession(user_id=user.id, token_hash=token_hash('role-session'), csrf_token='role-csrf',
+            expires_at=replica.now + timedelta(days=1)))
+        db.commit()
+    app = FastAPI()
+    app.include_router(router)
+    app.add_middleware(ReplicaModeMiddleware)
+    def database():
+        with replica.sessions() as db:
+            yield db
+    app.dependency_overrides[get_db] = database
+    with TestClient(app) as client:
+        client.cookies.set(SESSION_COOKIE, 'role-session')
+        path = '/api/services/replica-nginx/local-overrides'
+        headers = {'X-CSRF-Token': 'role-csrf'}
+        response = client.post(path, json=replica.data, headers=headers)
+        assert response.status_code == (200 if allowed else 403)
+        if allowed:
+            identity = response.json()['id']
+            assert client.get(f'{path}/{identity}/uses').status_code == 200
+            revoked = client.post(f'{path}/{identity}/revoke', json={'reason': 'Mission restored'}, headers=headers)
+            assert revoked.status_code == 200 and revoked.json()['status'] == 'revoked'
+            assert not decision(replica).allowed

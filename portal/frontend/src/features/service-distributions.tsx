@@ -1,5 +1,6 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {requestJson} from '../api';
+import {useReplica} from '../operatingMode';
 import '../styles/service-distributions.css';
 
 interface ChartIdentityData {
@@ -204,10 +205,11 @@ function DistributionManager({serviceKey, csrfToken, canRequestApproval}: Servic
 }
 
 export function ServiceDistributions(props: ServiceDistributionProps) {
+  const replica = useReplica();
   const [expanded, setExpanded] = useState(window.location.hash === '#service-distributions');
   const [opened, setOpened] = useState(expanded);
   return <section id="service-distributions" className="panel padded service-distributions"><h2>Service distributions</h2>
-    <p>Choose which charts from a confirmed inventory are enabled for a distribution. Each saved selection can be scanned and submitted for Cyber review.</p>
+    <p>{replica ? 'Review chart selections captured with the approved service evidence.' : 'Choose which charts from a confirmed inventory are enabled for a distribution. Each saved selection can be scanned and submitted for Cyber review.'}</p>
     <button type="button" className="secondary-button" aria-expanded={expanded} aria-controls="service-distribution-list" onClick={() => {
       setExpanded(!expanded); setOpened(true);
     }}>{expanded ? 'Hide distributions' : 'View distributions and chart selections'}</button>

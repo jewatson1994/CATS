@@ -4,6 +4,7 @@ import {Page as Artifacts} from './service-artifacts';
 import {Page as Dependencies} from './service-dependencies';
 import {Page as Validation,isTerminal} from './service-validation';
 import type {PageData} from '../api';
+import {OperatingMode} from '../operatingMode';
 
 beforeAll(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function(this:HTMLDialogElement) {this.setAttribute('open','');});
@@ -16,6 +17,15 @@ const chart = {semantic_type:'helm_chart',artifact:{id:11,chart_name:'Test Chart
 const response = (data:any) => ({ok:true,status:200,redirected:false,headers:new Headers({'content-type':'application/json'}),json:async () => data});
 
 describe('native service operations', () => {
+  it('describes captured replica artifacts without offering acquisition instructions', async () => {
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({releases:[],overrides:[],confirmations:[],distributions:[]})));
+    await act(async () => {render(<OperatingMode.Provider value="replica"><Artifacts data={fixture({can:{}})}/></OperatingMode.Provider>);});
+    expect(screen.getByText('Captured Helm, Kubernetes, and container artifacts associated with this service.')).toBeInTheDocument();
+    expect(screen.getByText('No Helm repository records were included in this captured release.')).toBeInTheDocument();
+    expect(screen.getByText('No standalone Kubernetes manifests were included in this captured release.')).toBeInTheDocument();
+    expect(screen.queryByText('Add a repository to discover available charts.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Upload YAML or YML manifests to associate them with this service.')).not.toBeInTheDocument();
+  });
   it('keeps service exports and image patch history available together on Artifacts', () => {
     render(<Artifacts data={fixture({can_patch_images: true, can_image_workflow: false, image_inventory: [{image: {...image, image_digest: `sha256:${'b'.repeat(64)}`, patch_history: [{original_image: 'registry/original:v1', result_image: image.image_reference, patched_at: '2026-10-25T12:00:00Z', job_id: 'patch-1'}]}, count: 0, references: []}]})}/>);
     expect(screen.getByRole('heading', {level: 1, name: 'Sample'})).toBeInTheDocument();

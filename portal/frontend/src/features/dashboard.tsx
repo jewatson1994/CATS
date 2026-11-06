@@ -28,10 +28,11 @@ function Dashboard({data}: {data: any}) {
       actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>{canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
     {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is still being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}; {preparing === 1 ? 'it is' : 'they are'} not listed yet and totals exclude {preparing === 1 ? 'it' : 'them'}. Refresh shortly.</p>
       : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is being refreshed after a portfolio-wide change; some rows may briefly show their previous values.</p>}
+    {replica && <p role="note">These assessment results were captured by the publishing system. Release expiration, revocation and local Cyber overrides are evaluated separately. <a href="/approved-releases">Review current OCI enforcement and release history</a>.</p>}
     <MetricGrid label="Service summary" className="metric-grid-compact">
       <MetricCard label="Services" value={pending ? 'Pending' : data.total_count ?? 0}/>
-      <MetricCard label="Compliant" value={pending ? 'Pending' : data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
-      <MetricCard label="Non-compliant" value={pending ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
+      <MetricCard label={replica ? 'Captured compliant' : 'Compliant'} value={pending ? 'Pending' : data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
+      <MetricCard label={replica ? 'Captured non-compliant' : 'Non-compliant'} value={pending ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
       <MetricCard label="Active POA&Ms" value={pending ? 'Pending' : data.poam_active_count} hint={pending ? undefined : `${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
     </MetricGrid>
     <section className="panel cyber-matrix" aria-label="Service Security Matrix">

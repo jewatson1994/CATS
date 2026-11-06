@@ -2,6 +2,8 @@
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import timedelta
+import hashlib
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -87,6 +89,44 @@ def test_incomplete_sync_preserves_active_and_retries(replica_import, monkeypatc
     rejection = f.db.scalar(select(AuditEvent).where(AuditEvent.action == 'replica.rejected'))
     assert rejection.detail['failure_type'] == 'ReplicaImportError'
     assert rejection.detail['correlation_id'] == job.correlation_id
+
+
+@pytest.mark.parametrize('condition', ['healthy', 'missing_archive', 'corrupt_archive', 'corrupt_projection', 'broken_seal'])
+def test_known_release_sync_checks_retained_evidence_and_retries_recovery(replica_import, monkeypatch, condition):
+    f = replica_import
+    incoming = verified(f)
+    incoming['manifest']['evidence'] = {'digest': 'sha256:' + hashlib.sha256(incoming['evidence']).hexdigest()}
+    imported = reconcile(f.db, f.source, incoming, now=f.now)
+    f.db.commit()
+    release = f.db.get(ReplicaRelease, imported['release_id'])
+    archive = Path(release.evidence_path)
+    if condition == 'missing_archive':
+        archive.unlink()
+    elif condition == 'corrupt_archive':
+        archive.write_bytes(b'corrupted')
+    elif condition == 'corrupt_projection':
+        release.evidence_state = {'corrupted': True}
+    elif condition == 'broken_seal':
+        release.integrity_seal = 'corrupted'
+    f.db.commit()
+    sessions = worker(f, monkeypatch, incoming)
+    fetched = []
+    def fetch(*args):
+        fetched.append(args[0])
+        return incoming
+    monkeypatch.setattr(replica_sync.portable_release, 'fetch_release', fetch)
+    job = replica_sync.enqueue(f.db, f.source)
+    f.db.commit()
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'integrity-worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    completed = condition in {'healthy', 'missing_archive'}
+    assert f.db.get(durable_jobs.DurableJob, job.id).status == ('completed' if completed else 'queued')
+    assert fetched == ([] if condition == 'healthy' else [incoming['reference']])
+    assert f.db.get(ReplicaServiceState, imported['service_id']).active_release_id == imported['release_id']
+    if completed:
+        assert archive.read_bytes() == incoming['evidence']
+    else:
+        assert 'rejected or incomplete' in f.db.get(ReplicaSource, f.source.id).last_error
 
 
 def test_captured_risk_and_exact_approved_scan_without_local_evaluation(replica_import, monkeypatch):

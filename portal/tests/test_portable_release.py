@@ -190,6 +190,30 @@ def test_capture_rejects_missing_record_category_even_with_consistent_counts(env
         portable.evidence_capture(output.getvalue())
 
 
+@pytest.mark.parametrize('category', portable._CAPTURE_LISTS + ('approval_context', 'display'))
+def test_capture_requires_explicit_context_categories(environment, category):
+    evidence = Path(environment.approval.snapshot['evidence']['path']).read_bytes()
+    state = portable.evidence_capture(evidence)
+    del state['extension'][category]
+    output = BytesIO()
+    with ZipFile(output, 'w') as archive:
+        archive.writestr(portable.CAPTURE_NAME, portable.canonical(state))
+    with pytest.raises(ValueError, match='frozen .* evidence'):
+        portable.evidence_capture(output.getvalue())
+
+
+@pytest.mark.parametrize('field,value', [('configuration', []), ('services_row', {}),
+    ('cyber_row', None), ('captured_at', 'not-a-date'), ('captured_at', '2026-11-05T00:00:00')])
+def test_capture_rejects_invalid_frozen_display(environment, field, value):
+    state = portable.evidence_capture(Path(environment.approval.snapshot['evidence']['path']).read_bytes())
+    state['extension']['display'][field] = value
+    output = BytesIO()
+    with ZipFile(output, 'w') as archive:
+        archive.writestr(portable.CAPTURE_NAME, portable.canonical(state))
+    with pytest.raises(ValueError, match='frozen dashboard'):
+        portable.evidence_capture(output.getvalue())
+
+
 def test_verifier_checks_more_than_one_hundred_inventory_entries(environment):
     artifacts = []
     for number in range(101):

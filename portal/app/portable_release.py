@@ -20,6 +20,16 @@ from . import release_oci as oci, release_signing, release_validity, signing
 FORMAT = 'cats-replica-release-v1'
 ARTIFACT_TYPE = 'application/vnd.cats.approved-release.v1'
 CAPTURE_NAME = 'replica-service.json'
+# Empty categories are meaningful: omission must not silently erase evidence.
+_CAPTURE_LISTS = (
+    'risk_assessments', 'risk_decisions', 'vex_disposition_evaluations',
+    'service_artifact_assignments', 'cyber_approvals', 'release_revisions',
+    'discovery_distributions', 'finding_classifications', 'finding_classification_state',
+    'finding_classification_changes', 'risk_policy_versions', 'vex_observation_dispositions',
+    'vex_finding_dispositions', 'release_revision_states', 'global_artifacts',
+    'global_artifact_locations', 'artifact_patch_lineage', 'vex_documents',
+    'vex_statements', 'vex_sources', 'finding_decisions', 'observation_decisions',
+)
 _TAG = re.compile(r'(?:release|revocation)-[0-9]+-[A-Za-z0-9_-]+\Z')
 
 
@@ -92,6 +102,28 @@ def evidence_capture(content, *, max_bytes=1024**3):
     from . import service_transfer
     service_transfer.validate_state(state, {'schema_version': 2,
         'counts': state['counts'], 'service_key': state.get('service_key')})
+    extension = state.get('extension')
+    if (not isinstance(extension, dict)
+            or any(not isinstance(extension.get(name), list)
+                   or any(not isinstance(row, dict) for row in extension[name])
+                   for name in _CAPTURE_LISTS)
+            or not isinstance(extension.get('approval_context'), dict)
+            or not isinstance(state.get('actors'), dict)
+            or not isinstance(state.get('activity'), list)):
+        raise ValueError('Complete frozen contextual evidence is missing or invalid')
+    display = extension.get('display')
+    if (not isinstance(display, dict)
+            or any(not isinstance(display.get(name), dict)
+                   for name in ('services_row', 'cyber_row', 'configuration'))
+            or not display.get('services_row') or not display.get('cyber_row')
+            or not isinstance(display.get('captured_at'), str)):
+        raise ValueError('Complete frozen dashboard evidence is missing or invalid')
+    try:
+        captured_at = datetime.fromisoformat(display['captured_at'].replace('Z', '+00:00'))
+        if captured_at.tzinfo is None:
+            raise ValueError('Frozen dashboard capture time must include a timezone')
+    except ValueError as exc:
+        raise ValueError('Invalid frozen dashboard capture time') from exc
     return state
 
 

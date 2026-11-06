@@ -138,11 +138,11 @@ async def synchronize(request: Request, auth: AuthContext = Depends(require_user
 
 
 def release_row(db, release):
+    from .replica_authorization import trusted_release
     service = db.get(Service, release.service_id)
-    state = db.get(ReplicaServiceState, release.service_id)
+    state = db.get(ReplicaServiceState, release.service_id, populate_existing=True)
     timestamp = datetime.now(timezone.utc)
-    source = db.get(ReplicaSource, state.source_id) if state else None
-    trusted = source and source.enabled and release.publisher in source.trusted_publishers and verify_record(release)
+    trusted = trusted_release(db, release, state, timestamp)
     status = ('untrusted' if not trusted else 'revoked' if release.revoked_at else
               'expired' if release.expires_at and utc(release.expires_at) <= timestamp else
               'active' if state and state.active_release_id == release.id else 'superseded')

@@ -14,6 +14,7 @@ from app.database import Base
 from app.models import Service
 from app.replica_models import upgrade_connection
 import test_replica_import as imports
+import test_replica_evidence_api as evidence
 import test_replica_sync as sync
 
 
@@ -67,6 +68,7 @@ def postgres_replica(postgres_engines, monkeypatch, tmp_path):
     imports.test_complete_snapshot_replaces_23_of_100_images_and_keeps_history,
     imports.test_replay_collision_rollback_and_incomplete_import_do_not_move_active_release,
     imports.test_signed_revocation_is_durable_and_tampered_revocation_cannot_restore_trust,
+    imports.test_duplicate_import_restores_missing_archive_but_rejects_changed_retained_state,
     sync.test_delayed_revocation_applies_without_rolling_back_newer_release,
 ], ids=lambda scenario: scenario.__name__.removeprefix('test_'))
 def test_postgres_reconciliation(postgres_replica, scenario):
@@ -79,6 +81,14 @@ def test_postgres_projection_failure_is_atomic(postgres_replica, monkeypatch):
 
 def test_postgres_preserves_frozen_finding_decisions(postgres_replica, monkeypatch):
     sync.test_frozen_finding_views_never_consult_local_policy_or_intelligence(postgres_replica, monkeypatch)
+
+
+def test_postgres_rich_frozen_evidence_http(postgres_replica, monkeypatch):
+    evidence.test_rich_capture_reconstructs_original_domains_through_replica_http(postgres_replica, monkeypatch)
+
+
+def test_postgres_historical_native_vex(postgres_replica, monkeypatch):
+    evidence.test_historical_native_vex_does_not_claim_effective_exclusion(postgres_replica, monkeypatch)
 
 
 def test_postgres_additive_upgrade_preserves_existing_full_deployment(postgres_engines):

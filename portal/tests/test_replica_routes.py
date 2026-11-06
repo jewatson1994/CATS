@@ -1,5 +1,6 @@
 """Actual local administration and evidence routes enforce scope and CSRF."""
 from types import SimpleNamespace
+from datetime import timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -12,7 +13,7 @@ from app.durable_jobs import DurableJob
 from app.models import AuditEvent
 from app.operating_mode import ReplicaModeMiddleware
 from app.replica_integrity import digest, seal_record
-from app.replica_models import ReplicaRelease, ReplicaSource
+from app.replica_models import ReplicaRelease, ReplicaSource, ReplicaServiceState
 from app import replica_routes
 from test_replica_authorization import replica
 
@@ -142,3 +143,26 @@ def test_source_update_locks_and_refreshes_before_preserving_unspecified_fields(
         with pytest.raises(HTTPException) as error:
             replica_routes.configure(db, auth, {'repository': 'other/releases'}, stale)
         assert error.value.status_code == 409
+
+
+@pytest.mark.parametrize('change', ['future_approval', 'publisher_binding', 'registry_binding', 'key_binding'])
+def test_release_status_uses_the_same_trust_boundary_as_pull_authorization(api, change):
+    fixture = api.fixture
+    with fixture.sessions() as db:
+        release = db.get(ReplicaRelease, fixture.new_id)
+        state = db.get(ReplicaServiceState, fixture.service_id)
+        if change == 'future_approval':
+            release.approved_at = fixture.now + timedelta(days=1)
+        elif change == 'publisher_binding':
+            state.publisher = 'different-publisher'
+        elif change == 'registry_binding':
+            state.upstream_id += 100
+        else:
+            release.key_fingerprint = 'different-key'
+        seal_record(release)
+        db.commit()
+    api.login({'service.view'}, fixture.service_id)
+    response = api.client.get('/api/replica/releases')
+    assert response.status_code == 200
+    current = next(row for row in response.json()['releases'] if row['id'] == fixture.new_id)
+    assert current['status'] == 'untrusted'

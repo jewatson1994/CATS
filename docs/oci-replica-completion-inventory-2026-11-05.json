@@ -1,0 +1,995 @@
+{
+  "architecture_source_references": [
+    {
+      "line": 129,
+      "path": "portal/app/release_oci.py",
+      "purpose": "Authenticate and transfer OCI manifests/blobs with registry transport validation.",
+      "symbol_pattern": "^class _Client:"
+    },
+    {
+      "line": 20,
+      "path": "portal/app/portable_release_capture.py",
+      "purpose": "Capture approved service evidence and complete execution-scoped inventory.",
+      "symbol_pattern": "^def capture\\("
+    },
+    {
+      "line": 351,
+      "path": "portal/app/cyber_release_publication.py",
+      "purpose": "Publish approved artifact graphs, signed manifest and signed captured evidence.",
+      "symbol_pattern": "^def publish\\("
+    },
+    {
+      "line": 635,
+      "path": "portal/app/cyber_release_publication.py",
+      "purpose": "Publish signed, ordered revocation events.",
+      "symbol_pattern": "^def publish_revocation\\("
+    },
+    {
+      "line": 237,
+      "path": "portal/app/portable_release.py",
+      "purpose": "Verify release trust, signatures, evidence and complete OCI artifact graph.",
+      "symbol_pattern": "^def fetch_release\\("
+    },
+    {
+      "line": 356,
+      "path": "portal/app/portable_release.py",
+      "purpose": "Discover releases within the exact configured repository.",
+      "symbol_pattern": "^def discover_release_references\\("
+    },
+    {
+      "line": 179,
+      "path": "portal/app/replica_import.py",
+      "purpose": "Transactionally reconcile release lifecycle and project captured evidence.",
+      "symbol_pattern": "^def reconcile\\("
+    },
+    {
+      "line": 60,
+      "path": "portal/app/replica_models.py",
+      "purpose": "Persist per-service active release and high-water sequence.",
+      "symbol_pattern": "^class ReplicaServiceState\\("
+    },
+    {
+      "line": 34,
+      "path": "portal/app/replica_integrity.py",
+      "purpose": "Check local release-record integrity before use.",
+      "symbol_pattern": "^def verify_record\\("
+    },
+    {
+      "line": 28,
+      "path": "portal/app/replica_sync.py",
+      "purpose": "Check retained archive and projection integrity before skipping known events.",
+      "symbol_pattern": "^def retained_complete\\("
+    },
+    {
+      "line": 54,
+      "path": "portal/app/replica_sync.py",
+      "purpose": "Synchronize remote events with failure recording and retry behavior.",
+      "symbol_pattern": "^def sync\\("
+    },
+    {
+      "line": 161,
+      "path": "portal/app/replica_sync.py",
+      "purpose": "Run replica-only periodic synchronization without authoritative workers.",
+      "symbol_pattern": "^async def replica_lifespan\\("
+    },
+    {
+      "line": 16,
+      "path": "portal/app/replica_authorization.py",
+      "purpose": "Share authoritative local trust evaluation between status and pull enforcement.",
+      "symbol_pattern": "^def trusted_release\\("
+    },
+    {
+      "line": 108,
+      "path": "portal/app/replica_authorization.py",
+      "purpose": "Enforce release validity and exact repository/digest scope at pull time.",
+      "symbol_pattern": "^def authorize\\("
+    },
+    {
+      "line": 114,
+      "path": "portal/app/local_cyber_overrides.py",
+      "purpose": "Create authenticated, scoped local overrides with justification and expiry/review semantics.",
+      "symbol_pattern": "^def create_override\\("
+    },
+    {
+      "line": 196,
+      "path": "portal/app/local_cyber_overrides.py",
+      "purpose": "Serialize override use with revocation.",
+      "symbol_pattern": "^def lock_for_use\\("
+    },
+    {
+      "line": 509,
+      "path": "portal/app/oci_proxy.py",
+      "purpose": "Revalidate and audit authorization before delivering cached or fetched content.",
+      "symbol_pattern": "^def get_blob\\("
+    },
+    {
+      "line": 68,
+      "path": "portal/app/operating_mode.py",
+      "purpose": "Block unavailable authoritative mutation routes in replica mode.",
+      "symbol_pattern": "^class ReplicaModeMiddleware"
+    },
+    {
+      "line": 432,
+      "path": "portal/app/main.py",
+      "purpose": "Select the authoritative or replica application lifecycle.",
+      "symbol_pattern": "^async def app_lifespan\\("
+    },
+    {
+      "line": 140,
+      "path": "portal/app/replica_routes.py",
+      "purpose": "Expose release lifecycle status using the same trust checks as enforcement.",
+      "symbol_pattern": "^def release_row\\("
+    },
+    {
+      "line": 93,
+      "path": "portal/app/replica_views.py",
+      "purpose": "Serve captured assessment views without recomputation from local source policy.",
+      "symbol_pattern": "^def captured_assessment\\("
+    },
+    {
+      "line": 21,
+      "path": "portal/app/replica_views.py",
+      "purpose": "Resolve imported actors from integrity-checked captured provenance rather than local importer foreign keys.",
+      "symbol_pattern": "^def actor_labels\\("
+    },
+    {
+      "line": 68,
+      "path": "portal/app/replica_views.py",
+      "purpose": "Render captured publisher activity separately from local audit events.",
+      "symbol_pattern": "^def service_activity\\("
+    },
+    {
+      "line": 25,
+      "path": "portal/app/activity_queries.py",
+      "purpose": "Route service activity pages to captured evidence in replica mode.",
+      "symbol_pattern": "^def service_activity_page\\("
+    },
+    {
+      "line": 48,
+      "path": "portal/app/frontend_governance.py",
+      "purpose": "Batch original publisher attribution for governance rows.",
+      "symbol_pattern": "^def entries\\("
+    },
+    {
+      "line": 7,
+      "path": "portal/app/frontend_remediations.py",
+      "purpose": "Use captured governance attribution on remediation views.",
+      "symbol_pattern": "^def project_remediations\\("
+    },
+    {
+      "line": 90,
+      "path": "portal/frontend/src/features/replica.tsx",
+      "purpose": "Display local release evidence and lifecycle state.",
+      "symbol_pattern": "^export function Releases"
+    },
+    {
+      "line": 5,
+      "path": "portal/frontend/src/components/ReplicaReleaseIndicator.tsx",
+      "purpose": "Show authoritative imported-release status throughout service views.",
+      "symbol_pattern": "^export function ReplicaReleaseIndicator"
+    },
+    {
+      "line": 5,
+      "path": "portal/frontend/src/hooks/useReplicaResource.ts",
+      "purpose": "Fetch replica resources with explicit errors and optional polling.",
+      "symbol_pattern": "^export function useReplicaResource"
+    },
+    {
+      "line": 4,
+      "path": "compose.replica.yaml",
+      "purpose": "Deploy standalone replica database, portal and OCI proxy with retained local storage.",
+      "symbol_pattern": "^services:"
+    },
+    {
+      "line": 9,
+      "path": "portal/Dockerfile.replica",
+      "purpose": "Build the replica runtime and pinned signature verifier without scanner/validator tools.",
+      "symbol_pattern": "^FROM python:"
+    },
+    {
+      "line": 417,
+      "path": "portal/tests/harbor_graph_qualification.py",
+      "purpose": "Exercise actual target graph completeness, import, rollback, revocation and recovery.",
+      "symbol_pattern": "^def verify\\("
+    },
+    {
+      "line": 245,
+      "path": "portal/tests/harbor_replication_qualification.py",
+      "purpose": "Run real Harbor jobservice replication and retain task outcomes/logs.",
+      "symbol_pattern": "^def replicate\\("
+    }
+  ],
+  "baseline_commit": "8dc9ea42b6af7f883d2607ecad7a813cd0e53722",
+  "branch": "codex/oci-approved-release-replicas",
+  "completion_parent": "d8055227fb270706d5e4aebbf8ebea85f3c33846",
+  "counts": {
+    "distinct_paths": 97,
+    "explicit_new_feature_and_audit_paths": 8,
+    "feature_commit_paths": 79,
+    "tracked_completion_paths": 32
+  },
+  "feature_commit": "d8055227fb270706d5e4aebbf8ebea85f3c33846",
+  "files": [
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": ".env.example"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": ".env.replica.example"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": ".gitignore"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "compose.replica.yaml"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "compose.yaml"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "docs/cyber-approved-releases.md"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "docs/harbor-replication-acceptance-2026-11-05.json"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "docs/oci-proxy.md"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": true,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "docs/oci-replica-completion-audit-2026-11-05.md"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": true,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "docs/oci-replica-completion-harbor-2026-11-05.json"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": true,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "docs/oci-replica-completion-inventory-2026-11-05.json"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": true,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "docs/oci-replica-completion-nginx-2026-11-05.json"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "docs/portable-approved-releases.md"
+    },
+    {
+      "category": "documentation",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "docs/real-nginx-acceptance-2026-11-05.json"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/.env.example"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/Dockerfile.replica"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/app/activity_queries.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/auth.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/cyber_approval_evidence.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/cyber_approvals.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/cyber_release_publication.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/finding_classification.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/findings_query.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/frontend.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/app/frontend_governance.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/app/frontend_remediations.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/local_cyber_overrides.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/main.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/native_vex.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/oci_authorization.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/oci_proxy.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/operating_mode.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/portable_release.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/portable_release_capture.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_authorization.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_findings.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_import.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_integrity.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_models.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_routes.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_sync.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/app/replica_views.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/risk_routes.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/service_evidence.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/service_posture.py"
+    },
+    {
+      "category": "backend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/app/service_tab_queries.py"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/App.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/frontend/src/components/OverrideIndicator.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/components/ReplicaReleaseIndicator.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/components/ServiceHeader.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/components/ServiceSecurityMatrix.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/components/Shell.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/admin_shared.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/configuration.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/dashboard.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/home.tsx"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/native_vex.test.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/native_vex.tsx"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/oci_distribution.test.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/oci_distribution.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/poam.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/frontend/src/features/remediations.tsx"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/frontend/src/features/replica.test.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/frontend/src/features/replica.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/service-artifacts.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/service-distributions.tsx"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/service-operations.test.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/features/service_history.tsx"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/frontend/src/hooks/useReplicaResource.ts"
+    },
+    {
+      "category": "frontend",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/frontend/src/operatingMode.ts"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/harbor_acceptance_stack.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/harbor_graph_qualification.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/harbor_nginx_qualification.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/harbor_replication_qualification.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/nginx_acceptance_stack.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/nginx_replica_acceptance.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/nginx_replica_workflow.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/nginx_workflow_integration.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/portable_registry_integration.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/tests/test_cyber_approval_evidence.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/tests/test_cyber_approvals.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/tests/test_cyber_release_publication.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_harbor_replication_qualification.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_operating_mode.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_portable_release.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/tests/test_proposal_assessments.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_authorization.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/tests/test_replica_concurrency_postgres.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "A",
+      "exists_at_generation": true,
+      "feature_commit_change": null,
+      "path": "portal/tests/test_replica_evidence_api.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_execution_views.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_import.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_postgres.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_routes.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": "M",
+      "exists_at_generation": true,
+      "feature_commit_change": "A",
+      "path": "portal/tests/test_replica_sync.py"
+    },
+    {
+      "category": "tests",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "portal/tests/test_scanner_shell_lifecycle.py"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "scanning-main/scripts/generate-sboms.sh"
+    },
+    {
+      "category": "deployment_and_scanner",
+      "completion_audit_artifact": false,
+      "completion_change": null,
+      "exists_at_generation": true,
+      "feature_commit_change": "M",
+      "path": "templates/compose.main.yaml"
+    }
+  ],
+  "format": "cats-oci-replica-completion-file-inventory-v1",
+  "generated_at": "2026-11-06T01:31:11.801947+00:00",
+  "repository": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene",
+  "scope": "Union of git diff 8dc9ea4..d805522, current tracked completion changes and eight explicit new feature/audit paths. Unrelated untracked files are excluded. Existence is recorded at generation time; this inventory does not attest that an ongoing audit artifact is final.",
+  "source_line_reference_scope": "Line numbers describe the shared working tree at generation time, before the final completion commit."
+}

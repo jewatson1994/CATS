@@ -1,5 +1,6 @@
 """The replica boundary must remain closed as authoritative APIs evolve."""
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,19 @@ from app.auth import AuthContext, SYSTEM_ROLES
     ('POST', '/api/services/example/local-overrides/1/edit'),
     ('POST', '/admin/configuration/signing'),
     ('POST', '/admin/configuration/scan-settings'),
+    ('POST', '/api/public/scan'),
+    ('POST', '/api/public/patch'),
+    ('POST', '/admin/services/stage'),
+    ('POST', '/admin/services/example'),
+    ('POST', '/services/example/remediate'),
+    ('POST', '/services/example/scan-schedule'),
+    ('POST', '/services/example/images/1/replace'),
+    ('POST', '/services/example/missing-evidence/remove'),
+    ('POST', '/services/example/mitigations'),
+    ('POST', '/findings/1/exceptions'),
+    ('POST', '/api/services/example/risk-assessments'),
+    ('POST', '/api/services/example/risk-decisions'),
+    ('POST', '/api/cyber-approvals/1/decide'),
     ('GET', '/api/public/jobs/scan-1/results'),
     ('GET', '/api/public/patch-jobs/patch-1/results'),
     ('GET', '/services/example/exports/findings.xlsx'),
@@ -148,3 +162,38 @@ def test_replica_compose_has_no_assessment_infrastructure():
         assert 'INTELLIGENCE_DATABASE_URL' not in service['environment']
         assert 'docker.sock' not in str(service)
     assert set(compose['services']['portal']['depends_on']) == {'db'}
+
+
+def test_initial_replica_synchronization_does_not_block_portal(monkeypatch):
+    from app import replica_sync
+    monkeypatch.setenv('CATS_REPLICA_SYNC_ENABLED', 'true')
+    started, finish, completed = threading.Event(), threading.Event(), threading.Event()
+
+    def slow_initial_sync():
+        started.set()
+        finish.wait(5)
+        completed.set()
+
+    monkeypatch.setattr(replica_sync, 'schedule_due', slow_initial_sync)
+    monkeypatch.setattr(replica_sync.jobs, 'claim', lambda *args: None)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        async with replica_sync.replica_lifespan():
+            yield
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.get('/health')
+    def health():
+        return {'status': 'ok'}
+
+    with TestClient(app) as client:
+        try:
+            assert started.wait(2)
+            assert not completed.is_set()
+            assert client.get('/health').json() == {'status': 'ok'}
+            assert not completed.is_set()
+        finally:
+            finish.set()
+    assert completed.is_set()

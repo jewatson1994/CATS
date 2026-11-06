@@ -1,5 +1,5 @@
 """Explicit governance and remediation DTOs; never serialize ORM internals."""
-from .frontend_governance import entry, service
+from .frontend_governance import entries, service
 from .remediation_summary import _redact
 from .remediation_workflow import workflow_projection
 
@@ -29,7 +29,7 @@ def project_remediations(data, name, context, can, formatters):
     data["remediation_preview"] = _fields(context.get("remediation_preview", {}), ("images", "charts", "configuration_changes", "manual_review", "error", "pending"))
     data["oci_destinations"] = [_fields(row, ("id", "name", "endpoint", "namespace", "is_default", "credentials_configured", "ca_configured", "scope")) for row in context.get("oci_destinations", [])]
     for key in ("poams", "mitigations"):
-        data[key] = [entry(item, formatters) for item in context.get(key, [])]
+        data[key] = entries(context.get(key, []), formatters)
         for item in data[key]:
             item["service_id"] = item["service"]["id"]
             permission("poam.review", item["service_id"])

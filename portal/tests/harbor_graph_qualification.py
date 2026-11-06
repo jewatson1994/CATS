@@ -140,7 +140,7 @@ def image_fixture(ctx, registry, namespace, sequence):
 def evidence_fixture(ctx, folder, service_key, sequence):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session
-    from app import service_transfer
+    from app import main, portable_release_capture
     from app.database import Base
     from app.models import Service
     engine = create_engine('sqlite://')
@@ -150,11 +150,8 @@ def evidence_fixture(ctx, folder, service_key, sequence):
                           description=f'{LABEL}; revision {sequence}')
         db.add(service)
         db.flush()
-        records = service_transfer.snapshot(db, service)
+        state = portable_release_capture.capture(db, service, {})
     engine.dispose()
-    state = {'format': 'cats-replica-service-v1', 'service_key': service_key,
-        'relational_schema': service_transfer.schema_signature(), 'records': records,
-        'counts': {name: len(rows) for name, rows in records.items()}, 'actors': {}, 'activity': [], 'extension': {}}
     evidence = folder / 'evidence.zip'
     with ZipFile(evidence, 'w') as archive:
         archive.writestr('replica-service.json', ctx.portable.canonical(state))

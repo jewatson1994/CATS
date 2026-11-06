@@ -206,6 +206,21 @@ def reconcile(db, source, verified, *, now=None):
     if same:
         if same.manifest_digest != event_digest:
             raise ReplicaImportError('Signed sequence collision; release quarantine required')
+        if kind == 'release':
+            from .replica_integrity import verify_record
+            retained = db.scalar(select(ReplicaRelease).where(ReplicaRelease.publisher == publisher,
+                ReplicaRelease.source_release_id == release_id, ReplicaRelease.manifest_digest == event_digest))
+            retained_state = db.get(ReplicaServiceState, retained.service_id) if retained else None
+            if (not retained_state or retained_state.source_id != source.id
+                    or retained_state.source_service_id != source_id
+                    or not verify_record(retained)
+                    or digest(retained.evidence_state) != retained.evidence_state_digest
+                    or digest(verified.get('state')) != retained.evidence_state_digest
+                    or verified.get('artifacts') != retained.artifacts):
+                raise ReplicaImportError('Existing release evidence integrity check failed')
+            # A fresh fully verified package may repair absent retained bytes.
+            # It never reprojects history or changes the active release pointer.
+            retained.evidence_path = _retain(verified.get('evidence'))
         return {'status': 'unchanged', 'sequence': sequence}
     if kind != 'revocation' and events and sequence <= events[0].sequence:
         raise ReplicaImportError('Rollback rejected by durable signed sequence high-water mark')

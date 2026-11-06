@@ -17,6 +17,15 @@ it('loads scoped evidence on demand and labels retained observations',async()=>{
  render(<VexEvidence serviceKey="payments" findingId={7}/>);expect(requestJson).not.toHaveBeenCalled();fireEvent.click(screen.getByText('Automatic VEX disposition and evidence'));await screen.findByText('VEX Excluded');expect(requestJson).toHaveBeenCalledWith('/api/risk/services/payments/native-vex?after=0&finding_id=7',expect.anything());
 });
 
+it.each([true,false])('labels imported VEX as captured evidence (current=%s)',async current=>{
+ vi.mocked(requestJson).mockResolvedValue({imported:true,enabled:true,current,evaluation:null,items:[]});
+ render(<VexEvidence serviceKey="payments" expanded/>);
+ expect(await screen.findByText(/Captured publisher evaluation; no local reassessment is performed/)).toBeInTheDocument();
+ expect(screen.getByText(/Automatic exclusion at capture/)).toBeInTheDocument();
+ expect(screen.getByText(current?/Captured evaluation\./:/Captured evaluation pending, failed, stale or current status not recorded/)).toBeInTheDocument();
+ expect(screen.queryByText(/This is the current service evaluation/)).not.toBeInTheDocument();
+});
+
 it('flags fully excluded POAM findings independently of evidence pagination',async()=>{
  vi.mocked(requestJson).mockResolvedValue({enabled:true,current:true,finding_disposition:'vex_not_affected',items:[],next_after:100});
  render(<VexPoamReview serviceKey="payments" findingId={7}/>);

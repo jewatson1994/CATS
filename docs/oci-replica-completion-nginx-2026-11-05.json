@@ -1,0 +1,1502 @@
+{
+  "active_patched_pull": {
+    "complete": true,
+    "graphs": [
+      {
+        "blob_count": 13,
+        "blobs": [
+          {
+            "digest": "sha256:00780f84336db4ebddafd5ca64e2c7c7de2c7c2e96416e5c08cad46272be8422",
+            "size": 11944
+          },
+          {
+            "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+            "size": 8117760
+          },
+          {
+            "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+            "size": 4511232
+          },
+          {
+            "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+            "size": 3584
+          },
+          {
+            "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+            "size": 4608
+          },
+          {
+            "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+            "size": 2560
+          },
+          {
+            "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+            "size": 5120
+          },
+          {
+            "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+            "size": 7168
+          },
+          {
+            "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+            "size": 37023232
+          },
+          {
+            "digest": "sha256:6ce123c4a13d48f8c6135405f7197606edb6080385bf6fbf85173cf1cd8bf538",
+            "size": 766976
+          },
+          {
+            "digest": "sha256:b122f902bc8330eabe475d25d7283dc11a0e561369a6b3ea0de90f3ae3bd3641",
+            "size": 133632
+          },
+          {
+            "digest": "sha256:ebbb7a9fe8fc421ab0b038d4e6152336df73b2d74d31ea02ec01f5c30e0d420d",
+            "size": 12864000
+          },
+          {
+            "digest": "sha256:22ea38b87d6ac138b1bf0cfcef59497002dc44e1fab6f8fe1fa51d153545c0a5",
+            "size": 253355
+          }
+        ],
+        "complete": true,
+        "manifest_count": 1,
+        "manifests": [
+          {
+            "digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "size": 2859
+          }
+        ],
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "root_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+        "verified_bytes": 63708030
+      }
+    ],
+    "release_id": 2,
+    "verified_bytes": 63708030
+  },
+  "administrator_separation": {
+    "administrator_override_denied": true
+  },
+  "audit_date_local": "2026-11-05",
+  "audit_timezone": "America/New_York",
+  "code_after_restart": {
+    "both_compose_files_used": true,
+    "portal_matches_workspace": true,
+    "proxy_matches_workspace": true,
+    "sha256": {
+      "oci_proxy.py": "3cc7bfc14b52e71bc4f504204743834a7784ef2424b9ecab2aa031f432aead8f",
+      "portable_release.py": "21e353ee2a7713d682343f8448ddc81c32666f369294b0ed95ad042d1c8066cf",
+      "replica_authorization.py": "a55cfc22413a05b1015c88f530b4ff7a62bf7f7443f94e5768ecf4b933ef3043",
+      "replica_import.py": "adf0bbdb279087310e277e51884f9e9da32cfdcc4ec00a19b65ae3b0f83e656e",
+      "replica_integrity.py": "3abbec39a07be3a10837e5c97eb0de378c87bdc8b5febd950511b46c15ef6eec",
+      "replica_routes.py": "ed554d5d57b14881bfee27b91d8ead0818ee4172ac9094d8ce2e6298bc1536e5",
+      "replica_sync.py": "74bdd2d9074a7ea96693adbaea18871734db5380af1ed3402f7790852410d165",
+      "replica_views.py": "8e4d997b2b9af11ea4bdec2b6feb866766aba26d39c28f957b2008bf92b4842e"
+    }
+  },
+  "code_before": {
+    "both_compose_files_used": true,
+    "portal_matches_workspace": true,
+    "proxy_matches_workspace": true,
+    "sha256": {
+      "oci_proxy.py": "3cc7bfc14b52e71bc4f504204743834a7784ef2424b9ecab2aa031f432aead8f",
+      "portable_release.py": "21e353ee2a7713d682343f8448ddc81c32666f369294b0ed95ad042d1c8066cf",
+      "replica_authorization.py": "a55cfc22413a05b1015c88f530b4ff7a62bf7f7443f94e5768ecf4b933ef3043",
+      "replica_import.py": "adf0bbdb279087310e277e51884f9e9da32cfdcc4ec00a19b65ae3b0f83e656e",
+      "replica_integrity.py": "3abbec39a07be3a10837e5c97eb0de378c87bdc8b5febd950511b46c15ef6eec",
+      "replica_routes.py": "ed554d5d57b14881bfee27b91d8ead0818ee4172ac9094d8ce2e6298bc1536e5",
+      "replica_sync.py": "74bdd2d9074a7ea96693adbaea18871734db5380af1ed3402f7790852410d165",
+      "replica_views.py": "8e4d997b2b9af11ea4bdec2b6feb866766aba26d39c28f957b2008bf92b4842e"
+    }
+  },
+  "complete": true,
+  "completed_at": "2026-11-06T01:22:03.878409+00:00",
+  "evidence_after_restart": {
+    "patched": {
+      "archive_entries": 10,
+      "evidence_bytes": 1986940,
+      "evidence_digest": "sha256:60cfb8137e5ba6618dfaa167f6cd9e7cd6edcf4815fc26f3bf423fcb73acd280",
+      "manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+      "original_evidence_equal": true,
+      "read_only": true,
+      "record_counts": {
+        "dependency_watchlist_entries": 0,
+        "dependency_watchlist_matches": 0,
+        "deployment_validation_runs": 0,
+        "exceptions": 0,
+        "executions": 4,
+        "finding_observations": 388,
+        "findings": 129,
+        "inventory_records": 0,
+        "patch_executions": 2,
+        "poam_change_requests": 0,
+        "poam_entries": 0,
+        "poam_history": 0,
+        "policy_exceptions": 0,
+        "policy_findings": 0,
+        "remediation_executions": 0,
+        "service_archive_events": 0,
+        "service_artifact_revisions": 0,
+        "service_artifacts": 0,
+        "service_images": 1,
+        "service_metadata": 0,
+        "service_transfer_provenance": 0,
+        "service_versions": 2,
+        "services": 1,
+        "workflow_requests": 0
+      },
+      "release_id": 2
+    },
+    "source": {
+      "archive_entries": 10,
+      "evidence_bytes": 2051852,
+      "evidence_digest": "sha256:4613a698078480406193a9500dff27de95bfe3f688897d358d74e3d3f026cb82",
+      "manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+      "original_evidence_equal": true,
+      "read_only": true,
+      "record_counts": {
+        "dependency_watchlist_entries": 0,
+        "dependency_watchlist_matches": 0,
+        "deployment_validation_runs": 0,
+        "exceptions": 0,
+        "executions": 3,
+        "finding_observations": 388,
+        "findings": 129,
+        "inventory_records": 0,
+        "patch_executions": 0,
+        "poam_change_requests": 0,
+        "poam_entries": 0,
+        "poam_history": 0,
+        "policy_exceptions": 0,
+        "policy_findings": 0,
+        "remediation_executions": 0,
+        "service_archive_events": 0,
+        "service_artifact_revisions": 0,
+        "service_artifacts": 0,
+        "service_images": 0,
+        "service_metadata": 0,
+        "service_transfer_provenance": 0,
+        "service_versions": 1,
+        "services": 1,
+        "workflow_requests": 0
+      },
+      "release_id": 1
+    }
+  },
+  "evidence_before": {
+    "patched": {
+      "archive_entries": 10,
+      "evidence_bytes": 1986940,
+      "evidence_digest": "sha256:60cfb8137e5ba6618dfaa167f6cd9e7cd6edcf4815fc26f3bf423fcb73acd280",
+      "manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+      "original_evidence_equal": true,
+      "read_only": true,
+      "record_counts": {
+        "dependency_watchlist_entries": 0,
+        "dependency_watchlist_matches": 0,
+        "deployment_validation_runs": 0,
+        "exceptions": 0,
+        "executions": 4,
+        "finding_observations": 388,
+        "findings": 129,
+        "inventory_records": 0,
+        "patch_executions": 2,
+        "poam_change_requests": 0,
+        "poam_entries": 0,
+        "poam_history": 0,
+        "policy_exceptions": 0,
+        "policy_findings": 0,
+        "remediation_executions": 0,
+        "service_archive_events": 0,
+        "service_artifact_revisions": 0,
+        "service_artifacts": 0,
+        "service_images": 1,
+        "service_metadata": 0,
+        "service_transfer_provenance": 0,
+        "service_versions": 2,
+        "services": 1,
+        "workflow_requests": 0
+      },
+      "release_id": 2
+    },
+    "source": {
+      "archive_entries": 10,
+      "evidence_bytes": 2051852,
+      "evidence_digest": "sha256:4613a698078480406193a9500dff27de95bfe3f688897d358d74e3d3f026cb82",
+      "manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+      "original_evidence_equal": true,
+      "read_only": true,
+      "record_counts": {
+        "dependency_watchlist_entries": 0,
+        "dependency_watchlist_matches": 0,
+        "deployment_validation_runs": 0,
+        "exceptions": 0,
+        "executions": 3,
+        "finding_observations": 388,
+        "findings": 129,
+        "inventory_records": 0,
+        "patch_executions": 0,
+        "poam_change_requests": 0,
+        "poam_entries": 0,
+        "poam_history": 0,
+        "policy_exceptions": 0,
+        "policy_findings": 0,
+        "remediation_executions": 0,
+        "service_archive_events": 0,
+        "service_artifact_revisions": 0,
+        "service_artifacts": 0,
+        "service_images": 0,
+        "service_metadata": 0,
+        "service_transfer_provenance": 0,
+        "service_versions": 1,
+        "services": 1,
+        "workflow_requests": 0
+      },
+      "release_id": 1
+    }
+  },
+  "fixed_created": {
+    "denial_condition": "superseded",
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": "2026-11-06T01:51:32.904678+00:00",
+    "id": 2,
+    "release_id": 1,
+    "revocation": null,
+    "status": "active"
+  },
+  "fixed_override_pull": {
+    "complete": true,
+    "graphs": [
+      {
+        "blob_count": 9,
+        "blobs": [
+          {
+            "digest": "sha256:c318e336065b17ff460aeac6d14bce5d0b13e35f25d5cb1843b635359fc00c9a",
+            "size": 10767
+          },
+          {
+            "digest": "sha256:f637881d1138581d892d9eb942c56e0ccc7758fe3bdc0f1e6cd66059fdfd8185",
+            "size": 3642569
+          },
+          {
+            "digest": "sha256:b8554c5f1ad0265d1dc3a5f23b3b52e93fa1cdeda0c6b54618d3f9168e6ed01b",
+            "size": 1791417
+          },
+          {
+            "digest": "sha256:8e049f0fd1511eaabb03da73d0582501fd3a012ddb00620ff653b1a13b646310",
+            "size": 627
+          },
+          {
+            "digest": "sha256:71a39d0d04b2893246ec57f9cf1b074a63fd0f094098a8b1741d0e625f4009c1",
+            "size": 955
+          },
+          {
+            "digest": "sha256:e6918dcfd20da0647335265f4647268123ce772646f9dea11cae650f26be0276",
+            "size": 404
+          },
+          {
+            "digest": "sha256:c4fca37af7b3b885e76d1a14e76d630444c2868b27ff67848e077142d9771faa",
+            "size": 1209
+          },
+          {
+            "digest": "sha256:bc1d7488b05ed88bc5975378fd4ef0f1ea4b6114d13fa5cbeec6a572588e0c00",
+            "size": 1398
+          },
+          {
+            "digest": "sha256:3e300a7cb18c79c3ddadf170ae2c540c8feafdf7fcdc6cd5d5a3cd229fb0cada",
+            "size": 15553487
+          }
+        ],
+        "complete": true,
+        "manifest_count": 1,
+        "manifests": [
+          {
+            "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "size": 2493
+          }
+        ],
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "verified_bytes": 21005326
+      }
+    ],
+    "release_id": 1,
+    "verified_bytes": 21005326
+  },
+  "fixed_override_usage": {
+    "matching_use_count": 10,
+    "matching_uses": [
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:34.560707+00:00",
+        "decision_at": "2026-11-06T01:21:34.538512+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 150,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:34.402378+00:00",
+        "decision_at": "2026-11-06T01:21:34.380366+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 148,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:34.253469+00:00",
+        "decision_at": "2026-11-06T01:21:34.231884+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 146,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:34.106052+00:00",
+        "decision_at": "2026-11-06T01:21:34.082207+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 144,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.953608+00:00",
+        "decision_at": "2026-11-06T01:21:33.930809+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 142,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.804574+00:00",
+        "decision_at": "2026-11-06T01:21:33.783808+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 140,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.635429+00:00",
+        "decision_at": "2026-11-06T01:21:33.613387+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 138,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.473637+00:00",
+        "decision_at": "2026-11-06T01:21:33.451268+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 136,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.313780+00:00",
+        "decision_at": "2026-11-06T01:21:33.291113+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 134,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:33.163933+00:00",
+        "decision_at": "2026-11-06T01:21:33.141256+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 132,
+        "override_id": 2,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      }
+    ],
+    "override_id": 2
+  },
+  "fixed_revoked": {
+    "denial_condition": "superseded",
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": "2026-11-06T01:51:32.904678+00:00",
+    "id": 2,
+    "release_id": 1,
+    "revocation": {
+      "reason": "Fixed-duration current-code acceptance finished.",
+      "revoked_at": "2026-11-06T01:21:34.635783+00:00",
+      "revoked_by_id": 2
+    },
+    "status": "revoked"
+  },
+  "fixed_revoked_warm_denial": {
+    "allowed": false,
+    "approval_id": null,
+    "approval_status": "superseded",
+    "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+    "authorization_source": "denied",
+    "decision_at": "2026-11-06T01:21:34.697588+00:00",
+    "effective_policy": {
+      "exact_digest": true,
+      "mode": "replica",
+      "trusted_publisher_required": true
+    },
+    "execution_id": null,
+    "override_id": null,
+    "override_status": "no_applicable_override",
+    "reason": "release_superseded",
+    "release_id": 1,
+    "service_id": 1
+  },
+  "format": "cats-oci-replica-completion-nginx-v1",
+  "generated_at": "2026-11-06T01:27:34.929179+00:00",
+  "indefinite_after_restart": {
+    "denial_condition": "superseded",
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": null,
+    "id": 3,
+    "release_id": 1,
+    "revocation": null,
+    "status": "active"
+  },
+  "indefinite_created": {
+    "denial_condition": "superseded",
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": null,
+    "id": 3,
+    "release_id": 1,
+    "revocation": null,
+    "status": "active"
+  },
+  "indefinite_override_pull": {
+    "complete": true,
+    "graphs": [
+      {
+        "blob_count": 9,
+        "blobs": [
+          {
+            "digest": "sha256:c318e336065b17ff460aeac6d14bce5d0b13e35f25d5cb1843b635359fc00c9a",
+            "size": 10767
+          },
+          {
+            "digest": "sha256:f637881d1138581d892d9eb942c56e0ccc7758fe3bdc0f1e6cd66059fdfd8185",
+            "size": 3642569
+          },
+          {
+            "digest": "sha256:b8554c5f1ad0265d1dc3a5f23b3b52e93fa1cdeda0c6b54618d3f9168e6ed01b",
+            "size": 1791417
+          },
+          {
+            "digest": "sha256:8e049f0fd1511eaabb03da73d0582501fd3a012ddb00620ff653b1a13b646310",
+            "size": 627
+          },
+          {
+            "digest": "sha256:71a39d0d04b2893246ec57f9cf1b074a63fd0f094098a8b1741d0e625f4009c1",
+            "size": 955
+          },
+          {
+            "digest": "sha256:e6918dcfd20da0647335265f4647268123ce772646f9dea11cae650f26be0276",
+            "size": 404
+          },
+          {
+            "digest": "sha256:c4fca37af7b3b885e76d1a14e76d630444c2868b27ff67848e077142d9771faa",
+            "size": 1209
+          },
+          {
+            "digest": "sha256:bc1d7488b05ed88bc5975378fd4ef0f1ea4b6114d13fa5cbeec6a572588e0c00",
+            "size": 1398
+          },
+          {
+            "digest": "sha256:3e300a7cb18c79c3ddadf170ae2c540c8feafdf7fcdc6cd5d5a3cd229fb0cada",
+            "size": 15553487
+          }
+        ],
+        "complete": true,
+        "manifest_count": 1,
+        "manifests": [
+          {
+            "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "size": 2493
+          }
+        ],
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "verified_bytes": 21005326
+      }
+    ],
+    "release_id": 1,
+    "verified_bytes": 21005326
+  },
+  "indefinite_pull_after_restart": {
+    "complete": true,
+    "graphs": [
+      {
+        "blob_count": 9,
+        "blobs": [
+          {
+            "digest": "sha256:c318e336065b17ff460aeac6d14bce5d0b13e35f25d5cb1843b635359fc00c9a",
+            "size": 10767
+          },
+          {
+            "digest": "sha256:f637881d1138581d892d9eb942c56e0ccc7758fe3bdc0f1e6cd66059fdfd8185",
+            "size": 3642569
+          },
+          {
+            "digest": "sha256:b8554c5f1ad0265d1dc3a5f23b3b52e93fa1cdeda0c6b54618d3f9168e6ed01b",
+            "size": 1791417
+          },
+          {
+            "digest": "sha256:8e049f0fd1511eaabb03da73d0582501fd3a012ddb00620ff653b1a13b646310",
+            "size": 627
+          },
+          {
+            "digest": "sha256:71a39d0d04b2893246ec57f9cf1b074a63fd0f094098a8b1741d0e625f4009c1",
+            "size": 955
+          },
+          {
+            "digest": "sha256:e6918dcfd20da0647335265f4647268123ce772646f9dea11cae650f26be0276",
+            "size": 404
+          },
+          {
+            "digest": "sha256:c4fca37af7b3b885e76d1a14e76d630444c2868b27ff67848e077142d9771faa",
+            "size": 1209
+          },
+          {
+            "digest": "sha256:bc1d7488b05ed88bc5975378fd4ef0f1ea4b6114d13fa5cbeec6a572588e0c00",
+            "size": 1398
+          },
+          {
+            "digest": "sha256:3e300a7cb18c79c3ddadf170ae2c540c8feafdf7fcdc6cd5d5a3cd229fb0cada",
+            "size": 15553487
+          }
+        ],
+        "complete": true,
+        "manifest_count": 1,
+        "manifests": [
+          {
+            "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "size": 2493
+          }
+        ],
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "root_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "verified_bytes": 21005326
+      }
+    ],
+    "release_id": 1,
+    "verified_bytes": 21005326
+  },
+  "indefinite_revoked": {
+    "denial_condition": "superseded",
+    "digests": [
+      "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+    ],
+    "expires_at": null,
+    "id": 3,
+    "release_id": 1,
+    "revocation": {
+      "reason": "Indefinite current-code acceptance and persistence verification finished.",
+      "revoked_at": "2026-11-06T01:22:00.541656+00:00",
+      "revoked_by_id": 2
+    },
+    "status": "revoked"
+  },
+  "indefinite_usage_after_restart": {
+    "matching_use_count": 20,
+    "matching_uses": [
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:22:00.468481+00:00",
+        "decision_at": "2026-11-06T01:22:00.447438+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 201,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:22:00.315068+00:00",
+        "decision_at": "2026-11-06T01:22:00.293467+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 199,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:22:00.165470+00:00",
+        "decision_at": "2026-11-06T01:22:00.143352+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 197,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:22:00.005803+00:00",
+        "decision_at": "2026-11-06T01:21:59.983371+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 195,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.853505+00:00",
+        "decision_at": "2026-11-06T01:21:59.831298+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 193,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.697188+00:00",
+        "decision_at": "2026-11-06T01:21:59.675855+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 191,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.533944+00:00",
+        "decision_at": "2026-11-06T01:21:59.511395+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 189,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.364552+00:00",
+        "decision_at": "2026-11-06T01:21:59.341654+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 187,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.160188+00:00",
+        "decision_at": "2026-11-06T01:21:59.136809+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 185,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:59.005195+00:00",
+        "decision_at": "2026-11-06T01:21:58.981500+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 183,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.384808+00:00",
+        "decision_at": "2026-11-06T01:21:36.363116+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 174,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.227573+00:00",
+        "decision_at": "2026-11-06T01:21:36.205879+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 172,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.081242+00:00",
+        "decision_at": "2026-11-06T01:21:36.059830+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 170,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.934136+00:00",
+        "decision_at": "2026-11-06T01:21:35.912413+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 168,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.784848+00:00",
+        "decision_at": "2026-11-06T01:21:35.762443+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 166,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.634383+00:00",
+        "decision_at": "2026-11-06T01:21:35.612946+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 164,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.481844+00:00",
+        "decision_at": "2026-11-06T01:21:35.460222+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 162,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.300918+00:00",
+        "decision_at": "2026-11-06T01:21:35.279317+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 160,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.151440+00:00",
+        "decision_at": "2026-11-06T01:21:35.128370+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 158,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.000948+00:00",
+        "decision_at": "2026-11-06T01:21:34.978750+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 156,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      }
+    ],
+    "override_id": 3
+  },
+  "indefinite_usage_before": {
+    "matching_use_count": 10,
+    "matching_uses": [
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.384808+00:00",
+        "decision_at": "2026-11-06T01:21:36.363116+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 174,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.227573+00:00",
+        "decision_at": "2026-11-06T01:21:36.205879+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 172,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:36.081242+00:00",
+        "decision_at": "2026-11-06T01:21:36.059830+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 170,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.934136+00:00",
+        "decision_at": "2026-11-06T01:21:35.912413+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 168,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.784848+00:00",
+        "decision_at": "2026-11-06T01:21:35.762443+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 166,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.634383+00:00",
+        "decision_at": "2026-11-06T01:21:35.612946+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 164,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.481844+00:00",
+        "decision_at": "2026-11-06T01:21:35.460222+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 162,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.300918+00:00",
+        "decision_at": "2026-11-06T01:21:35.279317+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 160,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.151440+00:00",
+        "decision_at": "2026-11-06T01:21:35.128370+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 158,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      },
+      {
+        "approval_status": "superseded",
+        "authorization_source": "local_override",
+        "created_at": "2026-11-06T01:21:35.000948+00:00",
+        "decision_at": "2026-11-06T01:21:34.978750+00:00",
+        "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "id": 156,
+        "override_id": 3,
+        "override_status": "active",
+        "principal_id": 1,
+        "reason": "local_cyber_override",
+        "release_id": 1,
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "service_id": 1
+      }
+    ],
+    "override_id": 3
+  },
+  "limitations": [
+    "Retained replica and warm proxy cache; this run does not claim a new cold first pull.",
+    "Uses original real nginx publication receipts and scans; no new scanner execution is performed.",
+    "Source registry and publisher are stopped; target Harbor and replica remain running for browser review."
+  ],
+  "local_cyber": {
+    "assignment": {
+      "active": true,
+      "group": "Global",
+      "id": 2,
+      "role": "Local Cyber",
+      "service": "nginx-replica-acceptance",
+      "source": "local"
+    },
+    "service_id": 1,
+    "user_id": 2
+  },
+  "offline_after_restart": {
+    "checked_at": "2026-11-06T01:21:51.386409+00:00",
+    "from_service": "replica-proxy",
+    "probes": [
+      {
+        "checked_at": "2026-11-06T01:21:47.169103+00:00",
+        "error_type": "ConnectionError",
+        "name": "source_harbor",
+        "reachable": false,
+        "url": "https://harbor-source.test:8443/v2/"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:47.180553+00:00",
+        "error_type": "ConnectionError",
+        "name": "original_registry",
+        "reachable": false,
+        "url": "https://publisher.test:5000/v2/"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:47.185679+00:00",
+        "error_type": "ConnectionError",
+        "name": "original_cats",
+        "reachable": false,
+        "url": "http://portal:8000/login"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:51.143578+00:00",
+        "name": "target_harbor",
+        "reachable": true,
+        "status": 401,
+        "url": "https://harbor-target.test:8443/v2/"
+      }
+    ]
+  },
+  "offline_before": {
+    "checked_at": "2026-11-06T01:21:24.152263+00:00",
+    "from_service": "replica-proxy",
+    "probes": [
+      {
+        "checked_at": "2026-11-06T01:21:19.847335+00:00",
+        "error_type": "ConnectionError",
+        "name": "source_harbor",
+        "reachable": false,
+        "url": "https://harbor-source.test:8443/v2/"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:19.868961+00:00",
+        "error_type": "ConnectionError",
+        "name": "original_registry",
+        "reachable": false,
+        "url": "https://publisher.test:5000/v2/"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:19.966520+00:00",
+        "error_type": "ConnectionError",
+        "name": "original_cats",
+        "reachable": false,
+        "url": "http://portal:8000/login"
+      },
+      {
+        "checked_at": "2026-11-06T01:21:23.917881+00:00",
+        "name": "target_harbor",
+        "reachable": true,
+        "status": 401,
+        "url": "https://harbor-target.test:8443/v2/"
+      }
+    ]
+  },
+  "patched_pull_after_restart": {
+    "complete": true,
+    "graphs": [
+      {
+        "blob_count": 13,
+        "blobs": [
+          {
+            "digest": "sha256:00780f84336db4ebddafd5ca64e2c7c7de2c7c2e96416e5c08cad46272be8422",
+            "size": 11944
+          },
+          {
+            "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+            "size": 8117760
+          },
+          {
+            "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+            "size": 4511232
+          },
+          {
+            "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+            "size": 3584
+          },
+          {
+            "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+            "size": 4608
+          },
+          {
+            "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+            "size": 2560
+          },
+          {
+            "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+            "size": 5120
+          },
+          {
+            "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+            "size": 7168
+          },
+          {
+            "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+            "size": 37023232
+          },
+          {
+            "digest": "sha256:6ce123c4a13d48f8c6135405f7197606edb6080385bf6fbf85173cf1cd8bf538",
+            "size": 766976
+          },
+          {
+            "digest": "sha256:b122f902bc8330eabe475d25d7283dc11a0e561369a6b3ea0de90f3ae3bd3641",
+            "size": 133632
+          },
+          {
+            "digest": "sha256:ebbb7a9fe8fc421ab0b038d4e6152336df73b2d74d31ea02ec01f5c30e0d420d",
+            "size": 12864000
+          },
+          {
+            "digest": "sha256:22ea38b87d6ac138b1bf0cfcef59497002dc44e1fab6f8fe1fa51d153545c0a5",
+            "size": 253355
+          }
+        ],
+        "complete": true,
+        "manifest_count": 1,
+        "manifests": [
+          {
+            "digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "size": 2859
+          }
+        ],
+        "repository": "services/1/approved/nginx-replica-acceptance/nginx",
+        "root_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+        "verified_bytes": 63708030
+      }
+    ],
+    "release_id": 2,
+    "verified_bytes": 63708030
+  },
+  "phase": "Current-code retained real nginx verification complete; target and replica remain running",
+  "raw_harbor_qualification": {
+    "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\completion-audit\\current-nginx-verification\\harbor-qualification.json",
+    "relative_to_evidence_root": "completion-audit/current-nginx-verification/harbor-qualification.json",
+    "sha256": "e0037425faca79741a5c350aea605041d81d5dcf578e1966d308bf76344e2de7"
+  },
+  "raw_proof": {
+    "path": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\completion-audit\\current-nginx-verification\\current-nginx-proof.json",
+    "relative_to_evidence_root": "completion-audit/current-nginx-verification/current-nginx-proof.json",
+    "sha256": "646ac82d4d5ac0b5b94de75ac6cd70ef2dd31e3d6c00e4f4407369a715194261"
+  },
+  "revoked_warm_denial_after_restart": {
+    "allowed": false,
+    "approval_id": null,
+    "approval_status": "superseded",
+    "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+    "authorization_source": "denied",
+    "decision_at": "2026-11-06T01:22:00.582445+00:00",
+    "effective_policy": {
+      "exact_digest": true,
+      "mode": "replica",
+      "trusted_publisher_required": true
+    },
+    "execution_id": null,
+    "override_id": null,
+    "override_status": "no_applicable_override",
+    "reason": "release_superseded",
+    "release_id": 1,
+    "service_id": 1
+  },
+  "scope": {
+    "cache_state": "Warm retained proxy cache; graph bytes and digests are verified for each recorded pull.",
+    "code_scope": "Recorded code hashes identify the runtime tested. This run preceded later display-only provenance changes in activity_queries.py, frontend_governance.py, frontend_remediations.py and replica_views.py; their focused tests are separate evidence. Authorization, verifier and importer checks were not replaced with stubs.",
+    "content": "Retained real nginx original and patched releases, original scanner evidence and publication receipts.",
+    "fresh_scan_performed": false,
+    "new_cold_first_pull_proven": false,
+    "original_acceptance_reference": "docs/real-nginx-acceptance-2026-11-05.json",
+    "restart": "Replica portal and proxy restarted with both compose files and current-source mounts; database/evidence/override persistence verified.",
+    "runtime_source_offline_proof": "Probes from replica-proxy show source Harbor, original registry and original CATS unreachable before and after restart; target Harbor reachable.",
+    "runtime_source_offline_proven": true,
+    "transport": "Actual target Harbor and replica HTTP paths, local PostgreSQL replica, signature verifier and OCI proxy."
+  },
+  "source_format": "cats-current-code-retained-real-nginx-v1",
+  "source_stop": {
+    "project": "cats-harbor-acceptance-20261105",
+    "services": [
+      "source-log",
+      "source-registry",
+      "source-registryctl",
+      "source-postgresql",
+      "source-core",
+      "source-portal",
+      "source-jobservice",
+      "source-redis",
+      "source-proxy"
+    ],
+    "target_services_untouched": true
+  },
+  "started_at": "2026-11-06T01:21:02.475266+00:00",
+  "strict_target_fetch": [
+    {
+      "artifact_count": 1,
+      "blob_count": 9,
+      "complete": true,
+      "evidence_bytes": 2051852,
+      "evidence_sha256": "4613a698078480406193a9500dff27de95bfe3f688897d358d74e3d3f026cb82",
+      "extension_categories": [
+        "approval_context",
+        "artifact_patch_lineage",
+        "cyber_approvals",
+        "discovery_distributions",
+        "display",
+        "finding_classification_changes",
+        "finding_classification_state",
+        "finding_classifications",
+        "finding_decisions",
+        "global_artifact_locations",
+        "global_artifacts",
+        "observation_decisions",
+        "release_revision_states",
+        "release_revisions",
+        "risk_assessments",
+        "risk_decisions",
+        "risk_policy_versions",
+        "service_artifact_assignments",
+        "vex_disposition_evaluations",
+        "vex_documents",
+        "vex_finding_dispositions",
+        "vex_observation_dispositions",
+        "vex_sources",
+        "vex_statements"
+      ],
+      "legacy_native_vex_context_absent": true,
+      "manifest_count": 1,
+      "reference": "harbor-target.test:8443/approved/nginx-replica-acceptance/releases@sha256:ce3b630631d544eca99109d85ceab3caccd4cded02f1ca80981978cc83999db5",
+      "release_id": 1,
+      "retained_manifest_equal": true,
+      "verified": true
+    },
+    {
+      "artifact_count": 1,
+      "blob_count": 13,
+      "complete": true,
+      "evidence_bytes": 1986940,
+      "evidence_sha256": "60cfb8137e5ba6618dfaa167f6cd9e7cd6edcf4815fc26f3bf423fcb73acd280",
+      "extension_categories": [
+        "approval_context",
+        "artifact_patch_lineage",
+        "cyber_approvals",
+        "discovery_distributions",
+        "display",
+        "finding_classification_changes",
+        "finding_classification_state",
+        "finding_classifications",
+        "finding_decisions",
+        "global_artifact_locations",
+        "global_artifacts",
+        "observation_decisions",
+        "release_revision_states",
+        "release_revisions",
+        "risk_assessments",
+        "risk_decisions",
+        "risk_policy_versions",
+        "service_artifact_assignments",
+        "vex_disposition_evaluations",
+        "vex_documents",
+        "vex_finding_dispositions",
+        "vex_observation_dispositions",
+        "vex_sources",
+        "vex_statements"
+      ],
+      "legacy_native_vex_context_absent": true,
+      "manifest_count": 1,
+      "reference": "harbor-target.test:8443/approved/nginx-replica-acceptance/releases@sha256:6bdd4cfdb87d31cc2e08225ccde75afb10626d06f5c137c4b1c43fe440e58162",
+      "release_id": 2,
+      "retained_manifest_equal": true,
+      "verified": true
+    }
+  ],
+  "superseded_denial": {
+    "allowed": false,
+    "approval_id": null,
+    "approval_status": "superseded",
+    "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+    "authorization_source": "denied",
+    "decision_at": "2026-11-06T01:21:31.263096+00:00",
+    "effective_policy": {
+      "exact_digest": true,
+      "mode": "replica",
+      "trusted_publisher_required": true
+    },
+    "execution_id": null,
+    "override_id": null,
+    "override_status": "no_applicable_override",
+    "reason": "release_superseded",
+    "release_id": 1,
+    "service_id": 1
+  },
+  "sync_after_restart": {
+    "identities_unchanged": true,
+    "job_id": "38f8331ea5934c949cc549121e26bcd5",
+    "release_count": 2,
+    "result": {
+      "activated": 0,
+      "discovered": 2,
+      "failed": 0,
+      "revoked": 0,
+      "unchanged": 2
+    },
+    "service_ids_after": [
+      1
+    ],
+    "service_ids_before": [
+      1
+    ]
+  },
+  "sync_before": {
+    "identities_unchanged": true,
+    "job_id": "085ac9ac590241f8abd049b36201c048",
+    "release_count": 2,
+    "result": {
+      "activated": 0,
+      "discovered": 2,
+      "failed": 0,
+      "revoked": 0,
+      "unchanged": 2
+    },
+    "service_ids_after": [
+      1
+    ],
+    "service_ids_before": [
+      1
+    ]
+  },
+  "unrelated_root_denied": {
+    "allowed": false,
+    "denial_stage": "replica_repository_membership",
+    "message": "Artifact does not belong to this verified replica repository",
+    "requested_artifact_digest": "sha256:ce3b630631d544eca99109d85ceab3caccd4cded02f1ca80981978cc83999db5"
+  }
+}
