@@ -1,0 +1,1406 @@
+{
+  "format": "cats-harbor-replication-acceptance-v1",
+  "complete": true,
+  "completed_at": "2026-11-06T00:45:11.484386+00:00",
+  "baseline_commit": "f28d85a",
+  "branch": "codex/oci-approved-release-replicas",
+  "scope": {
+    "source_and_target": "Harbor v2.15.4-d8841742",
+    "adapter": "harbor",
+    "transport": "Actual Harbor jobservice replication; seed helper writes source only",
+    "nginx": "Previously completed real nginx scan/patch approvals2 and3; no new assessment or approval fabricated",
+    "synthetic_fixture": "Two-architecture image index, Helm chart, signed findings/SBOM evidence and approval/supersession/revocation events",
+    "limits": [
+      "This exact local Harbor pair and rules only; no other version or production deployment qualified.",
+      "Synthetic graph importer checks use an isolated SQLite ledger; HTTP authorization/overrides use the real nginx PostgreSQL replica.",
+      "Explicit release-repository discovery qualified; catalog access denied for configured anonymous/scoped-robot identities.",
+      "Multiarchitecture content verified; verifier execution on ARM hosts not tested."
+    ]
+  },
+  "configuration": {
+    "instances": {
+      "source": {
+        "version": "v2.15.4-d8841742",
+        "registry": "harbor-source.test:8443",
+        "health": "healthy",
+        "robot": {
+          "id": 1,
+          "name": "robot$cats-qualification",
+          "level": "system",
+          "disable": false,
+          "duration": 1,
+          "expires_at": 1794010755
+        },
+        "robot_permissions": [
+          {
+            "kind": "project",
+            "namespace": "approved",
+            "access": [
+              {
+                "resource": "repository",
+                "action": "pull"
+              },
+              {
+                "resource": "repository",
+                "action": "push"
+              },
+              {
+                "resource": "artifact",
+                "action": "read"
+              },
+              {
+                "resource": "artifact",
+                "action": "list"
+              },
+              {
+                "resource": "tag",
+                "action": "create"
+              },
+              {
+                "resource": "tag",
+                "action": "list"
+              }
+            ]
+          },
+          {
+            "kind": "project",
+            "namespace": "qualification",
+            "access": [
+              {
+                "resource": "repository",
+                "action": "pull"
+              },
+              {
+                "resource": "repository",
+                "action": "push"
+              },
+              {
+                "resource": "artifact",
+                "action": "read"
+              },
+              {
+                "resource": "artifact",
+                "action": "list"
+              },
+              {
+                "resource": "tag",
+                "action": "create"
+              },
+              {
+                "resource": "tag",
+                "action": "list"
+              }
+            ]
+          }
+        ],
+        "projects": [
+          {
+            "id": 2,
+            "name": "approved",
+            "metadata": {
+              "public": "true"
+            },
+            "retention": {
+              "configured": false,
+              "policy": null
+            }
+          },
+          {
+            "id": 3,
+            "name": "qualification",
+            "metadata": {
+              "public": "true"
+            },
+            "retention": {
+              "configured": false,
+              "policy": null
+            }
+          }
+        ]
+      },
+      "target": {
+        "version": "v2.15.4-d8841742",
+        "registry": "harbor-target.test:8443",
+        "health": "healthy",
+        "robot": {
+          "id": 1,
+          "name": "robot$cats-qualification",
+          "level": "system",
+          "disable": false,
+          "duration": 1,
+          "expires_at": 1794010756
+        },
+        "robot_permissions": [
+          {
+            "kind": "project",
+            "namespace": "approved",
+            "access": [
+              {
+                "resource": "repository",
+                "action": "pull"
+              },
+              {
+                "resource": "repository",
+                "action": "push"
+              },
+              {
+                "resource": "artifact",
+                "action": "read"
+              },
+              {
+                "resource": "artifact",
+                "action": "list"
+              },
+              {
+                "resource": "tag",
+                "action": "create"
+              },
+              {
+                "resource": "tag",
+                "action": "list"
+              }
+            ]
+          },
+          {
+            "kind": "project",
+            "namespace": "qualification",
+            "access": [
+              {
+                "resource": "repository",
+                "action": "pull"
+              },
+              {
+                "resource": "repository",
+                "action": "push"
+              },
+              {
+                "resource": "artifact",
+                "action": "read"
+              },
+              {
+                "resource": "artifact",
+                "action": "list"
+              },
+              {
+                "resource": "tag",
+                "action": "create"
+              },
+              {
+                "resource": "tag",
+                "action": "list"
+              }
+            ]
+          }
+        ],
+        "projects": [
+          {
+            "id": 2,
+            "name": "approved",
+            "metadata": {
+              "public": "true"
+            },
+            "retention": {
+              "configured": false,
+              "policy": null
+            }
+          },
+          {
+            "id": 3,
+            "name": "qualification",
+            "metadata": {
+              "public": "true"
+            },
+            "retention": {
+              "configured": false,
+              "policy": null
+            }
+          }
+        ]
+      }
+    },
+    "image_ids": [
+      "sha256:01edf478505b21dba23a83c095f6ecac0c1e705690093edbab41e9a4d6754a75",
+      "sha256:30bd1ace4e3bb390d75b84673f98ddb4a69fcc6d116932ea764391df01943fb7",
+      "sha256:79b5614d0d02b5d2c6c9b7b9755f5caaea882797353bfcb6421f77e6d69cc317",
+      "sha256:7d2ba5304a729887cdec7cb222a82b500278423de230ae5150c386a6c332b112",
+      "sha256:7eff0287d5ad0f35754e162c8481ced04bbde107153ce586cefb15ee74fa1311",
+      "sha256:a32d51e636d76303e086a7c5251a2c8415c6f165b2f87bafa914efd866c5403f",
+      "sha256:bb022e8f236f56f53cee7bb1f609595e497da67d829048e0af2284f97e6eb54f",
+      "sha256:bd5879d2c0f9c63c2d0e6650bbf03a9b644d110e4855bc39f798193a1fff8289",
+      "sha256:dc0cb388a6445c69c8a0c406679290d2991c9698833d9e6e86a23bdfaf2f83c3",
+      "sha256:f143578ef30e2be5c48873298257ed0fca31545025958c534e536a06765d2b82"
+    ],
+    "tls": {
+      "verification_enabled": true,
+      "ca_sha256_fingerprint": "2c400c23dfe61f41e10f82f1e4dbb6b0630c4f4e1168b2c2b3efdd86b7140f51",
+      "ca_not_after": "2026-11-13T00:17:39+00:00",
+      "configured_destination": {
+        "id": 1,
+        "name": "cats-target",
+        "type": "harbor",
+        "url": "https://harbor-target.test:8443",
+        "status": "healthy",
+        "creation_time": "2026-11-06T00:19:16.251Z",
+        "update_time": "2026-11-06T00:19:16.251Z",
+        "ca_configured": true,
+        "ca_certificate_sha256": "6b2a786ea404534d28825775bef929fa8b3283bb62650c848d3bdbf7e8a7cbf5",
+        "insecure_field_present": false,
+        "credential_type": "basic"
+      },
+      "destination_job_log_insecure": false,
+      "source_internal_transport": "Harbor-generated internal http://core:8080 on isolated source network"
+    },
+    "policies": {
+      "approved": {
+        "id": 1,
+        "name": "cats-approved",
+        "enabled": true,
+        "override": true,
+        "dest_namespace_replace_count": 0,
+        "speed": 0,
+        "filters": [
+          {
+            "type": "name",
+            "value": "approved/**"
+          }
+        ],
+        "trigger": {
+          "type": "manual"
+        }
+      },
+      "qualification": {
+        "id": 2,
+        "name": "cats-qualification",
+        "enabled": true,
+        "override": true,
+        "dest_namespace_replace_count": 0,
+        "speed": 0,
+        "filters": [
+          {
+            "type": "name",
+            "value": "qualification/**"
+          }
+        ],
+        "trigger": {
+          "type": "manual"
+        }
+      },
+      "interruption": {
+        "id": 3,
+        "name": "cats-interruption",
+        "enabled": true,
+        "override": true,
+        "dest_namespace_replace_count": 0,
+        "speed": 1024,
+        "filters": [
+          {
+            "type": "name",
+            "value": "qualification/interruption"
+          }
+        ],
+        "trigger": {
+          "type": "manual"
+        }
+      }
+    },
+    "catalog": {
+      "checked_at": "2026-11-06T00:36:44.607434+00:00",
+      "registry": "harbor-target.test:8443",
+      "operation": "production wildcard discovery: approved/*",
+      "results": [
+        {
+          "actor": "anonymous",
+          "catalog_http_status": 401,
+          "challenge_scheme": "Basic",
+          "permitted": false,
+          "error": "Registry authentication failed"
+        },
+        {
+          "actor": "scoped_robot",
+          "catalog_http_status": 401,
+          "challenge_scheme": "Basic",
+          "permitted": false,
+          "error": "Registry authentication failed"
+        }
+      ]
+    }
+  },
+  "replication": {
+    "executions": [
+      {
+        "id": 3,
+        "policy_id": 1,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:19:53.574Z",
+        "end_time": "2026-11-06T00:19:56.000Z",
+        "total": 2,
+        "succeed": 2,
+        "failed": 0,
+        "stopped": 0,
+        "label": "original-nginx",
+        "stop_requested": false,
+        "tasks": [
+          {
+            "id": 4,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/nginx [2 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/nginx [2 item(s) in total]"
+          },
+          {
+            "id": 3,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/releases [2 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/releases [2 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-3-task-4.log",
+            "sha256": "8d23ca0edc377cd293649d11e46a9df1bd7fe375a31496f30373a530f6c90e46"
+          },
+          {
+            "file": "execution-3-task-3.log",
+            "sha256": "4cb6686092434464bdb9f82cf703f53d1b550fcd8b8a21fc3d199fad65eb4fdf"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "policy_id": 1,
+        "status": "Failed",
+        "start_time": "2026-11-06T00:21:07.062Z",
+        "end_time": "2026-11-06T00:21:07.184Z",
+        "total": 0,
+        "succeed": 0,
+        "failed": 0,
+        "stopped": 0,
+        "label": "interrupted-patched-nginx",
+        "stop_requested": false,
+        "tasks": [],
+        "logs": [],
+        "qualification_note": "Endpoint outage failed before task creation; not credited as in-flight interruption."
+      },
+      {
+        "id": 5,
+        "policy_id": 1,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:21:46.051Z",
+        "end_time": "2026-11-06T00:21:49.000Z",
+        "total": 2,
+        "succeed": 2,
+        "failed": 0,
+        "stopped": 0,
+        "label": "stopped-inflight-patched-nginx",
+        "stop_requested": true,
+        "tasks": [
+          {
+            "id": 6,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/nginx [4 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/nginx [4 item(s) in total]"
+          },
+          {
+            "id": 5,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/releases [4 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/releases [4 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-5-task-6.log",
+            "sha256": "47ab20459fab093a0a90fb80e83fd27d88095f8422bfc468ede46be557d811cf"
+          },
+          {
+            "file": "execution-5-task-5.log",
+            "sha256": "30aabce21edbc5aaafbaf347be7f73fae8a8f140405d7be851aab2f80597085a"
+          }
+        ],
+        "qualification_note": "Transfer completed before effective cancellation; not credited as interruption."
+      },
+      {
+        "id": 6,
+        "policy_id": 2,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:23:55.507Z",
+        "end_time": "2026-11-06T00:24:02.000Z",
+        "total": 7,
+        "succeed": 7,
+        "failed": 0,
+        "stopped": 0,
+        "label": "multiarch-helm-events",
+        "stop_requested": false,
+        "tasks": [
+          {
+            "id": 13,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/fixtures/application [2 item(s) in total]",
+            "dst_resource": "qualification/fixtures/application [2 item(s) in total]"
+          },
+          {
+            "id": 12,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph/application [4 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph/application [4 item(s) in total]"
+          },
+          {
+            "id": 11,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph/charts/application [4 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph/charts/application [4 item(s) in total]"
+          },
+          {
+            "id": 10,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph/releases [4 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph/releases [4 item(s) in total]"
+          },
+          {
+            "id": 9,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph-qualified/application [4 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph-qualified/application [4 item(s) in total]"
+          },
+          {
+            "id": 8,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph-qualified/charts/application [4 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph-qualified/charts/application [4 item(s) in total]"
+          },
+          {
+            "id": 7,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/synthetic-harbor-graph-qualified/releases [5 item(s) in total]",
+            "dst_resource": "qualification/synthetic-harbor-graph-qualified/releases [5 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-6-task-13.log",
+            "sha256": "9abc0cb533f6b4fb696374f6796a002789d62608ec48c873cf32885845732784"
+          },
+          {
+            "file": "execution-6-task-12.log",
+            "sha256": "b41ddc0104747b27ca930e1512129fbf01ed855a045d328175cc1b668881119d"
+          },
+          {
+            "file": "execution-6-task-11.log",
+            "sha256": "0d0c42b65248e9df11a4a408dcefd9f81a9f933825cf4798f3e71447654b513e"
+          },
+          {
+            "file": "execution-6-task-10.log",
+            "sha256": "30b3be15206e82efad5a9cac58273b293bc78c098b3569a17d0bab23b8289df3"
+          },
+          {
+            "file": "execution-6-task-9.log",
+            "sha256": "7f7f9b48f9c168529a9c77c72e2c1fba4ed1ba2a951428ea7acf80b5fee39919"
+          },
+          {
+            "file": "execution-6-task-8.log",
+            "sha256": "29409c57069a47918083300e6fda06e2958dc3ceeb7d36c7fc84d0dea8b908cb"
+          },
+          {
+            "file": "execution-6-task-7.log",
+            "sha256": "e6568f791ceb8e140185bb164a546b384b239df13f2ffc701a66806a64d19273"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "policy_id": 3,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:24:38.903Z",
+        "end_time": "2026-11-06T00:24:44.000Z",
+        "total": 1,
+        "succeed": 1,
+        "failed": 0,
+        "stopped": 0,
+        "label": "cancelled-active-transfer",
+        "stop_requested": true,
+        "tasks": [
+          {
+            "id": 14,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/interruption [2 item(s) in total]",
+            "dst_resource": "qualification/interruption [2 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-7-task-14.log",
+            "sha256": "bc29291ebad4e4c011d7fc8f3accb8b7809fc5e4f2e2a573df6df20a1bfc20b5"
+          }
+        ],
+        "qualification_note": "Bandwidth setting too high; transfer completed before effective cancellation; not credited as interruption."
+      },
+      {
+        "id": 8,
+        "policy_id": 3,
+        "status": "Stopped",
+        "start_time": "2026-11-06T00:25:52.204Z",
+        "end_time": "2026-11-06T00:25:58.000Z",
+        "total": 1,
+        "succeed": 0,
+        "failed": 0,
+        "stopped": 1,
+        "label": "cancelled-active-transfer-corrected-limit",
+        "stop_requested": true,
+        "tasks": [
+          {
+            "id": 15,
+            "status": "Stopped",
+            "operation": "copy",
+            "src_resource": "qualification/interruption [3 item(s) in total]",
+            "dst_resource": "qualification/interruption [3 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-8-task-15.log",
+            "sha256": "90e4578d7ce1a8c78377c7d872bca723c56e0a189493be8433dbf41231cb0ba0"
+          }
+        ],
+        "qualification_note": "Task15 copied a new layer before explicit stop. Original log snapshot proves in-progress transfer; later controller observation-field hardening was not retroactively applied."
+      },
+      {
+        "id": 9,
+        "policy_id": 3,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:26:32.699Z",
+        "end_time": "2026-11-06T00:30:44.000Z",
+        "total": 1,
+        "succeed": 1,
+        "failed": 0,
+        "stopped": 0,
+        "label": "retry-after-active-cancellation",
+        "stop_requested": false,
+        "tasks": [
+          {
+            "id": 16,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "qualification/interruption [3 item(s) in total]",
+            "dst_resource": "qualification/interruption [3 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-9-task-16.log",
+            "sha256": "48996f48a04c6da4804df21236b9b425f9b5b15b9181a71cbf4ca57b8a4bdebe"
+          }
+        ],
+        "qualification_note": "Successful Harbor retry after execution8; full recovered graph verified from target with all sources stopped."
+      },
+      {
+        "id": 10,
+        "policy_id": 1,
+        "status": "Succeed",
+        "start_time": "2026-11-06T00:31:09.288Z",
+        "end_time": "2026-11-06T00:31:10.000Z",
+        "total": 2,
+        "succeed": 2,
+        "failed": 0,
+        "stopped": 0,
+        "label": "patched-nginx-confirmed",
+        "stop_requested": false,
+        "tasks": [
+          {
+            "id": 18,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/nginx [4 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/nginx [4 item(s) in total]"
+          },
+          {
+            "id": 17,
+            "status": "Succeed",
+            "operation": "copy",
+            "src_resource": "approved/nginx-replica-acceptance/releases [4 item(s) in total]",
+            "dst_resource": "approved/nginx-replica-acceptance/releases [4 item(s) in total]"
+          }
+        ],
+        "logs": [
+          {
+            "file": "execution-10-task-18.log",
+            "sha256": "b9926ce26d7932012e3d1e3ce90fa4f904c8f9f31c90f301b51349f8fe541dde"
+          },
+          {
+            "file": "execution-10-task-17.log",
+            "sha256": "4271341877e3923aadd52ff44f90dbdca6efdb9652b91e9bc51b5b694b6457ad"
+          }
+        ]
+      }
+    ],
+    "interruption_execution_id": 8,
+    "recovery_execution_id": 9,
+    "recovered_graph": {
+      "synthetic": true,
+      "target": "harbor-target.test:8443",
+      "digest": "sha256:c8baeee2888e4ec446e26b8acc49abf9ffb47d64b61c6fa00f66d1de0b74f7f0",
+      "layer": {
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "digest": "sha256:5474f8069db89084e183acf3bd2ab5b991a8b5468bf7763d484965b87868f010",
+        "size": 33556480
+      },
+      "complete_graph_verified": true,
+      "checked_at": "2026-11-06T00:35:09.971971+00:00"
+    }
+  },
+  "disconnected": {
+    "source_services_stopped_at": "2026-11-06T00:34:44.391768+00:00",
+    "source_harbor_service_count": 9,
+    "original_stack_all_stopped": true,
+    "online_probe": {
+      "checked_at": "2026-11-06T00:20:40.378116+00:00",
+      "from_service": "replica-proxy",
+      "probes": [
+        {
+          "name": "source_harbor",
+          "url": "https://harbor-source.test:8443/v2/",
+          "checked_at": "2026-11-06T00:20:36.271700+00:00",
+          "reachable": true,
+          "status": 401
+        },
+        {
+          "name": "original_registry",
+          "url": "https://publisher.test:5000/v2/",
+          "checked_at": "2026-11-06T00:20:36.288224+00:00",
+          "reachable": true,
+          "status": 200
+        },
+        {
+          "name": "original_cats",
+          "url": "http://portal:8000/login",
+          "checked_at": "2026-11-06T00:20:36.303969+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "target_harbor",
+          "url": "https://harbor-target.test:8443/v2/",
+          "checked_at": "2026-11-06T00:20:40.140828+00:00",
+          "reachable": true,
+          "status": 401
+        }
+      ]
+    },
+    "before_successor_sync": {
+      "checked_at": "2026-11-06T00:35:09.706058+00:00",
+      "from_service": "replica-proxy",
+      "probes": [
+        {
+          "name": "source_harbor",
+          "url": "https://harbor-source.test:8443/v2/",
+          "checked_at": "2026-11-06T00:35:05.390484+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_registry",
+          "url": "https://publisher.test:5000/v2/",
+          "checked_at": "2026-11-06T00:35:05.491601+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_cats",
+          "url": "http://portal:8000/login",
+          "checked_at": "2026-11-06T00:35:05.504216+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "target_harbor",
+          "url": "https://harbor-target.test:8443/v2/",
+          "checked_at": "2026-11-06T00:35:09.468195+00:00",
+          "reachable": true,
+          "status": 401
+        }
+      ]
+    },
+    "before_first_pull": {
+      "checked_at": "2026-11-06T00:35:40.385068+00:00",
+      "from_service": "replica-proxy",
+      "probes": [
+        {
+          "name": "source_harbor",
+          "url": "https://harbor-source.test:8443/v2/",
+          "checked_at": "2026-11-06T00:35:36.166893+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_registry",
+          "url": "https://publisher.test:5000/v2/",
+          "checked_at": "2026-11-06T00:35:36.180022+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_cats",
+          "url": "http://portal:8000/login",
+          "checked_at": "2026-11-06T00:35:36.186038+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "target_harbor",
+          "url": "https://harbor-target.test:8443/v2/",
+          "checked_at": "2026-11-06T00:35:40.149279+00:00",
+          "reachable": true,
+          "status": 401
+        }
+      ]
+    },
+    "after_restart": {
+      "checked_at": "2026-11-06T00:36:31.712599+00:00",
+      "from_service": "replica-proxy",
+      "probes": [
+        {
+          "name": "source_harbor",
+          "url": "https://harbor-source.test:8443/v2/",
+          "checked_at": "2026-11-06T00:36:27.296871+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_registry",
+          "url": "https://publisher.test:5000/v2/",
+          "checked_at": "2026-11-06T00:36:27.314674+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "original_cats",
+          "url": "http://portal:8000/login",
+          "checked_at": "2026-11-06T00:36:27.319435+00:00",
+          "reachable": false,
+          "error_type": "ConnectionError"
+        },
+        {
+          "name": "target_harbor",
+          "url": "https://harbor-target.test:8443/v2/",
+          "checked_at": "2026-11-06T00:36:31.291930+00:00",
+          "reachable": true,
+          "status": 401
+        }
+      ]
+    }
+  },
+  "real_nginx": {
+    "trusted_publisher": "sha256:daad1684e8109beb6ed9dbb61f90f63e0769c4f26bbb752c717806f21e27f7d8",
+    "receipts": {
+      "source": {
+        "approval_id": "2",
+        "image_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "release_oci_digest": "sha256:ce3b630631d544eca99109d85ceab3caccd4cded02f1ca80981978cc83999db5",
+        "signed_manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+        "receipt_file_sha256": "f09bf2aa2e71a2dce89330f113911a3bf0965468b60a22bc5cb3acb8a338afd0",
+        "sync": {
+          "job_id": "27f97094114e44ffb2847f588183c01c",
+          "result": {
+            "discovered": 1,
+            "activated": 0,
+            "revoked": 0,
+            "unchanged": 1,
+            "failed": 0
+          },
+          "release_id": 1,
+          "source_release_id": "2",
+          "manifest_digest": "sha256:7798dd3b354c9b72530715d05b1d0e9e2562196d588df5411d5c41c4b13724ef",
+          "status": "active"
+        },
+        "evidence": {
+          "evidence_digest": "sha256:4613a698078480406193a9500dff27de95bfe3f688897d358d74e3d3f026cb82",
+          "evidence_bytes": 2051852,
+          "archive_entries": 10,
+          "read_only": true,
+          "original_evidence_equal": true
+        }
+      },
+      "patched": {
+        "approval_id": "3",
+        "image_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+        "release_oci_digest": "sha256:6bdd4cfdb87d31cc2e08225ccde75afb10626d06f5c137c4b1c43fe440e58162",
+        "signed_manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+        "receipt_file_sha256": "15dabd806ca3d7dda296ce85d60b9014b91afeb09bd24d76bf03bdf5dc24d40c",
+        "sync": {
+          "job_id": "c8de0eb879114ea5bde242c340d957e4",
+          "result": {
+            "discovered": 2,
+            "activated": 1,
+            "revoked": 0,
+            "unchanged": 1,
+            "failed": 0
+          },
+          "release_id": 2,
+          "source_release_id": "3",
+          "manifest_digest": "sha256:1ba8e35b61d46050ea018a2377a3993396df12b4cc68dc077f36f96708cd843a",
+          "status": "active"
+        },
+        "evidence": {
+          "evidence_digest": "sha256:60cfb8137e5ba6618dfaa167f6cd9e7cd6edcf4815fc26f3bf423fcb73acd280",
+          "evidence_bytes": 1986940,
+          "archive_entries": 10,
+          "read_only": true,
+          "original_evidence_equal": true
+        }
+      }
+    },
+    "original_pull_verified_bytes": 21005326,
+    "cold_cache": {
+      "checked_at": "2026-11-06T00:35:25.627998+00:00",
+      "patched_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "manifest_rows": 0,
+      "object_links": 0,
+      "patched_only_blobs": [
+        {
+          "digest": "sha256:00780f84336db4ebddafd5ca64e2c7c7de2c7c2e96416e5c08cad46272be8422",
+          "present": false
+        },
+        {
+          "digest": "sha256:22ea38b87d6ac138b1bf0cfcef59497002dc44e1fab6f8fe1fa51d153545c0a5",
+          "present": false
+        },
+        {
+          "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+          "present": false
+        },
+        {
+          "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+          "present": false
+        },
+        {
+          "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+          "present": false
+        },
+        {
+          "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+          "present": false
+        },
+        {
+          "digest": "sha256:6ce123c4a13d48f8c6135405f7197606edb6080385bf6fbf85173cf1cd8bf538",
+          "present": false
+        },
+        {
+          "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+          "present": false
+        },
+        {
+          "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+          "present": false
+        },
+        {
+          "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+          "present": false
+        },
+        {
+          "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+          "present": false
+        },
+        {
+          "digest": "sha256:b122f902bc8330eabe475d25d7283dc11a0e561369a6b3ea0de90f3ae3bd3641",
+          "present": false
+        },
+        {
+          "digest": "sha256:ebbb7a9fe8fc421ab0b038d4e6152336df73b2d74d31ea02ec01f5c30e0d420d",
+          "present": false
+        }
+      ]
+    },
+    "first_patched_pull": {
+      "initial_attempt_at": "2026-11-06T00:35:44.168362+00:00",
+      "verified_bytes": 63708030,
+      "complete": true,
+      "roots": [
+        {
+          "root_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+          "manifest_count": 1,
+          "blob_count": 13
+        }
+      ]
+    },
+    "warm_cache": {
+      "checked_at": "2026-11-06T00:35:58.617692+00:00",
+      "patched_digest": "sha256:0cc6334705815195d3c5cbe60d0f1f04ad7cf52768abdad590156e98e0aed446",
+      "manifest_rows": 1,
+      "object_links": 14,
+      "patched_only_blobs": [
+        {
+          "digest": "sha256:00780f84336db4ebddafd5ca64e2c7c7de2c7c2e96416e5c08cad46272be8422",
+          "present": true
+        },
+        {
+          "digest": "sha256:22ea38b87d6ac138b1bf0cfcef59497002dc44e1fab6f8fe1fa51d153545c0a5",
+          "present": true
+        },
+        {
+          "digest": "sha256:34034c5235653389adbf8982e9fc868561e62e5d88c58c878331ed89abfd1a6f",
+          "present": true
+        },
+        {
+          "digest": "sha256:412e147b334cddb83eedf352f7f2ea40844abceb3614a5d9c9726d076e5c3b6f",
+          "present": true
+        },
+        {
+          "digest": "sha256:570a1c87f279a67fc5509cf76c4b57cf722c8de9f9cdaa214c787d0fb0e1e7a5",
+          "present": true
+        },
+        {
+          "digest": "sha256:5f23a9cf34f1103f7564dfb3f036e877efedde5372cb2190285418008372fdde",
+          "present": true
+        },
+        {
+          "digest": "sha256:6ce123c4a13d48f8c6135405f7197606edb6080385bf6fbf85173cf1cd8bf538",
+          "present": true
+        },
+        {
+          "digest": "sha256:7d9abb9ab3b7a473c37818aee5eb0f4637716ef9d8b28989ebab09d29f987246",
+          "present": true
+        },
+        {
+          "digest": "sha256:90ec271303985395afe0c2966824bb392d291365e94b87df2c4582c30b0bc18a",
+          "present": true
+        },
+        {
+          "digest": "sha256:922ec217407c0fd31cb18b46090bf62e439fb53ecd01f09406d62e25a906e09b",
+          "present": true
+        },
+        {
+          "digest": "sha256:a231a657395e32fc50a9dd243cbf8476a246468d0faf68dacfd9a9a1befbb456",
+          "present": true
+        },
+        {
+          "digest": "sha256:b122f902bc8330eabe475d25d7283dc11a0e561369a6b3ea0de90f3ae3bd3641",
+          "present": true
+        },
+        {
+          "digest": "sha256:ebbb7a9fe8fc421ab0b038d4e6152336df73b2d74d31ea02ec01f5c30e0d420d",
+          "present": true
+        }
+      ]
+    },
+    "administrator_override_denied": true,
+    "override": {
+      "id": 1,
+      "service_id": 1,
+      "release_id": 1,
+      "digests": [
+        "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+      ],
+      "expires_at": null,
+      "created_at": "2026-11-06T00:35:46.624119+00:00",
+      "denial_condition": "superseded",
+      "created_by_role": "Local Cyber",
+      "matching_audit_uses": 10,
+      "override_pull_verified_bytes": 21005326,
+      "unrelated_digest_denied": true,
+      "revoked_at": "2026-11-06T00:35:48.524690+00:00",
+      "warm_cache_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "decision_at": "2026-11-06T00:35:48.570783+00:00"
+      }
+    },
+    "publisher_status_preserved": {
+      "source": "superseded",
+      "patched": "active"
+    },
+    "restart": {
+      "checked_at": "2026-11-06T00:36:42.154581+00:00",
+      "result": {
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 2,
+        "failed": 0
+      },
+      "release_count": 2,
+      "revoked_override_id": 1,
+      "first_pull_evidence_preserved": true,
+      "complete": true,
+      "superseded_denied": true,
+      "patched_pull_verified_bytes": 63708030
+    }
+  },
+  "synthetic_graph": {
+    "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+    "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+    "target": "https://harbor-target.test:8443",
+    "source_reads": 0,
+    "signed_events": [
+      "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/releases@sha256:1aa9cdcf4f407cc7067f2cfe037790360456266175e292a5cc4d4048f3ccb302",
+      "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/releases@sha256:216559874b0aa0b78964b3b05fd3c596feabc74125ff0a8558433e45d879fe5f",
+      "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/releases@sha256:fce119a4bd9d4a7194330384031494277a2ca8c3c0a3aac1c0fd7a06e384ff79"
+    ],
+    "artifacts": {
+      "first": [
+        {
+          "kind": "image",
+          "reference": "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/application@sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+          "manifest_count": 3,
+          "blob_count": 4
+        },
+        {
+          "kind": "chart",
+          "reference": "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/charts/application@sha256:fb3e288eca33228f2968e94c1c6bb2aaf00f5d4d203b08f2553eac6d8fa4419d",
+          "manifest_count": 1,
+          "blob_count": 2
+        }
+      ],
+      "successor": [
+        {
+          "kind": "image",
+          "reference": "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/application@sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+          "manifest_count": 3,
+          "blob_count": 4
+        },
+        {
+          "kind": "chart",
+          "reference": "harbor-target.test:8443/qualification/synthetic-harbor-graph-qualified/charts/application@sha256:b99e7176c765c39bc63fea49979910f9571a3b796b28ec45bd488c532d456957",
+          "manifest_count": 1,
+          "blob_count": 2
+        }
+      ]
+    },
+    "evidence": {
+      "first": {
+        "digest": "sha256:94c417539e0b40a8772699c60ee81cca360b64c4050a1c1474d8ad66db75403e",
+        "bytes": 2602,
+        "detached_signature_verified": true,
+        "archive_files": [
+          "SYNTHETIC-QUALIFICATION.txt",
+          "replica-service.json",
+          "sbom.json",
+          "scanner-output.json"
+        ]
+      },
+      "successor": {
+        "digest": "sha256:0af3159176ce90c0e11bce812af1f81a300a0b0d6284a7b590f963e1d33b5bce",
+        "bytes": 2602,
+        "detached_signature_verified": true,
+        "archive_files": [
+          "SYNTHETIC-QUALIFICATION.txt",
+          "replica-service.json",
+          "sbom.json",
+          "scanner-output.json"
+        ]
+      }
+    },
+    "wrong_signer_rejected": true,
+    "changed_signed_sequence_rejected": true,
+    "active_after_older_replay": {
+      "approved_at": "2026-11-06T00:23:10.915820+00:00",
+      "expires_at": "2027-02-04T00:23:10.915820+00:00",
+      "high_sequence": 2,
+      "release_uuid": "2",
+      "revoked_at": null,
+      "sequence": 2
+    },
+    "exact_successor_revocation_and_reopened_state": {
+      "approved_at": "2026-11-06T00:23:10.915820+00:00",
+      "expires_at": "2027-02-04T00:23:10.915820+00:00",
+      "high_sequence": 3,
+      "release_uuid": "2",
+      "revoked_at": "2026-11-06T00:23:17.762592+00:00",
+      "sequence": 2
+    },
+    "negative_cases": [
+      {
+        "case": "missing-child",
+        "status": "passed",
+        "omission": {
+          "digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+          "kind": "manifest",
+          "mediaType": "application/vnd.oci.image.manifest.v1+json",
+          "observed_http_status": 404,
+          "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+          "platform": {
+            "architecture": "amd64",
+            "os": "linux"
+          },
+          "repository": "qualification/synthetic-harbor-graph-qualified/application",
+          "size": 398
+        },
+        "active_preserved": true,
+        "completed_at": "2026-11-06T00:37:33.448502+00:00",
+        "restored_at": "2026-11-06T00:37:35.426906+00:00",
+        "recovered_at": "2026-11-06T00:37:42.760140+00:00",
+        "recovery_scope": "target bytes restored; same persistent importer ledger retried"
+      },
+      {
+        "case": "missing-layer",
+        "status": "passed",
+        "omission": {
+          "digest": "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+          "empty_body_for_nonempty_blob": true,
+          "kind": "blob",
+          "mediaType": "application/vnd.oci.image.layer.v1.tar",
+          "observed_body_bytes": 0,
+          "observed_content_length": "10240",
+          "observed_http_status": 200,
+          "parent_digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+          "repository": "qualification/synthetic-harbor-graph-qualified/application",
+          "size": 10240
+        },
+        "active_preserved": true,
+        "completed_at": "2026-11-06T00:40:47.666881+00:00",
+        "restored_at": "2026-11-06T00:40:49.436405+00:00",
+        "recovered_at": "2026-11-06T00:40:56.152716+00:00",
+        "recovery_scope": "target bytes restored; same persistent importer ledger retried"
+      },
+      {
+        "case": "missing-evidence",
+        "status": "passed",
+        "omission": {
+          "annotations": {
+            "org.opencontainers.image.title": "evidence.zip"
+          },
+          "digest": "sha256:0af3159176ce90c0e11bce812af1f81a300a0b0d6284a7b590f963e1d33b5bce",
+          "empty_body_for_nonempty_blob": true,
+          "kind": "blob",
+          "mediaType": "application/zip",
+          "observed_body_bytes": 0,
+          "observed_content_length": "2602",
+          "observed_http_status": 200,
+          "parent_digest": "sha256:216559874b0aa0b78964b3b05fd3c596feabc74125ff0a8558433e45d879fe5f",
+          "repository": "qualification/synthetic-harbor-graph-qualified/releases",
+          "size": 2602
+        },
+        "active_preserved": true,
+        "completed_at": "2026-11-06T00:41:11.495612+00:00",
+        "restored_at": "2026-11-06T00:41:13.273963+00:00",
+        "recovered_at": "2026-11-06T00:41:20.071081+00:00",
+        "recovery_scope": "target bytes restored; same persistent importer ledger retried"
+      },
+      {
+        "case": "missing-signature",
+        "status": "passed",
+        "omission": {
+          "digest": "sha256:5e4fc161a016cb1c2256fe73f20e73acae15bc17d335fb4d14fcbb6a5a25b1a3",
+          "kind": "manifest",
+          "observed_http_status": 404,
+          "parent_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+          "repository": "qualification/synthetic-harbor-graph-qualified/application"
+        },
+        "active_preserved": true,
+        "completed_at": "2026-11-06T00:41:35.396644+00:00",
+        "restored_at": "2026-11-06T00:41:37.099757+00:00",
+        "recovered_at": "2026-11-06T00:41:44.045539+00:00",
+        "recovery_scope": "target bytes restored; same persistent importer ledger retried"
+      }
+    ],
+    "storage_restoration_audit": {
+      "status": "passed",
+      "target": "https://harbor-target.test:8443",
+      "objects": [
+        {
+          "case": "missing-child",
+          "digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+          "restored_bytes": 398,
+          "hash_verified": true,
+          "quarantine_file_absent": true,
+          "observed_http_status": 404,
+          "observed_body_bytes": null,
+          "active_preserved": true,
+          "recovery_passed": true
+        },
+        {
+          "case": "missing-evidence",
+          "digest": "sha256:0af3159176ce90c0e11bce812af1f81a300a0b0d6284a7b590f963e1d33b5bce",
+          "restored_bytes": 2602,
+          "hash_verified": true,
+          "quarantine_file_absent": true,
+          "observed_http_status": 200,
+          "observed_body_bytes": 0,
+          "active_preserved": true,
+          "recovery_passed": true
+        },
+        {
+          "case": "missing-layer",
+          "digest": "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+          "restored_bytes": 10240,
+          "hash_verified": true,
+          "quarantine_file_absent": true,
+          "observed_http_status": 200,
+          "observed_body_bytes": 0,
+          "active_preserved": true,
+          "recovery_passed": true
+        },
+        {
+          "case": "missing-signature",
+          "digest": "sha256:5e4fc161a016cb1c2256fe73f20e73acae15bc17d335fb4d14fcbb6a5a25b1a3",
+          "restored_bytes": 558,
+          "hash_verified": true,
+          "quarantine_file_absent": true,
+          "observed_http_status": 404,
+          "observed_body_bytes": null,
+          "active_preserved": true,
+          "recovery_passed": true
+        }
+      ],
+      "restoration_mechanism": "same-directory guarded file restore; not Harbor retry"
+    }
+  },
+  "fixes": [
+    "Handle Harbor CSRF token rejection once, without replaying ambiguous network failures or ordinary authorization errors.",
+    "Use optional storage_service configuration and wait for healthy Harbor core before starting jobservice.",
+    "Persist actual sanitized permissions/policies across setup reruns; inspect separately from execution history.",
+    "Reject false interruption successes and require an observed active task for future runs.",
+    "Use production numeric approval identities for synthetic revocation; preserve failed fixture attempts.",
+    "Accept a proven empty HTTP200 blob response as a failed completeness check only when production integrity verification rejects it; preserve the initial failed HTTP404-only assertion."
+  ],
+  "checks": {
+    "focused_harbor_controller_tests": 25,
+    "new_python_files_syntax_checked": 5
+  },
+  "cleanup": {
+    "checked_at": "2026-11-06T00:44:37.562031+00:00",
+    "all_test_services_stopped": true,
+    "service_count": 21,
+    "services": [
+      {
+        "project": "cats-harbor-replica-aeb76b2cd2",
+        "service": "replica-db",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-replica-aeb76b2cd2",
+        "service": "replica-portal",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-replica-aeb76b2cd2",
+        "service": "replica-proxy",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-core",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-jobservice",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-log",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-portal",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-postgresql",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-proxy",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-redis",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-registry",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "source-registryctl",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-core",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-jobservice",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-log",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-portal",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-postgresql",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-proxy",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-redis",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-registry",
+        "state": "exited"
+      },
+      {
+        "project": "cats-harbor-acceptance-20261105",
+        "service": "target-registryctl",
+        "state": "exited"
+      }
+    ],
+    "data_volumes_and_private_evidence_retained": true,
+    "temporary_publisher_bridge_removed": true,
+    "unrelated_stacks_untouched": true
+  },
+  "evidence_sha256": {
+    "harbor-configuration.json": "4d61811776c8e4744a3c74af832d895145b01b3cb35c3202d179eb416b32262d",
+    "harbor-replication.json": "84dad430f21a17c6876c5385aa1298e9639c34d2672f90239db6fa5b3f7e87f1",
+    "source-disconnected-services.json": "8dc914f124a4cd503dcbc642aa9d0349c30a4e02f69176bdc895ac58bff1a405",
+    "catalog-probe.json": "70a608d4349e8b98d5f72255295f8ba334d45507abadd94a23af88540068177a",
+    "transfer-probe-verified.json": "c18ef8f82de73293f6744bf29ec059d20fcea868ca8883246a40fd421cb741a5",
+    "graph-qualified/observations/missing-layer-initial-storage-probe.json": "50df4ca5ee013ce620e1093ee45979c0850771a83a8be15ec3ceb942497482f7",
+    "replica/replica-acceptance.json": "8972ed520d0fb90d620222e637c4198252664b0073f038838d140f54cb47f75a",
+    "replica/harbor-qualification.json": "63b31135270996f838f7dacf592c1c6a14ff44ee86f2b53d0676d856920da7b5",
+    "graph-qualified/reports/complete.json": "a7691fb150219c8ec16a178a23a1d5becc3a1c072ee831fbe55addbf4a444aeb",
+    "graph-qualified/reports/missing-child.json": "b6dfed9fa2fea2a92c339fb86fe346793010190ce7e3f671cc9d66e3a1b7e57b",
+    "graph-qualified/reports/missing-evidence.json": "271b7fb6517445e1efb03d99c3dca8f61d4faacabf155e7df0859455e2898b2e",
+    "graph-qualified/reports/missing-layer.json": "d521abd3f6748654e93d44b830da8bb573e5285c34252445beef8db8bcc12135",
+    "graph-qualified/reports/missing-signature.json": "c2070c1f9a01c20236703d1eb931e4c82e54e5b4782c39fbf50d090f038e4c8f",
+    "graph-qualified/reports/recover-missing-child.json": "7632ec3efbfe0633e0959138f0a1b9250b95a3e6b59aedc8ffff570d030e99bd",
+    "graph-qualified/reports/recover-missing-evidence.json": "68b058d6e7993115e23b93b2a2b92bc61b68b359bbccb15d6ec18ea26fa26b01",
+    "graph-qualified/reports/recover-missing-layer.json": "fe3e8269a35bdb8d7d0c8119d46346a638546958951220568fbb89a87c5fde30",
+    "graph-qualified/reports/recover-missing-signature.json": "a35b807658df4be43b3393dd0b3425046db1660d6ced66da39e99b04de3ad49c",
+    "graph-qualified/reports/storage-restoration-audit.json": "53f279c2abeac4c8f51d5087feb41860e33711edc2ff4f4137c8ea95b7c24d10"
+  }
+}
