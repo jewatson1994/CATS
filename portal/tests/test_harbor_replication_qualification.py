@@ -67,6 +67,7 @@ def scoped_policy(tmp_path, monkeypatch):
 
     api = API()
     monkeypatch.setattr(controller, 'clients', lambda _: ({}, {'source': api}))
+    monkeypatch.setattr(controller, 'validate_qualification_robots', lambda *args: {})
     return tmp_path, api
 
 
@@ -125,6 +126,72 @@ def test_changed_scoped_policy_is_rejected_before_execution(scoped_policy, mutat
     with pytest.raises(RuntimeError, match='exact subtree'):
         controller.replicate(root, 'fresh', 'should-not-run')
     assert not api.executions
+
+
+@pytest.fixture
+def qualification_robots(monkeypatch):
+    state = {side: {'id': 1, 'username': 'robot', 'password': 'secret-never-report'}
+             for side in ('source', 'target')}
+    stack = {**{side: {'url': 'https://' + side} for side in state}, 'ca_file': 'ca.pem'}
+    robot = {'id': 1, 'disable': False, 'expires_at': 2000}
+    reads, closes = [], []
+    failure = []
+    class Scoped:
+        def __init__(self, url, username, password, ca):
+            self.url = url
+            assert username == 'robot' and password == 'secret-never-report' and ca == 'ca.pem'
+            self.session = SimpleNamespace(close=lambda: closes.append(url))
+        def get(self, path):
+            reads.append((self.url, path))
+            if failure:
+                raise RuntimeError(failure[0])
+            return []
+    apis = {side: SimpleNamespace(get=lambda path: copy.deepcopy(robot)) for side in state}
+    monkeypatch.setattr(controller, 'Harbor', Scoped)
+    monkeypatch.setattr(controller.time, 'time', lambda: 1000)
+    return stack, apis, state, robot, reads, closes, failure
+
+
+@pytest.mark.parametrize('expiry', [2000, -1])
+def test_qualification_robot_preflight_checks_current_credentials_read_only(qualification_robots, expiry):
+    stack, apis, state, robot, reads, closes, _ = qualification_robots
+    robot['expires_at'] = expiry
+    report = controller.validate_qualification_robots(stack, apis, state, 'qualification/service')
+    assert len(reads) == len(closes) == 2
+    assert all(path == '/projects/qualification/repositories?page=1&page_size=1' for _, path in reads)
+    assert report['source'] == dict(id=1, expires_at=expiry, repository_read_verified=True)
+    assert 'secret-never-report' not in json.dumps(report)
+
+
+@pytest.mark.parametrize(('mutation', 'message'), [
+    ({'expires_at': 999}, 'expired at'), ({'expires_at': 1000}, 'expired at'),
+    ({'disable': True}, 'disabled'), ({'expires_at': None}, 'could not be verified'),
+])
+def test_qualification_robot_preflight_rejects_inactive_credentials_before_use(qualification_robots, mutation, message):
+    stack, apis, state, robot, reads, closes, _ = qualification_robots
+    robot.update(mutation)
+    with pytest.raises(RuntimeError, match=message):
+        controller.validate_qualification_robots(stack, apis, state, 'approved/service')
+    assert not reads and not closes
+
+
+def test_qualification_robot_preflight_sanitizes_failure_and_closes_session(qualification_robots):
+    stack, apis, state, _, reads, closes, failure = qualification_robots
+    failure.append('unauthorized secret-never-report')
+    with pytest.raises(RuntimeError, match='stored secret, expiration, project permission and TLS') as caught:
+        controller.validate_qualification_robots(stack, apis, state, 'approved/service')
+    assert len(reads) == len(closes) == 1
+    assert 'secret-never-report' not in str(caught.value)
+
+
+def test_failed_robot_preflight_cannot_create_policy(scoped_policy, monkeypatch):
+    root, api = scoped_policy
+    def failed(*args):
+        raise RuntimeError('source qualification robot expired at the test deadline')
+    monkeypatch.setattr(controller, 'validate_qualification_robots', failed)
+    with pytest.raises(RuntimeError, match='expired'):
+        controller.setup_scoped(root, 'fresh', 'qualification/service')
+    assert not api.created and not api.executions
 
 
 CSRF = {'errors': [{'code': 'FORBIDDEN', 'message': 'CSRF token not found in request'}]}

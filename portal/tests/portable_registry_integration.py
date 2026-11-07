@@ -124,15 +124,17 @@ def publish(root):
         origin, replica = oci._Client('publisher.test:5000', repository, env), oci._Client('replica.test:5000', repository, env)
         descriptor = transport.graph(origin, digest, replica)
         transport.tag(replica, descriptor, item['tag'])
-        if item.get('signature'):
-            # Copy immutable signature descriptors explicitly; no referrers API
-            # or mutable Cosign discovery tag is available on the replica.
-            transport.graph(origin, item['signature']['digest'], replica)
+        for kind in ('signature', 'attestation'):
+            if item.get(kind):
+                # Copy immutable attachment descriptors explicitly; no referrers
+                # API or mutable Cosign discovery tag is needed on the replica.
+                transport.graph(origin, item[kind]['digest'], replica)
     (root / 'expected.json').write_text(json.dumps({'fingerprint': fingerprint,
         'release': receipt['release'], 'revocation': revocation['release'], 'state': state,
         'index': index_digest, 'manifest': receipt['manifest']}))
     print(json.dumps({'phase': 'published-and-copied', 'real_cosign': True, 'https_registries': 2,
         'multiarchitecture_children': 2, 'helm_charts': 1, 'immutable_signature_fallback': True, 'retry_same_digest': True}))
+    return receipt
 
 
 def verify(root):

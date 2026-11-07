@@ -67,7 +67,7 @@ def _repository(value):
 
 
 def copy_receipt(receipt, root, env, source_host, target_host):
-    """Copy every receipt graph and signature, then publish discovery last.
+    """Copy every receipt graph and attachment, then publish discovery last.
 
     Uses the exact-byte production transport, preserving repository paths and
     signed digests. Trust verification still happens through the replica's
@@ -103,13 +103,19 @@ def copy_receipt(receipt, root, env, source_host, target_host):
             raise ValueError("Receipt reference must match the explicit source host and digest")
         if not isinstance(item.get("tag"), str) or not re.fullmatch(r"[\w][\w.-]{0,127}", item["tag"], re.ASCII):
             raise ValueError("Receipt must contain a valid publication tag")
-        signature = item.get("signature")
-        if signature is not None:
-            if not isinstance(signature, dict):
-                raise ValueError("Invalid immutable signature descriptor")
-            _digest(signature.get("digest"))
-        elif item is not release:
+        if item.get("signature") is None and item is not release:
             raise ValueError("Every approved artifact must have an immutable signature descriptor")
+        for kind in ("signature", "attestation"):
+            if kind not in item:
+                continue
+            attachment = item[kind]
+            if not isinstance(attachment, dict):
+                raise ValueError("Invalid immutable " + kind + " descriptor")
+            _digest(attachment.get("digest"))
+            retention = attachment.get("retention_tag")
+            if retention is not None and (not isinstance(retention, str)
+                    or not re.fullmatch(r"[\w][\w.-]{0,127}", retention, re.ASCII)):
+                raise ValueError("Invalid immutable attachment retention tag")
         inventory.append((item, repository, digest))
 
     # Production transport intentionally requires a new layout. A fresh child
@@ -120,17 +126,22 @@ def copy_receipt(receipt, root, env, source_host, target_host):
         source = release_oci._Client(source_host, repository, env)
         target = release_oci._Client(target_host, repository, env)
         descriptor = transport.graph(source, digest, target)
-        signature_digest = None
-        if item.get("signature"):
-            signature_digest = item["signature"]["digest"]
-            transport.graph(source, signature_digest, target)
+        attachment_digests = {}
+        for kind in ("signature", "attestation"):
+            if item.get(kind):
+                attachment = item[kind]
+                attachment_digests[kind] = attachment["digest"]
+                retained = transport.graph(source, attachment["digest"], target)
+                if attachment.get("retention_tag"):
+                    transport.tag(target, retained, attachment["retention_tag"])
         # The release document is last in inventory, so its discovery tag is
-        # exposed only after all artifact and immutable signature graphs exist.
+        # exposed only after all artifact, signature and attestation graphs exist.
         transport.tag(target, descriptor, item["tag"])
         copied.append({"source_reference": item["reference"],
                        "target_reference": target_host + "/" + repository + "@" + digest,
                        "digest": digest, "tag": item["tag"],
-                       "signature_digest": signature_digest})
+                       "signature_digest": attachment_digests.get("signature"),
+                       "attestation_digest": attachment_digests.get("attestation")})
     return {"approval_id": receipt.get("approval_id"), "copied": copied,
             "artifact_count": len(artifacts), "discovery_tag_copied_last": True}
 

@@ -214,6 +214,51 @@ def test_restart_proof_requires_actual_two_service_restart_with_same_storage(res
     assert actual['proof_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+@pytest.mark.parametrize('before,after', [
+    ('/run/desktop/mnt/host/c/Users/local/qualification tls', r'C:\Users\local\qualification tls'),
+    (r'C:\Users\local\qualification tls', '/run/desktop/mnt/host/c/Users/local/qualification tls'),
+    ('/run/desktop/mnt/host/d/Work/tls', r'd:\Work\tls'),
+])
+def test_restart_proof_accepts_only_equivalent_desktop_windows_bind_sources(restart, before, after):
+    path, proof, stack, prepared = restart
+    for phase, source in [('before', before), ('after', after)]:
+        proof[phase]['app']['persistent_mounts'] = [
+            {'destination': '/data', 'type': 'volume', 'source': 'unchanged-volume'},
+            {'destination': '/tls', 'type': 'bind', 'source': source}]
+    path.write_text(json.dumps(proof))
+    actual = verifier.restart_proof(path, stack, prepared)
+    # The returned observations and hash still describe the original proof bytes.
+    assert actual['before'] == proof['before'] and actual['after'] == proof['after']
+    assert actual['proof_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('before,after,kind', [
+    ('/run/desktop/mnt/host/c/Users/local/tls', r'D:\Users\local\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/tls', r'C:\Users\other\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/tls', r'C:\users\local\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/tls', r'C:\Users\local\tls', 'volume'),
+    ('/mnt/c/Users/local/tls', r'C:\Users\local\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/tls', r'\\host\c\Users\local\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/../tls', r'C:\Users\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/local/../tls', r'C:\Users\local\..\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users//tls', r'C:\Users\tls', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/tls/', 'C:\\Users\\tls\\', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/tls.', r'C:\Users\tls.', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/tls ', 'C:\\Users\\tls ', 'bind'),
+    ('/run/desktop/mnt/host/c/Users/tls:stream', r'C:\Users\tls:stream', 'bind'),
+    ('/srv/data/../tls', '/srv/tls', 'bind'),
+    ('/srv/TLS', '/srv/tls', 'bind'),
+    ('original-volume', 'replacement-volume', 'volume'),
+])
+def test_restart_proof_rejects_different_or_ambiguously_normalized_mounts(restart, before, after, kind):
+    path, proof, stack, prepared = restart
+    for phase, source in [('before', before), ('after', after)]:
+        proof[phase]['app']['persistent_mounts'] = [{'destination': '/tls', 'type': kind, 'source': source}]
+    path.write_text(json.dumps(proof))
+    with pytest.raises(AssertionError, match='same persistent storage'):
+        verifier.restart_proof(path, stack, prepared)
+
+
 @pytest.mark.parametrize('mutation', [
     lambda value: value.update(replica_project='different'),
     lambda value: value['after']['database'].update(started_at=value['before']['database']['started_at']),

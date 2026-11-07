@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import time
 from urllib.parse import quote, urlsplit
 
@@ -346,6 +347,24 @@ def override_checks(api, root, stack, state, report, first, expected, machine):
         local.session.close()
 
 
+def _persistent_mount_identity(mount):
+    """Recognize only Docker Desktop's two spellings of a Windows bind path."""
+    source = mount['source']
+    identity = ('literal', source)
+    if mount['type'] == 'bind':
+        desktop = re.fullmatch(r'/run/desktop/mnt/host/([a-z])/(.+)', source)
+        windows = re.fullmatch(r'([A-Za-z]):\\(.+)', source)
+        if desktop or windows:
+            match = desktop or windows
+            components = match[2].split('/' if desktop else '\\')
+            # Do not resolve dot segments, duplicate separators, case, symlinks,
+            # alternate streams or Windows trailing-dot/space aliases.
+            if all(part and part not in {'.', '..'} and not part.endswith(('.', ' '))
+                   and not any(char in part for char in ('/', '\\', ':', '\x00')) for part in components):
+                identity = ('desktop-windows-bind', match[1].lower(), *components)
+    return mount['destination'], mount['type'], identity
+
+
 def restart_proof(path, stack, prepared_at):
     """Bind caller-observed Docker restarts to this prepared grant and storage."""
     _require(path is not None and path.is_file(), 'Persistence verification requires caller-recorded app and database restart proof')
@@ -374,7 +393,8 @@ def restart_proof(path, stack, prepared_at):
                      'Restart proof must contain only sanitized persistent-mount identities')
             result[phase][role] = {key: snapshot[key] for key in ('container_id', 'started_at', 'running')}
             result[phase][role]['persistent_mounts'] = sorted(mounts, key=lambda item: (item['destination'], item['source']))
-        _require(result['before'][role]['persistent_mounts'] == result['after'][role]['persistent_mounts'],
+        _require(sorted(map(_persistent_mount_identity, result['before'][role]['persistent_mounts']))
+                 == sorted(map(_persistent_mount_identity, result['after'][role]['persistent_mounts'])),
                  'Restart must retain the same persistent storage')
     return result | {'proof_sha256': hashlib.sha256(raw).hexdigest(),
                      'scope': 'Caller-observed container restarts; grant and authorization persistence verified independently over HTTP.'}

@@ -268,6 +268,32 @@ def verify_scoped_policy(policy, registry_id, repository_prefix):
         raise RuntimeError('Scoped Harbor policy no longer matches its retained exact subtree and destination')
 
 
+def validate_qualification_robots(stack, apis, state, repository_prefix):
+    """Check retained test credentials without changing robots or their scopes."""
+    project = repository_prefix.split('/', 1)[0]
+    checked = {}
+    for side in ('source', 'target'):
+        credentials = state[side]
+        robot = apis[side].get('/robots/' + str(int(credentials['id'])))
+        expiry = robot.get('expires_at')
+        if robot.get('disable'):
+            raise RuntimeError(f'{side} qualification robot is disabled; restore authorized test credentials before setup-scoped')
+        if type(expiry) is not int or expiry < -1:
+            raise RuntimeError(f'{side} qualification robot expiration could not be verified; inspect its authorized Harbor configuration')
+        if expiry != -1 and expiry <= time.time():
+            expired = datetime.fromtimestamp(expiry, timezone.utc).isoformat()
+            raise RuntimeError(f'{side} qualification robot expired at {expired}; renew or replace the authorized test credentials before setup-scoped')
+        scoped = Harbor(stack[side]['url'], credentials['username'], credentials['password'], stack['ca_file'])
+        try:
+            scoped.get('/projects/' + quote(project, safe='') + '/repositories?page=1&page_size=1')
+        except Exception:
+            raise RuntimeError(f'{side} qualification robot failed its repository read check; verify its stored secret, expiration, project permission and TLS before setup-scoped') from None
+        finally:
+            scoped.session.close()
+        checked[side] = dict(id=robot['id'], expires_at=expiry, repository_read_verified=True)
+    return checked
+
+
 def setup_scoped(root, alias, repository_prefix):
     """Add one isolated subtree policy using the already configured project robots."""
     scoped_arguments(alias, repository_prefix)
@@ -275,7 +301,8 @@ def setup_scoped(root, alias, repository_prefix):
     policies, scopes = state['policies'], state.setdefault('policy_scopes', {})
     if alias in policies and scopes.get(alias) != repository_prefix:
         raise ValueError('Existing policy alias must not be repurposed for another subtree')
-    _, apis = clients(root)
+    stack, apis = clients(root)
+    robots = validate_qualification_robots(stack, apis, state, repository_prefix)
     source = apis['source']
     if alias not in policies:
         suffix = hashlib.sha256(repository_prefix.encode()).hexdigest()[:12]
@@ -304,6 +331,7 @@ def setup_scoped(root, alias, repository_prefix):
     report = load(root, 'harbor-replication.json', {'executions': []})
     report.setdefault('policies', {})[alias] = policy_report(actual)
     report.setdefault('policy_scopes', {})[alias] = repository_prefix
+    report['robot_preflight'] = robots
     save(root, 'harbor-replication.json', report)
     print(f'Harbor scoped policy {alias} verified for {repository_prefix}/**.')
 

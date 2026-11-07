@@ -43,7 +43,7 @@ from .service_exports import (format_sheet, _service_mitigations_book,
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
 from openpyxl import Workbook
@@ -2647,6 +2647,18 @@ def service_overview_rows(db: Session, auth: AuthContext, now: datetime, configu
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/readyz")
+def readiness():
+    """Report database readiness without exposing connection diagnostics."""
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+    except SQLAlchemyError:
+        return JSONResponse({"status": "unavailable"}, status_code=503,
+                            headers={"Cache-Control": "no-store"})
+    return JSONResponse({"status": "ready"}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/admin/replica", response_class=HTMLResponse)

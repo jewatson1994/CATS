@@ -42,6 +42,15 @@ def registry_url(value):
     return value.rstrip('/')
 
 
+def publisher_portal_url(previous, template):
+    # The replica joins multiple Compose networks. A service alias such as
+    # "portal" can resolve an unrelated deployment on the shared Harbor bridge.
+    name = template['services']['portal'].get('container_name') or previous['project'] + '-portal-1'
+    _require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name),
+             'The original publisher must have a unique valid container identity')
+    return 'http://' + name + ':8000/login'
+
+
 def prepare(args):
     root, original = args.workspace.resolve(), args.original_workspace.resolve()
     _require(root != original and original not in root.parents,
@@ -115,7 +124,7 @@ def prepare(args):
              'source_registry': source_url, 'target_registry': target_url,
              'publisher_probes': [{'name': 'source_harbor', 'url': source_url + '/v2/'},
                                   {'name': 'original_registry', 'url': 'https://publisher.test:5000/v2/'},
-                                  {'name': 'original_cats', 'url': 'http://portal:8000/login'}]}
+                                  {'name': 'original_cats', 'url': publisher_portal_url(previous, template)}]}
     save(root, 'replica-compose.json', compose)
     save(root, 'stack.json', stack)
     save(root, 'workflow-state.json', {'service_key': baseline['service_key'], 'trusted_fingerprint': trusted})

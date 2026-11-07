@@ -1,0 +1,1131 @@
+{
+  "format": "cats-oci-replica-remaining-gap-qualification-v1",
+  "generated_at": "2026-11-07T10:09:53.588078+00:00",
+  "branch": "codex/oci-approved-release-replicas",
+  "baseline_commit": "d20b8513d68c2f8477612705099299834f608073",
+  "status": "passed_in_stated_local_qualification_scope",
+  "production_acceptance": "unverified",
+  "prior_reports": [
+    "oci-replica-final-qualification-2026-11-06.md",
+    "oci-replica-feature-completion-2026-11-07.md"
+  ],
+  "inventory": {
+    "complete": true,
+    "fixture_scope": "Synthetic 123-image inventory fixture, actual signed production publication and real Harbor/replica HTTP.",
+    "runtime": {
+      "archive_digest": "sha256:8eb4ffdfeba8d34aaadd8bfc21f81ec754dce8c0e8abc1ea50750272a3038451",
+      "capabilities": [],
+      "image_count": 123,
+      "image_reference_policy": "validated-immutable-id",
+      "network": "none",
+      "no_new_privileges": true,
+      "passed": true,
+      "read_only": true
+    },
+    "harbor_executions": [
+      {
+        "id": 27,
+        "status": "Succeed",
+        "succeed": 3,
+        "total": 3,
+        "failed": 0
+      },
+      {
+        "id": 30,
+        "status": "Succeed",
+        "succeed": 3,
+        "total": 3,
+        "failed": 0
+      }
+    ],
+    "source_services_explicitly_stopped": 9,
+    "source_online": {
+      "checked_at": "2026-11-07T09:33:25.052294+00:00",
+      "urls": [
+        "https://harbor-source.test:8443/v2/"
+      ],
+      "reachable": true,
+      "probes": [
+        {
+          "url": "https://harbor-source.test:8443/v2/",
+          "status": 401
+        }
+      ]
+    },
+    "baseline": {
+      "service_id": 1,
+      "active_release_id": 1,
+      "active_image_count": 100,
+      "history_count": 1,
+      "history": [
+        {
+          "id": 1,
+          "service_id": 1,
+          "source_release_id": "1",
+          "manifest_digest": "sha256:38555a7b80b2d0dd54ea2ac32192dd793b691ca2fbd2b7d283cabcf75179d180",
+          "status": "active"
+        }
+      ]
+    },
+    "baseline_pull": {
+      "release_id": 1,
+      "complete": true,
+      "image_count": 100,
+      "verified_bytes": 2101456490,
+      "completed_at": "2026-11-07T09:36:05.156548+00:00"
+    },
+    "incomplete_successor_sync": {
+      "id": "72580932e8b746fd9318ef26d7256d17",
+      "status": "failed",
+      "result": {
+        "failure_code": "release_verification_failed",
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 1,
+        "failed": 1
+      },
+      "error": "Release verification failed. Complete registry replication, verify publisher trust and signed sequence, then retry. Reference: 8b40fc9c15b849948d6f89205716adc5",
+      "created_at": "2026-11-07T09:44:48.912609+00:00",
+      "completed_at": "2026-11-07T09:47:02.717288+00:00"
+    },
+    "incomplete_preserved_baseline": true,
+    "fault_injection": "Reversible exact repository layer-link and descriptor-cache-key quarantine; both restored. No shared blob deletion or cache flush.",
+    "recovery_sync": {
+      "id": "86c3ea24c52f4a22a3061fcaad117d09",
+      "status": "completed",
+      "result": {
+        "failure_code": null,
+        "discovered": 2,
+        "activated": 1,
+        "revoked": 0,
+        "unchanged": 1,
+        "failed": 0
+      },
+      "error": null,
+      "created_at": "2026-11-07T09:47:07.971025+00:00",
+      "completed_at": "2026-11-07T09:47:55.074414+00:00"
+    },
+    "replacement": {
+      "retained": 77,
+      "retired": 23,
+      "new": 23
+    },
+    "successor": {
+      "service_id": 1,
+      "active_release_id": 2,
+      "active_image_count": 100,
+      "history_count": 2,
+      "history": [
+        {
+          "id": 2,
+          "service_id": 1,
+          "source_release_id": "2",
+          "manifest_digest": "sha256:1e6c56b4c6d943e9237eae167c1aae98fb9aedaf5211caaf8f571be16ba35da2",
+          "status": "active"
+        },
+        {
+          "id": 1,
+          "service_id": 1,
+          "source_release_id": "1",
+          "manifest_digest": "sha256:38555a7b80b2d0dd54ea2ac32192dd793b691ca2fbd2b7d283cabcf75179d180",
+          "status": "superseded"
+        }
+      ]
+    },
+    "retired_root_denials": 23,
+    "cold_blob_cache": {
+      "format": "cats-inventory-cold-cache-v1",
+      "checked_at": "2026-11-07T09:48:01.8351385+00:00",
+      "replica_project": "cats-remaining-replica-20261107",
+      "cache_volume": "cats-remaining-replica-20261107_remaining_empty_cache_1794044878",
+      "cache_directory": "/var/cache/cats-oci",
+      "file_count": 0,
+      "prior_volume_retained": true,
+      "proof_sha256": "d86396f39c4320a1fc9a304d5f45d879c3c5340182002de23da3dd6ec028caba",
+      "scope": "Empty blob cache; PostgreSQL manifest cache is retained and may serve previously pulled manifests."
+    },
+    "successor_pull": {
+      "release_id": 2,
+      "complete": true,
+      "image_count": 100,
+      "verified_bytes": 2101456523,
+      "completed_at": "2026-11-07T10:01:17.530567+00:00"
+    },
+    "byte_count_scope": "Aggregate bytes hash-verified by full pulls; shared blobs may be downloaded for each graph and counted repeatedly.",
+    "overrides": [
+      {
+        "duration": "fixed",
+        "created": {
+          "id": 1,
+          "release_id": 1,
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "denial_condition": "superseded",
+          "expires_at": "2026-11-07T11:01:18.067660+00:00",
+          "status": "active"
+        },
+        "use_count": 11,
+        "other_retired_denials": 22,
+        "revoked_status": "revoked",
+        "warm_cache_denied_after_revocation": {
+          "allowed": false,
+          "reason": "release_superseded",
+          "approval_id": null,
+          "execution_id": null,
+          "service_id": 1,
+          "artifact_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+          "release_id": 1,
+          "override_id": null,
+          "authorization_source": "denied",
+          "approval_status": "superseded",
+          "decision_at": "2026-11-07T10:01:26.021977+00:00",
+          "override_url": "/services/harbor-inventory-remaining-20261107/cyber-overrides?release_id=1&digest=sha256%3A01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353&denial_condition=superseded",
+          "override_status": "no_applicable_override",
+          "effective_policy": {
+            "mode": "replica",
+            "exact_digest": true,
+            "trusted_publisher_required": true,
+            "repository_policy": {}
+          }
+        }
+      },
+      {
+        "duration": "indefinite",
+        "created": {
+          "id": 2,
+          "release_id": 1,
+          "digests": [
+            "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353"
+          ],
+          "denial_condition": "superseded",
+          "expires_at": null,
+          "status": "active"
+        },
+        "use_count": 11,
+        "other_retired_denials": 22,
+        "revoked_status": "revoked",
+        "warm_cache_denied_after_revocation": {
+          "allowed": false,
+          "reason": "release_superseded",
+          "approval_id": null,
+          "execution_id": null,
+          "service_id": 1,
+          "artifact_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+          "release_id": 1,
+          "override_id": null,
+          "authorization_source": "denied",
+          "approval_status": "superseded",
+          "decision_at": "2026-11-07T10:01:34.095413+00:00",
+          "override_url": "/services/harbor-inventory-remaining-20261107/cyber-overrides?release_id=1&digest=sha256%3A01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353&denial_condition=superseded",
+          "override_status": "no_applicable_override",
+          "effective_policy": {
+            "mode": "replica",
+            "exact_digest": true,
+            "trusted_publisher_required": true,
+            "repository_policy": {}
+          }
+        }
+      }
+    ],
+    "persistence": {
+      "complete": true,
+      "completed_at": "2026-11-07T10:07:14.400778+00:00",
+      "app_and_database_restarted": true,
+      "same_persistent_storage_verified": true,
+      "proof_correction": "The first verification stopped before reading or revoking the grant because Docker Desktop returned equivalent certificate bind paths in Windows and Linux forms. Only those exact forms are now normalized for comparison; the original grant and unchanged restart proof were reused successfully. Different paths and volume identities remain rejected.",
+      "original_exact_indefinite_grant_survived": true,
+      "audit_preserved_after_restart": true,
+      "normal_upstream_sync": {
+        "id": "df02deaecb0f493f990d486be3bd7ed7",
+        "status": "completed",
+        "result": {
+          "failure_code": null,
+          "discovered": 2,
+          "activated": 0,
+          "revoked": 0,
+          "unchanged": 2,
+          "failed": 0
+        },
+        "error": null,
+        "created_at": "2026-11-07T10:07:03.319998+00:00",
+        "completed_at": "2026-11-07T10:07:05.221450+00:00"
+      },
+      "total_use_count_after_restart": 22,
+      "new_post_restart_use_count": 11,
+      "other_retired_denials": 22,
+      "revoked_status": "revoked",
+      "warm_cache_denied_after_revocation": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "approval_id": null,
+        "execution_id": null,
+        "service_id": 1,
+        "artifact_digest": "sha256:01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353",
+        "release_id": 1,
+        "override_id": null,
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "decision_at": "2026-11-07T10:07:14.360241+00:00",
+        "override_url": "/services/harbor-inventory-remaining-20261107/cyber-overrides?release_id=1&digest=sha256%3A01ab94b2285050ffec1f4838019753abcbdbf8dba85fe744fbe9fd669183c353&denial_condition=superseded",
+        "override_status": "no_applicable_override",
+        "effective_policy": {
+          "mode": "replica",
+          "exact_digest": true,
+          "trusted_publisher_required": true,
+          "repository_policy": {}
+        }
+      },
+      "no_override_use_after_revocation": true
+    }
+  },
+  "nginx": {
+    "complete": true,
+    "scans": {
+      "source": {
+        "job_id": "fba2e4eb40c142758e5d0a1dfa5d8ef4",
+        "finished_at": "2026-11-07T09:25:51.796144+00:00",
+        "package_match_count": 194,
+        "raw_configuration_count": 7,
+        "configuration_findings": [
+          {
+            "finding": "CIS-DI-0001",
+            "scanner": "Dockle",
+            "severity": "High",
+            "title": "Create a user for the container"
+          },
+          {
+            "finding": "CIS-DI-0005",
+            "scanner": "Dockle",
+            "severity": "Low",
+            "title": "Enable Content trust for Docker"
+          },
+          {
+            "finding": "CIS-DI-0006",
+            "scanner": "Dockle",
+            "severity": "Low",
+            "title": "Add HEALTHCHECK instruction to the container image"
+          },
+          {
+            "finding": "CIS-DI-0010",
+            "scanner": "Dockle",
+            "severity": "Critical",
+            "title": "Do not store credential in environment variables/files"
+          },
+          {
+            "finding": "DS-0026",
+            "scanner": "Trivy",
+            "severity": "Low",
+            "title": "No HEALTHCHECK defined"
+          },
+          {
+            "finding": "DS-0002",
+            "scanner": "Trivy",
+            "severity": "High",
+            "title": "Image user should not be 'root'"
+          },
+          {
+            "finding": "DS-0013",
+            "scanner": "Trivy",
+            "severity": "Medium",
+            "title": "'RUN cd ...' to change directory"
+          }
+        ],
+        "intelligence": {
+          "status": "unversioned",
+          "databases": {
+            "grype": {
+              "status": "unversioned",
+              "version": "v6.1.10",
+              "built": "2026-11-05T06:21:06Z"
+            },
+            "trivy": {
+              "status": "unversioned",
+              "version": "2",
+              "built": "2026-11-05T13:09:41.435406326Z"
+            }
+          }
+        },
+        "release_uuid": "1",
+        "release_reference": "publisher.test:5000/approved/nginx-remaining-20261107/releases@sha256:0b933c3c07c2b210391d7121e56f5547191af2f653e5c6651076467112cf99bc",
+        "approved_artifacts": [
+          {
+            "kind": "image",
+            "reference": "publisher.test:5000/approved/nginx-remaining-20261107/nginx@sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+            "digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+          }
+        ],
+        "publication_signature_status": "verified",
+        "publication_verification_status": "verified"
+      },
+      "patched": {
+        "job_id": "49ebe09153144f65abd4d948b1ae2d72",
+        "finished_at": "2026-11-07T09:33:48.675587+00:00",
+        "package_match_count": 0,
+        "raw_configuration_count": 3,
+        "configuration_findings": [
+          {
+            "finding": "CIS-DI-0005",
+            "scanner": "Dockle",
+            "severity": "Low",
+            "title": "Enable Content trust for Docker"
+          },
+          {
+            "finding": "CIS-DI-0010",
+            "scanner": "Dockle",
+            "severity": "Critical",
+            "title": "Do not store credential in environment variables/files"
+          },
+          {
+            "finding": "DS-0013",
+            "scanner": "Trivy",
+            "severity": "Medium",
+            "title": "'RUN cd ...' to change directory"
+          }
+        ],
+        "intelligence": {
+          "status": "unversioned",
+          "databases": {
+            "grype": {
+              "status": "unversioned",
+              "version": "v6.1.10",
+              "built": "2026-11-05T06:21:06Z"
+            },
+            "trivy": {
+              "status": "unversioned",
+              "version": "2",
+              "built": "2026-11-05T13:09:41.435406326Z"
+            }
+          }
+        },
+        "release_uuid": "2",
+        "release_reference": "publisher.test:5000/approved/nginx-remaining-20261107/releases@sha256:78f787a6026215410161d99b6dbfb68d0b3c10fba94edda255dcabe2f0a7b7af",
+        "approved_artifacts": [
+          {
+            "kind": "image",
+            "reference": "publisher.test:5000/approved/nginx-remaining-20261107/nginx@sha256:416e8e43683e73f198518a2949832b5d6730f61081e5a96a138db11cab13ad95",
+            "digest": "sha256:416e8e43683e73f198518a2949832b5d6730f61081e5a96a138db11cab13ad95"
+          }
+        ],
+        "publication_signature_status": "verified",
+        "publication_verification_status": "verified"
+      }
+    },
+    "package_findings_before_after": [
+      194,
+      0
+    ],
+    "raw_configuration_findings_before_after": [
+      7,
+      3
+    ],
+    "remaining_configuration_interpretation": [
+      {
+        "finding": "CIS-DI-0010",
+        "raw_severity": "Critical",
+        "explanation": "Dockle flags inherited KEY_SHA512. Retained image history shows this is the public nginx signing-key checksum used with sha512sum, preserved in both exact image ancestries. Raw finding remains unsuppressed."
+      },
+      {
+        "finding": "DS-0013",
+        "raw_severity": "Medium",
+        "explanation": "Inherited upstream RUN cd instructions remain in preserved build history; no history rewriting or scanner suppression was used."
+      },
+      {
+        "finding": "CIS-DI-0005",
+        "raw_severity": "Low",
+        "explanation": "Dockle checks Docker Content Trust environment configuration. Verified CATS signatures and attestations do not erase this raw environment-specific finding."
+      }
+    ],
+    "patch_summary": {
+      "vulnerabilities_before": 194,
+      "vulnerabilities_after": 0,
+      "vulnerabilities_removed": 194,
+      "vulnerabilities_remaining": 0,
+      "could_not_be_patched": 0,
+      "vulnerabilities_unresolved": 0,
+      "vulnerabilities_new_after": 0,
+      "remediated": 194,
+      "unresolved": 0,
+      "patch_status": "PATCHED",
+      "reason": "Applicable vulnerabilities were remediated",
+      "image_changed": true
+    },
+    "replication": {
+      "source_to_target": "Real Harbor replication only; no direct target copy",
+      "namespace": "remaining-nginx",
+      "repository_prefix": "approved/nginx-remaining-20261107",
+      "executions": [
+        {
+          "label": "source",
+          "id": 28,
+          "status": "Succeed",
+          "succeeded_tasks": 2,
+          "failed_tasks": 0
+        },
+        {
+          "label": "patched",
+          "id": 29,
+          "status": "Succeed",
+          "succeeded_tasks": 2,
+          "failed_tasks": 0
+        }
+      ]
+    },
+    "restart_replay": {
+      "checked_at": "2026-11-07T09:47:51.526005+00:00",
+      "job_id": "c81e79442cf3475db3dee69d36427763",
+      "result": {
+        "failure_code": null,
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 2,
+        "failed": 0
+      },
+      "release_count": 2,
+      "revoked_override_id": 1,
+      "warm_superseded_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "approval_id": null,
+        "execution_id": null,
+        "service_id": 1,
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "release_id": 1,
+        "override_id": null,
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "decision_at": "2026-11-07T09:47:49.443448+00:00",
+        "override_url": "/services/nginx-remaining-20261107/cyber-overrides?release_id=1&digest=sha256%3A09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c&denial_condition=superseded",
+        "override_status": "no_applicable_override",
+        "effective_policy": {
+          "mode": "replica",
+          "exact_digest": true,
+          "trusted_publisher_required": true,
+          "repository_policy": {}
+        }
+      },
+      "first_pull_evidence_preserved": true,
+      "complete": true
+    },
+    "rebuilt_readiness_after_restart": {
+      "complete": true,
+      "checked_at": "2026-11-07T09:48:16.223324+00:00",
+      "image_id_matches_rebuilt_replica": true,
+      "services": [
+        {
+          "service": "replica-portal",
+          "image_id": "sha256:64e4df849eb17747796a37fd1e47a1fa3268fb56f232a47cd9a8b63c6a4fc888",
+          "image": "cats-replica:remaining-20261107",
+          "started_at": "2026-11-07T09:47:32.661421628Z",
+          "health_status": "healthy"
+        },
+        {
+          "service": "replica-proxy",
+          "image_id": "sha256:64e4df849eb17747796a37fd1e47a1fa3268fb56f232a47cd9a8b63c6a4fc888",
+          "image": "cats-replica:remaining-20261107",
+          "started_at": "2026-11-07T09:47:32.72819336Z",
+          "health_status": "healthy"
+        }
+      ],
+      "readyz_status": 200,
+      "readyz": {
+        "status": "ready"
+      }
+    },
+    "runtime": {
+      "complete": true,
+      "checks": {
+        "immutable_identity": true,
+        "inherited_layers": true,
+        "inherited_history": true,
+        "healthy": true,
+        "restricted_runtime": true,
+        "nonroot_uid": true,
+        "http_content": true,
+        "unhealthy_on_outage": true,
+        "recovered": true
+      }
+    },
+    "cold_first_pull": {
+      "complete": true,
+      "verified_bytes": 63712617,
+      "first_proxy_request_for_patched_roots": true
+    },
+    "override": {
+      "id": 1,
+      "exact_digests": [
+        "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c"
+      ],
+      "revoked_status": "revoked",
+      "revoked_warm_cache_denial": {
+        "allowed": false,
+        "reason": "release_superseded",
+        "approval_id": null,
+        "execution_id": null,
+        "service_id": 1,
+        "artifact_digest": "sha256:09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c",
+        "release_id": 1,
+        "override_id": null,
+        "authorization_source": "denied",
+        "approval_status": "superseded",
+        "decision_at": "2026-11-07T09:47:10.372451+00:00",
+        "override_url": "/services/nginx-remaining-20261107/cyber-overrides?release_id=1&digest=sha256%3A09ab424a8c788f8d0fe3a64429f6d19dfa526885c8609b748d0943a75dcb9f8c&denial_condition=superseded",
+        "override_status": "no_applicable_override",
+        "effective_policy": {
+          "mode": "replica",
+          "exact_digest": true,
+          "trusted_publisher_required": true,
+          "repository_policy": {}
+        }
+      },
+      "unrelated_artifact_denied": true,
+      "publisher_status_preserved": {
+        "source": "superseded",
+        "patched": "active"
+      }
+    },
+    "source_reachability_evidence": "nginx-harbor/qualification-summary.json: corrected unique publisher endpoint online/offline observations"
+  },
+  "deployment": {
+    "passed": true,
+    "source_note": "Current working-tree app mounted read-only over existing qualification runtime; root rebuild independently required for image qualification.",
+    "tls": {
+      "replica_url": {
+        "hostname": "localhost",
+        "port": 19482,
+        "protocol": "TLSv1.3",
+        "certificate_sha256": "2d0a1431c87268d941fca126ffc1035064b81a38491e9dd707e451dad3d27cfa",
+        "subject_alternative_names": [
+          [
+            "DNS",
+            "final-replica.test"
+          ],
+          [
+            "DNS",
+            "localhost"
+          ],
+          [
+            "IP Address",
+            "127.0.0.1"
+          ]
+        ],
+        "not_after": "Dec  7 03:47:50 2026 GMT",
+        "trusted_ca_and_hostname": true,
+        "wrong_hostname_rejected": true,
+        "untrusted_ca_rejected": true
+      },
+      "proxy_url": {
+        "hostname": "localhost",
+        "port": 19582,
+        "protocol": "TLSv1.3",
+        "certificate_sha256": "2d0a1431c87268d941fca126ffc1035064b81a38491e9dd707e451dad3d27cfa",
+        "subject_alternative_names": [
+          [
+            "DNS",
+            "final-replica.test"
+          ],
+          [
+            "DNS",
+            "localhost"
+          ],
+          [
+            "IP Address",
+            "127.0.0.1"
+          ]
+        ],
+        "not_after": "Dec  7 03:47:50 2026 GMT",
+        "trusted_ca_and_hostname": true,
+        "wrong_hostname_rejected": true,
+        "untrusted_ca_rejected": true
+      }
+    },
+    "local_auth": {
+      "login": true,
+      "secure_cookie": true,
+      "anonymous_denied_status": 303
+    },
+    "local_roles": {
+      "ungranted_evidence": 403,
+      "service_view_without_evidence": 403,
+      "scoped_evidence_allowed": 200,
+      "other_service_evidence_denied": 404,
+      "source_admin_api_denied": 403,
+      "csrf_denied": 403,
+      "same_session_role_removal_denied": 403,
+      "password_change": {
+        "challenge": {
+          "status": 303,
+          "location": "/account/password"
+        },
+        "change": {
+          "status": 303,
+          "location": "/"
+        },
+        "initial_credentials_rejected_status": 401,
+        "fresh_login": {
+          "status": 303,
+          "location": "/"
+        },
+        "authenticated_password_page": true,
+        "passed": true
+      }
+    },
+    "restore": {
+      "equal": true,
+      "table_count": 128,
+      "row_count": 5866,
+      "sequence_count": 82,
+      "evidence_files": 9,
+      "evidence_bytes": 3251219,
+      "archives": {
+        "database.dump": {
+          "bytes": 4045791,
+          "sha256": "4fec0e3b5a5d8f578374c9fac0a47b228a5689be82a4cb808dffdd8aad1cf1af"
+        },
+        "evidence.tar.gz": {
+          "bytes": 2901090,
+          "sha256": "33560293e27275819dfefef9f21ae3edc5287d40d24465d5ae3095e3f2f0e08d"
+        },
+        "quiesced-postgres.tar.gz": {
+          "bytes": 52614855,
+          "sha256": "1b77d0aab54927b3a0af40a42a11c95d8b43ebc5a8ec42bf471e40ba7013a07d"
+        }
+      },
+      "method": "Both original containers stopped; read-only volume archive; clone database only; consistent pg_dump -Fc; pg_restore --exit-on-error --no-owner --no-acl into fresh PostgreSQL 16 storage; exact full table/sequence/file comparison before portal startup",
+      "encryption_key_preserved": true,
+      "original_containers_untouched": true
+    },
+    "restored_signed_evidence_count": 9,
+    "restored_cold_pull": {
+      "release_id": 9,
+      "cache_files_before": 0,
+      "graph": {
+        "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+        "root_digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+        "verified_bytes": 22315,
+        "manifests": [
+          {
+            "digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+            "size": 491,
+            "mediaType": "application/vnd.oci.image.index.v1+json"
+          },
+          {
+            "digest": "sha256:8529cfa81618a6a82395c52f24aa2f528dfbb947b129c4f3b21e3fbd752f70c7",
+            "size": 398,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json"
+          },
+          {
+            "digest": "sha256:5dd43da7e0f8e37d58ff9c1869a8b9183e3c7788966896a5f2398720f6de23c4",
+            "size": 398,
+            "mediaType": "application/vnd.oci.image.manifest.v1+json"
+          }
+        ],
+        "blobs": [
+          {
+            "digest": "sha256:557b39627304c9a98e1910b5082c51cce76573cb7b42258f34bb2014029929c2",
+            "size": 274
+          },
+          {
+            "digest": "sha256:2e494de843a8bf3e30ed5a1cce81d9154d5ce845e8c4c7f250c9b9172465079e",
+            "size": 10240
+          },
+          {
+            "digest": "sha256:7c51c966cc786f15a661a295553604795ba6233ffe300dd45274cbd9a4ca79d2",
+            "size": 274
+          },
+          {
+            "digest": "sha256:2c63fa5661360722113527ec746a300c5696ae3ad2bc4ce28ec1df2e03328db0",
+            "size": 10240
+          }
+        ],
+        "manifest_count": 3,
+        "blob_count": 4,
+        "complete": true
+      }
+    },
+    "bounded_load": {
+      "requests": 240,
+      "failures": 0,
+      "elapsed_seconds": 13.832,
+      "requests_per_second": 17.35,
+      "latency_ms": {
+        "min": 5.45,
+        "median": 204.55,
+        "p95": 1134.2,
+        "max": 3237.3
+      },
+      "max_p95_ms": 5000,
+      "passed": true,
+      "concurrency": 8,
+      "paths": [
+        "/readyz",
+        "/api/replica/releases",
+        "/api/replica/releases/9/context"
+      ],
+      "scope": "Authenticated read burst only; does not establish sustained production sizing or registry throughput"
+    },
+    "database_outage": {
+      "portal_liveness": 200,
+      "portal_readiness": 503,
+      "portal_readiness_body": {
+        "status": "unavailable"
+      },
+      "proxy_readiness": 503,
+      "detection_seconds": {
+        "oci-proxy": 108.05,
+        "portal": 160.83
+      },
+      "portal_docker_health": "unhealthy",
+      "proxy_docker_health": "unhealthy"
+    },
+    "recovery": {
+      "portal_readiness": 200,
+      "portal_docker_health": "healthy",
+      "proxy_readiness": 200,
+      "proxy_docker_health": "healthy",
+      "authenticated_release_api": true,
+      "required_app_restart": false,
+      "observed_seconds": 16.0
+    },
+    "limits": [
+      "No external alert destination or production monitor configuration was supplied; delivery/escalation is not qualified.",
+      "This is a bounded read burst on the development host, not sustained production concurrency, registry bandwidth, recovery-time SLA or off-host backup durability.",
+      "No production hostname, enterprise CA/DNS or reachable local SSO issuer was supplied; local qualification TLS and local accounts only."
+    ]
+  },
+  "compatibility": {
+    "synthetic_evidence_fixture": true,
+    "registry_transport_and_cosign_are_real": true,
+    "results": {
+      "focused_pytest": {
+        "passed": 152,
+        "log": "pytest.log"
+      },
+      "harbor_controller_pytest": {
+        "passed": 63,
+        "log": "pytest-robot.log"
+      },
+      "arm64_image": {
+        "passed": true,
+        "id": "sha256:5ae19c677f5a043fe9cda926566e8cfe4cc954ee91a8e25e9251d1283ccfe4c3",
+        "tag": "cats-compat-replica:arm64",
+        "platform": "linux/arm64",
+        "execution": "Docker Desktop emulation on amd64 host; not native ARM hardware",
+        "cosign": "2.6.1 linux/arm64, official SHA256 checked in Dockerfile",
+        "log": "arm64-build.log",
+        "signed_graph": "verified-aarch64.json",
+        "portal_and_proxy_http": "arm64-health.json"
+      },
+      "alternate_registry": {
+        "passed": true,
+        "source": "Distribution 2.8.3",
+        "target": "Zot v2.1.22",
+        "transport": "private TLS; source stopped before verification",
+        "graphs": "signed release and revocation, two-architecture image index, chart, signature and cyber-approval attestation manifests and blobs",
+        "publish": "publish.log",
+        "amd64_verification": "verified-x86_64.json",
+        "native_oci11_referrer": "zot-referrers.json",
+        "unrelated_referrer_excluded": true,
+        "negatives": "negative.json",
+        "partial_graph_negative": "Zot protects referenced architecture child deletion (405); removing chart root is accepted and causes CATS release verification to reject",
+        "strict_source_offline_probe": {
+          "passed": true,
+          "report": "strict-source-offline-probe.json",
+          "raw_probe": "source-offline-probe.json",
+          "scope": "Separate affected-probe rerun: trusted TLS HTTP 200 while source online, explicit source stop, then fixed-IP host_unreachable. Existing complete-graph verification reports unchanged.",
+          "rejects": [
+            "HTTP/authentication failures",
+            "TLS validation failures",
+            "DNS resolution failures"
+          ]
+        }
+      },
+      "legacy_inventory": {
+        "passed": true,
+        "fixture": "CATS signed inventory omits optional retention_tag; pinned complete graphs retained; no signed bytes changed afterward",
+        "explicit_tag_backfill_and_tag_only_copy": "explicit-backfill.json",
+        "current_offline_importer": "current-importer.json",
+        "oras": "1.3.0 linux/amd64, official SHA256 verified",
+        "retained_attachment_tags": 5,
+        "offline_import_layout": "backfill/legacy/{image-0,chart-1,release}; different from original replica discovery paths"
+      },
+      "rotation_and_lost_key": {
+        "passed": true,
+        "tests": "portal/tests/test_release_rotation_boundaries.py",
+        "cryptography": "real EC signatures using in-process test sign/verify adapter; configuration and chain-validation code are production",
+        "max_transitions": 32,
+        "max_service_cutovers_per_certificate": 10000,
+        "aggregate_chain_bytes": 4194304,
+        "aggregate_bound_can_precede_count_bounds": true,
+        "missing_current_private_key_fails_native_guard": true,
+        "same_key_backup_reupload_preserves_chain_and_successor_transition": true
+      },
+      "renewed_harbor_robot_live_preflight": {
+        "passed": true,
+        "read_only": true,
+        "report": "robot-preflight.json",
+        "scope": "existing source and target qualification robots, current expiry plus credential-authenticated repository read; no renewal or permission changes"
+      }
+    },
+    "remaining_deployment_inputs": [
+      "Native ARM hardware, load and performance qualification on intended host",
+      "Production registry versions, auth policies, retention and replication rules; this test does not generalize arbitrary registries or attestation formats",
+      "Actual retained legacy graphs/bundles and independently trusted publisher pin; backfill cannot restore deleted content or absent frozen service evidence",
+      "Authorized current-key backup, password/config encryption key and custody procedure; irreversible current-key loss or exhausted chain bounds require separately authorized trust migration"
+    ]
+  },
+  "recovery": {
+    "process-kill-after_projection": {
+      "complete": true,
+      "observed_at": "2026-11-07T09:20:55.632265+00:00",
+      "scope": "Controlled verified-format/sealed fixture; real PostgreSQL and TCP HTTP",
+      "boundary": "after_projection",
+      "worker_exit_code": 1,
+      "predecessor_visible_during_activation": true,
+      "projection_rolled_back_after_os_kill": true,
+      "fresh_worker_recovery": "activated",
+      "second_replay": "unchanged",
+      "release_count": 2,
+      "activation_audit_count": 2,
+      "high_sequence": 2
+    },
+    "process-kill-before_commit": {
+      "complete": true,
+      "observed_at": "2026-11-07T09:21:08.894178+00:00",
+      "scope": "Controlled verified-format/sealed fixture; real PostgreSQL and TCP HTTP",
+      "boundary": "before_commit",
+      "worker_exit_code": 1,
+      "predecessor_visible_during_activation": true,
+      "projection_rolled_back_after_os_kill": true,
+      "fresh_worker_recovery": "activated",
+      "second_replay": "unchanged",
+      "release_count": 2,
+      "activation_audit_count": 2,
+      "high_sequence": 2
+    },
+    "live-http-expiry": {
+      "complete": true,
+      "observed_at": "2026-11-07T09:21:18.401254+00:00",
+      "scope": "Controlled verified-format/sealed fixture; real PostgreSQL and TCP HTTP",
+      "expires_at": "2026-11-07T09:21:17.828464+00:00",
+      "allowed_at": "2026-11-07T09:21:13.137022+00:00",
+      "denied_at": "2026-11-07T09:21:18.401254+00:00",
+      "clock_patched": false,
+      "registry_stopped_before_expiry": true,
+      "upstream_requests": 2,
+      "proxy_restarted_after_expiry": true,
+      "post_restart_requests": [
+        {
+          "method": "GET",
+          "kind": "manifests",
+          "status": 403
+        },
+        {
+          "method": "GET",
+          "kind": "blobs",
+          "status": 403
+        },
+        {
+          "method": "HEAD",
+          "kind": "manifests",
+          "status": 403
+        },
+        {
+          "method": "HEAD",
+          "kind": "blobs",
+          "status": 403
+        }
+      ]
+    },
+    "live-http-shared-artifact": {
+      "complete": true,
+      "observed_at": "2026-11-07T09:21:25.106755+00:00",
+      "scope": "Controlled verified-format/sealed fixture; real PostgreSQL and TCP HTTP",
+      "shared_root": "sha256:d4f1675b271f4b9ad47365777207f998968542e786b3766c7a81b8af97549155",
+      "shared_blob": "sha256:b16a15d74da3b5c63846e3f75807ffa2fdca72fe891d06bfd7b074e81c3a665f",
+      "override_id": 1,
+      "both_mapping_caches_primed": true,
+      "registry_stopped_before_isolation_checks": true,
+      "local_override_usage_audits": 6,
+      "requests": [
+        {
+          "method": "GET",
+          "kind": "manifests",
+          "override_service_status": 200,
+          "other_service_status": 403
+        },
+        {
+          "method": "GET",
+          "kind": "blobs",
+          "override_service_status": 200,
+          "other_service_status": 403
+        },
+        {
+          "method": "HEAD",
+          "kind": "manifests",
+          "override_service_status": 200,
+          "other_service_status": 403
+        },
+        {
+          "method": "HEAD",
+          "kind": "blobs",
+          "override_service_status": 200,
+          "other_service_status": 403
+        }
+      ],
+      "upstream_requests": 3
+    }
+  },
+  "recovery_restart_scope": "Expiry HTTP-server restart occurs in the same Python process. Full application/database container restart is independently qualified by the inventory and nginx journeys.",
+  "tests": {
+    "affected_features": {
+      "tests": 1019,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 1018,
+      "seconds": 122.992,
+      "report": "tests/pytest.xml"
+    },
+    "final_focused": {
+      "tests": 118,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 118,
+      "seconds": 3.589,
+      "report": "tests/final-focused.xml"
+    },
+    "inventory_mount_followup": {
+      "tests": 29,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 29,
+      "seconds": 0.991,
+      "report": "tests/inventory-mount-followup.xml"
+    },
+    "real_postgresql_tcp_process_recovery": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 4,
+      "seconds": 41.105,
+      "report": "recovery/pytest.xml"
+    },
+    "overlap_note": "Runs overlap and must not be summed as unique tests. Prior broader, frontend and migration evidence remains in the referenced completion report.",
+    "skip": "Windows-host test_real_cosign_encrypted_key_roundtrip: host Cosign absent. Linux registry workflows use real Cosign; the exact test passed in the prior completion run."
+  },
+  "images": [
+    {
+      "os": "linux",
+      "created": "2026-11-07T09:30:34.157215941Z",
+      "id": "sha256:a46a19488f3c50b8869f04238e7673d74af4af42b3d3f939b5b6e4e79145d9ff",
+      "architecture": "amd64",
+      "tag": "cats:remaining-20261107"
+    },
+    {
+      "os": "linux",
+      "created": "2026-11-07T09:28:29.037958116Z",
+      "id": "sha256:64e4df849eb17747796a37fd1e47a1fa3268fb56f232a47cd9a8b63c6a4fc888",
+      "architecture": "amd64",
+      "tag": "cats-replica:remaining-20261107"
+    },
+    {
+      "os": "linux",
+      "created": "2026-11-07T09:19:17.081581481Z",
+      "id": "sha256:5ae19c677f5a043fe9cda926566e8cfe4cc954ee91a8e25e9251d1283ccfe4c3",
+      "architecture": "arm64",
+      "tag": "cats-compat-replica:arm64"
+    }
+  ],
+  "cleanup": {
+    "complete": true,
+    "checked_at": "2026-11-07T10:08:31.5783948+00:00",
+    "owned_container_count": 51,
+    "all_owned_containers_stopped": true,
+    "volumes_and_images_preserved": true,
+    "unrelated_containers_changed": false,
+    "stopped_by_root_projects": [
+      "cats-remaining-replica-20261107",
+      "cats-harbor-acceptance-20261105"
+    ]
+  },
+  "remaining_environment_specific_work": [
+    "Intended staging host and native ARM performance/capacity",
+    "Intended registry versions, policies and retention",
+    "Deployment DNS, enterprise TLS and SSO",
+    "External alert delivery and sustained workload",
+    "Off-host backup custody and measured recovery objectives",
+    "Authorized trust migration if a key backup is absent or rotation bounds are exhausted; retained graphs/new approval for unsupported legacy evidence"
+  ],
+  "evidence_root": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\remaining-20261107",
+  "evidence_sha256": {
+    "cleanup.json": "bb5a80fa0ea102e7cad1b7fa8c5602132969797e0eb23fbcfd949506c572fc32",
+    "compatibility/arm64-build.log": "eb1678ef6da60c47d35bcaf49ec86c0a96aa263bd826e0f2b8c43c2262f0d25c",
+    "compatibility/arm64-health.json": "9850a100faeb9702b88dacb51735dbabeff675f3c06b72b70c1dad9a2179a2a9",
+    "compatibility/arm64-verify.log": "44220b68f962ef04831a66c5d3ab16bf943d7948f9780aea11182785c6f000ce",
+    "compatibility/cosign_checksums.txt": "e6a1af26aec6127c223114bc7dfad48e06fe7e84a9285d96ceb67df8aa88d88b",
+    "compatibility/current-importer.json": "09ebc7393567b5958eb5df1c37514e5ce930f99568bbb4ec243514627b899e1b",
+    "compatibility/explicit-backfill.json": "80d316cd8175a543774ce80c1302935ad00c2772e68bb06730c51f2d28cb2aa3",
+    "compatibility/negative.json": "c98e6ab503433938d097c2f28d9c4714b8816f74c6474baa9ba86c20c9aa2494",
+    "compatibility/negative.log": "eb07e067bdecdc6b24ac35e5081c800f96e3a0936f0e584f397f1edca2b138c4",
+    "compatibility/offline-import.log": "f6e713efee1d143e7f0a0ff18bb29da55f7791eaf9f761188a4ff4cb86566d4f",
+    "compatibility/oras_checksums.txt": "4233c2020db9cfb4022c6ecf0502313dea93b8ac98958c21a0edde163b3f272a",
+    "compatibility/publish.log": "e3ed992526805c889f07cc0ad4db01f3a82d906de99542a8a3f2412f8ef22130",
+    "compatibility/pytest-robot.log": "f4e39d18dd6c423aaf4699050ed2546473913fe8641da7180a5623a58cd0fb9d",
+    "compatibility/pytest.log": "c2310e3adef3f76e78d37b06421e5528bf4e1855f456ee1532c8dcf50197652b",
+    "compatibility/robot-preflight.json": "ca8357c6ec6ccf7358fd2a98391b25b29dff1514bb1ec83cb61ec0cddcc27507",
+    "compatibility/sha256.json": "ca81c69931d71bdd70057bce76dea166a567978cd4c93ee57f06088d485886bb",
+    "compatibility/source-offline-probe.json": "5bf161338a1b4ced353bd39af74fc10d50ced29277c404d7897b98a97d09ea4b",
+    "compatibility/strict-source-offline-probe.json": "18397af9394c1c0bb3a9c48eeef5a6e17a4e9bd16ece5d3945196e3bc299e0ce",
+    "compatibility/summary.json": "b10b00ba7aa1d126fb02d955cdf72a3ede987490ad1afdc26cd20272942b763b",
+    "compatibility/verified-aarch64.json": "310d10bc87947d2115e67e8dd920fd3466d5d28986b7c2c2cc28456146a6b529",
+    "compatibility/verified-x86_64.json": "5d2ded5294e10a4adfb075972d42e8318c6c56fc22d5889d13b829308e93875a",
+    "compatibility/zot-referrers.json": "84eb02cec97a7fc70535960e8faa457c07cde0c8b046770c0d873f0711ec47cf",
+    "deployment/after-restore.json": "269cd4f2a9b970375042ddf730164fc9ff7b2ea55718fdd50550bae1a689376b",
+    "deployment/before-readiness-fix.json": "1bbfd2beabded2e7b4710c52b07e37f4026ad765634d481ef46b72dddc18c346",
+    "deployment/before-restore.json": "269cd4f2a9b970375042ddf730164fc9ff7b2ea55718fdd50550bae1a689376b",
+    "deployment/deployment-summary.json": "2ba9e3b5e29587e4733f13e68a356be888d33332d7784c5b82ec67d2fb88d977",
+    "deployment/live-report.json": "088fdf2124ca12d2165d2cdd4b3d733ba2cdfae8e7b1988431974758a5078405",
+    "deployment/operational-report.json": "fd3d2a8b411327a060ecd80e993dc43ed1bbc957c0ae8c11d1cee1be58132f64",
+    "deployment/password-reset-report.json": "0e16d31c68dfc0a90b82adbd69a5899cf10ea52c7266a4d672c2f2a3aef9d3b2",
+    "harbor-source-stop.json": "e4b56911d8c33dbed0cb5d20f4205751e3377e406980764363647e0bac3126dc",
+    "harbor/harbor-replication.json": "4aa5979a295c8f42cb2783c109f55dd14365beb07a0fc1d52977b2699d8cd22c",
+    "harbor/robot-renewal.json": "5aeda428cfb0e4736eb23e93886ff41db25be11d47e7b9d0d666beaea81c880e",
+    "image-builds.json": "0b2a8b00d7d6de8f0cf73057de2187721d7a087ad5d9a5468f46ce290ec29d56",
+    "inventory-persistence-verify-corrected.log": "ff5da28dec22a7404baa630c8680c19052dc9f43fb2293573e461d6192922774",
+    "inventory-persistence-verify.log": "039c82fc55a418fd7769095562c8b3b4a08151d0b2c1d90d51ff2a67ad96a942",
+    "inventory/cache-omission.json": "4a9f9106238a198f23654ab5d1cf0720ac17da36090cb2d222acb70a9ed7c266",
+    "inventory/cold-cache-proof.json": "d86396f39c4320a1fc9a304d5f45d879c3c5340182002de23da3dd6ec028caba",
+    "inventory/http/replica-acceptance.json": "9da6e796d39b73907825bea0120034bcf853e2f26324e31606559f2a4990e3d1",
+    "inventory/restart-proof.json": "8aaba61aacee58c309cf703350d9687955fb6d6bc3d85a3f64364bf62f99cca1",
+    "inventory/runtime-verification.json": "98d1e24046e63ff73a1e8d429dd681c4716bcef9f20914e453184422f543a0cb",
+    "inventory/target-omission.json": "1da11c2ee88fcb080659f2156c848a92dfccf75c390ca4013b4a6af2aaecbb0c",
+    "nginx-harbor/cleanup.json": "c204a5ee194ea7b826702a9fdfe07db023dc8d82571846f2b6bc6402cd3590cb",
+    "nginx-harbor/harbor-executions.json": "9af6b88c8932f55dc5da6c36bed0777204dfa15429cb220189003fbcfa9c2f31",
+    "nginx-harbor/harbor-qualification.json": "e9382eaedec3cb02c1d92aeb43f8fcb2232716719c98e308ea69a5482a5919f3",
+    "nginx-harbor/harness-tests.xml": "ddc4e174a51eff1b6b8fc6b2de3e8b8ca38baca08d77dd01d75ccd34044af149",
+    "nginx-harbor/probe-alias-correction.json": "77882063123a313850a8897bc5c31a1e3e65e757a0f40e218e4e716e939f97c4",
+    "nginx-harbor/qualification-summary.json": "ae29a416d519f6b30ff4399bb763dcedc641f6510075d94466ea36c9d4cf8267",
+    "nginx-harbor/readiness-after-restart.json": "597ecbaacaa48b61b74bdf2bf1dad835ca3a056af56412b44180fb91a515cf96",
+    "nginx-harbor/replica-acceptance.json": "d2a0f8b06a99101d66c5e26a49c9bb88fcc560008d963e2f8850ec9e0099bb67",
+    "nginx/patched-receipt.json": "ebd7cd9d0e581c4dd16272df60fae0b7b2bf9b76b51eeefe4ad33a2934a0b249",
+    "nginx/qualification-summary.json": "ef0a6165a2a21d547317d37d31bbd99dd4efc4ed3ce9a40812e18593e8077ec0",
+    "nginx/replica-acceptance.json": "207c6216a632a8540e6bb733944b3710440c1eb3ece32f8a550a3d395257a421",
+    "nginx/runtime/hardening-runtime.json": "2ea72e1fb1dc435186ca1a1e61baf6f264f049ffc7c8ed4c49b628edd00a6d61",
+    "nginx/source-receipt.json": "34e9911fe01302a0ad1291e88798533975d8263e9dd51cce9ee1a3596bc52aa0",
+    "recovery/live-http-expiry.json": "1cb2de3f99bb0caead330ad00c253c0f87d8efc08eb4949463f2b4ee04361753",
+    "recovery/live-http-shared-artifact.json": "9f4813efc4d822cbdeea9a7c0c72b4e1dce6dbfd115807c2fd710129318b6622",
+    "recovery/process-kill-after_projection.json": "a2f256b7ffc72cebd2c4a40c7a8f3bc79318cbb062f7f42e125792e17a60fb4b",
+    "recovery/process-kill-before_commit.json": "36bc6b8264449ab3e228d43565dc2af3976e8ff1f9b6c68f075002be842ed5f4",
+    "recovery/pytest.xml": "6706004c2695ed607bcb497f3df096157726d95988bc3fcb4ea131e722ce55bd",
+    "tests/final-focused.xml": "70e4cd2d70784db420b1818a33887a4e81e37a7c1424709a7c7c378fd208d3be",
+    "tests/inventory-mount-followup.xml": "ae9cbeedb2657129e024029762b744ed088cc7d720b4590ce006808dedc9555c",
+    "tests/pytest.xml": "d2c649dfb058dcc134af44cb7f63fb6e4d654687a176c11c8f38b5498bba7fef"
+  },
+  "evidence_policy": "Only sanitized observations and hashes committed. Private credentials, signing keys, runtime state, database backups and detailed evidence remain outside Git. No push or merge."
+}
