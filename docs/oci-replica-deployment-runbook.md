@@ -73,7 +73,9 @@ Expect healthy running services and a successful signed publication receipt befo
 
 Use Docker Compose v2 and a separate project, database and volumes. The [replica Compose file](../compose.replica.yaml) is standalone. Do not combine it with the full `compose.yaml` or the full deployment template: those deploy assessment infrastructure that a replica does not need.
 
-The replica has exactly three services: `db`, `portal`, and `oci-proxy`. It has no Docker socket, scanner worker, patch worker, validator, intelligence database or intelligence initialization job. The image contains the signature verifier and portal runtime, not scanner/validator tools.
+For deployment with prebuilt images, use the dedicated [replica template and environment example](../templates/README.md#cats-replica). That template requires an explicit image and has no build context; it can be deployed without a source checkout. It adds a fourth service, Nginx, for built-in HTTPS routing with private TLS backends. Prepare the pinned Nginx image, two DNS names and matching certificate directories as described there. It preserves the root file's `cats-replica` project, volume names and replica settings. The commands below use the root file, which also supports local builds.
+
+The root replica file has exactly three services, ordered `portal`, `oci-proxy`, then `db`. Both variants have no Docker socket, scanner worker, patch worker, validator, intelligence database or intelligence initialization job. The image contains the signature verifier and portal runtime, not scanner/validator tools.
 
 Prepare the image while build dependencies are reachable, or deliver a previously built and verified image into the disconnected environment. Prepare the `postgres:16` image too. The replica Dockerfile supports `linux/amd64` and `linux/arm64`, selecting the checksum-pinned Cosign binary for the target architecture. Use BuildKit/buildx and an explicit `--platform` when cross-building; other target architectures fail the build. ARM64 qualification covers a complete image build, native ARM64 tool binaries, signed graph verification and portal/proxy startup under Docker Desktop emulation. Native ARM hardware, deployment capacity and performance still require qualification on the intended host.
 
@@ -101,9 +103,11 @@ Compose fixes `CATS_MODE=replica`, production mode, disabled development-auth by
 
 ### HTTPS and names
 
-Select your actual portal and OCI hostnames, DNS records and trusted certificates. Place a TLS ingress in front of the loopback portal and proxy ports. Preserve the original Host and HTTPS forwarding information; configure the ingress/forwarded-header trust for your topology. Do not expose the plain HTTP backend ports to consumer networks. The replica file does not include an ingress or create DNS/certificates.
+Select your actual portal and OCI hostnames, DNS records and trusted certificates. The deployment template includes TLS passthrough routing on port 443, with certificates mounted in the private portal and proxy backends; no forwarded-header trust is needed for that path. Both full and replica templates use port 443, so use separate hosts or adapt ingress/port mappings when sharing a host. Neither variant creates DNS records or issues certificates.
 
-The portal sets secure cookies, so use its HTTPS address for browser login. The local health probes can use loopback HTTP. OCI clients must trust the ingress certificate; the replica must separately trust the local upstream registry certificate. Use your actual hostnames in client commands, not the examples from other deployment documents. Do not layer a full-stack ingress template onto this replica merely to obtain TLS.
+When using the root replica file instead, place a TLS ingress in front of its loopback portal and proxy ports. Preserve the original Host and HTTPS forwarding information; configure the ingress/forwarded-header trust for your topology. Do not expose those plain HTTP backend ports to consumer networks. The root file does not include ingress.
+
+The portal sets secure cookies, so use its HTTPS address for browser login. The root file's local health probes use loopback HTTP; the deployment template verifies backend certificates over HTTPS. OCI clients must trust the ingress certificate; the replica must separately trust the local upstream registry certificate. Use your actual hostnames in client commands, not the examples from other deployment documents. Do not layer a full-stack ingress template onto this replica merely to obtain TLS.
 
 For disconnected use, keep a tested local login or configure an OIDC/Keycloak issuer reachable within System B's environment. A login that depends on an unreachable external identity provider cannot provide offline access.
 

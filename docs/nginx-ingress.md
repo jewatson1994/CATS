@@ -1,6 +1,6 @@
 # Portal and OCI pulls on HTTPS port 443
 
-`templates/compose.main.yaml` includes Nginx, its startup command, and its routing configuration in one Compose file. The startup command validates the hostnames and writes the configuration into the container's writable `/tmp` area. No Nginx override or companion configuration files are needed. Use Docker Compose v2 (`docker compose`). This routing change needs no CATS image rebuild.
+Both `templates/compose.main.yaml` and `templates/compose.replica.yaml` include Nginx, its startup command, and its routing configuration in one Compose file. The startup command validates the hostnames and writes the configuration into the container's writable `/tmp` area. No Nginx override or companion configuration files are needed. Use Docker Compose v2 (`docker compose`). This routing change needs no CATS image rebuild. For replica startup, use the [dedicated replica instructions](../templates/README.md#cats-replica); the commands below address main CATS.
 
 All hostnames in this guide are placeholders. Replace `portal.example.com` and `registry.example.com` with your own distinct DNS names. Set `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME` in your deployment environment; Compose requires both and supplies no hostname defaults.
 

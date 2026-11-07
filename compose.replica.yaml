@@ -1,54 +1,54 @@
-# Standalone deployment: do not combine this with the full compose.yaml.
-# docker compose --env-file .env.replica -f compose.replica.yaml up -d --build
+# Standalone replica: portal, read-only OCI proxy, and a dedicated database.
+# Setup: docs/oci-replica-deployment-runbook.md; settings: .env.replica.example.
+# This checkout supports local builds. For prebuilt images, use templates/compose.replica.yaml.
+# Keep this project separate from the full CATS Compose stack.
 name: cats-replica
-services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-cats}
-      POSTGRES_USER: ${POSTGRES_USER:-cats}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-    volumes:
-      - replica_db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
 
+services:
+  # 1. Portal — browse retained evidence and administer replica synchronization.
   portal:
     image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
     build:
       context: ./portal
       dockerfile: Dockerfile.replica
+    # The OCI proxy below reuses these settings through *replica_environment.
     environment: &replica_environment
+      # Fixed replica runtime settings.
       CATS_MODE: replica
       CATS_ENV: production
       CATS_DEV_AUTH_BYPASS: "false"
+      CATS_DEPLOYMENT_VALIDATION_ENABLED: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+
+      # Dedicated database and persistent credential encryption key.
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+
+      # Local administrator and optional locally reachable OIDC provider.
       CATS_BOOTSTRAP_USERNAME: ${CATS_BOOTSTRAP_USERNAME:-admin}
       CATS_BOOTSTRAP_PASSWORD: ${CATS_BOOTSTRAP_PASSWORD:?Set CATS_BOOTSTRAP_PASSWORD}
-      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
       SESSION_COOKIE_SECURE: "true"
       CATS_OIDC_ENABLED: ${CATS_OIDC_ENABLED:-false}
       CATS_OIDC_ISSUER_URL: ${CATS_OIDC_ISSUER_URL:-}
       CATS_OIDC_CLIENT_ID: ${CATS_OIDC_CLIENT_ID:-}
       CATS_OIDC_CLIENT_SECRET: ${CATS_OIDC_CLIENT_SECRET:-}
       CATS_OIDC_REDIRECT_URI: ${CATS_OIDC_REDIRECT_URI:-}
+
+      # Retained releases/evidence and the proxy's bounded blob cache.
       CATS_APPROVED_RELEASE_ROOT: /var/lib/cats/releases
       CATS_REPLICA_STORAGE: /var/lib/cats/replica
+      CATS_OCI_CACHE_DIR: /var/cache/cats-oci
+      CATS_OCI_CACHE_MAX_BYTES: ${CATS_OCI_CACHE_MAX_BYTES:-10737418240}
+
+      # Discovery limits apply across a complete synchronization run.
       CATS_REPLICA_DISCOVERY_MAX_PAGES: ${CATS_REPLICA_DISCOVERY_MAX_PAGES:-100}
       CATS_REPLICA_DISCOVERY_MAX_ENTRIES: ${CATS_REPLICA_DISCOVERY_MAX_ENTRIES:-10000}
       CATS_REPLICA_DISCOVERY_MAX_RELEASES: ${CATS_REPLICA_DISCOVERY_MAX_RELEASES:-10000}
-      CATS_OCI_CACHE_DIR: /var/cache/cats-oci
-      CATS_OCI_CACHE_MAX_BYTES: ${CATS_OCI_CACHE_MAX_BYTES:-10737418240}
-      CATS_DEPLOYMENT_VALIDATION_ENABLED: "false"
-      PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - replica_evidence:/var/lib/cats
     ports:
+      # Host-local HTTP backend; provide an HTTPS ingress for browser login.
       - "127.0.0.1:${CATS_PORT:-8080}:8000"
     depends_on:
       db:
@@ -63,14 +63,17 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
+  # 2. OCI access — enforce release approval and serve verified local content.
   oci-proxy:
     image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers"]
     environment: *replica_environment
     volumes:
+      # Evidence is read-only here; downloaded blobs use a separate cache.
       - replica_evidence:/var/lib/cats:ro
       - replica_cache:/var/cache/cats-oci
     ports:
+      # Host-local HTTP backend; expose consumer access through HTTPS ingress.
       - "127.0.0.1:${CATS_OCI_PORT:-5000}:5000"
     depends_on:
       db:
@@ -86,7 +89,28 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
+  # 3. Database — local accounts, replica state, and authorization records.
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cats}
+      POSTGRES_USER: ${POSTGRES_USER:-cats}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - replica_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+# Persistent storage belongs to the cats-replica project, separate from main CATS.
+# Preserve these volumes and the encryption key during upgrades.
 volumes:
+  # PostgreSQL data.
   replica_db:
+  # Imported releases, evidence, and replica files.
   replica_evidence:
+  # Verified OCI blob cache.
   replica_cache:

@@ -8,13 +8,19 @@ name: cats
 #
 #   docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --wait
 #
+# Relative host paths resolve from this file's templates/ directory, including
+# seccomp profiles. Keep the checkout's deploy/ files alongside templates/.
+# Create the repository-root scan-registry-auth directory before startup;
+# an empty directory is valid for public sources.
+# Existing deployments should retain explicit auth and backup paths on upgrades.
+#
 # Authentication:
 #   - CATS provides local authentication by default.
 #   - External identity providers may be configured through OIDC.
 #   - CATS does NOT bundle or operate an identity provider.
 #
 # Image:
-#   - CATS_IMAGE may be used to select the CATS image/version.
+#   - CATS_IMAGE must select the built CATS image/version.
 #   - Example:
 #       CATS_IMAGE=cats:YOUR_VERSION
 #
@@ -24,242 +30,8 @@ name: cats
 services:
 
   # =========================================================
-  # PostgreSQL
+  # Portal and Access
   # =========================================================
-
-  db:
-    image: postgres:16-alpine
-
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-cats}
-      POSTGRES_USER: ${POSTGRES_USER:-cats}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
-
-    restart: unless-stopped
-
-
-  # Intelligence has independent storage and an independent import process.
-  intelligence-db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
-      POSTGRES_USER: ${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}
-      POSTGRES_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
-    volumes:
-      - intelligence_postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    restart: unless-stopped
-
-  intelligence-init:
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: []
-    command: ["python", "-m", "app.intelligence_importer", "--schema-only"]
-    environment: &intelligence_environment
-      INTELLIGENCE_DATABASE_URL: postgresql+psycopg://${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}@intelligence-db:5432/${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
-      INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
-    depends_on:
-      intelligence-db:
-        condition: service_healthy
-    restart: on-failure:3
-
-  intelligence-importer:
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: []
-    command: ["python", "-m", "app.intelligence_importer"]
-    environment: *intelligence_environment
-    depends_on:
-      intelligence-init:
-        condition: service_completed_successfully
-    cpus: ${CATS_INTELLIGENCE_IMPORT_CPUS:-1.0}
-    mem_limit: ${CATS_INTELLIGENCE_IMPORT_MEMORY:-2g}
-    restart: on-failure:3
-
-  db-backup:
-    image: ${CATS_IMAGE:-cats:local}
-    entrypoint: ["python3", "/opt/backup/backup.py"]
-    command: ["schedule"]
-    environment:
-      PGHOST: db
-      PGPORT: 5432
-      PGDATABASE: ${POSTGRES_DB:-cats}
-      PGUSER: ${POSTGRES_USER:-cats}
-      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      BACKUP_UTC_TIME: ${BACKUP_UTC_TIME:-03:00}
-      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-7}
-    volumes:
-      - ${CATS_DB_BACKUP_DIR:-./backups/postgres}:/backups
-    depends_on:
-      db:
-        condition: service_healthy
-      portal:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python3", "/opt/backup/backup.py", "health"]
-      interval: 60s
-      timeout: 5s
-      retries: 1
-      start_period: 10m
-    restart: unless-stopped
-
-  # =========================================================
-  # Patch Worker
-  # =========================================================
-
-  patch-worker:
-    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
-    entrypoint: []
-    security_opt:
-      - no-new-privileges:true
-      - seccomp=./deploy/discovery-seccomp.json
-
-    command:
-      [
-        "uvicorn",
-        "app.patch_service:app",
-        "--host",
-        "0.0.0.0",
-        "--port",
-        "8010"
-      ]
-
-    environment:
-      CATS_PATCH_JOB_ROOT: /tmp/cats-patch-jobs
-
-      CATS_CANDIDATE_VERIFICATION_CONCURRENCY: ${CATS_CANDIDATE_VERIFICATION_CONCURRENCY:-${CATS_REMEDIATION_WORKERS:-2}}
-
-      CATS_PATCH_WORKER_TOKEN: ${CATS_PATCH_WORKER_TOKEN:?Set CATS_PATCH_WORKER_TOKEN in .env}
-
-      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
-
-      CATS_PATCH_COMMAND_TIMEOUT: ${CATS_PATCH_COMMAND_TIMEOUT:-1800}
-
-      CATS_COPA_TIMEOUT: ${CATS_COPA_TIMEOUT:-30m}
-
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - patch_jobs:/tmp/cats-patch-jobs
-      - security_grype_db:/opt/catscan/grype-db:ro
-      - security_trivy_db:/opt/catscan/trivy-cache:ro
-
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/opt/cats-venv/bin/python",
-          "-c",
-          "import subprocess,sys,urllib.request; subprocess.run([sys.executable,'-m','app.rendering','--probe'],check=True,timeout=10); urllib.request.urlopen('http://127.0.0.1:8010/openapi.json', timeout=3)"
-        ]
-      interval: 10s
-      timeout: 15s
-      retries: 12
-      start_period: 10s
-
-    restart: unless-stopped
-
-
-  # =========================================================
-  # CATS Portal
-  # =========================================================
-
-  # Dedicated daemonless scanner: no database credentials or Docker socket.
-  scan-worker:
-    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
-    entrypoint: []
-    command: ["/opt/cats-venv/bin/python", "-m", "app.scan_worker"]
-    networks: [scan_control, scan_egress]
-    # Control broker can drop scanner identity, reclaim files, and stop scanner groups.
-    # Scanner subprocesses run as 10002 without capabilities or control credentials.
-    user: "0:0"
-    read_only: true
-    cap_drop: [ALL]
-    cap_add: [SETUID, SETGID, CHOWN, KILL]
-    security_opt:
-      - no-new-privileges:true
-      - seccomp=./deploy/discovery-seccomp.json
-    cpus: ${CATS_SCAN_CPUS:-2}
-    mem_limit: ${CATS_SCAN_MEMORY:-4g}
-    pids_limit: ${CATS_SCAN_PIDS:-256}
-    stop_grace_period: 30s
-    environment:
-      PYTHONDONTWRITEBYTECODE: "1"
-      HOME: /var/lib/cats-scan
-      TMPDIR: /var/lib/cats-scan/tmp
-      CATS_SCAN_SCANNER_UID: "10002"
-      CATS_SCAN_SCANNER_GID: "10002"
-      CATS_PUBLIC_MAX_CHART_BYTES: ${CATS_PUBLIC_MAX_CHART_BYTES:-536870912}
-      CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES: ${CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES:-1073741824}
-      CATS_PUBLIC_MAX_CHART_MEMBERS: ${CATS_PUBLIC_MAX_CHART_MEMBERS:-10000}
-      CATS_PUBLIC_HELM_PULL_TIMEOUT: ${CATS_PUBLIC_HELM_PULL_TIMEOUT:-180}
-      CATS_PUBLIC_HELM_TEMP_RESERVE_BYTES: ${CATS_PUBLIC_HELM_TEMP_RESERVE_BYTES:-0}
-      HELM_DISCOVERY_MAX_ARCHIVE_BYTES: ${HELM_DISCOVERY_MAX_ARCHIVE_BYTES:-536870912}
-      HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES: ${HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES:-1073741824}
-      HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS: ${HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS:-10000}
-      CATS_SERVICE_DEFINITION_MAX_BYTES: ${CATS_SERVICE_DEFINITION_MAX_BYTES:-10485760}
-      CATS_SERVICE_DEFINITION_MAX_NODES: ${CATS_SERVICE_DEFINITION_MAX_NODES:-200000}
-      CATS_SERVICE_DEFINITION_MAX_DEPTH: ${CATS_SERVICE_DEFINITION_MAX_DEPTH:-64}
-      CATS_SERVICE_DEFINITION_MAX_STRING_BYTES: ${CATS_SERVICE_DEFINITION_MAX_STRING_BYTES:-1048576}
-      CATS_SERVICE_DEFINITION_MAX_COMPONENTS: ${CATS_SERVICE_DEFINITION_MAX_COMPONENTS:-1000}
-      CATS_SCAN_WORKER_TOKEN: ${CATS_SCAN_WORKER_TOKEN:?Set CATS_SCAN_WORKER_TOKEN in .env}
-      CATS_SCAN_WORKER_ID: ${CATS_SCAN_WORKER_ID:-scan-worker}
-      CATS_SCAN_PORTAL_URL: http://portal-control:8001
-      CATS_SCAN_JOB_ROOT: /var/lib/cats-scan
-      CATS_SCAN_CONCURRENCY: ${CATS_SCAN_CONCURRENCY:-2}
-      CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
-      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
-      CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
-      CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
-      CATS_IMAGE_SOURCE: daemonless
-      DOCKER_CONFIG: /run/cats-scan-control/registry-auth
-      GRYPE_DB_CACHE_DIR: /var/lib/cats-scan/cache/grype
-      GRYPE_DB_METADATA: /var/lib/cats-scan/cache/grype/latest.json
-      TRIVY_CACHE_DIR: /var/lib/cats-scan/cache/trivy
-      HELM_CACHE_HOME: /var/lib/cats-scan/cache/helm
-      HELM_CONFIG_HOME: /var/lib/cats-scan/config/helm
-      HELM_DATA_HOME: /var/lib/cats-scan/data/helm
-      HELM_ALLOW_NETWORK: ${HELM_ALLOW_NETWORK:-false}
-      TRIVY_IMAGE_CONFIG_SCAN_ENABLED: ${TRIVY_IMAGE_CONFIG_SCAN_ENABLED:-true}
-      DOCKLE_IMAGE_CONFIG_SCAN_ENABLED: ${DOCKLE_IMAGE_CONFIG_SCAN_ENABLED:-true}
-    volumes:
-      - scan_jobs:/var/lib/cats-scan
-      - type: bind
-        source: ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-./scan-registry-auth}
-        target: /run/cats-scan-control/registry-auth
-        read_only: true
-        bind:
-          create_host_path: false
-      - security_policy_data:/app/policy:ro
-      - security_grype_db:/opt/catscan/grype-db:ro
-      - security_trivy_db:/opt/catscan/trivy-cache:ro
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,nodev,size=${CATS_SCAN_TMP_BYTES:-536870912},mode=1777
-    depends_on:
-      portal-control:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/cats-venv/bin/python -m app.scan_worker --readiness && /opt/cats-venv/bin/python -m app.rendering --probe"]
-      interval: 10s
-      timeout: 15s
-      retries: 6
-      start_period: 30s
-    restart: unless-stopped
 
   portal:
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
@@ -269,7 +41,9 @@ services:
 
     x-shared-environment: &portal_environment
       CATS_MODE: ${CATS_MODE:-full}
-      <<: *intelligence_environment
+      <<: &intelligence_environment
+        INTELLIGENCE_DATABASE_URL: postgresql+psycopg://${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}@intelligence-db:5432/${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
+        INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
 
       # -------------------------------------------------------
       # Database
@@ -670,7 +444,6 @@ services:
 
     restart: unless-stopped
 
-
   # Dedicated internal listener: worker protocol never uses the published Portal port.
   portal-control:
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
@@ -691,7 +464,6 @@ services:
       retries: 12
       start_period: 20s
     restart: unless-stopped
-
 
   # Shared HTTPS entry point; configuration below is embedded in this file.
   nginx:
@@ -839,6 +611,11 @@ services:
       retries: 3
       start_period: 30s
 
+
+  # =========================================================
+  # Assessment and Remediation
+  # =========================================================
+
   discovery-worker:
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
@@ -848,7 +625,7 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-      - seccomp=./deploy/discovery-seccomp.json
+      - seccomp=../deploy/discovery-seccomp.json
     cpus: ${CATS_DISCOVERY_CPUS:-1}
     mem_limit: ${CATS_DISCOVERY_MEMORY:-1g}
     pids_limit: 128
@@ -872,7 +649,7 @@ services:
       - discovery_uploads:/data/discovery-uploads:ro
       - discovery_scratch:/tmp
       - type: bind
-        source: ${CATS_DISCOVERY_MIRROR_DIR:-./deploy/discovery-mirror}
+        source: ${CATS_DISCOVERY_MIRROR_DIR:-../deploy/discovery-mirror}
         target: /opt/discovery-mirror
         read_only: true
         bind:
@@ -886,6 +663,139 @@ services:
       timeout: 15s
       retries: 3
       start_period: 10s
+    restart: unless-stopped
+
+  # Dedicated daemonless scanner: no database credentials or Docker socket.
+  scan-worker:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    command: ["/opt/cats-venv/bin/python", "-m", "app.scan_worker"]
+    networks: [scan_control, scan_egress]
+    # Control broker can drop scanner identity, reclaim files, and stop scanner groups.
+    # Scanner subprocesses run as 10002 without capabilities or control credentials.
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=../deploy/discovery-seccomp.json
+    cpus: ${CATS_SCAN_CPUS:-2}
+    mem_limit: ${CATS_SCAN_MEMORY:-4g}
+    pids_limit: ${CATS_SCAN_PIDS:-256}
+    stop_grace_period: 30s
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /var/lib/cats-scan
+      TMPDIR: /var/lib/cats-scan/tmp
+      CATS_SCAN_SCANNER_UID: "10002"
+      CATS_SCAN_SCANNER_GID: "10002"
+      CATS_PUBLIC_MAX_CHART_BYTES: ${CATS_PUBLIC_MAX_CHART_BYTES:-536870912}
+      CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES: ${CATS_PUBLIC_MAX_CHART_EXPANDED_BYTES:-1073741824}
+      CATS_PUBLIC_MAX_CHART_MEMBERS: ${CATS_PUBLIC_MAX_CHART_MEMBERS:-10000}
+      CATS_PUBLIC_HELM_PULL_TIMEOUT: ${CATS_PUBLIC_HELM_PULL_TIMEOUT:-180}
+      CATS_PUBLIC_HELM_TEMP_RESERVE_BYTES: ${CATS_PUBLIC_HELM_TEMP_RESERVE_BYTES:-0}
+      HELM_DISCOVERY_MAX_ARCHIVE_BYTES: ${HELM_DISCOVERY_MAX_ARCHIVE_BYTES:-536870912}
+      HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES: ${HELM_DISCOVERY_MAX_ARCHIVE_EXPANDED_BYTES:-1073741824}
+      HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS: ${HELM_DISCOVERY_MAX_ARCHIVE_MEMBERS:-10000}
+      CATS_SERVICE_DEFINITION_MAX_BYTES: ${CATS_SERVICE_DEFINITION_MAX_BYTES:-10485760}
+      CATS_SERVICE_DEFINITION_MAX_NODES: ${CATS_SERVICE_DEFINITION_MAX_NODES:-200000}
+      CATS_SERVICE_DEFINITION_MAX_DEPTH: ${CATS_SERVICE_DEFINITION_MAX_DEPTH:-64}
+      CATS_SERVICE_DEFINITION_MAX_STRING_BYTES: ${CATS_SERVICE_DEFINITION_MAX_STRING_BYTES:-1048576}
+      CATS_SERVICE_DEFINITION_MAX_COMPONENTS: ${CATS_SERVICE_DEFINITION_MAX_COMPONENTS:-1000}
+      CATS_SCAN_WORKER_TOKEN: ${CATS_SCAN_WORKER_TOKEN:?Set CATS_SCAN_WORKER_TOKEN in .env}
+      CATS_SCAN_WORKER_ID: ${CATS_SCAN_WORKER_ID:-scan-worker}
+      CATS_SCAN_PORTAL_URL: http://portal-control:8001
+      CATS_SCAN_JOB_ROOT: /var/lib/cats-scan
+      CATS_SCAN_CONCURRENCY: ${CATS_SCAN_CONCURRENCY:-2}
+      CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
+      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
+      CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
+      CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
+      CATS_IMAGE_SOURCE: daemonless
+      DOCKER_CONFIG: /run/cats-scan-control/registry-auth
+      GRYPE_DB_CACHE_DIR: /var/lib/cats-scan/cache/grype
+      GRYPE_DB_METADATA: /var/lib/cats-scan/cache/grype/latest.json
+      TRIVY_CACHE_DIR: /var/lib/cats-scan/cache/trivy
+      HELM_CACHE_HOME: /var/lib/cats-scan/cache/helm
+      HELM_CONFIG_HOME: /var/lib/cats-scan/config/helm
+      HELM_DATA_HOME: /var/lib/cats-scan/data/helm
+      HELM_ALLOW_NETWORK: ${HELM_ALLOW_NETWORK:-false}
+      TRIVY_IMAGE_CONFIG_SCAN_ENABLED: ${TRIVY_IMAGE_CONFIG_SCAN_ENABLED:-true}
+      DOCKLE_IMAGE_CONFIG_SCAN_ENABLED: ${DOCKLE_IMAGE_CONFIG_SCAN_ENABLED:-true}
+    volumes:
+      - scan_jobs:/var/lib/cats-scan
+      - type: bind
+        source: ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-../scan-registry-auth}
+        target: /run/cats-scan-control/registry-auth
+        read_only: true
+        bind:
+          create_host_path: false
+      - security_policy_data:/app/policy:ro
+      - security_grype_db:/opt/catscan/grype-db:ro
+      - security_trivy_db:/opt/catscan/trivy-cache:ro
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=${CATS_SCAN_TMP_BYTES:-536870912},mode=1777
+    depends_on:
+      portal-control:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/cats-venv/bin/python -m app.scan_worker --readiness && /opt/cats-venv/bin/python -m app.rendering --probe"]
+      interval: 10s
+      timeout: 15s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  patch-worker:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
+    entrypoint: []
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=../deploy/discovery-seccomp.json
+
+    command:
+      [
+        "uvicorn",
+        "app.patch_service:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8010"
+      ]
+
+    environment:
+      CATS_PATCH_JOB_ROOT: /tmp/cats-patch-jobs
+
+      CATS_CANDIDATE_VERIFICATION_CONCURRENCY: ${CATS_CANDIDATE_VERIFICATION_CONCURRENCY:-${CATS_REMEDIATION_WORKERS:-2}}
+
+      CATS_PATCH_WORKER_TOKEN: ${CATS_PATCH_WORKER_TOKEN:?Set CATS_PATCH_WORKER_TOKEN in .env}
+
+      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
+
+      CATS_PATCH_COMMAND_TIMEOUT: ${CATS_PATCH_COMMAND_TIMEOUT:-1800}
+
+      CATS_COPA_TIMEOUT: ${CATS_COPA_TIMEOUT:-30m}
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - patch_jobs:/tmp/cats-patch-jobs
+      - security_grype_db:/opt/catscan/grype-db:ro
+      - security_trivy_db:/opt/catscan/trivy-cache:ro
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/opt/cats-venv/bin/python",
+          "-c",
+          "import subprocess,sys,urllib.request; subprocess.run([sys.executable,'-m','app.rendering','--probe'],check=True,timeout=10); urllib.request.urlopen('http://127.0.0.1:8010/openapi.json', timeout=3)"
+        ]
+      interval: 10s
+      timeout: 15s
+      retries: 12
+      start_period: 10s
+
     restart: unless-stopped
 
   remediation-worker:
@@ -914,13 +824,56 @@ services:
       restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-      - seccomp=./deploy/discovery-seccomp.json
+      - seccomp=../deploy/discovery-seccomp.json
     healthcheck:
       test: ["CMD", "/opt/cats-venv/bin/python", "-m", "app.rendering", "--probe"]
       interval: 30s
       timeout: 15s
       retries: 3
       start_period: 10s
+
+
+  # =========================================================
+  # Intelligence and Risk
+  # =========================================================
+
+  # Intelligence has independent storage and an independent import process.
+  intelligence-db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
+      POSTGRES_USER: ${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}
+      POSTGRES_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}
+    volumes:
+      - intelligence_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  intelligence-init:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.intelligence_importer", "--schema-only"]
+    environment: *intelligence_environment
+    depends_on:
+      intelligence-db:
+        condition: service_healthy
+    restart: on-failure:3
+
+  intelligence-importer:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: []
+    command: ["python", "-m", "app.intelligence_importer"]
+    environment: *intelligence_environment
+    depends_on:
+      intelligence-init:
+        condition: service_completed_successfully
+    cpus: ${CATS_INTELLIGENCE_IMPORT_CPUS:-1.0}
+    mem_limit: ${CATS_INTELLIGENCE_IMPORT_MEMORY:-2g}
+    restart: on-failure:3
 
   security-data-worker:
     <<: *background_worker
@@ -950,6 +903,11 @@ services:
     mem_limit: ${CATS_RISK_MEMORY:-1g}
     pids_limit: 128
 
+
+  # =========================================================
+  # Exports and Provisioning
+  # =========================================================
+
   export-worker:
     <<: *background_worker
     command: ["python", "-m", "app.export_worker"]
@@ -977,12 +935,67 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - validator_data:/app/data
-      - ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-./scan-registry-auth}:/run/registry-auth:ro
+      - ${CATS_SCAN_REGISTRY_AUTH_SOURCE:-../scan-registry-auth}:/run/registry-auth:ro
       - validator_payloads:/app/data/validator-payloads
       - ${CATS_MANAGED_VALIDATOR_RELEASE_SOURCE:-validator_staged_release}:/opt/cats/managed-validator-release:ro
     cpus: ${CATS_PROVISIONING_CPUS:-1.0}
     mem_limit: ${CATS_PROVISIONING_MEMORY:-2g}
 
+
+  # =========================================================
+  # Application Database and Backups
+  # =========================================================
+
+  db:
+    image: postgres:16-alpine
+
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cats}
+      POSTGRES_USER: ${POSTGRES_USER:-cats}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+    restart: unless-stopped
+
+  db-backup:
+    image: ${CATS_IMAGE:-cats:local}
+    entrypoint: ["python3", "/opt/backup/backup.py"]
+    command: ["schedule"]
+    environment:
+      PGHOST: db
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-cats}
+      PGUSER: ${POSTGRES_USER:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      BACKUP_UTC_TIME: ${BACKUP_UTC_TIME:-03:00}
+      BACKUP_RETENTION_COUNT: ${BACKUP_RETENTION_COUNT:-7}
+    volumes:
+      - ${CATS_DB_BACKUP_DIR:-../backups/postgres}:/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      portal:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "/opt/backup/backup.py", "health"]
+      interval: 60s
+      timeout: 5s
+      retries: 1
+      start_period: 10m
+    restart: unless-stopped
 
 
 # ===========================================================

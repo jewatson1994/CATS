@@ -152,15 +152,21 @@ def test_replica_lifespan_skips_intelligence_scanning_and_validation(monkeypatch
     assert steps == ['start', 'stop']
 
 
-def test_replica_compose_has_no_assessment_infrastructure():
+@pytest.mark.parametrize('compose_path,expected_services', [
+    ('compose.replica.yaml', {'db', 'portal', 'oci-proxy'}),
+    ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'nginx'}),
+])
+def test_replica_compose_has_no_assessment_infrastructure(compose_path, expected_services):
     root = Path(__file__).resolve().parents[2]
-    compose = yaml.safe_load((root / 'compose.replica.yaml').read_text())
-    assert set(compose['services']) == {'db', 'portal', 'oci-proxy'}
+    compose = yaml.safe_load((root / compose_path).read_text())
+    assert set(compose['services']) == expected_services
+    assert 'docker.sock' not in str(compose)
     for name in ('portal', 'oci-proxy'):
         service = compose['services'][name]
         assert service['environment']['CATS_MODE'] == 'replica'
+        assert service['environment']['CATS_DEPLOYMENT_VALIDATION_ENABLED'] == 'false'
         assert 'INTELLIGENCE_DATABASE_URL' not in service['environment']
-        assert 'docker.sock' not in str(service)
+        assert service['depends_on']['db']['condition'] == 'service_healthy'
     assert set(compose['services']['portal']['depends_on']) == {'db'}
 
 
