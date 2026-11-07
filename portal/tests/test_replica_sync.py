@@ -84,11 +84,73 @@ def test_incomplete_sync_preserves_active_and_retries(replica_import, monkeypatc
     f.db.expire_all()
     retained = f.db.get(ReplicaServiceState, result['service_id'])
     assert retained.active_release_id == result['release_id'] and retained.high_sequence == 1
-    assert f.db.get(durable_jobs.DurableJob, job.id).status == 'queued'
+    pending = f.db.get(durable_jobs.DurableJob, job.id)
+    assert pending.status == 'queued' and pending.attempts == 1
+    assert pending.result['failure_code'] == 'release_verification_failed'
+    assert pending.available_at > pending.created_at
+    assert 'Complete registry replication' in replica_routes.sync_job_view(pending)['error']
     assert 'rejected or incomplete' in f.db.get(ReplicaSource, f.source.id).last_error
     rejection = f.db.scalar(select(AuditEvent).where(AuditEvent.action == 'replica.rejected'))
     assert rejection.detail['failure_type'] == 'ReplicaImportError'
     assert rejection.detail['correlation_id'] == job.correlation_id
+
+
+def test_sync_failure_diagnostic_excludes_external_secrets_and_clears_after_retry(replica_import, monkeypatch):
+    f = replica_import
+    incoming = verified(f)
+    sessions = worker(f, monkeypatch, incoming)
+    secret = 'https://user:private-token@registry.invalid/private?token=secret'
+    def rejected(*args):
+        raise ValueError(secret)
+    monkeypatch.setattr(replica_sync.portable_release, 'fetch_release', rejected)
+    job = replica_sync.enqueue(f.db, f.source)
+    f.db.commit()
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    pending = f.db.get(durable_jobs.DurableJob, job.id)
+    assert pending.status == 'queued' and pending.result['failed'] == 1
+    view = replica_routes.sync_job_view(pending)
+    assert view['error'] == replica_sync.FAILURE_MESSAGES['release_verification_failed'] + f' Reference: {job.correlation_id}'
+    assert secret not in str(view)
+    assert secret not in f.source.last_error
+    assert secret not in str(list(f.db.scalars(select(AuditEvent.detail))))
+    pending.available_at = durable_jobs.now() - timedelta(seconds=1)
+    f.db.commit()
+    monkeypatch.setattr(replica_sync.portable_release, 'fetch_release', lambda *args: incoming)
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'retry-worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    completed = f.db.get(durable_jobs.DurableJob, job.id)
+    assert completed.status == 'completed' and completed.attempts == 2
+    assert completed.result['failure_code'] is None and completed.result['failed'] == 0
+    assert replica_routes.sync_job_view(completed)['error'] is None
+
+
+@pytest.mark.parametrize('disabled', ['source', 'registry'])
+def test_retry_clears_verification_diagnostic_before_disabled_configuration_check(replica_import, monkeypatch, disabled):
+    from app.oci_models import OCIUpstream
+    f = replica_import
+    incoming = verified(f)
+    incoming['complete'] = False
+    sessions = worker(f, monkeypatch, incoming)
+    job = replica_sync.enqueue(f.db, f.source)
+    f.db.commit()
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    pending = f.db.get(durable_jobs.DurableJob, job.id)
+    assert pending.status == 'queued' and pending.result['failure_code'] == 'release_verification_failed'
+    pending.available_at = durable_jobs.now() - timedelta(seconds=1)
+    configuration = f.source if disabled == 'source' else f.db.get(OCIUpstream, f.source.upstream_id)
+    configuration.enabled = False
+    f.db.commit()
+    monkeypatch.setattr(replica_sync.portable_release, 'fetch_release',
+        lambda *args: pytest.fail('Disabled source or registry must fail before verification'))
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'retry-worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    failed = f.db.get(durable_jobs.DurableJob, job.id)
+    assert failed.status == 'failed' and failed.attempts == 2
+    assert failed.result['failure_code'] is None
+    expected = f'Replica source or local registry is disabled. Reference: {job.correlation_id}'
+    assert failed.error == replica_routes.sync_job_view(failed)['error'] == expected
 
 
 @pytest.mark.parametrize('condition', ['healthy', 'missing_archive', 'corrupt_archive', 'corrupt_projection', 'broken_seal'])

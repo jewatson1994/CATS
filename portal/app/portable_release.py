@@ -127,22 +127,42 @@ def evidence_capture(content, *, max_bytes=1024**3):
     return state
 
 
-def discover_releases(repository, env):
+class _DiscoveryBudget:
+    """A single bounded budget spans catalog pages and every discovered service."""
+    def __init__(self, env):
+        self.remaining = {}
+        for name, default in (('pages', 100), ('entries', 10000), ('releases', 10000)):
+            value = int(env.get('CATS_REPLICA_DISCOVERY_MAX_' + name.upper(), str(default)))
+            if value <= 0:
+                raise ValueError('Registry discovery limits must be positive')
+            self.remaining[name] = value
+
+    def consume(self, name, count=1):
+        self.remaining[name] -= count
+        if self.remaining[name] < 0:
+            raise ValueError('Registry discovery exceeds configured ' + name + ' limit')
+
+
+def discover_releases(repository, env, *, _budget=None):
     """List all discovery tags with bounded pages, following same-repository Link."""
     host, name, _ = oci._reference(repository + '@sha256:' + '0' * 64)
     client = oci._Client(host, name, env, pull_only=True)
+    budget = _budget if _budget is not None else _DiscoveryBudget(env)
     url, seen, results = client.api + '/tags/list?n=100', set(), []
     while url:
         if url in seen:
             raise ValueError('Registry tag pagination cycle')
         seen.add(url)
+        budget.consume('pages')
         _, headers, content = client.request('GET', url)
         document = load_json(content)
         tags = document.get('tags') or []
         if not isinstance(tags, list) or any(not isinstance(tag, str) for tag in tags):
             raise ValueError('Invalid registry tag listing')
+        budget.consume('entries', len(tags))
         for tag in tags:
             if _TAG.fullmatch(tag):
+                budget.consume('releases')
                 _, _, data = client.request('GET', client.api + '/manifests/' + tag)
                 digest = oci._digest(data)
                 results.append({'tag': tag, 'digest': digest, 'reference': repository + '@' + digest})
@@ -361,15 +381,18 @@ def discover_release_references(host, repository, env):
     prefix = repository[:-2].rstrip('/')
     oci._reference(host + '/' + prefix + '@sha256:' + '0' * 64)
     client = oci._Client(host, prefix, env, pull_only=True)
+    budget = _DiscoveryBudget(env)
     url, seen, names = client.base + '/v2/_catalog?n=100', set(), set()
     while url:
         if url in seen:
             raise ValueError('Registry catalog pagination cycle')
         seen.add(url)
+        budget.consume('pages')
         _, headers, data = client.request('GET', url)
         repositories = load_json(data).get('repositories')
         if not isinstance(repositories, list) or any(not isinstance(name, str) for name in repositories):
             raise ValueError('Invalid registry repository catalog')
+        budget.consume('entries', len(repositories))
         names.update(name for name in repositories if name.startswith(prefix + '/') and name.endswith('/releases'))
         link = headers.get('Link', '') if hasattr(headers, 'get') else ''
         links = re.findall(r'<([^>]+)>\s*;\s*rel=["\']?next["\']?', link)
@@ -380,4 +403,4 @@ def discover_release_references(host, repository, env):
                     or urlsplit(url).path != '/v2/_catalog' or urlsplit(url).fragment):
             raise ValueError('Registry catalog pagination left configured origin')
     for name in sorted(names):
-        yield from (row['reference'] for row in discover_releases(host + '/' + name, env))
+        yield from (row['reference'] for row in discover_releases(host + '/' + name, env, _budget=budget))

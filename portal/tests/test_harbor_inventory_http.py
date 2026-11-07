@@ -192,6 +192,159 @@ def test_override_is_revoked_if_a_scope_or_report_assertion_fails(tmp_path, monk
     assert events == ['response closed', ('revoked', 9), 'closed']
 
 
+@pytest.fixture
+def restart(tmp_path):
+    prepared = datetime.now(timezone.utc) - timedelta(minutes=2)
+    before, after = {}, {}
+    for role in ('app', 'database'):
+        snapshot = {'container_id': 'real-' + role, 'running': True,
+            'persistent_mounts': [{'destination': '/data', 'type': 'volume', 'source': role + '-retained'}]}
+        before[role] = dict(snapshot, started_at=(prepared - timedelta(minutes=1)).isoformat())
+        after[role] = dict(snapshot, started_at=(prepared + timedelta(minutes=1)).isoformat())
+    proof = {'format': 'cats-inventory-restart-v1', 'replica_project': 'isolated-inventory',
+        'checked_at': datetime.now(timezone.utc).isoformat(), 'before': before, 'after': after}
+    return tmp_path / 'restart.json', proof, {'project': 'isolated-inventory'}, prepared.isoformat()
+
+
+def test_restart_proof_requires_actual_two_service_restart_with_same_storage(restart):
+    path, proof, stack, prepared = restart
+    path.write_text(json.dumps(proof))
+    actual = verifier.restart_proof(path, stack, prepared)
+    assert actual['before'] == proof['before'] and actual['after'] == proof['after']
+    assert actual['proof_sha256'] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('mutation', [
+    lambda value: value.update(replica_project='different'),
+    lambda value: value['after']['database'].update(started_at=value['before']['database']['started_at']),
+    lambda value: value['after']['app'].update(started_at=value['before']['app']['started_at']),
+    lambda value: value['after']['database'].update(persistent_mounts=[{'destination': '/data', 'type': 'volume', 'source': 'new-db'}]),
+    lambda value: value['after']['app'].update(running=False),
+    lambda value: value['after']['database'].update(persistent_mounts=[]),
+    lambda value: value['after']['database'].update(started_at='2030-01-01T00:00:00+00:00'),
+    lambda value: value['after']['app'].update(started_at='2026-01-01T00:00:00'),
+    lambda value: value['after']['app']['persistent_mounts'][0].update(password='must-not-copy-inspect-environment'),
+])
+def test_restart_proof_rejects_stale_partial_or_replaced_storage_claims(restart, mutation):
+    path, proof, stack, prepared = restart
+    mutation(proof)
+    path.write_text(json.dumps(proof))
+    with pytest.raises(AssertionError):
+        verifier.restart_proof(path, stack, prepared)
+
+
+@pytest.fixture
+def persistence_harness(tmp_path, monkeypatch):
+    events = []
+    grant = {'id': 9, 'service_id': 4, 'release_id': 3, 'digests': [digest(0)],
+             'denial_condition': 'superseded', 'status': 'active', 'expires_at': None,
+             'revocation': None, 'last_usage_at': None, 'justification': 'retained original justification'}
+    retired = [{'digest': digest(index), 'proxy_repositories': ['replica/retired/' + str(index)]}
+               for index in range(23)]
+    current = copy.deepcopy(grant)
+    use_ids = [11]
+    state = {'service_key': 'inventory', 'service_id': 4, 'source_id': 8, 'machine': {'id': 7},
+        'local_cyber': {'username': 'original-local', 'new_password': 'private-original-password', 'password_changed': True}}
+    report = {'complete': True, 'final_inventory': {'unchanged': True}}
+    stack = {'proxy_url': 'https://proxy.test', 'project': 'isolated-inventory'}
+    api = SimpleNamespace(base='https://api.test')
+
+    def post(*args, **kwargs):
+        events.append('create')
+        return SimpleNamespace(status_code=200, json=lambda: copy.deepcopy(current), close=lambda: events.append('response_closed'))
+
+    def uses(*args, **kwargs):
+        return {'override_id': 9, 'matching_uses': [{'id': identity, 'digest': digest(0), 'principal_id': 7}
+                                                  for identity in use_ids]}
+
+    def pull(*args):
+        events.append('pull')
+        use_ids.append(max(use_ids) + 1)
+        return {'complete': True, 'root_digest': digest(0)}
+
+    def revoke(*args):
+        events.append('revoke')
+        current.update(status='revoked', revocation={'reason': args[-1]})
+        return copy.deepcopy(current)
+
+    local = SimpleNamespace(base=api.base, csrf='csrf',
+        session=SimpleNamespace(post=post, close=lambda: events.append('close')),
+        get=lambda path: {'overrides': [copy.deepcopy(current)]},
+        login=lambda username, password: events.append(('login', username, password)))
+    monkeypatch.setattr(verifier.workflow, 'local_cyber', lambda *args: local)
+    monkeypatch.setattr(verifier, 'API', lambda *args: local)
+    monkeypatch.setattr(verifier, 'retired_artifacts', lambda *args: retired)
+    monkeypatch.setattr(verifier, 'pull_graph', pull)
+    monkeypatch.setattr(verifier, 'assert_override_uses', uses)
+    monkeypatch.setattr(verifier, 'assert_root_denied', lambda *args: events.append('denial') or {'allowed': False})
+    monkeypatch.setattr(verifier, 'revoke_override', revoke)
+    monkeypatch.setattr(verifier, 'sync_job', lambda *args: events.append('sync'))
+    monkeypatch.setattr(verifier, 'restart_proof', lambda *args: {'observed': True})
+    monkeypatch.setattr(verifier, 'exact_release', lambda *args: {'id': 5})
+    monkeypatch.setattr(verifier, 'active_inventory', lambda *args: {'unchanged': True})
+    return SimpleNamespace(root=tmp_path, stack=stack, state=state, report=report, api=api, local=local,
+        first={'id': 3}, expected={}, machine=object(), events=events, current=current, use_ids=use_ids)
+
+
+def prepare_persistence(harness):
+    verifier.persistence_prepare(harness.api, harness.root, harness.stack, harness.state, harness.report,
+                                 harness.first, harness.expected, harness.machine)
+
+
+def verify_persistence(harness):
+    verifier.persistence_verify(harness.api, harness.root, harness.stack, harness.state, harness.report,
+                                harness.first, harness.expected, harness.machine, harness.root / 'restart.json')
+
+
+def test_persistence_uses_saved_original_grant_and_credentials_then_cleans_up(persistence_harness, monkeypatch):
+    h = persistence_harness
+    prepare_persistence(h)
+    assert h.state['override_persistence']['status'] == 'prepared' and 'revoke' not in h.events
+    h.state = verifier.load(h.root, 'replica-state.json')
+    h.report = verifier.load(h.root, 'replica-acceptance.json')
+    monkeypatch.setattr(verifier.workflow, 'local_cyber', lambda *args: pytest.fail('Cannot recreate or reassign Local Cyber after restart'))
+    h.current['last_usage_at'] = 'allowed observational change'
+    verify_persistence(h)
+    assert h.events.count('create') == 1 and h.events.count('pull') == 2
+    assert ('login', 'original-local', 'private-original-password') in h.events
+    assert h.events.index('sync') < h.events.index('revoke') < len(h.events) - 2
+    assert h.state['override_persistence']['status'] == 'revoked'
+    assert h.report['override_persistence']['complete'] is True
+    assert h.report['override_persistence']['no_override_use_after_revocation'] is True
+    public = (h.root / 'replica-acceptance.json').read_text()
+    assert 'private-original-password' not in public and 'new_password' not in public
+
+
+@pytest.mark.parametrize('failure', ['changed_after_restart', 'changed_after_sync', 'missing_audit', 'no_new_audit', 'failed_pull'])
+def test_persistence_detects_lost_or_changed_state_and_revokes(persistence_harness, monkeypatch, failure):
+    h = persistence_harness
+    prepare_persistence(h)
+    if failure == 'changed_after_restart':
+        h.current['justification'] = 'altered'
+    elif failure == 'changed_after_sync':
+        monkeypatch.setattr(verifier, 'sync_job', lambda *args: h.current.update(digests=[digest(0), digest(1)]))
+    elif failure == 'missing_audit':
+        h.use_ids.clear()
+    elif failure == 'no_new_audit':
+        monkeypatch.setattr(verifier, 'pull_graph', lambda *args: {'complete': True})
+    else:
+        monkeypatch.setattr(verifier, 'pull_graph', lambda *args: (_ for _ in ()).throw(AssertionError('failed pull')))
+    with pytest.raises(AssertionError):
+        verify_persistence(h)
+    assert h.events.count('revoke') == 1 and h.events[-1] == 'close'
+    assert h.state['override_persistence']['status'] == 'revoked'
+    assert h.report['override_persistence']['complete'] is False
+
+
+def test_failed_preparation_revokes_instead_of_leaving_indefinite_authority(persistence_harness, monkeypatch):
+    h = persistence_harness
+    monkeypatch.setattr(verifier, 'pull_graph', lambda *args: (_ for _ in ()).throw(AssertionError('failed preparation')))
+    with pytest.raises(AssertionError, match='failed preparation'):
+        prepare_persistence(h)
+    assert h.events.count('revoke') == 1
+    assert h.state['override_persistence']['status'] == 'revoked'
+
+
 def test_override_driver_reaches_production_route_through_replica_boundary(tmp_path, monkeypatch):
     from fastapi import FastAPI, HTTPException
     from fastapi.testclient import TestClient

@@ -9144,13 +9144,17 @@ def scan_all_artifact_images(
 
 @app.get("/api/services/{service_key}/artifacts/images/status")
 def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
+    from .operating_mode import is_replica
+    replica = is_replica()
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.images)))
     if not service:
         raise HTTPException(404)
     rows = []
     for image in service.images:
         status_value = image.scan_status or "never_scanned"
-        job = PUBLIC_JOBS.get(image.scan_job_id or "") if image.scan_job_id else None
+        # Imported scanner state belongs to the publisher. Local job identities
+        # and restart recovery must never rewrite that authoritative evidence.
+        job = PUBLIC_JOBS.get(image.scan_job_id or "") if image.scan_job_id and not replica else None
         if job:
             if job.get("status") in {"queued", "running"}:
                 status_value = "queued" if job.get("status") == "queued" else "scanning"
@@ -9162,7 +9166,7 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
                 status_value = "failed"
                 image.scan_status = status_value
                 image.scan_error = str(job.get("error") or job.get("status"))[:500]
-        elif status_value in {"queued", "scanning"} and image.updated_at and aware(image.updated_at) < utcnow() - timedelta(hours=2):
+        elif not replica and status_value in {"queued", "scanning"} and image.updated_at and aware(image.updated_at) < utcnow() - timedelta(hours=2):
             # PUBLIC_JOBS is intentionally ephemeral.  Do not leave a durable
             # inventory row claiming work is active after a process restart.
             status_value = "failed"
@@ -9171,7 +9175,8 @@ def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth:
         rows.append({"id": image.id, "status": status_value, "job_id": image.scan_job_id,
                      "last_scanned_at": image.last_scanned_at.isoformat() if image.last_scanned_at else None,
                      "error": image.scan_error})
-    db.commit()
+    if not replica:
+        db.commit()
     return {"images": rows}
 
 

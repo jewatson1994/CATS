@@ -16,7 +16,7 @@ from .oci_transport import REPOSITORY
 from .operating_mode import is_replica
 from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState
 from .replica_integrity import verify_record, digest
-from .replica_sync import enqueue, KIND
+from .replica_sync import enqueue, KIND, FAILURE_MESSAGES
 from .durable_jobs import DurableJob
 from .release_validity import utc
 from .service_oci import _csrf
@@ -102,6 +102,14 @@ def configure(db, auth, payload, source=None):
 def sources(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     require(auth, 'replica.admin')
     return {'sources': [fields(row, SOURCE_FIELDS) for row in db.scalars(select(ReplicaSource).order_by(ReplicaSource.id))]}
+
+
+@router.get('/registries')
+def registries(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+    """Source administrators can select a registry without credential authority."""
+    require(auth, 'replica.admin')
+    return [fields(row, ('id', 'name', 'endpoint', 'enabled'))
+        for row in db.scalars(select(OCIUpstream).order_by(OCIUpstream.id))]
 
 
 @router.post('/sources')
@@ -203,6 +211,17 @@ def evidence(identity: int, auth: AuthContext = Depends(require_user), db=Depend
                         headers={'Cache-Control': 'private, no-store'})
 
 
+def sync_job_view(job):
+    result = fields(job, ('id','status','stage','progress','result','error','created_at','completed_at'))
+    # Never display external exception text. Handler-authored classifications
+    # make replica failures actionable without changing shared retry behavior.
+    code = (job.result or {}).get('failure_code')
+    message = FAILURE_MESSAGES.get(code) if isinstance(code, str) else None
+    if message and job.error and job.status in {'queued', 'failed'}:
+        result['error'] = f'{message} Reference: {job.correlation_id}'
+    return result
+
+
 @router.get('/status')
 def status(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     if not (auth.has('replica.admin') or auth.has('replica.sync')):
@@ -213,5 +232,5 @@ def status(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
         'services': [dict(service_id=state.service_id, service_key=service.service_key, service_name=service.name,
             active_release_id=state.active_release_id, high_sequence=state.high_sequence, last_sync_at=state.last_sync_at)
             for state, service in db.execute(select(ReplicaServiceState, Service).join(Service, ReplicaServiceState.service_id == Service.id))],
-        'jobs': [fields(job, ('id','status','stage','progress','result','error','created_at','completed_at'))
+        'jobs': [sync_job_view(job)
             for job in db.scalars(select(DurableJob).where(DurableJob.kind == KIND).order_by(DurableJob.created_at.desc()).limit(50))]}

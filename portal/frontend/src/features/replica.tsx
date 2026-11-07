@@ -19,9 +19,15 @@ function SourceFields({source, upstreams}: {source?: Row; upstreams: Row[]}) {
 }
 
 export function Page({data}: {data: PageData}) {
-  const status = useResource<Row>('/api/replica/status', 5000), upstreams = useResource<Row[]>('/api/oci/upstreams');
-  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
   const administer = can(data, 'replica.admin'), configureRegistry = can(data, 'release.destination.manage');
+  const status = useResource<Row>('/api/replica/status', 5000), upstreams = useResource<Row[]>(configureRegistry ? '/api/oci/upstreams' : administer ? '/api/replica/registries' : null);
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [busy, setBusy] = useState(false);
+  const navigation = [
+    {href: '/admin', label: 'Accounts and roles', allowed: data.may_manage_accounts || data.may_assign_roles || can(data, 'user.manage') || can(data, 'role.manage')},
+    {href: '/admin/approved-release-destinations', label: 'Registry access and proxy', allowed: configureRegistry},
+    {href: '/admin/configuration', label: 'Authentication and trust', allowed: can(data, 'config.manage')},
+    {href: '/admin/audit', label: 'Audit', allowed: can(data, 'audit.view')},
+  ].filter(item => item.allowed);
   const run = async (action: () => Promise<unknown>, success: string) => {
     setBusy(true); setError(''); setNotice('');
     try {await action(); setNotice(success); status.reload(); upstreams.reload();} catch (error) {setError(errorText(error));} finally {setBusy(false);}
@@ -38,16 +44,22 @@ export function Page({data}: {data: PageData}) {
   };
   return <><section className="heading"><div><p className="eyebrow">LOCAL OPERATIONS</p><h1>Replica administration</h1><p>Discover signed releases from this environment’s registry. No connection to the publishing CATS system is required.</p></div>
     <div><button type="button" className="secondary-button" onClick={status.reload}>Refresh status</button>{can(data, 'replica.sync') && <button type="button" disabled={busy} onClick={() => void run(() => mutate(data, '/api/replica/sync', {source_id: null}), 'Synchronization queued.')}>Synchronize now</button>}</div></section>
-    <nav aria-label="Replica administration"><a href="/admin">Accounts and roles</a> · <a href="/admin/approved-release-destinations">Registry access and proxy</a> · <a href="/admin/configuration">Authentication and trust</a> · <a href="/admin/audit">Audit</a></nav>
+    {navigation.length > 0 && <nav aria-label="Replica administration">{navigation.map((item, index) => <span key={item.href}>{index > 0 && ' · '}<a href={item.href}>{item.label}</a></span>)}</nav>}
     <ErrorMessage error={error || status.error}/>{notice && <p role="status">{notice}</p>}
-    <section className="panel padded"><h2>Release sources</h2><p>Status refreshes automatically every five seconds while this page is open.</p>{!status.value && !status.error && <p role="status">Loading replication health…</p>}
+    <section className="panel padded"><h2>Release sources</h2><p>Status refreshes automatically every five seconds while this page is open.</p>{administer && <ErrorMessage error={upstreams.error}/>} {!status.value && !status.error && <p role="status">Loading replication health…</p>}
       {status.value?.sources?.length ? <div className="table-scroll"><table><thead><tr><th>Source</th><th>Repository</th><th>Polling</th><th>Health</th><th>Last synchronization</th><th>Actions</th></tr></thead><tbody>{status.value.sources.map((row: Row) => <tr key={row.id}><td>{row.name}</td><td><code>{row.repository}</code></td><td>{row.poll_seconds} seconds</td><td><StatusBadge value={row.enabled ? row.last_error ? 'failed' : 'enabled' : 'disabled'}/>{row.last_error && <p>{row.last_error}</p>}</td><td>{date(row.last_success_at || row.last_attempt_at)}</td><td>{can(data, 'replica.sync') && <button disabled={busy || !row.enabled} onClick={() => void run(() => mutate(data, '/api/replica/sync', {source_id: row.id}), 'Synchronization queued.')}>Synchronize</button>}{administer && <button disabled={busy} onClick={() => void run(() => mutate(data, `/api/replica/sources/${row.id}`, {enabled: !row.enabled}, 'PUT'), 'Source updated.')}>{row.enabled ? 'Disable' : 'Enable'}</button>}</td></tr>)}</tbody></table></div> : status.value && <p>No release sources configured.</p>}
       {administer && <><details><summary>Add release source</summary><form onSubmit={event => source(event)} className="form-grid"><SourceFields upstreams={upstreams.value || []}/><button disabled={busy}>Save source</button></form></details>{status.value?.sources?.map((row: Row) => <details key={row.id}><summary>Edit {row.name}</summary><form onSubmit={event => source(event, row)} className="form-grid"><SourceFields source={row} upstreams={upstreams.value || []}/><button disabled={busy}>Update {row.name}</button></form></details>)}</>}
     </section>
     {configureRegistry && <section className="panel padded"><h2>Local registries</h2><ErrorMessage error={upstreams.error}/>{upstreams.value?.map(row => <p key={row.id}><strong>{row.name}</strong> · {row.endpoint} · Credentials {row.credentials_configured ? 'configured' : 'not configured'} · Custom CA {row.ca_configured ? 'configured' : 'not configured'}</p>)}<details><summary>Add local registry</summary><form onSubmit={registry} className="form-grid"><label>Name<input name="name" required/></label><label>HTTPS endpoint<input name="endpoint" type="url" placeholder="https://registry.local" required/></label><label>Username<input name="username" autoComplete="off"/></label><label>Password or robot token<input name="password" type="password" autoComplete="new-password"/></label><label>Trusted CA certificates (PEM)<textarea name="ca_pem"/></label><button disabled={busy}>Save registry</button></form></details></section>}
-    <section className="panel padded"><h2>Synchronization history and import failures</h2>{status.value?.jobs?.length ? <div className="table-scroll"><table><thead><tr><th>Created</th><th>Stage</th><th>Status</th><th>Details</th></tr></thead><tbody>{status.value.jobs.map((row: Row) => <tr key={row.id}><td>{date(row.created_at)}</td><td>{row.stage || '—'}</td><td><StatusBadge value={row.status}/></td><td>{row.error || row.message || row.detail || '—'}</td></tr>)}</tbody></table></div> : <p>No synchronization attempts recorded.</p>}</section>
+    <section className="panel padded"><h2>Synchronization history and import failures</h2>{status.value?.jobs?.length ? <div className="table-scroll"><table><thead><tr><th>Created</th><th>Stage</th><th>Status</th><th>Details</th></tr></thead><tbody>{status.value.jobs.map((row: Row) => <tr key={row.id}><td>{date(row.created_at)}</td><td>{row.stage || '—'}</td><td><StatusBadge value={row.status}/></td><td><SyncDetails job={row}/></td></tr>)}</tbody></table></div> : <p>No synchronization attempts recorded.</p>}</section>
     <section className="panel padded"><h2>Imported services</h2>{status.value?.services?.map((row: Row) => <p key={row.id || row.service_id}><a href={`/services/${encodeURIComponent(row.service_key || row.source_service_id)}`}>{row.service_name || row.service_key || row.source_service_id}</a> · Sequence {row.high_sequence} · Last synchronized {date(row.last_sync_at)}</p>) || null}<a href="/approved-releases">View release history and expiration</a></section>
   </>;
+}
+
+function SyncDetails({job}: {job: Row}) {
+  const counts = ['discovered', 'activated', 'revoked', 'unchanged', 'failed'].filter(key => typeof job.result?.[key] === 'number');
+  const detail = job.error || job.message || job.detail;
+  return <>{detail && <p>{typeof detail === 'string' ? detail : JSON.stringify(detail)}</p>}{counts.length > 0 && <p>{counts.map(key => `${humanize(key)}: ${job.result[key]}`).join(' · ')}</p>}{!detail && !counts.length && '—'}</>;
 }
 
 

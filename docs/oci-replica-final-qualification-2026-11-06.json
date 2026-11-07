@@ -1,0 +1,2099 @@
+{
+  "format": "cats-oci-replica-final-qualification-v1",
+  "report_date": "2026-11-06",
+  "generated_at_utc": "2026-11-07T04:47:25.446296+00:00",
+  "report_status": "Complete",
+  "finalization_state": "Complete qualification record within documented scope",
+  "repository": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene",
+  "branch": "codex/oci-approved-release-replicas",
+  "baseline_commit": "81197470abf1f2439d12f0d9e6d0ec2a9a5dadb7",
+  "new_commit": null,
+  "pushed": false,
+  "merged": false,
+  "artifact_root": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\final-qualification",
+  "readiness": {
+    "functional_status": "Complete within documented qualification scope",
+    "deployment_specific_staging": "Ready to enter deployment-specific staging qualification; that environment is not yet qualified",
+    "production": "Unverified",
+    "statement": "Functional qualification passes within the recorded scopes. Proceed to deployment-specific staging qualification. Production is unqualified. Seamless publisher-key continuity and approved-release import/proxy attestation routing remain explicit implementation limitations."
+  },
+  "requirements": [
+    {
+      "id": "R01",
+      "request_section": 1,
+      "requirement": "Preserve feature branch, baseline, unrelated work and implementation boundaries",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "AGENTS.md",
+        ".codex_context_engine/state.json"
+      ],
+      "tests": [],
+      "evidence": [],
+      "limitations": "Baseline 81197470abf1f2439d12f0d9e6d0ec2a9a5dadb7 on codex/oci-approved-release-replicas. Unrelated untracked files are preserved. The requested commit is the commit containing this report; resolve its identifier using Git history. No push or merge is part of this qualification."
+    },
+    {
+      "id": "R02",
+      "request_section": 2,
+      "requirement": "Capture and reconstruct full original service evidence, metadata, versions, approvals and provenance",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/portable_release_capture.py",
+        "portal/app/replica_import.py",
+        "portal/app/replica_integrity.py",
+        "portal/app/replica_views.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_evidence_api.py",
+        "portal/tests/test_replica_reconstruction_qualification.py",
+        "portal/tests/test_replica_import.py"
+      ],
+      "evidence": [
+        "reconstruction/source-semantic-comparison.json",
+        "reconstruction/patched-semantic-comparison.json",
+        "reconstruction/pytest-final.xml"
+      ],
+      "limitations": "All captured source fields match. Native comparisons cover exposed fields; extension-only domains remain available in existing release context/evidence APIs. No new nginx scan in this qualification."
+    },
+    {
+      "id": "R03",
+      "request_section": 2,
+      "requirement": "Deterministic independent comparison of original System A BOE and System B native API views",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/tests/replica_reconstruction_qualification.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_reconstruction_qualification.py"
+      ],
+      "evidence": [
+        "reconstruction/source-semantic-comparison.json",
+        "reconstruction/patched-semantic-comparison.json"
+      ],
+      "limitations": "Original IDs and timestamps remain exact in retained evidence; local IDs are mapped or excluded in native projections. Historical native views are intentionally skipped because the service view displays the active release. Exchange preview checks configured row counts and visible metadata; full row values are checked in captured context."
+    },
+    {
+      "id": "R04",
+      "request_section": 3,
+      "requirement": "Standalone replica deployment without assessment workers or intelligence ingestion",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "compose.replica.yaml",
+        "portal/Dockerfile.replica",
+        "portal/app/operating_mode.py",
+        "portal/app/replica_sync.py",
+        ".env.replica.example"
+      ],
+      "tests": [
+        "portal/tests/test_operating_mode.py",
+        "portal/tests/test_replica_sync.py"
+      ],
+      "evidence": [
+        "frontend/compose-validation.json",
+        "frontend/startup.xml",
+        "replica-build.log",
+        "replica/deployment-observation.json",
+        "cleanup.json"
+      ],
+      "limitations": "Fresh Docker/PostgreSQL deployment used db, portal and oci-proxy, with one separate qualification TLS ingress. Deployment observation records no assessment workers, all System A containers stopped and all nine source-Harbor services stopped. Production DNS, CA, secrets, ingress, identity provider, capacity and restore validation are deployment-specific."
+    },
+    {
+      "id": "R05",
+      "request_section": 3,
+      "requirement": "Background synchronization, restart, durable persistence and interrupted-job recovery",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_sync.py",
+        "portal/app/replica_import.py",
+        "compose.replica.yaml"
+      ],
+      "tests": [
+        "portal/tests/test_replica_sync.py",
+        "portal/tests/test_replica_postgres.py",
+        "portal/tests/test_replica_concurrency_postgres.py",
+        "portal/tests/test_harbor_inventory_http.py"
+      ],
+      "evidence": [
+        "enforcement/postgres-final.xml",
+        "enforcement/persistence-tests.xml",
+        "reconstruction/live-sync-result.json",
+        "inventory/http/replica-acceptance.json",
+        "inventory/restart-proof.json"
+      ],
+      "limitations": "Background import, SQLite durable worker-lease retry and actual PostgreSQL persistence/concurrency tests pass. Live incomplete import/recovery and forced recreation of both portal and PostgreSQL containers pass. Persistent volumes retained the grant, audit history and imported inventory across restart and normal synchronization. No actual process-kill during activation was exercised."
+    },
+    {
+      "id": "R06",
+      "request_section": 4,
+      "requirement": "Backend read-only enforcement and original evidence stability on GET",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/operating_mode.py",
+        "portal/app/main.py",
+        "portal/app/replica_routes.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_read_only.py",
+        "portal/tests/test_replica_routes.py",
+        "portal/tests/test_replica_reconstruction_qualification.py"
+      ],
+      "evidence": [
+        "enforcement/read-only-final.xml",
+        "reconstruction/pytest-final.xml"
+      ],
+      "limitations": "25 HTTP regressions include 19 mutation routes and six image-status GET cases using persisted administrator authentication. Fixed stale-timeout/local-job collision mutation of imported scan state. Scope is tested routes plus centralized middleware; this is not a claim of external penetration testing."
+    },
+    {
+      "id": "R07",
+      "request_section": 4,
+      "requirement": "Retain local administration and override permissions without registry credential authority",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_routes.py",
+        "portal/app/local_cyber_overrides.py",
+        "portal/frontend/src/features/replica.tsx",
+        "portal/frontend/src/hooks/useReplicaResource.ts"
+      ],
+      "tests": [
+        "portal/tests/test_replica_routes.py",
+        "portal/tests/test_replica_authorization.py",
+        "portal/frontend/src/features/replica.test.tsx"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "frontend/summary.json",
+        "browser/browser-observation.json",
+        "browser/cyber-enforcement.json"
+      ],
+      "limitations": "Source administrators receive sanitized registry id/name/endpoint/enabled values, not secret registry configuration. Browser confirms administrators cannot create Cyber overrides. A scoped Cyber user sees one authorized service and no administration link, and creates/revokes an exact-digest override. Actual HTTP pull and warm-cache denial independently verify those browser actions."
+    },
+    {
+      "id": "R08",
+      "request_section": 5,
+      "requirement": "100-image baseline, 23 replacements, 77 unchanged images, history and stable service identity",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_import.py",
+        "portal/app/replica_authorization.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_import.py",
+        "portal/tests/test_replica_postgres.py",
+        "portal/tests/harbor_inventory_http.py"
+      ],
+      "evidence": [
+        "inventory/http/replica-acceptance.json",
+        "inventory/runtime-verification.json",
+        "harbor/harbor-replication.json"
+      ],
+      "limitations": "Fresh baseline and successor HTTP graph pulls each pass for all 100 images; all 123 distinct runtime variants executed successfully. Successor activation preserves service identity, retains exactly 77 roots, adds 23 and retires 23. All 23 retired roots receive release_superseded denials. Incomplete synchronization preserves the baseline; restored scoped registry content enables recovery. Successor pulls and override checks run with source Harbor unreachable and an initially empty blob cache; PostgreSQL manifest cache remains retained."
+    },
+    {
+      "id": "R09",
+      "request_section": 5,
+      "requirement": "Atomic activation, failed-import rollback, replay, ordering, duplicate and concurrent import",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_import.py",
+        "portal/app/replica_sync.py",
+        "portal/app/replica_models.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_import.py",
+        "portal/tests/test_replica_postgres.py",
+        "portal/tests/test_replica_concurrency_postgres.py"
+      ],
+      "evidence": [
+        "enforcement/postgres-final.xml",
+        "graph/reports/complete.json",
+        "graph/reports/missing-child.json",
+        "graph/reports/missing-layer.json",
+        "graph/reports/missing-evidence.json",
+        "graph/reports/missing-signature.json",
+        "inventory/http/replica-acceptance.json"
+      ],
+      "limitations": "Atomic rollback injects failure after native projection and before sealing/commit in SQLite and an actual PostgreSQL wrapper. Actual PostgreSQL also covers concurrent import. Actual target OCI graph faults and the live 100/23 incomplete HTTP synchronization preserve prior active state, then recover. No actual process-kill mid-activation was exercised."
+    },
+    {
+      "id": "R10",
+      "request_section": 5,
+      "requirement": "Offline expiry, signed standalone revocation, rollback protection and cross-service authorization",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_authorization.py",
+        "portal/app/replica_import.py",
+        "portal/app/oci_proxy.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_authorization.py",
+        "portal/tests/test_replica_postgres.py",
+        "portal/tests/test_oci_proxy.py"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "enforcement/postgres-final.xml",
+        "graph/reports/complete.json",
+        "tests/broad-final.xml"
+      ],
+      "limitations": "Offline expiry is checked by direct authorization against persisted SQLite at one microsecond before, exactly at, and 365 days after the signed deadline, with upstream access forbidden. Two services sharing a digest cannot reuse an override in a direct SQLite authorization test. Actual target-registry graph verification imports a standalone signed sequence-3 revocation and rejects older replay; actual PostgreSQL separately covers revocation/replay. These are scoped automated/importer tests, not fresh live HTTP expiry or shared-artifact tests. An unreceived upstream revocation cannot be enforced offline."
+    },
+    {
+      "id": "R11",
+      "request_section": 6,
+      "requirement": "Fixed or indefinite Cyber override with immutable scope, mission/risk acceptance and audit",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/local_cyber_overrides.py",
+        "portal/app/replica_authorization.py",
+        "portal/frontend/src/features/replica.tsx"
+      ],
+      "tests": [
+        "portal/tests/test_replica_routes.py",
+        "portal/tests/test_replica_authorization.py",
+        "portal/tests/test_replica_concurrency_postgres.py",
+        "portal/frontend/src/features/replica.test.tsx"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "enforcement/postgres-final.xml",
+        "frontend/summary.json",
+        "inventory/http/replica-acceptance.json",
+        "inventory/restart-proof.json",
+        "browser/browser-observation.json",
+        "browser/cyber-enforcement.json"
+      ],
+      "limitations": "Actual HTTP checks create fixed and indefinite overrides, pull the selected retired digest, audit use, deny the other 22 retired roots, revoke the grant and deny warm-cache reuse. An additional grant and its audit survive actual portal/database recreation and normal sync. Browser Cyber creates an indefinite grant, observes 11 audited uses and revokes it. Mission/risk acceptance and invalid scope/permission cases have automated coverage."
+    },
+    {
+      "id": "R12",
+      "request_section": 6,
+      "requirement": "Immediate override revocation with cached bytes and concurrent authorization",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/local_cyber_overrides.py",
+        "portal/app/replica_authorization.py",
+        "portal/app/oci_proxy.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_concurrency_postgres.py",
+        "portal/tests/test_replica_authorization.py",
+        "portal/tests/test_oci_proxy.py",
+        "portal/tests/test_harbor_inventory_http.py"
+      ],
+      "evidence": [
+        "enforcement/postgres-final.xml",
+        "enforcement/persistence-tests.xml",
+        "inventory/http/replica-acceptance.json",
+        "browser/cyber-enforcement.json"
+      ],
+      "limitations": "Fixed, indefinite, post-restart and browser-created grants all deny warm-cache reuse immediately after revocation in actual HTTP checks. PostgreSQL tests cover both override-use/revoke lock orders. No new use is recorded after the persistence-test revocation. Revocation cannot withdraw already delivered bytes or terminate existing workloads."
+    },
+    {
+      "id": "R13",
+      "request_section": 7,
+      "requirement": "Actual Harbor image/index/chart/release/evidence/signature/attestation graph preservation and application support boundaries",
+      "implementation_status": "Partial",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/portable_release.py",
+        "portal/app/release_oci.py",
+        "portal/app/replica_integrity.py",
+        "portal/tests/harbor_attestation_qualification.py"
+      ],
+      "tests": [
+        "portal/tests/harbor_graph_qualification.py",
+        "portal/tests/test_portable_release.py",
+        "portal/tests/test_release_signing.py",
+        "portal/tests/test_harbor_attestation_qualification.py"
+      ],
+      "evidence": [
+        "harbor/harbor-replication.json",
+        "graph/reports/complete.json",
+        "reconstruction/live-sync-result.json",
+        "attestation/expected.json",
+        "attestation/verification.json",
+        "attestation/target-cosign-verified.jsonl",
+        "tests/attestation-source-stopped.jsonl",
+        "tests/attestation-helper.xml"
+      ],
+      "limitations": "Harbor executions 18/19/20/21 succeed with 3/4/3/1 tasks. Actual image/index/chart/release/evidence/signature graphs and native .att digest/subject/predicate/signature preservation pass. All nine source-Harbor services are stopped before target attestation verification. Native attestation is a separate synthetic transport fixture: approved-release import/proxy graph authorization currently handles .sig artifacts, not .att routing. The optional verifier requires the original source predicate subject after relocation. Generic third-party referrer ecosystems and other registry versions are not qualified."
+    },
+    {
+      "id": "R14",
+      "request_section": 7,
+      "requirement": "Reject incomplete graphs, invalid signing identity, changed signed content and mutable substitution",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/portable_release.py",
+        "portal/app/replica_integrity.py",
+        "portal/app/oci_proxy.py"
+      ],
+      "tests": [
+        "portal/tests/test_portable_release.py",
+        "portal/tests/test_oci_proxy.py",
+        "portal/tests/harbor_graph_qualification.py",
+        "portal/tests/test_harbor_graph_qualification.py"
+      ],
+      "evidence": [
+        "graph/reports/wrong-signer.json",
+        "graph/reports/changed-sequence.json",
+        "graph/reports/missing-child.json",
+        "graph/reports/missing-layer.json",
+        "graph/reports/missing-evidence.json",
+        "graph/reports/missing-signature.json",
+        "graph/reports/recover-missing-child.json",
+        "graph/reports/recover-missing-layer.json",
+        "graph/reports/recover-missing-evidence.json",
+        "graph/reports/recover-missing-signature.json",
+        "tests/graph-helper-final.xml",
+        "tests/graph-helper-final.log"
+      ],
+      "limitations": "Four actual target registry omission/recovery cases preserve the prior active release and restore successfully. Wrong pin and changed sequence mutate locally fetched real signed bytes; the report does not label them Harbor-storage signature tampering. All target faults restored. After the live graph runs, the qualification fault helper gained an all-reference ownership guard for global blob quarantine. It checks layer, manifest-revision, tag-index and current links and refuses foreign references, symlinks, malformed/oversized links or missing owned links. This helper safety change passes 20 focused tests, including seven new cases; live scenarios were not rerun after this helper-only change. Earlier quarantine records remain restorable."
+    },
+    {
+      "id": "R15",
+      "request_section": 7,
+      "requirement": "Local authorization without downloading full BOE for each pull",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/oci_proxy.py",
+        "portal/app/replica_authorization.py",
+        "portal/app/replica_integrity.py"
+      ],
+      "tests": [
+        "portal/tests/test_oci_proxy.py",
+        "portal/tests/test_replica_authorization.py"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "inventory/http/replica-acceptance.json"
+      ],
+      "limitations": "Authorization uses verified retained local state and current denial/override checks; cache is not authority. This is correctness evidence, not a production throughput or memory benchmark."
+    },
+    {
+      "id": "R16",
+      "request_section": 7,
+      "requirement": "Trusted signer management and disconnected key rotation procedure",
+      "implementation_status": "Partial",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_import.py",
+        "portal/app/replica_routes.py",
+        "docs/oci-replica-deployment-runbook.md"
+      ],
+      "tests": [
+        "portal/tests/test_replica_import.py",
+        "portal/tests/test_replica_authorization.py"
+      ],
+      "evidence": [
+        "graph/reports/wrong-signer.json",
+        "enforcement/enforcement.xml"
+      ],
+      "limitations": "No seamless signed handover exists. Identity binds service key and publisher fingerprint; adding a new pin does not authenticate continuity and same-service replacement-key import fails closed. Controlled migration/separate deployment and independent trust distribution are required."
+    },
+    {
+      "id": "R17",
+      "request_section": 8,
+      "requirement": "Automatic services and existing overview, findings, history, expiry and superseded UI",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/frontend/src/features/replica.tsx",
+        "portal/frontend/src/features/ServiceScanSchedule.tsx",
+        "portal/frontend/src/hooks/useReplicaResource.ts",
+        "portal/app/replica_views.py"
+      ],
+      "tests": [
+        "portal/frontend/src/features/replica.test.tsx",
+        "portal/tests/test_replica_execution_views.py",
+        "portal/tests/test_replica_evidence_api.py"
+      ],
+      "evidence": [
+        "frontend/summary.json",
+        "reconstruction/patched-semantic-comparison.json",
+        "browser/browser-observation.json"
+      ],
+      "limitations": "Actual browser checks cover automatic services, read-only banner, absent create action, nginx overview/findings, artifact inventory/lineage, dependencies/SBOM/licenses, original activity, history, expiry and active/superseded releases. These are representative manual views, supplemented by deterministic native API comparison. Browser uses loopback HTTP because its trust store rejects the test CA; secure-cookie configuration is unchanged. Authenticated API and OCI checks use explicitly trusted TLS."
+    },
+    {
+      "id": "R18",
+      "request_section": 8,
+      "requirement": "Actionable sync failures and evidence/document downloads",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_routes.py",
+        "portal/app/replica_sync.py",
+        "portal/frontend/src/features/replica.tsx"
+      ],
+      "tests": [
+        "portal/tests/test_replica_routes.py",
+        "portal/tests/test_replica_evidence_api.py",
+        "portal/frontend/src/features/replica.test.tsx"
+      ],
+      "evidence": [
+        "reconstruction/patched-semantic-comparison.json",
+        "reconstruction/source-semantic-comparison.json",
+        "frontend/summary.json",
+        "inventory/http/replica-acceptance.json",
+        "tests/replica-sync-diagnostics.xml",
+        "browser/browser-observation.json",
+        "replica/diagnostic-validation.json",
+        "tests/broad-final.xml",
+        "tests/replica-final-retry.xml"
+      ],
+      "limitations": "Both original BOEs downloaded through authenticated System B APIs match independent System A evidence. Browser download SHA-256 is dba47c15ebb3a139610ee151e1719eec2857ff2b4227f7e2c45c6bcf959a87eb. Actual wrong-pin synchronization fails with an actionable verification/retry message and correlation reference, reports discovered 2/activated 0/failed 2, and preserves imported state. Administrator browser displays that diagnostic and counters with zero warning/error logs. The final sync/routes suite passes 28 tests, including two late retry-state cases. The final broad rerun passes. The live image predates the final stale failure-code reset correction; focused and broad source tests cover that change."
+    },
+    {
+      "id": "R19",
+      "request_section": 9,
+      "requirement": "Authentication, RBAC, import safety, signatures, expiry, credential and TLS boundaries",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_routes.py",
+        "portal/app/replica_integrity.py",
+        "portal/app/portable_release.py",
+        "portal/app/replica_authorization.py",
+        "portal/app/oci_proxy.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_read_only.py",
+        "portal/tests/test_replica_authorization.py",
+        "portal/tests/test_portable_release.py",
+        "portal/tests/test_oci_proxy.py"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "enforcement/read-only-final.xml",
+        "graph/reports/complete.json"
+      ],
+      "limitations": "Tested implementation boundaries pass without disabling TLS verification for API checks. This is a scoped engineering review, not an external penetration test or organization-wide identity/CA audit."
+    },
+    {
+      "id": "R20",
+      "request_section": 9,
+      "requirement": "Bound discovery, graph verification and background work; preserve audit and fail closed",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/portable_release.py",
+        "portal/app/replica_sync.py",
+        "compose.replica.yaml",
+        ".env.replica.example"
+      ],
+      "tests": [
+        "portal/tests/test_portable_release.py",
+        "portal/tests/test_replica_sync.py"
+      ],
+      "evidence": [
+        "enforcement/enforcement.xml",
+        "frontend/compose-validation.json"
+      ],
+      "limitations": "Added source-wide limits: 100 catalog/tag pages, 10000 entries and 10000 matching release references by default. Exceeding bounds errors rather than silently truncating. Graph/archive limits exist; deployment-scale resource/load qualification remains outstanding."
+    },
+    {
+      "id": "R21",
+      "request_section": 10,
+      "requirement": "Review remaining nginx observations without manipulating source findings",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/tests/replica_reconstruction_qualification.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_reconstruction_qualification.py"
+      ],
+      "evidence": [
+        "reconstruction/nginx-observation-review.json",
+        "reconstruction/patched-semantic-comparison.json"
+      ],
+      "limitations": "Zero package CVEs, three configuration observations retained: public checksum false positive, inherited RUN cd and scanner Content Trust context. Review reused original scan artifacts; no fresh nginx scan was performed. Detailed Dockle alerts are retained separately and are not members of the original BOE evidence_documents list."
+    },
+    {
+      "id": "R22",
+      "request_section": 11,
+      "requirement": "Broad backend/full-mode regression and accurate skips/failure accounting",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/tests"
+      ],
+      "tests": [
+        "portal/tests/test_managed_validator_release_preparation.py",
+        "portal/tests/test_replica_reconstruction_qualification.py"
+      ],
+      "evidence": [
+        "tests/broad.xml",
+        "tests/focused-broad-fixes.xml",
+        "tests/broad-final.xml",
+        "tests/broad-final-summary.json",
+        "tests/broad-final-files.txt",
+        "tests/cybersecurity-postgres-final.xml"
+      ],
+      "limitations": "Final broad run: 1,169 passing executions, 3 skipped executions, zero failures/errors in 129.62 seconds (JUnit 129.511). There are 1,135 unique passing cases and 3 unique skips across 49 unique files; two repeated file entries produce 34 duplicate passing executions. The two exact PostgreSQL skipped cases separately pass against disposable PostgreSQL 16.15. The exact host encrypted-Cosign-key test remains unexecuted; actual Docker/Harbor Cosign verification is distinct coverage. Runs must not be summed. The final broad run includes 20 graph fault-helper tests and the 28-test sync/routes suite, including two new retry regressions. The 11 native-attestation helper tests pass separately and are excluded from this broad list."
+    },
+    {
+      "id": "R23",
+      "request_section": 11,
+      "requirement": "Frontend tests, type checking, lint and production build",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/frontend"
+      ],
+      "tests": [
+        "portal/frontend/src/features/replica.test.tsx"
+      ],
+      "evidence": [
+        "frontend/summary.json",
+        "frontend/vitest-final.json",
+        "frontend/typecheck.log",
+        "frontend/lint.log",
+        "frontend/build.log"
+      ],
+      "limitations": "496 tests in 66 files passed; typecheck, lint and production build passed. Actual browser coverage is tracked separately."
+    },
+    {
+      "id": "R24",
+      "request_section": 11,
+      "requirement": "PostgreSQL migrations, atomicity and concurrency",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "portal/app/replica_models.py",
+        "portal/app/replica_import.py",
+        "portal/app/local_cyber_overrides.py"
+      ],
+      "tests": [
+        "portal/tests/test_replica_postgres.py",
+        "portal/tests/test_replica_concurrency_postgres.py"
+      ],
+      "evidence": [
+        "enforcement/postgres-final.xml",
+        "tests/cybersecurity-postgres-final.xml",
+        "tests/cybersecurity-postgres-final-summary.json"
+      ],
+      "limitations": "14 replica tests pass against actual disposable PostgreSQL schemas: 100/23 reconciliation, atomic rollback, replay/revocation, concurrent import and both override revocation lock orders. The two exact cybersecurity-evidence normalization cases skipped by the broad invocation separately pass on PostgreSQL 16.15 in a unique disposable database, created and dropped without mutating the existing database."
+    },
+    {
+      "id": "R25",
+      "request_section": 12,
+      "requirement": "Practical System A/System B deployment and operational runbook",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "docs/oci-replica-deployment-runbook.md",
+        "compose.replica.yaml",
+        ".env.replica.example"
+      ],
+      "tests": [
+        "portal/tests/test_operating_mode.py"
+      ],
+      "evidence": [
+        "frontend/compose-validation.json",
+        "frontend/startup.xml",
+        "inventory/restart-proof.json"
+      ],
+      "limitations": "Guide covers System A publication/signing/registry trust, standalone startup, synchronization, exact pull routes, overrides, incomplete import, backup/restore, upgrade and manual trust migration. Local deployment and restart procedures are exercised. Deployment-specific backup restoration, IdP, ingress, certificates, monitoring and capacity remain unqualified."
+    },
+    {
+      "id": "R26",
+      "request_section": 13,
+      "requirement": "Requirements matrix separates implementation from validation and environment readiness",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "docs/oci-replica-final-qualification-2026-11-06.md",
+        "docs/oci-replica-final-qualification-2026-11-06.json"
+      ],
+      "tests": [],
+      "evidence": [],
+      "limitations": "The final record separates implementation from observed validation, labels synthetic fixtures, retains exact caveats and distinguishes functional qualification from deployment-specific staging and production readiness."
+    },
+    {
+      "id": "R27",
+      "request_section": 14,
+      "requirement": "Deliver qualification evidence, readiness assessment and requested commit summary",
+      "implementation_status": "Complete",
+      "validation_status": "Complete",
+      "sources": [
+        "docs/oci-replica-final-qualification-2026-11-06.md",
+        "docs/oci-replica-final-qualification-2026-11-06.json",
+        "docs/oci-replica-deployment-runbook.md"
+      ],
+      "tests": [],
+      "evidence": [],
+      "limitations": "All functional qualification results and 14 deliverables are recorded, including reconstruction, live lifecycle, browser, native attestation transport and exact test accounting. R13 application attestation support and R16 seamless key continuity remain Partial. Git identifies the commit containing this report without embedding a self-referential hash; no push or merge."
+    }
+  ],
+  "reconstruction": {
+    "source": {
+      "equal": true,
+      "manifest_digest": "sha256:92cdd9b641ff1b4d8d08ed023f756b55750313ab36362f62e93ab29d9aacead4",
+      "evidence_digest": "sha256:be2c2b2bc36b2cea7394eb2fd226369858fcf111eb2286a18578e2d701cbccac",
+      "evidence_bytes": 1458266,
+      "source_approval_id": 1,
+      "replica_release_id": 2,
+      "domains": 57,
+      "archive_members": 10,
+      "native_views": {
+        "skipped": "Historical release; native views present the active approved release"
+      }
+    },
+    "patched": {
+      "equal": true,
+      "manifest_digest": "sha256:c033300ef097b1bcce0dfc5bc762a9a7e8b30d65e0ecee577ec40684cf52c07d",
+      "evidence_digest": "sha256:dba47c15ebb3a139610ee151e1719eec2857ff2b4227f7e2c45c6bcf959a87eb",
+      "evidence_bytes": 1402721,
+      "source_approval_id": 2,
+      "replica_release_id": 3,
+      "domains": 57,
+      "archive_members": 10,
+      "native_views": {
+        "services": {
+          "equal": true,
+          "count": 1,
+          "fields": [
+            "service_key",
+            "name",
+            "description",
+            "owner",
+            "poc",
+            "manual_version"
+          ]
+        },
+        "service_versions": {
+          "equal": true,
+          "count": 2,
+          "fields": [
+            "current version",
+            "scan history version selector"
+          ]
+        },
+        "service_images": {
+          "equal": true,
+          "count": 1,
+          "fields": [
+            "image_digest",
+            "image_reference",
+            "scan_status",
+            "scan_error",
+            "lifecycle_status"
+          ]
+        },
+        "service_artifacts": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "artifact_type",
+            "artifact_name",
+            "chart_name",
+            "chart_version",
+            "source_type"
+          ]
+        },
+        "service_artifact_revisions": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "latest checksum",
+            "latest revision_number"
+          ]
+        },
+        "executions": {
+          "equal": true,
+          "count": 2,
+          "fields": [
+            "complete",
+            "source file names",
+            "service identity/version",
+            "SBOM name/version/purl/image"
+          ]
+        },
+        "findings": {
+          "equal": true,
+          "count": 129,
+          "fields": [
+            "cve",
+            "severity",
+            "active"
+          ]
+        },
+        "policy_findings": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "finding",
+            "title",
+            "severity",
+            "active",
+            "framework",
+            "target",
+            "description",
+            "remediation"
+          ]
+        },
+        "poam_entries": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "item_type",
+            "title",
+            "description",
+            "remediation",
+            "ticket",
+            "status",
+            "service_version"
+          ]
+        },
+        "poam_history": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "action",
+            "note",
+            "original actor identity"
+          ]
+        },
+        "risk_assessments": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "all assessment fields except remapped local IDs"
+          ]
+        },
+        "risk_decisions": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "kind",
+            "decision",
+            "payload",
+            "created_by"
+          ]
+        },
+        "native_vex_context": {
+          "equal": true,
+          "count": 1,
+          "fields": [
+            "current",
+            "enabled",
+            "pending"
+          ]
+        },
+        "vex_observation_dispositions": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "all fields with remapped IDs restored"
+          ]
+        },
+        "activity": {
+          "equal": true,
+          "count": 8,
+          "fields": [
+            "id",
+            "action",
+            "original actor identity"
+          ]
+        },
+        "exchange.ppsm": {
+          "equal": true,
+          "count": 0,
+          "fields": [
+            "configured row lower bound",
+            "visible mission metadata"
+          ]
+        },
+        "exchange.assets": {
+          "equal": true,
+          "count": 1,
+          "fields": [
+            "configured row lower bound",
+            "visible mission metadata"
+          ]
+        },
+        "context_only_domains": [
+          "dependency_watchlist_entries",
+          "dependency_watchlist_matches",
+          "deployment_validation_runs",
+          "exceptions",
+          "finding_observations",
+          "inventory_records",
+          "patch_executions",
+          "poam_change_requests",
+          "policy_exceptions",
+          "remediation_executions",
+          "service_archive_events",
+          "service_metadata",
+          "service_transfer_provenance",
+          "workflow_requests",
+          "extension.approval_context",
+          "extension.artifact_patch_lineage",
+          "extension.cyber_approvals",
+          "extension.discovery_distributions",
+          "extension.display",
+          "extension.finding_classification_changes",
+          "extension.finding_classification_state",
+          "extension.finding_classifications",
+          "extension.finding_decisions",
+          "extension.global_artifact_locations",
+          "extension.global_artifacts",
+          "extension.observation_decisions",
+          "extension.release_revision_states",
+          "extension.release_revisions",
+          "extension.risk_policy_versions",
+          "extension.service_artifact_assignments",
+          "extension.vex_disposition_evaluations",
+          "extension.vex_documents",
+          "extension.vex_finding_dispositions",
+          "extension.vex_sources",
+          "extension.vex_statements"
+        ],
+        "scope": "Every source field is compared in signed context/BOE. Native checks compare the listed public fields; extension-only records and non-displayed fields remain inspectable in the existing release evidence view."
+      }
+    }
+  },
+  "graph_cases": [
+    {
+      "case": "changed-sequence",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:00:18.051727+00:00",
+      "completed_at": "2026-11-07T04:00:18.438774+00:00",
+      "evidence": "graph/reports/changed-sequence.json"
+    },
+    {
+      "case": "complete",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T03:59:26.736773+00:00",
+      "completed_at": "2026-11-07T03:59:39.665833+00:00",
+      "evidence": "graph/reports/complete.json"
+    },
+    {
+      "case": "missing-child",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": true,
+      "started_at": "2026-11-07T04:00:57.612709+00:00",
+      "completed_at": "2026-11-07T04:01:07.818559+00:00",
+      "evidence": "graph/reports/missing-child.json"
+    },
+    {
+      "case": "missing-evidence",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": true,
+      "started_at": "2026-11-07T04:03:25.232212+00:00",
+      "completed_at": "2026-11-07T04:03:32.291760+00:00",
+      "evidence": "graph/reports/missing-evidence.json"
+    },
+    {
+      "case": "missing-layer",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": true,
+      "started_at": "2026-11-07T04:02:24.166574+00:00",
+      "completed_at": "2026-11-07T04:02:33.603196+00:00",
+      "evidence": "graph/reports/missing-layer.json"
+    },
+    {
+      "case": "missing-signature",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": true,
+      "started_at": "2026-11-07T04:04:24.100184+00:00",
+      "completed_at": "2026-11-07T04:04:32.147736+00:00",
+      "evidence": "graph/reports/missing-signature.json"
+    },
+    {
+      "case": "recover",
+      "failed_case": "missing-child",
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:01:45.447108+00:00",
+      "completed_at": "2026-11-07T04:01:49.308765+00:00",
+      "evidence": "graph/reports/recover-missing-child.json"
+    },
+    {
+      "case": "recover",
+      "failed_case": "missing-evidence",
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:03:48.705524+00:00",
+      "completed_at": "2026-11-07T04:03:52.612003+00:00",
+      "evidence": "graph/reports/recover-missing-evidence.json"
+    },
+    {
+      "case": "recover",
+      "failed_case": "missing-layer",
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:02:47.899735+00:00",
+      "completed_at": "2026-11-07T04:02:51.788563+00:00",
+      "evidence": "graph/reports/recover-missing-layer.json"
+    },
+    {
+      "case": "recover",
+      "failed_case": "missing-signature",
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:04:45.531020+00:00",
+      "completed_at": "2026-11-07T04:04:49.094395+00:00",
+      "evidence": "graph/reports/recover-missing-signature.json"
+    },
+    {
+      "case": "wrong-signer",
+      "failed_case": null,
+      "status": "passed",
+      "scope": "actual target OCI graph and production importer in isolated SQLite; HTTP authorization tested separately",
+      "source_reads": 0,
+      "active_preserved": null,
+      "started_at": "2026-11-07T04:00:16.014398+00:00",
+      "completed_at": "2026-11-07T04:00:16.399906+00:00",
+      "evidence": "graph/reports/wrong-signer.json"
+    }
+  ],
+  "harbor_replications": [
+    {
+      "label": "final-inventory-first",
+      "execution_id": 18,
+      "status": "Succeed",
+      "tasks": 3
+    },
+    {
+      "label": "final-graph-current",
+      "execution_id": 19,
+      "status": "Succeed",
+      "tasks": 4
+    },
+    {
+      "label": "final-inventory-successor",
+      "execution_id": 20,
+      "status": "Succeed",
+      "tasks": 3
+    },
+    {
+      "label": "final-native-attestation",
+      "execution_id": 21,
+      "status": "Succeed",
+      "tasks": 1
+    }
+  ],
+  "runtime_inventory": {
+    "image_count": 123,
+    "passed": 123,
+    "evidence": "inventory/runtime-verification.json"
+  },
+  "test_runs": [
+    {
+      "evidence": "tests/broad-final.xml",
+      "tests": 1172,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 1169,
+      "seconds": 129.511,
+      "console_elapsed_seconds": 129.62,
+      "file_entries": 51,
+      "unique_files": 49,
+      "unique_passed": 1135,
+      "unique_skipped": 3,
+      "duplicate_extra_executions": 34,
+      "status": "Final broad run after graph safety and retry-diagnostic fixes; passed/skipped columns count executions"
+    },
+    {
+      "evidence": "tests/broad.xml",
+      "tests": 1074,
+      "failures": 2,
+      "errors": 0,
+      "skipped": 3,
+      "passed": 1069,
+      "seconds": 178.095,
+      "status": "Superseded by tests/broad-final.xml; retained as historical evidence"
+    },
+    {
+      "evidence": "tests/focused-broad-fixes.xml",
+      "tests": 55,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 55,
+      "seconds": 3.059
+    },
+    {
+      "evidence": "enforcement/enforcement.xml",
+      "tests": 305,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "passed": 304,
+      "seconds": 35.634
+    },
+    {
+      "evidence": "enforcement/read-only-final.xml",
+      "tests": 25,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 25,
+      "seconds": 3.783
+    },
+    {
+      "evidence": "enforcement/postgres-final.xml",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 14,
+      "seconds": 82.013
+    },
+    {
+      "evidence": "enforcement/persistence-tests.xml",
+      "tests": 56,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 56,
+      "seconds": 1.361
+    },
+    {
+      "evidence": "reconstruction/pytest-final.xml",
+      "tests": 22,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 22,
+      "seconds": 6.848
+    },
+    {
+      "evidence": "frontend/startup.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 3,
+      "seconds": 1.975
+    },
+    {
+      "evidence": "graph/scope-tests.xml",
+      "tests": 13,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 13,
+      "seconds": 1.376
+    },
+    {
+      "evidence": "tests/cybersecurity-postgres-final.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 2,
+      "seconds": 11.398
+    },
+    {
+      "evidence": "tests/replica-sync-diagnostics.xml",
+      "tests": 26,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 26,
+      "seconds": 4.488
+    },
+    {
+      "evidence": "tests/attestation-helper.xml",
+      "tests": 11,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 11,
+      "seconds": 0.737
+    },
+    {
+      "evidence": "tests/graph-helper-final.xml",
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 20,
+      "seconds": 0.925,
+      "console_elapsed_seconds": 0.93
+    },
+    {
+      "evidence": "tests/replica-final-retry.xml",
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 28,
+      "seconds": 4.737
+    }
+  ],
+  "frontend": {
+    "passed": 496,
+    "failed": 0,
+    "skipped": 0,
+    "files": 66,
+    "typecheck": "passed",
+    "lint": "passed",
+    "production_build": "passed",
+    "test_report": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\final-qualification\\frontend\\vitest-final.json",
+    "qualification_scope": "496 passing tests across 66 files; type checking, lint and production build passed. Distinct from manual browser observations."
+  },
+  "test_counts_overlap": true,
+  "pending_completion": [],
+  "limitations": [
+    "This local qualification does not establish production readiness. Real deployment DNS/TLS, identity provider, trust distribution, resource sizing, backup/restore, monitoring and change procedures require staging qualification.",
+    "No seamless publisher-key rollover: fingerprint is part of service identity. A new key needs a controlled identity migration or separately qualified deployment; adding a trust pin alone is insufficient.",
+    "No fresh nginx scan was run. The actual prior source/hardened scan BOEs were independently downloaded from System A and freshly imported into System B. Synthetic rich, inventory and graph fixtures are separately labeled.",
+    "The source-approved ServiceImage row identifies prior patched digest eb007132ae918972f2de3ba02e45bc330460058472b13ba5fe4aa3e838c13663; latest scan overview identifies hardened digest 2dd3835ed3850194293bc9191b8a66504f66c069580b7c08dbe3e18200c33fa2. Import preserves this original discrepancy.",
+    "Actual nginx source relational policy_findings is empty; three observations reside in execution.raw_payload and remain retained. Native table count zero is not a claim of zero scanner observations.",
+    "Detailed Dockle alerts are separately retained original scan output, outside the original BOE evidence_documents list; signed captured observations and immutable target digest remain present.",
+    "Native public views expose a subset of original fields. Full context/BOE comparisons cover all captured fields; extension-only lineage/approval records and non-displayed inventory fields are available through release evidence/context APIs.",
+    "Browser trust store rejected the local test CA. Browser validation used loopback HTTP without weakening secure-cookie settings; authenticated API and registry checks used explicitly trusted TLS.",
+    "Target-local registry and a trustworthy local clock remain required. Disconnection from System A does not communicate future revocations. Revocation cannot retrieve previously delivered bytes or stop running workloads.",
+    "The supplied replica image includes an amd64 Cosign build; other architectures and other registry/referrer implementations require their own qualification.",
+    "Test runs overlap and must not be added. Early sandbox socketpair/connection failures were environmental; final successful reruns are cited. Initial broad stale assertions and remaining environment-specific skips are reported explicitly.",
+    "Expiry and shared-artifact isolation use controlled direct-authorization tests; signed revocation uses an actual registry graph importer plus separate automated/PostgreSQL coverage. No fresh live HTTP expiry/shared-artifact/revocation exercise or actual process-kill mid-activation is claimed.",
+    "Native Harbor attestation transport (.att) passes, including digest, original subject/predicate and signature preservation after source shutdown. Approved-release import/proxy currently authorizes signature (.sig) graphs only; integrated attestation graph routing remains Partial.",
+    "The broad command repeats two files, producing 34 duplicate passing executions: 1,169 passing executions correspond to 1,135 unique passing cases. Two exact PostgreSQL skips separately pass; the host encrypted-Cosign-key roundtrip remains unexecuted despite distinct actual Docker/Harbor Cosign coverage.",
+    "The disconnected pull starts with an empty blob cache while retaining the PostgreSQL manifest cache; this is not a claim that every cache was empty.",
+    "The deployed image and live browser/HTTP qualification predate the final retry-diagnostic correction: clearing a previous failure code before early disabled-source or registry validation. The 28-test focused sync/routes suite, including two new retry regressions, and final broad rerun verify the updated source. The graph quarantine ownership guard was also added after the live scenarios and passes 20 focused tests plus the final broad rerun. No repeat live deployment or fault scenario run is claimed for these last changes."
+  ],
+  "deliverables": [
+    {
+      "id": 1,
+      "name": "Requirements traceability matrix",
+      "status": "Complete",
+      "evidence": "R01-R27; implementation/validation statuses and explicit R13/R16 limitations"
+    },
+    {
+      "id": 2,
+      "name": "Architecture summary",
+      "status": "Complete",
+      "evidence": "System A / registry / System B architecture and trust boundaries"
+    },
+    {
+      "id": 3,
+      "name": "Complete service reconstruction evidence",
+      "status": "Complete",
+      "evidence": "Both independent nginx BOEs, 57-domain comparison and rich native HTTP fixture"
+    },
+    {
+      "id": 4,
+      "name": "Replica deployment evidence",
+      "status": "Complete",
+      "evidence": "Standalone deployment, source shutdown, actual portal/database recreation and persistent-volume evidence"
+    },
+    {
+      "id": 5,
+      "name": "Read-only API/RBAC evidence",
+      "status": "Complete",
+      "evidence": "Read-only HTTP/API regressions plus administrator and scoped-Cyber browser boundaries"
+    },
+    {
+      "id": 6,
+      "name": "Multi-image reconciliation evidence",
+      "status": "Complete",
+      "evidence": "123 executed variants; baseline100/successor100 graph pulls;77 retained/23 new/23 retired; incomplete-import recovery"
+    },
+    {
+      "id": 7,
+      "name": "Local Cyber override evidence",
+      "status": "Complete",
+      "evidence": "Fixed/indefinite HTTP grants, restart/sync persistence, immediate warm-cache denials and actual browser Cyber lifecycle"
+    },
+    {
+      "id": 8,
+      "name": "OCI signature and replication evidence",
+      "status": "Complete",
+      "evidence": "Harbor executions18/19/20/21, graph11 reports and native .att verification; application .att routing limitation explicit"
+    },
+    {
+      "id": 9,
+      "name": "Full regression test results",
+      "status": "Complete",
+      "evidence": "1,169 passing executions / 1,135 unique cases; 3 unique broad skips with the 2 exact PostgreSQL cases separately passed; 496 frontend tests; targeted and database suites"
+    },
+    {
+      "id": 10,
+      "name": "Deployment runbook",
+      "status": "Complete",
+      "evidence": "docs/oci-replica-deployment-runbook.md; deployment-specific environment qualification remains"
+    },
+    {
+      "id": 11,
+      "name": "Known limitations",
+      "status": "Complete",
+      "evidence": "Explicit scope and known limitations retained"
+    },
+    {
+      "id": 12,
+      "name": "Production readiness assessment",
+      "status": "Complete",
+      "evidence": "Ready to enter deployment-specific staging qualification within documented scope; production unqualified"
+    },
+    {
+      "id": 13,
+      "name": "Git commit summary",
+      "status": "Complete",
+      "evidence": "This commit; resolve with git log for this report; baseline recorded; no push/merge"
+    },
+    {
+      "id": 14,
+      "name": "Machine-readable companion report",
+      "status": "Complete",
+      "evidence": "docs/oci-replica-final-qualification-2026-11-06.json"
+    }
+  ],
+  "evidence_index": [
+    {
+      "path": "attestation/expected.json",
+      "bytes": 3554,
+      "sha256": "1cff4c98e00830f255f2476e3976dab5d0763e5e79b7a388add586ee38e6b14c"
+    },
+    {
+      "path": "attestation/target-cosign-verified.jsonl",
+      "bytes": 1041,
+      "sha256": "9aa02b03fd2d656853b27673f7aab4ef788696775ef3d6b723c9c35c128165c2"
+    },
+    {
+      "path": "attestation/verification.json",
+      "bytes": 3534,
+      "sha256": "479eb34d20dd7787cc55dc9175d2c2df0258899aa228734dbe4736172b8c040e"
+    },
+    {
+      "path": "browser/admin-override-denied.jpg",
+      "bytes": 50595,
+      "sha256": "a51161932a45b65ca4d294e7833a495fe6378dcc54c8b1b128fe5fb5c30adc41"
+    },
+    {
+      "path": "browser/browser-observation.json",
+      "bytes": 1930,
+      "sha256": "0cbf273a6a5536687910146faacc94e3201668a1ad5ceb10bf6cb317769c3264"
+    },
+    {
+      "path": "browser/cyber-enforcement.json",
+      "bytes": 11945,
+      "sha256": "c5c7d80ceb4db3e9a004c3d5cad623033d46f30be5e14a302a97e311204356c6"
+    },
+    {
+      "path": "browser/cyber-override-active.jpg",
+      "bytes": 59681,
+      "sha256": "909d920760291d07c0dbb353c90e8e27d0b0befa0bf92e22e24d5fa4f476efa8"
+    },
+    {
+      "path": "browser/cyber-override-revoked.jpg",
+      "bytes": 95965,
+      "sha256": "b0a640405200235264d152e27adee6adbe103bf26c2f9499809380fed57f49b0"
+    },
+    {
+      "path": "browser/replica-diagnostics.jpg",
+      "bytes": 348068,
+      "sha256": "13c63b854e92f6ceb9bb69664f00f9df370ccb1de7095db1c027b2653b3b8591"
+    },
+    {
+      "path": "cleanup.json",
+      "bytes": 10007,
+      "sha256": "4d591e3f7d91af21314c064022be1c1af8300415d153bcf93b120a3f70287814"
+    },
+    {
+      "path": "enforcement/enforcement.xml",
+      "bytes": 46059,
+      "sha256": "b81b5b690ca5e76d6392c4672d434f07e7b465633016ce97d3371d6150e1c78e"
+    },
+    {
+      "path": "enforcement/persistence-tests.xml",
+      "bytes": 9146,
+      "sha256": "1e1055ae84ff6c503644450983c3601ca8ef4f1d787092cb3de83e9c45a49fd9"
+    },
+    {
+      "path": "enforcement/postgres-final.xml",
+      "bytes": 2407,
+      "sha256": "bdd7b03e4a6fb640cfa751fc194736e0f5393ecc4d9429f81e7d9d00aaa11ec4"
+    },
+    {
+      "path": "enforcement/read-only-final.xml",
+      "bytes": 4921,
+      "sha256": "3a09d48d4fd8e6d93d6e0873c0e5f30071ae8ed2ee38e54d19e2697d5cab98d0"
+    },
+    {
+      "path": "frontend/build.log",
+      "bytes": 5056,
+      "sha256": "cb0bdc2627802e18f6b5631ae7c58b1dde735bfcd82726fd23757ceb908b664a"
+    },
+    {
+      "path": "frontend/compose-validation.json",
+      "bytes": 191,
+      "sha256": "223f39b211a45a4b393a9665267dadd2030eba4ed0ca8194175c0d99558d703f"
+    },
+    {
+      "path": "frontend/lint.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "frontend/startup.xml",
+      "bytes": 640,
+      "sha256": "754746e11ee57f56773611be64dc36b5732edf4c5721865663045f11d28b3303"
+    },
+    {
+      "path": "frontend/summary.json",
+      "bytes": 1990,
+      "sha256": "00ba68de8f791e19ac039eb0ce7ed1bfc2fa0c7348638c46ea1e01dd646aa79a"
+    },
+    {
+      "path": "frontend/typecheck.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "frontend/vitest-final.json",
+      "bytes": 157222,
+      "sha256": "f1c9148e5d4b958edb5ddb4c1e020e1452369a2f567d53fcd61b2929e567e263"
+    },
+    {
+      "path": "graph/reports/changed-sequence.json",
+      "bytes": 627,
+      "sha256": "84f32db353c61306181f830df646ed65d40d94aabc6d4b1403c8111a012b3817"
+    },
+    {
+      "path": "graph/reports/complete.json",
+      "bytes": 7010,
+      "sha256": "dfed13c5864f740346feb4e8b58d7a2bb2690c6bde8e7c3dd2cc464b06eb5540"
+    },
+    {
+      "path": "graph/reports/missing-child.json",
+      "bytes": 1594,
+      "sha256": "aa99e41de6ca217cc58e29ee8dd24dcd472e1badb368ecf29220d1f9a9469a30"
+    },
+    {
+      "path": "graph/reports/missing-evidence.json",
+      "bytes": 1690,
+      "sha256": "548c2b40266d7ec42f935f3da3f5c9a950a5dc5a6e90ace89845cfc992096dd4"
+    },
+    {
+      "path": "graph/reports/missing-layer.json",
+      "bytes": 1632,
+      "sha256": "b4f4f2752d7fb81012d313785f1059160753e14d9b004f48baec1a30275b6877"
+    },
+    {
+      "path": "graph/reports/missing-signature.json",
+      "bytes": 1442,
+      "sha256": "af0df268d339b338aaccea3d9073fee03427b96162b86c015191b02cf2080f12"
+    },
+    {
+      "path": "graph/reports/recover-missing-child.json",
+      "bytes": 5790,
+      "sha256": "9a36f2faf3a76705fc050c664e01719c32ac1a3323fcc8aed946dea2c3c38c19"
+    },
+    {
+      "path": "graph/reports/recover-missing-evidence.json",
+      "bytes": 5793,
+      "sha256": "605cbb836ef49224a7b4a62f703594cb6c413af1b5304223d3d366fd20076ce4"
+    },
+    {
+      "path": "graph/reports/recover-missing-layer.json",
+      "bytes": 5790,
+      "sha256": "ede10057ad23ac4c58dd7b4b1112645358ca69d0cdc77d7af7cd65479925aeb3"
+    },
+    {
+      "path": "graph/reports/recover-missing-signature.json",
+      "bytes": 5794,
+      "sha256": "75b4bfe5b93c69561e1155b9573b989809ade430c2970e664ddb51b419e71d52"
+    },
+    {
+      "path": "graph/reports/wrong-signer.json",
+      "bytes": 623,
+      "sha256": "522c950596d0c68c820eaece676b134d3e6164f620c3c947bd149ba5a1b9bf54"
+    },
+    {
+      "path": "harbor/harbor-replication.json",
+      "bytes": 15714,
+      "sha256": "4207b6c2ab4412cda9154a174b7407474224dc0b2d2bd44f0a5c59eaed2143de"
+    },
+    {
+      "path": "inventory/http/replica-acceptance.json",
+      "bytes": 642340,
+      "sha256": "e1bf52754011cdafae0064a41126d4b4b9a9975d93bd3c1406d3a976520d4876"
+    },
+    {
+      "path": "inventory/restart-proof.json",
+      "bytes": 2415,
+      "sha256": "ab916217ea4422870105449c8607ece4505a4432eae6ecad716bec51a47fdbee"
+    },
+    {
+      "path": "inventory/runtime-verification.json",
+      "bytes": 83968,
+      "sha256": "98d1e24046e63ff73a1e8d429dd681c4716bcef9f20914e453184422f543a0cb"
+    },
+    {
+      "path": "reconstruction/browser-approved-evidence.zip",
+      "bytes": 1402721,
+      "sha256": "dba47c15ebb3a139610ee151e1719eec2857ff2b4227f7e2c45c6bcf959a87eb"
+    },
+    {
+      "path": "reconstruction/live-sync-result.json",
+      "bytes": 406,
+      "sha256": "ed96adb4caf4956f51a37cd9c417cce8c8cb3eefb90a4694ed90553ba18a5da7"
+    },
+    {
+      "path": "reconstruction/nginx-observation-review.json",
+      "bytes": 5192,
+      "sha256": "53155bd1675a60fa3ed9cfb2a6dfbea7a38daee73c161d12ab0466ba10983817"
+    },
+    {
+      "path": "reconstruction/patched-semantic-comparison.json",
+      "bytes": 17019,
+      "sha256": "71ebbef5b2977a81c71ed3a747ba68833a74d0832ada5fbe5064450887802dac"
+    },
+    {
+      "path": "reconstruction/pytest-final.xml",
+      "bytes": 3638,
+      "sha256": "4da88139bc5423ef39c0bb28224fb96f6d61ea87b4b9cd12a5959c2dde59f1db"
+    },
+    {
+      "path": "reconstruction/source-semantic-comparison.json",
+      "bytes": 12252,
+      "sha256": "0158be53152082a6f9477bcef853ad8a7e66ea8bd77a37a16f6a185c3ad61188"
+    },
+    {
+      "path": "replica-build.log",
+      "bytes": 8829,
+      "sha256": "598b775602e8fc8d2516b5d81e5256ee12c67cb2e593306e7e9f3f9aecefed10"
+    },
+    {
+      "path": "replica/deployment-observation.json",
+      "bytes": 20004,
+      "sha256": "00e952413a26645d2009c36441fed2598c80b2216a462ac671022c8c09b2546d"
+    },
+    {
+      "path": "replica/diagnostic-validation.json",
+      "bytes": 835,
+      "sha256": "cfb86f6ad1b0e4501fcdf6895ba60dc845206b4d01180879452956d30f10fc43"
+    },
+    {
+      "path": "tests/attestation-helper.log",
+      "bytes": 260,
+      "sha256": "4dd610877cee99d2d564be3d6f5f9db51328d2ed66f27f04fae6c2f148aef72f"
+    },
+    {
+      "path": "tests/attestation-helper.xml",
+      "bytes": 2072,
+      "sha256": "66930606e7ccf137039e128f694ffc17159be513381331c67f87de3d56dd0132"
+    },
+    {
+      "path": "tests/attestation-policy.log",
+      "bytes": 98,
+      "sha256": "17e6f7a69386cdeeb2a2b3da735062dfbcf210e43e0036bfc762eccef083713e"
+    },
+    {
+      "path": "tests/attestation-publish.log",
+      "bytes": 110,
+      "sha256": "ad82b1f58429cdb83dea2bb83e5593dbda866a34c5eef47992956cc082cb8dcc"
+    },
+    {
+      "path": "tests/attestation-replication.log",
+      "bytes": 135,
+      "sha256": "b7ea97ba3c68dbfe88bba80b0516d5df321fa282867f76d6f6b7d292527469e2"
+    },
+    {
+      "path": "tests/attestation-source-stopped.jsonl",
+      "bytes": 20939,
+      "sha256": "9a45a41f6bf029f17261852d9732492a7f04c7de7d2a9177fde31baf354290f3"
+    },
+    {
+      "path": "tests/attestation-verify.log",
+      "bytes": 106,
+      "sha256": "9f2b61e7220cdab2dfd4f866775cc402609dfebcde0e639e29d4a9604c99404a"
+    },
+    {
+      "path": "tests/broad-final-files.txt",
+      "bytes": 2206,
+      "sha256": "298b7188a039006d30ab1da393db329c44bccba0452ba2fafb61431361ad8984"
+    },
+    {
+      "path": "tests/broad-final-summary.json",
+      "bytes": 2274,
+      "sha256": "a87863242a5b320ccfe3bcbbaef96eb6d88539e738f9add5fbe204d232acceaa"
+    },
+    {
+      "path": "tests/broad-final.log",
+      "bytes": 1886,
+      "sha256": "00c4a63e9e5fb55f14673c40c275393c65e970728ead571485fc3efe1e82f10e"
+    },
+    {
+      "path": "tests/broad-final.xml",
+      "bytes": 183759,
+      "sha256": "661cf262103a3230de492bc8e248ae5d99f15dacb10965fae93a6eb22f59b17e"
+    },
+    {
+      "path": "tests/broad.xml",
+      "bytes": 172846,
+      "sha256": "1129186eba7e6fdc7aeca2439dd9361125296599211c5dc935c319ffd6e3306b"
+    },
+    {
+      "path": "tests/cybersecurity-postgres-final-summary.json",
+      "bytes": 325,
+      "sha256": "54027b9fa02e0bcbbe5820d2e23668369259e7d8c12077996a2effaf6681a8f1"
+    },
+    {
+      "path": "tests/cybersecurity-postgres-final.log",
+      "bytes": 270,
+      "sha256": "9341ad7af51994bb5eaa1981419e824010e9036172f922f529455f9ccb33eb2a"
+    },
+    {
+      "path": "tests/cybersecurity-postgres-final.xml",
+      "bytes": 541,
+      "sha256": "b1d2f9eecc55fe2710fbefb46c429c9db75776ae4e26f164fcdcffe1a4369359"
+    },
+    {
+      "path": "tests/focused-broad-fixes.xml",
+      "bytes": 9707,
+      "sha256": "89571cbb39364058aed88a9052a845feb7b83682745392b16794d325329e4099"
+    },
+    {
+      "path": "tests/graph-helper-final.log",
+      "bytes": 260,
+      "sha256": "b8b1231d7c68965afa0f8175988e584924dbc6d01e339e3638b76311e364dd3a"
+    },
+    {
+      "path": "tests/graph-helper-final.xml",
+      "bytes": 3733,
+      "sha256": "7533a36f607454ce65951a56aa64a70b1856a966b1fe89c60a3f8b9db9fc601e"
+    },
+    {
+      "path": "tests/replica-final-retry.log",
+      "bytes": 261,
+      "sha256": "f7c7447cd74f16d05390d54a0259394cd24827bd0ac6b4c5894adf9e6e193174"
+    },
+    {
+      "path": "tests/replica-final-retry.xml",
+      "bytes": 4666,
+      "sha256": "367cfb47c7f5a0bb0e056e45d3ed806ce5870ab03cff1c995a4d95f668b707e4"
+    },
+    {
+      "path": "tests/replica-sync-diagnostics.log",
+      "bytes": 1279,
+      "sha256": "8fe8e578163847b6ebeb243e39dfe0ed6956ef385e83a945f6310850a246c5e3"
+    },
+    {
+      "path": "tests/replica-sync-diagnostics.xml",
+      "bytes": 4342,
+      "sha256": "04023d42d7a79972dab4dce059c6855d142c38515b42cc0c763f227ecca10157"
+    }
+  ],
+  "final_broad_skips": [
+    {
+      "class": "portal.tests.test_release_signing",
+      "name": "test_real_cosign_encrypted_key_roundtrip",
+      "reason": "Cosign not installed; set CATS_TEST_COSIGN to test encrypted Cosign keys",
+      "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_release_signing.py:349: Cosign not installed; set CATS_TEST_COSIGN to test encrypted Cosign keys"
+    },
+    {
+      "class": "portal.tests.test_cybersecurity_evidence",
+      "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[False]",
+      "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)",
+      "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_cybersecurity_evidence.py:76: needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+    },
+    {
+      "class": "portal.tests.test_cybersecurity_evidence",
+      "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[True]",
+      "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)",
+      "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_cybersecurity_evidence.py:76: needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+    }
+  ],
+  "live_inventory_status": {
+    "status": "Complete",
+    "evidence": "inventory/http/replica-acceptance.json",
+    "snapshot_at_utc": "2026-11-07T04:42:13.433606+00:00",
+    "baseline_complete": true,
+    "baseline_image_count": 100,
+    "incomplete_sync": {
+      "id": "3e679e799f7043149c6b30feffc25170",
+      "status": "failed",
+      "result": {
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 1,
+        "failed": 1
+      },
+      "error": "Operation failed; inspect worker configuration and retry. Reference: 2824a13511004979b064ea59f560a89f",
+      "created_at": "2026-11-07T04:17:23.659025+00:00",
+      "completed_at": "2026-11-07T04:19:31.047862+00:00"
+    },
+    "incomplete_preserved_baseline": true,
+    "target_omission": {
+      "checked_at": "2026-11-07T04:16:52.607642+00:00",
+      "target": "https://harbor-target.test:8443",
+      "object": {
+        "digest": "sha256:5e103bea2293c20676a713240428fd3fad5bcdf5077b6bd755eb15aa27e16b4f",
+        "index": 100,
+        "kind": "blob",
+        "mediaType": "application/vnd.oci.image.layer.v1.tar",
+        "parent_digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c",
+        "repository": "qualification/final-inventory-20261106/harbor-inventory-final-20261106/corpus",
+        "size": 10240
+      },
+      "parent": {
+        "status": 200,
+        "bytes": 1647,
+        "digest": "sha256:35d32208b51bbeb6ebc8fb5cffb4ca2cf8973e19678c8b903ee4f5afa3640c8c"
+      },
+      "source_reads": 0,
+      "blob": {
+        "status": 404,
+        "bytes": null,
+        "digest": null,
+        "body_observation": "Registry client discards error response bodies."
+      },
+      "production_verification": {
+        "rejected": true,
+        "http_status": 404,
+        "reason": "Referenced target OCI content is unavailable (HTTP 404)."
+      },
+      "sync_error_scope": "The job API sanitizes error text; content cause is independently verified here."
+    },
+    "recovery_sync": {
+      "id": "e9233d8563024af2949277ac31027b9c",
+      "status": "completed",
+      "result": {
+        "discovered": 2,
+        "activated": 1,
+        "revoked": 0,
+        "unchanged": 1,
+        "failed": 0
+      },
+      "error": null,
+      "created_at": "2026-11-07T04:19:36.330930+00:00",
+      "completed_at": "2026-11-07T04:20:20.987379+00:00"
+    },
+    "replacement": {
+      "retained": 77,
+      "retired": 23,
+      "new": 23
+    },
+    "successor_service_id": 1,
+    "successor_active_image_count": 100,
+    "retired_denial_count": 23,
+    "all_retired_denied_as_superseded": true,
+    "cold_blob_cache": {
+      "format": "cats-inventory-cold-cache-v1",
+      "checked_at": "2026-11-07T04:20:54.2066503+00:00",
+      "replica_project": "cats-final-replica-20261106",
+      "cache_volume": "cats-final-replica-20261106_final_empty_cache_1794025251",
+      "cache_directory": "/var/cache/cats-oci",
+      "file_count": 0,
+      "prior_volume_retained": true,
+      "proof_sha256": "ca0308cb2a3e929fbb1439297db6b643de43d67831f64b26c5cca2d27f5eb712",
+      "scope": "Empty blob cache; PostgreSQL manifest cache is retained and may serve previously pulled manifests."
+    },
+    "source_harbor_unreachable_before_complete": true,
+    "successor_pull_complete": true,
+    "fault_restore": "Root confirmed scoped repository link and registry cache restoration; unsafe shared-blob deletion was refused before the scoped link injection.",
+    "successor_image_count": 100,
+    "successor_verified_bytes": 2101456523,
+    "baseline_verified_bytes": 2101456490,
+    "completed_at": "2026-11-07T04:30:11.796760+00:00",
+    "override_checks": [
+      {
+        "duration": "fixed",
+        "override_id": 1,
+        "full_pull_complete": true,
+        "other_retired_denials": 22,
+        "revoked": true,
+        "warm_cache_denied": true
+      },
+      {
+        "duration": "indefinite",
+        "override_id": 2,
+        "full_pull_complete": true,
+        "other_retired_denials": 22,
+        "revoked": true,
+        "warm_cache_denied": true
+      }
+    ],
+    "override_persistence": {
+      "complete": true,
+      "actual_app_and_database_recreated": true,
+      "evidence": "inventory/restart-proof.json",
+      "audit_preserved_after_restart": true,
+      "normal_sync_status": "completed",
+      "after_restart_and_sync_pull_complete": true,
+      "warm_cache_denied_after_revocation": true,
+      "no_override_use_after_revocation": true,
+      "source_unreachable_after_verify": true
+    },
+    "both_release_evidence_archives_equal_original": true
+  },
+  "deployment_observation": {
+    "replica_core_services": [
+      "db",
+      "portal",
+      "oci-proxy"
+    ],
+    "source_harbor_services": 9,
+    "checked_at": "2026-11-07T04:39:39.9575473+00:00",
+    "source_harbor_offline": true,
+    "assessment_workers_present": false,
+    "replica_supporting_services": [
+      "qualification-tls"
+    ],
+    "system_a_offline": true,
+    "format": "cats-final-deployment-observation-v1",
+    "evidence": "replica/deployment-observation.json"
+  },
+  "browser_observation": {
+    "observed_at": "2026-11-07T04:38:45.044Z",
+    "status": "Complete",
+    "base_url": "http://127.0.0.1:18938",
+    "scope": "Actual in-app browser using the loopback HTTP qualification listener. API and OCI pull qualification used explicit-CA HTTPS. No TLS warnings bypassed.",
+    "checks": {
+      "automatic_imported_services": 2,
+      "read_only_banner": true,
+      "create_service_action_absent": true,
+      "nginx_overview_and_findings": true,
+      "artifact_inventory_and_lineage": true,
+      "dependencies_sbom_and_licenses": true,
+      "activity_original_events": true,
+      "release_history_active_and_superseded": true,
+      "release_expiration_visible": true,
+      "source_evidence_zip_download_sha256": "dba47c15ebb3a139610ee151e1719eec2857ff2b4227f7e2c45c6bcf959a87eb",
+      "administrator_override_creation_absent": true,
+      "scoped_cyber_visible_services": 1,
+      "cyber_administration_link_absent": true,
+      "cyber_override_id": 4,
+      "cyber_override_created_from_browser": true,
+      "cyber_override_indefinite_exact_digest": true,
+      "cyber_override_usage_displayed": 11,
+      "cyber_override_revoked_from_browser": true,
+      "real_full_pull_and_warm_cache_denial_evidence": "cyber-enforcement.json",
+      "synchronization_counters_visible": true,
+      "failed_import_actionable_diagnostic_visible": true,
+      "failed_import_reference": "03634ab2c573432781ed5559775740a5",
+      "browser_warning_or_error_logs": 0
+    },
+    "limitations": [
+      "Read-only browser samples are representative views, not an exhaustive manual visit to every service route.",
+      "Native historical assessment comparison was skipped by the deterministic comparator because the native service projection reflects the active release; signed historical BOE contents were independently compared."
+    ],
+    "screenshots": [
+      "admin-override-denied.jpg",
+      "cyber-override-active.jpg",
+      "cyber-override-revoked.jpg",
+      "replica-diagnostics.jpg"
+    ],
+    "evidence": "browser/browser-observation.json",
+    "download_retained_copy": "reconstruction/browser-approved-evidence.zip",
+    "cyber_enforcement_evidence": "browser/cyber-enforcement.json",
+    "actual_cyber_pull_complete": true,
+    "actual_warm_cache_denied_after_revocation": true
+  },
+  "controlled_validation_scope": [
+    {
+      "behavior": "Exact offline signed expiry",
+      "test": "portal/tests/test_replica_authorization.py::test_expiration_is_enforced_offline_at_the_exact_signed_deadline",
+      "environment": "SQLite persisted state and direct authorization; upstream client forbidden",
+      "boundary": "One microsecond before, exact deadline, 365 days later; no fresh live HTTP expiry exercise"
+    },
+    {
+      "behavior": "Cross-service shared-digest override isolation",
+      "test": "portal/tests/test_replica_authorization.py::test_same_digest_in_another_service_cannot_reuse_override",
+      "environment": "Two persisted SQLite services and direct authorization",
+      "boundary": "No fresh live HTTP or PostgreSQL shared-digest exercise"
+    },
+    {
+      "behavior": "Interrupted activation rollback",
+      "test": "portal/tests/test_replica_import.py:304; portal/tests/test_replica_postgres.py:78",
+      "environment": "Injected failure after projection before seal/commit, SQLite plus actual PostgreSQL",
+      "boundary": "No operating-system process kill during activation"
+    },
+    {
+      "behavior": "Durable worker lease retry",
+      "test": "portal/tests/test_replica_sync.py:34,73",
+      "environment": "SQLite worker lease/retry tests",
+      "boundary": "Controlled lease retry is separate from actual portal/database recreation and HTTP persistence verification, now passed."
+    },
+    {
+      "behavior": "Concurrent import",
+      "test": "portal/tests/test_replica_concurrency_postgres.py:90",
+      "environment": "Actual disposable PostgreSQL",
+      "boundary": "Separate from SQLite tests"
+    },
+    {
+      "behavior": "Standalone signed revocation and replay",
+      "evidence": "graph/reports/complete.json",
+      "environment": "Production importer, actual signed target-registry graph, isolated SQLite",
+      "boundary": "No fresh live HTTP upstream revocation exercise"
+    }
+  ],
+  "forthcoming_evidence_slots": [],
+  "evidence_index_snapshot_at_utc": "2026-11-07T04:47:25.446296+00:00",
+  "mutable_evidence": [],
+  "final_broad_skip_followup": {
+    "exact_postgresql_skipped_cases": {
+      "passed": 2,
+      "seconds": 11.398,
+      "console_elapsed_seconds": 11.4,
+      "server_version": "PostgreSQL 16.15",
+      "database_scope": "Unique disposable database created and dropped; existing database not mutated",
+      "evidence": [
+        "tests/cybersecurity-postgres-final.xml",
+        "tests/cybersecurity-postgres-final-summary.json"
+      ]
+    },
+    "unexecuted_exact_test": "portal.tests.test_release_signing.test_real_cosign_encrypted_key_roundtrip",
+    "original_broad_skip_count_unchanged": 3
+  },
+  "commit_reference": {
+    "kind": "self",
+    "description": "The commit containing this report; resolve its identifier through Git history rather than embedding a self-referential hash.",
+    "command": "git log -1 --format=%H -- docs/oci-replica-final-qualification-2026-11-06.md"
+  },
+  "final_broad_summary": {
+    "format": "cats-broad-final-tests-v1",
+    "file_entries": 51,
+    "unique_files": 49,
+    "reported_duration_seconds": 129.62,
+    "executions": {
+      "total": 1172,
+      "passed": 1169,
+      "skipped": 3,
+      "failed": 0,
+      "errors": 0
+    },
+    "unique_cases": {
+      "total": 1138,
+      "passed": 1135,
+      "skipped": 3,
+      "failed": 0,
+      "errors": 0
+    },
+    "duplicate_case_extra_executions": 34,
+    "duplicate_files": [
+      "portal/tests/test_replica_read_only.py",
+      "portal/tests/test_replica_reconstruction_qualification.py"
+    ],
+    "suites": [
+      {
+        "name": "pytest",
+        "tests": "1172",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "3",
+        "time": "129.511"
+      }
+    ],
+    "skips": [
+      {
+        "class": "portal.tests.test_release_signing",
+        "name": "test_real_cosign_encrypted_key_roundtrip",
+        "reason": "Cosign not installed; set CATS_TEST_COSIGN to test encrypted Cosign keys",
+        "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_release_signing.py:349: Cosign not installed; set CATS_TEST_COSIGN to test encrypted Cosign keys"
+      },
+      {
+        "class": "portal.tests.test_cybersecurity_evidence",
+        "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[False]",
+        "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)",
+        "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_cybersecurity_evidence.py:76: needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+      },
+      {
+        "class": "portal.tests.test_cybersecurity_evidence",
+        "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[True]",
+        "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)",
+        "location": "C:\\Users\\lil-j\\Projects\\Cyber Hygiene\\portal\\tests\\test_cybersecurity_evidence.py:76: needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+      }
+    ],
+    "postgres_skip_closure": "cybersecurity-postgres-final-summary.json",
+    "prior_run_prefix": "broad-before-final-retry-fix",
+    "graph_helper_included": true,
+    "native_attestation_helper_included": false,
+    "live_image_boundary": "Live image predates the final sync-entry failure-code checkpoint move; this final source suite includes that change."
+  },
+  "diagnostic_validation": {
+    "format": "cats-replica-diagnostic-v1",
+    "passed": true,
+    "negative_control": "Valid replicated releases rejected by deliberately untrusted fingerprint on a separate disabled test source.",
+    "job": {
+      "id": "805b8ebc115a429ebf1ba074f17cebab",
+      "status": "failed",
+      "stage": "Failed",
+      "progress": 20,
+      "result": {
+        "failure_code": "release_verification_failed",
+        "discovered": 2,
+        "activated": 0,
+        "revoked": 0,
+        "unchanged": 0,
+        "failed": 2
+      },
+      "error": "Release verification failed. Complete registry replication, verify publisher trust and signed sequence, then retry. Reference: 03634ab2c573432781ed5559775740a5",
+      "created_at": "2026-11-07T04:34:44.911452+00:00",
+      "completed_at": "2026-11-07T04:35:19.295548+00:00"
+    },
+    "imported_release_state_unchanged": true,
+    "evidence": "replica/diagnostic-validation.json"
+  },
+  "native_attestation": {
+    "attestation_graph": {
+      "blobs": [
+        "sha256:557802cd4afcf49e50b7cfa38a6f1e8e621d9c7cf954fd006ff9f1ed98428aa2",
+        "sha256:a623635cb4dc8cca1f8fd0a6395712cd0a724108fc97bd6f086f7bf6bb7bc22c"
+      ],
+      "descriptor": {
+        "digest": "sha256:1e47889de2beb4d68455483b3d42c6ddbc942afee384bdb1206f8688d62ae894",
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "size": 516
+      },
+      "manifests": [
+        "sha256:1e47889de2beb4d68455483b3d42c6ddbc942afee384bdb1206f8688d62ae894"
+      ]
+    },
+    "checked_at": "2026-11-07T04:35:51.122785+00:00",
+    "equivalent_relationship": "sha256-ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35.att",
+    "explicit_ca_sha256": "80954587cd9f599130d36a6cab1816bb22b2b166b19c5cc0c7d5bbc646a3212c",
+    "fixture": "SYNTHETIC Harbor native attestation preservation; not scanned or approved production content",
+    "format": "cats-harbor-attestation-preservation-v1",
+    "image_graph": {
+      "blobs": [
+        "sha256:1f91e20e605aa47cab39bc3c7b57fa27af5af02c5121b4b6809d96ec1cba1cb1",
+        "sha256:4ea5321850f5cc8379c0e24f6703f9626c8e05b73b41639bbf3e4a064232bc52",
+        "sha256:5448c85d542951860839ba2a63979e80a5879ae84ce24f8b1168d4344b2026b7",
+        "sha256:9dc000a538cce9908f40348ea137d303f6223aacfc6050e67f1c43e34a4faebd"
+      ],
+      "descriptor": {
+        "digest": "sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35",
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "size": 491
+      },
+      "manifests": [
+        "sha256:076d77f71fe849538a3cbd5b588edc5eef320fe5b4b12fcc4fa5cbf31ff43013",
+        "sha256:9afb165b6b9717f7d999b968655a2b89ebb905b6149615c459b1f449e6e9ab7c",
+        "sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35"
+      ]
+    },
+    "native_cosign_verification": "passed",
+    "original_source_predicate_subject": "harbor-source.test:8443/qualification/final-attestation-20261106/fixtures/application@sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35",
+    "predicate": {
+      "evidence": {
+        "qualification.json": "sha256:e044bead0770154f5417c965b584cf6ebe22270c4566ca0333fc4bc4293a65c7"
+      },
+      "purpose": "release",
+      "schemaVersion": 1,
+      "subject": "harbor-source.test:8443/qualification/final-attestation-20261106/fixtures/application@sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35"
+    },
+    "predicate_type": "https://cats.security/attestations/release/v1",
+    "scope": "Native Harbor transport only; approved-release import and proxy support are separate.",
+    "source_reference": "harbor-source.test:8443/qualification/final-attestation-20261106/fixtures/application@sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35",
+    "statement_subjects": [
+      {
+        "digest": {
+          "sha256": "ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35"
+        },
+        "name": "harbor-source.test:8443/qualification/final-attestation-20261106/fixtures/application"
+      }
+    ],
+    "status": "passed",
+    "subject_digest": "sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35",
+    "target_reference": "harbor-target.test:8443/qualification/final-attestation-20261106/fixtures/application@sha256:ea7dd082e152b4a118e6ff1fbec05a425f1c37500bc310db06cce6389db16a35",
+    "transparency_log": false,
+    "trusted_fingerprint": "sha256:0e78ba881f30a955211b14b302e7f2f9dbe18c2fb09cafcf06fbf04fb9740f05",
+    "verification_registry": "https://harbor-target.test:8443",
+    "verification_uses_source_registry": false,
+    "evidence": [
+      "attestation/expected.json",
+      "attestation/verification.json",
+      "attestation/target-cosign-verified.jsonl"
+    ],
+    "source_harbor_stopped_before_target_verification": true,
+    "application_support_boundary": "Native Harbor .att preservation verified; approved-release importer/proxy supports .sig graph authorization only. Optional attestation verifier expects original source predicate subject."
+  },
+  "cleanup": {
+    "all_qualification_services_stopped": true,
+    "scope": "Only three explicitly named qualification compose projects; no containers, volumes or evidence removed.",
+    "evidence_preserved": true,
+    "containers_and_volumes_preserved": true,
+    "source_registry_faults_restored_before_cleanup": true,
+    "completed_at": "2026-11-07T04:40:05.2200836+00:00",
+    "format": "cats-final-qualification-cleanup-v1",
+    "evidence": "cleanup.json",
+    "running_containers_stopped": 13,
+    "total_observed_containers": 38,
+    "qualification_projects": 3
+  },
+  "post_live_helper_validation": {
+    "scope": "After the live graph runs, the qualification fault helper gained an all-reference ownership guard for global blob quarantine. It checks layer, manifest-revision, tag-index and current links and refuses foreign references, symlinks, malformed/oversized links or missing owned links. This helper safety change passes 20 focused tests, including seven new cases; live scenarios were not rerun after this helper-only change. Earlier quarantine records remain restorable.",
+    "evidence": [
+      "tests/graph-helper-final.xml",
+      "tests/graph-helper-final.log"
+    ],
+    "passed": 20,
+    "seconds": 0.925,
+    "console_elapsed_seconds": 0.93,
+    "new_cases": 7,
+    "live_scenarios_rerun": false
+  },
+  "completion_record": {
+    "runtime_cleanup_record": "Complete: cleanup.json; 13 running containers stopped, 38 observed containers across 3 qualification projects all stopped; containers, volumes and evidence retained.",
+    "git_reference": "This commit; resolve with git log for this report.",
+    "push": false,
+    "merge": false
+  },
+  "final_source_validation": {
+    "scope": "The deployed image and live browser/HTTP qualification predate the final retry-diagnostic correction: clearing a previous failure code before early disabled-source or registry validation. The 28-test focused sync/routes suite, including two new retry regressions, and final broad rerun verify the updated source. The graph quarantine ownership guard was also added after the live scenarios and passes 20 focused tests plus the final broad rerun. No repeat live deployment or fault scenario run is claimed for these last changes.",
+    "graph_fault_guard_passed": 20,
+    "both_in_final_broad_run": true,
+    "native_attestation_helper_passed": 11,
+    "native_attestation_helper_in_broad_run": false,
+    "live_deployment_rerun_after_final_changes": false,
+    "do_not_sum_overlapping_runs": true,
+    "evidence": [
+      "tests/replica-final-retry.xml",
+      "tests/graph-helper-final.xml",
+      "tests/broad-final.xml",
+      "tests/attestation-helper.xml"
+    ],
+    "sync_routes_passed": 28,
+    "new_retry_diagnostic_cases": 2
+  }
+}

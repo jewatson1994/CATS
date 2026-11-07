@@ -23,6 +23,11 @@ from .release_validity import utc
 from .secrets import decrypt_secret
 
 KIND = 'replica_sync'
+FAILURE_MESSAGES = {
+    'release_verification_failed': (
+        'Release verification failed. Complete registry replication, verify publisher trust '
+        'and signed sequence, then retry.'),
+}
 
 
 def retained_complete(release):
@@ -52,6 +57,9 @@ def enqueue(db, source, actor_id=None):
 
 
 def sync(ctx, payload):
+    # Clear an earlier attempt's diagnostic before any validation can fail.
+    # DurableJobs keeps retry/backoff semantics; only this handler authors codes.
+    ctx.checkpoint({'failure_code': None})
     source_id = payload['source_id']
     with ctx.session_factory() as db:
         source = db.get(ReplicaSource, source_id)
@@ -137,6 +145,7 @@ def sync(ctx, payload):
         if result['failed']:
             # Retrying is safe: committed events are idempotent, incomplete
             # releases remain inactive. DurableJobs supplies bounded backoff.
+            ctx.checkpoint({'failure_code': 'release_verification_failed'})
             raise RuntimeError('Incomplete release replication')
         return result
     except Exception:

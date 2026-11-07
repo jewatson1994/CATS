@@ -2,10 +2,11 @@ import {useEffect, useState} from 'react';
 import {requestJson} from '../api';
 
 /** Poll only after a request finishes, so a slow local registry cannot queue requests. */
-export function useReplicaResource<T>(url: string, pollMilliseconds = 0) {
-  const [state, setState] = useState<{url: string; value: T | null; error: string}>({url, value: null, error: ''});
+export function useReplicaResource<T>(url: string | null, pollMilliseconds = 0) {
+  const [state, setState] = useState<{url: string | null; value: T | null; error: string}>({url, value: null, error: ''});
   const [version, setVersion] = useState(0);
   useEffect(() => {
+    if (!url) return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const refresh = async () => {

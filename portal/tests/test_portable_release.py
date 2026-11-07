@@ -165,9 +165,72 @@ def test_project_discovery_catalog_pagination_and_scope(monkeypatch):
                 return 200, {}, b'{"repositories":["team/b/releases","outside/c/releases"]}'
             return 200, {'Link': '</v2/_catalog?n=100&last=a>; rel="next"'}, b'{"repositories":["team/a/releases","team/a/images"]}'
     monkeypatch.setattr(release_oci, '_Client', Registry)
-    monkeypatch.setattr(portable, 'discover_releases', lambda repository, env: calls.append(repository) or [{'reference': repository + '@sha256:' + 'a' * 64}])
+    monkeypatch.setattr(portable, 'discover_releases', lambda repository, env, **kwargs: calls.append(repository) or [{'reference': repository + '@sha256:' + 'a' * 64}])
     assert len(list(portable.discover_release_references('registry.example', 'team/*', {}))) == 2
     assert calls == ['registry.example/team/a/releases', 'registry.example/team/b/releases']
+
+
+@pytest.mark.parametrize('catalog', [False, True])
+def test_discovery_bounds_non_repeating_pagination(monkeypatch, catalog):
+    requests = []
+    class Registry:
+        def __init__(self, host, repository, env, **kwargs):
+            self.base, self.api = 'https://' + host, 'https://' + host + '/v2/' + repository
+        def request(self, method, url):
+            requests.append(url)
+            path = '/v2/_catalog' if catalog else '/v2/team/releases/tags/list'
+            return 200, {'Link': f'<{path}?page={len(requests)}>; rel="next"'}, portable.canonical(
+                {'repositories' if catalog else 'tags': []})
+    monkeypatch.setattr(release_oci, '_Client', Registry)
+    env = {'CATS_REPLICA_DISCOVERY_MAX_PAGES': '2'}
+    with pytest.raises(ValueError, match='pages limit'):
+        list(portable.discover_release_references('registry.example', 'team/*' if catalog else 'team/releases', env))
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize('catalog', [False, True])
+def test_discovery_bounds_oversized_listing_before_resolving_tags(monkeypatch, catalog):
+    requests = []
+    class Registry:
+        def __init__(self, host, repository, env, **kwargs):
+            self.base, self.api = 'https://' + host, 'https://' + host + '/v2/' + repository
+        def request(self, method, url):
+            requests.append(url)
+            return 200, {}, portable.canonical({'repositories' if catalog else 'tags':
+                ['team/a/releases', 'team/b/releases'] if catalog else ['release-1-a', 'release-2-b']})
+    monkeypatch.setattr(release_oci, '_Client', Registry)
+    with pytest.raises(ValueError, match='entries limit'):
+        list(portable.discover_release_references('registry.example', 'team/*' if catalog else 'team/releases',
+            {'CATS_REPLICA_DISCOVERY_MAX_ENTRIES': '1'}))
+    assert len(requests) == 1
+
+
+def test_project_discovery_shares_release_budget_across_repositories(monkeypatch):
+    requests = []
+    class Registry:
+        def __init__(self, host, repository, env, **kwargs):
+            self.base, self.api = 'https://' + host, 'https://' + host + '/v2/' + repository
+        def request(self, method, url):
+            requests.append(url)
+            if '/_catalog' in url:
+                return 200, {}, portable.canonical({'repositories': ['team/a/releases', 'team/b/releases']})
+            if '/tags/list' in url:
+                return 200, {}, portable.canonical({'tags': ['release-1-a']})
+            return 200, {}, b'{}'
+    monkeypatch.setattr(release_oci, '_Client', Registry)
+    discoveries = portable.discover_release_references('registry.example', 'team/*',
+        {'CATS_REPLICA_DISCOVERY_MAX_RELEASES': '1'})
+    assert next(discoveries).startswith('registry.example/team/a/releases@sha256:')
+    with pytest.raises(ValueError, match='releases limit'):
+        next(discoveries)
+    assert sum('/manifests/' in request for request in requests) == 1
+
+
+@pytest.mark.parametrize('name', ['PAGES', 'ENTRIES', 'RELEASES'])
+@pytest.mark.parametrize('limit', ['0', '-1', 'invalid'])
+def test_discovery_rejects_invalid_budgets(name, limit):
+    with pytest.raises(ValueError):
+        portable._DiscoveryBudget({'CATS_REPLICA_DISCOVERY_MAX_' + name: limit})
 
 
 def test_legacy_approval_requires_new_frozen_capture(environment):

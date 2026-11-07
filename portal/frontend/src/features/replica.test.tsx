@@ -8,6 +8,7 @@ import {ReplicaReleaseIndicator} from '../components/ReplicaReleaseIndicator';
 import {OperatingMode} from '../operatingMode';
 import {requestJson} from '../api';
 import {Page as PublicHome} from './home';
+import {ServiceScanSchedule} from './ServiceScanSchedule';
 
 vi.mock('../api', async importOriginal => ({...await importOriginal<typeof import('../api')>(), requestJson: vi.fn()}));
 const request = vi.mocked(requestJson);
@@ -82,7 +83,7 @@ it('queues synchronization with the existing CSRF boundary', async () => {
 
 it('updates publisher pins without enabling a paused source', async () => {
   const oldPin = 'sha256:' + 'a'.repeat(64), newPin = 'sha256:' + 'b'.repeat(64);
-  request.mockImplementation(async url => String(url).includes('/upstreams') ? [{id: 4, name: 'Local registry', endpoint: 'https://registry.local'}] : {sources: [
+  request.mockImplementation(async url => String(url).includes('/registries') ? [{id: 4, name: 'Local registry', endpoint: 'https://registry.local'}] : {sources: [
     {id: 2, name: 'Mission source', upstream_id: 4, repository: 'approved/mission/releases', poll_seconds: 300, enabled: false, trusted_publishers: [oldPin]}
   ], services: [], jobs: []});
   render(<Page data={{...data, can: {'replica.admin': {'*': true}, 'replica.sync': {'*': true}}}}/>);
@@ -169,4 +170,51 @@ it('hides unavailable assessment actions on the public replica landing page', ()
   render(<PublicHome data={data}/>);
   expect(screen.getByRole('link', {name: /Sign In/})).toBeInTheDocument();
   for (const name of [/Start Scan/, /Generate SBOM/, /Start Patch/]) expect(screen.queryByRole('link', {name})).not.toBeInTheDocument();
+});
+
+it('shows synchronization outcomes and actionable source errors to a sync-only operator', async () => {
+  request.mockResolvedValue({sources: [{id: 2, name: 'Mission source', enabled: true, last_error: 'Check publisher trust. Reference: sync-123'}], services: [], jobs: [
+    {id: 4, status: 'failed', error: 'Incomplete release replication', result: {discovered: 3, activated: 1, revoked: 0, unchanged: 1, failed: 1}},
+  ]});
+  render(<Page data={{...data, can: {'replica.sync': {'*': true}}}}/>);
+  expect(await screen.findByText('Check publisher trust. Reference: sync-123')).toBeInTheDocument();
+  expect(screen.getByText('Discovered: 3 · Activated: 1 · Revoked: 0 · Unchanged: 1 · Failed: 1')).toBeInTheDocument();
+  expect(screen.getByText('Incomplete release replication')).toBeInTheDocument();
+  expect(screen.queryByRole('navigation', {name: 'Replica administration'})).not.toBeInTheDocument();
+  expect(request.mock.calls.every(([url]) => url === '/api/replica/status')).toBe(true);
+});
+
+it('allows source administrators to select a registry without granting registry management', async () => {
+  request.mockImplementation(async url => String(url).endsWith('/registries') ? [{id: 4, name: 'Replica registry', endpoint: 'https://registry.local', enabled: true}]
+    : {sources: [], services: [], jobs: []});
+  render(<Page data={{...data, can: {'replica.admin': {'*': true}}}}/>);
+  expect(await screen.findByRole('option', {name: 'Replica registry — https://registry.local', hidden: true})).toHaveValue('4');
+  expect(request.mock.calls.some(([url]) => url === '/api/oci/upstreams')).toBe(false);
+  expect(screen.queryByRole('heading', {name: 'Local registries'})).not.toBeInTheDocument();
+});
+
+it('does not display a captured scan schedule as executable on a replica', () => {
+  render(<OperatingMode.Provider value="replica"><ServiceScanSchedule root="/services/mission" data={{...data,
+    scan_schedule: {cadence: 'daily', timezone: 'UTC', next_run_at: '2026-11-07T22:00:00Z'}, can_schedule_scans: true, can_disable_scan_schedule: true}}/></OperatingMode.Provider>);
+  expect(screen.queryByRole('region', {name: 'Scheduled scans'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Save schedule'})).not.toBeInTheDocument();
+});
+
+it('revokes an active override with a required reason and refreshes its history', async () => {
+  let revoked = false;
+  request.mockImplementation(async (url, init) => {
+    if (init?.method === 'POST') {revoked = true; return {};}
+    return String(url).includes('/releases') ? {releases: []} : {overrides: [{id: 6, release_id: 3,
+      status: revoked ? 'revoked' : 'active', denial_condition: 'expired', digests: []}]};
+  });
+  render(<Overrides data={{...data, can: {'local_override.revoke': {'7': true}}}}/>);
+  const reason = await screen.findByLabelText('Revocation reason');
+  expect(reason).toBeRequired();
+  fireEvent.change(reason, {target: {value: 'Mission restored on the approved release'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Revoke immediately'}));
+  await waitFor(() => expect(request).toHaveBeenCalledWith('/api/services/mission/local-overrides/6/revoke', expect.objectContaining({
+    method: 'POST', body: '{"reason":"Mission restored on the approved release"}', headers: expect.objectContaining({'X-CSRF-Token': 'token'}),
+  })));
+  expect(await screen.findByText('Revoked')).toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Revoke immediately'})).not.toBeInTheDocument();
 });

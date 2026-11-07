@@ -346,20 +346,175 @@ def override_checks(api, root, stack, state, report, first, expected, machine):
         local.session.close()
 
 
+def restart_proof(path, stack, prepared_at):
+    """Bind caller-observed Docker restarts to this prepared grant and storage."""
+    _require(path is not None and path.is_file(), 'Persistence verification requires caller-recorded app and database restart proof')
+    raw = path.read_bytes()
+    proof = json.loads(raw.decode('utf-8-sig'))
+    _require(proof.get('format') == 'cats-inventory-restart-v1'
+             and proof.get('replica_project') == stack['project'], 'Restart proof identifies a different replica')
+    prepared, checked = datetime.fromisoformat(prepared_at), datetime.fromisoformat(proof['checked_at'])
+    _require(prepared.tzinfo is not None and checked.tzinfo is not None
+             and prepared < checked <= datetime.now(timezone.utc), 'Restart observation must follow preparation')
+    result = {'format': proof['format'], 'replica_project': proof['replica_project'],
+              'checked_at': proof['checked_at'], 'before': {}, 'after': {}}
+    for role in ('app', 'database'):
+        before, after = proof['before'][role], proof['after'][role]
+        earlier, later = datetime.fromisoformat(before['started_at']), datetime.fromisoformat(after['started_at'])
+        _require(earlier.tzinfo is not None and later.tzinfo is not None
+                 and earlier <= prepared < later <= checked, 'Both app and database must restart after preparation')
+        for phase, snapshot in (('before', before), ('after', after)):
+            mounts = snapshot.get('persistent_mounts')
+            _require(isinstance(snapshot.get('container_id'), str) and snapshot['container_id']
+                     and snapshot.get('running') is True and isinstance(mounts, list)
+                     and (bool(mounts) or role == 'app'), 'Restart snapshots require running containers and persistent database storage')
+            _require(all(isinstance(item, dict) and set(item) == {'destination', 'type', 'source'}
+                         and item['type'] in {'volume', 'bind'}
+                         and all(isinstance(value, str) and value for value in item.values()) for item in mounts),
+                     'Restart proof must contain only sanitized persistent-mount identities')
+            result[phase][role] = {key: snapshot[key] for key in ('container_id', 'started_at', 'running')}
+            result[phase][role]['persistent_mounts'] = sorted(mounts, key=lambda item: (item['destination'], item['source']))
+        _require(result['before'][role]['persistent_mounts'] == result['after'][role]['persistent_mounts'],
+                 'Restart must retain the same persistent storage')
+    return result | {'proof_sha256': hashlib.sha256(raw).hexdigest(),
+                     'scope': 'Caller-observed container restarts; grant and authorization persistence verified independently over HTTP.'}
+
+
+def persisted_grant(local, state, checkpoint):
+    rows = local.get('/api/services/' + quote(state['service_key'], safe='') + '/local-overrides')['overrides']
+    matches = [row for row in rows if row.get('id') == checkpoint['grant']['id']]
+    _require(len(matches) == 1, 'The original override identity did not survive')
+    grant = matches[0]
+    # Usage time is observational; every signed grant field, status and revocation must remain unchanged.
+    stable = lambda value: {key: item for key, item in value.items() if key != 'last_usage_at'}
+    _require(stable(grant) == stable(checkpoint['grant'])
+             and grant.get('status') == 'active' and grant.get('expires_at') is None
+             and grant.get('revocation') is None, 'The exact indefinite grant changed or is no longer authentic and active')
+    return grant
+
+
+def persistence_prepare(api, root, stack, state, report, first, expected, machine):
+    _require(report.get('complete') is True, 'Complete the offline inventory qualification before persistence preparation')
+    _require(not state.get('override_persistence'), 'A persistence grant is already recorded; do not create a replacement')
+    selected = retired_artifacts(first, expected)[0]
+    outcome = report['override_persistence'] = {'complete': False}
+    outcome['denied_before_grant'] = assert_root_denied(
+        machine, stack['proxy_url'], selected['proxy_repositories'][0], selected['digest'])
+    local = workflow.local_cyber(api, root, state, report)
+    grant = None
+    try:
+        payload = exact_override_payload(first['id'], selected['digest'],
+            mission_impact='Verify offline continuity across actual app and database restarts in the isolated inventory qualification.',
+            justification='Retain one exact retired digest through restart and upstream sync, then revoke it.',
+            risk_acceptance='Local Cyber accepts superseded-release risk for this isolated persistence check until explicit revocation.')
+        response = local.session.post(_override_url(local.base, state['service_key']), json=payload,
+            headers={'X-CSRF-Token': local.csrf}, timeout=30, allow_redirects=False)
+        try:
+            status, grant = response.status_code, response.json()
+        finally:
+            response.close()
+        _require(isinstance(grant, dict) and type(grant.get('id')) is int and grant['id'] > 0,
+                 'Override creation did not return a usable cleanup identity; inspect the local override list')
+        checkpoint = state['override_persistence'] = {'grant': copy.deepcopy(grant),
+            'repository': selected['proxy_repositories'][0], 'digest': selected['digest'], 'status': 'preparing'}
+        outcome['created'] = copy.deepcopy(grant)
+        _require(status == 200 and grant.get('release_id') == first['id']
+                 and grant.get('service_id') == state['service_id'] and grant.get('digests') == [selected['digest']]
+                 and grant.get('denial_condition') == 'superseded' and grant.get('status') == 'active'
+                 and grant.get('expires_at') is None and grant.get('revocation') is None,
+                 'Persistence override did not preserve exact indefinite scope')
+        persist(root, state, report)
+        outcome['before_restart_pull'] = pull_graph(machine, stack['proxy_url'], checkpoint['repository'], checkpoint['digest'])
+        outcome['before_restart_uses'] = assert_override_uses(local.session, local.base, state['service_key'], grant['id'],
+            release_id=first['id'], digest=checkpoint['digest'], principal_id=state['machine']['id'])
+        checkpoint['use_ids'] = [item['id'] for item in outcome['before_restart_uses']['matching_uses']]
+        persisted_grant(local, state, checkpoint)
+        checkpoint.update(prepared_at=now(), status='prepared')
+        outcome['prepared_at'] = checkpoint['prepared_at']
+        persist(root, state, report)
+    except BaseException:
+        # Only a successfully persisted preparation may intentionally leave an active grant.
+        if isinstance(grant, dict) and type(grant.get('id')) is int and grant['id'] > 0:
+            outcome['revoked_after_failed_prepare'] = revoke_override(local.session, local.base, local.csrf,
+                state['service_key'], grant['id'], 'Persistence preparation failed; restore successor-only enforcement.')
+            if state.get('override_persistence'):
+                state['override_persistence']['status'] = 'revoked'
+            persist(root, state, report)
+        raise
+    finally:
+        local.session.close()
+
+
+def persistence_verify(api, root, stack, state, report, first, expected, machine, proof_path):
+    checkpoint = state.get('override_persistence') or {}
+    _require(checkpoint.get('status') == 'prepared', 'Run persistence-prepare and restart both app and database first')
+    outcome = report['override_persistence']
+    outcome['restart'] = restart_proof(proof_path, stack, checkpoint['prepared_at'])
+    retired = retired_artifacts(first, expected)
+    selected = next((item for item in retired if item['digest'] == checkpoint['digest']), None)
+    _require(selected is not None and checkpoint['repository'] in selected['proxy_repositories']
+             and first['id'] == checkpoint['grant']['release_id'], 'Prepared override belongs to a different retired artifact')
+    credentials = state['local_cyber']
+    _require(credentials.get('password_changed'), 'Use the original prepared Local Cyber account')
+    local = API(api.base)
+    try:
+        # Reuse credentials; do not recreate the user, assignment, machine principal or override after restart.
+        local.login(credentials['username'], credentials['new_password'])
+        try:
+            outcome['after_restart_grant'] = persisted_grant(local, state, checkpoint)
+            before = assert_override_uses(local.session, local.base, state['service_key'], checkpoint['grant']['id'],
+                release_id=first['id'], digest=checkpoint['digest'], principal_id=state['machine']['id'])
+            _require(set(checkpoint['use_ids']) <= {item['id'] for item in before['matching_uses']},
+                     'Override use audit did not survive restart')
+            outcome['audit_preserved_after_restart'] = True
+            sync_job(api, root, state, report, 'override_persistence')
+            outcome['after_sync_grant'] = persisted_grant(local, state, checkpoint)
+            successor = exact_release(api, state, expected, 'successor', 'active')
+            outcome['after_sync_inventory'] = active_inventory(api, state, expected, 'successor', successor, 2)
+            _require(outcome['after_sync_inventory'] == report['final_inventory'],
+                     'Restart or synchronization changed imported release state')
+            outcome['after_restart_and_sync_pull'] = pull_graph(machine, stack['proxy_url'],
+                checkpoint['repository'], checkpoint['digest'])
+            outcome['after_restart_and_sync_uses'] = assert_override_uses(local.session, local.base,
+                state['service_key'], checkpoint['grant']['id'], release_id=first['id'],
+                digest=checkpoint['digest'], principal_id=state['machine']['id'])
+            uses = outcome['after_restart_and_sync_uses']['matching_uses']
+            _require({item['id'] for item in uses} - {item['id'] for item in before['matching_uses']},
+                     'The post-restart full pull produced no new exact-digest use audit')
+            outcome['other_retired_denials'] = [assert_root_denied(machine, stack['proxy_url'],
+                item['proxy_repositories'][0], item['digest']) for item in retired if item['digest'] != checkpoint['digest']]
+        finally:
+            outcome['revoked'] = revoke_override(local.session, local.base, local.csrf, state['service_key'],
+                checkpoint['grant']['id'], 'Persistence qualification finished; restore successor-only enforcement.')
+            checkpoint['status'] = 'revoked'
+            persist(root, state, report)
+        outcome['warm_cache_denied_after_revocation'] = assert_root_denied(
+            machine, stack['proxy_url'], checkpoint['repository'], checkpoint['digest'])
+        after_denial = assert_override_uses(local.session, local.base, state['service_key'], checkpoint['grant']['id'],
+            release_id=first['id'], digest=checkpoint['digest'], principal_id=state['machine']['id'])
+        _require(after_denial == outcome['after_restart_and_sync_uses'], 'A denied pull recorded a successful override use')
+        outcome.update(complete=True, completed_at=now(), no_override_use_after_revocation=True)
+        persist(root, state, report)
+    finally:
+        local.session.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, required=True)
     parser.add_argument('--replica-workspace', type=Path, required=True)
     parser.add_argument('--ca', type=Path, required=True)
-    parser.add_argument('--phase', choices=('setup', 'baseline', 'incomplete', 'recover', 'complete'), required=True)
+    parser.add_argument('--phase', choices=('setup', 'baseline', 'incomplete', 'recover', 'complete',
+                                          'persistence-prepare', 'persistence-verify'), required=True)
     parser.add_argument('--api-url')
     parser.add_argument('--proxy-url')
     parser.add_argument('--publisher-url', action='append')
     parser.add_argument('--require-source-offline', action='store_true')
     parser.add_argument('--cold-cache-proof', type=Path)
+    parser.add_argument('--restart-proof', type=Path)
     args = parser.parse_args()
     expected = load(args.workspace, 'expected.json')
-    validate_expected(expected, successor=args.phase in {'incomplete', 'recover', 'complete'})
+    validate_expected(expected, successor=args.phase not in {'setup', 'baseline'})
     root = args.workspace.resolve() / 'http'
     root.mkdir(exist_ok=True)
     state, report = load(root, 'replica-state.json', {}), load(root, 'replica-acceptance.json', {})
@@ -429,7 +584,7 @@ def main():
                 report['retired_denials'] = [assert_root_denied(machine, stack['proxy_url'],
                     item['proxy_repositories'][0], item['digest']) for item in retired_artifacts(first, expected)]
             report['recovered_at'] = now()
-        else:
+        elif args.phase == 'complete':
             _require(report.get('recovered_at'), 'Recover the complete successor before final offline pulls')
             source_probes(root, state, report, urls, args.ca, offline=True, label='offline_before_complete')
             cold = cold_cache_proof(args.cold_cache_proof, stack, report)
@@ -453,6 +608,16 @@ def main():
             _require(report['final_inventory'] == report['successor_inventory'], 'Local overrides changed imported release state')
             source_probes(root, state, report, urls, args.ca, offline=True, label='offline_after_complete')
             report.update(complete=True, completed_at=now())
+        else:
+            _require(report.get('complete') is True, 'Complete the offline inventory qualification before persistence checks')
+            source_probes(root, state, report, urls, args.ca, offline=True, label='offline_before_' + args.phase)
+            first = exact_release(api, state, expected, 'first', 'superseded')
+            with workflow.machine_session(state) as machine:
+                if args.phase == 'persistence-prepare':
+                    persistence_prepare(api, root, stack, state, report, first, expected, machine)
+                else:
+                    persistence_verify(api, root, stack, state, report, first, expected, machine, args.restart_proof)
+            source_probes(root, state, report, urls, args.ca, offline=True, label='offline_after_' + args.phase)
         persist(root, state, report)
         print('Inventory HTTP qualification phase completed: ' + args.phase, flush=True)
     finally:

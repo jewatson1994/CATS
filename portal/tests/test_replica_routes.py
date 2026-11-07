@@ -11,6 +11,7 @@ from app.auth import require_user
 from app.database import get_db
 from app.durable_jobs import DurableJob
 from app.models import AuditEvent
+from app.oci_models import OCIUpstream
 from app.operating_mode import ReplicaModeMiddleware
 from app.replica_integrity import digest, seal_record
 from app.replica_models import ReplicaRelease, ReplicaSource, ReplicaServiceState
@@ -78,6 +79,39 @@ def test_replica_admin_and_sync_routes_require_distinct_permissions_and_csrf(api
     assert client.post(f'/api/replica/releases/{fixture.old_id}/context', json={}, headers=headers).json()['code'] == 'replica_read_only'
 
 
+@pytest.mark.parametrize('code,status,actionable', [
+    ('release_verification_failed', 'queued', True),
+    ('release_verification_failed', 'failed', True),
+    ('release_verification_failed', 'completed', False),
+    ('unexpected_external_text', 'failed', False),
+    ({'invalid': 'code'}, 'failed', False),
+    (None, 'failed', False),
+])
+def test_sync_status_uses_only_allowlisted_replica_failure_diagnostics(api, code, status, actionable):
+    api.login({'replica.sync'})
+    response = api.client.post('/api/replica/sync', json={'source_id': api.fixture.source_id},
+        headers={'X-CSRF-Token': 'csrf'})
+    assert response.status_code == 200
+    job_id = response.json()['jobs'][0]['id']
+    generic = 'Operation failed; inspect worker configuration and retry.'
+    with api.fixture.sessions() as db:
+        job = db.get(DurableJob, job_id)
+        job.status = status
+        job.result = {'failed': 1, 'failure_code': code}
+        job.error = generic
+        correlation = job.correlation_id
+        db.commit()
+    response = api.client.get('/api/replica/status')
+    assert response.status_code == 200
+    view = next(row for row in response.json()['jobs'] if row['id'] == job_id)
+    assert view['status'] == status and view['result']['failed'] == 1
+    if actionable:
+        assert 'Complete registry replication, verify publisher trust and signed sequence' in view['error']
+        assert view['error'].endswith(f'Reference: {correlation}')
+    else:
+        assert view['error'] == generic
+
+
 def test_original_evidence_routes_require_service_and_evidence_scope_and_integrity(api, tmp_path):
     fixture, client = api.fixture, api.client
     raw = b'original authenticated evidence archive'
@@ -118,6 +152,30 @@ def test_original_evidence_routes_require_service_and_evidence_scope_and_integri
         release.evidence_state = {'original': {'assessment': 'changed'}}
         db.commit()
     assert client.get(path + '/context').status_code == 409
+
+
+def test_source_admin_can_discover_registries_without_credential_authority(api, monkeypatch):
+    path = '/api/replica/registries'
+    assert api.client.get(path).status_code == 401
+    for permissions in ({'service.view'}, {'replica.sync'}, {'release.destination.manage'}):
+        api.login(permissions)
+        assert api.client.get(path).status_code == 403
+    with api.fixture.sessions() as db:
+        upstream = db.scalar(select(OCIUpstream))
+        upstream.username, upstream.password = 'private-user', 'private-password'
+        upstream.ca_pem = 'private trust configuration'
+        upstream.token_realms = ['https://private-auth.example/token']
+        db.commit()
+    api.login({'replica.admin'})
+    response = api.client.get(path)
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    assert set(rows[0]) == {'id', 'name', 'endpoint', 'enabled'}
+    assert rows[0]['endpoint'] == 'https://registry.example'
+    assert 'private' not in response.text
+    monkeypatch.setenv('CATS_MODE', 'full')
+    assert api.client.get(path).status_code == 404
 
 
 def test_source_update_locks_and_refreshes_before_preserving_unspecified_fields(replica, monkeypatch):

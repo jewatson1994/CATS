@@ -126,7 +126,8 @@ def test_scanner_base_is_built_only_for_unified_image_without_override(image):
         assert commands[0] == [
             'docker', 'buildx', 'build', '--load', '--platform', 'linux/amd64', '--pull',
             '-f', str(ROOT / 'cats-scanner/Dockerfile'), '-t', 'catscan-base:local',
-            str(ROOT / 'cats-scanner'),
+            # The Dockerfile copies cats-scanner/... from the repository root.
+            str(ROOT),
         ]
         assert 'CATSCAN_BASE_IMAGE=catscan-base:local' in commands[1]
     else:

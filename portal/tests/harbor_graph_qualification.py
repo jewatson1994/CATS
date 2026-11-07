@@ -8,6 +8,8 @@ quarantine/restore phases rename only a checked fixture blob in an explicitly
 mounted disposable target volume. This companion never copies between registries
 or accesses a live portal database. Import checks use the production importer
 and isolated SQLite.
+Stop registry writers before storage injection. A global blob may only be held
+when every stored repository reference belongs to the selected fixture subtree.
 
   python harbor_graph_qualification.py publish --workspace /verification/graph
   # Run Harbor replication; stop the source registry independently.
@@ -32,6 +34,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import tarfile
@@ -518,16 +521,48 @@ def verify(ctx, args):
     print(json.dumps({'status': 'passed', 'case': case, 'report': str(ctx.root / 'reports' / filename)}))
 
 
+def check_quarantine_scope(expected, confirmed_target, repository):
+    namespace = expected['namespace']
+    segment = r'[a-z0-9]+(?:[._-][a-z0-9]+)*'
+    require(expected['fixture'] == LABEL
+            and re.fullmatch(r'qualification(?:/' + segment + r')*', namespace)
+            and confirmed_target == expected['target'] and expected['target'] != expected['source'],
+            'Storage injection is restricted to the explicitly confirmed qualification target')
+    require(repository.startswith(namespace + '/'),
+            'Only objects in the exact retained qualification subtree may be quarantined')
+
+
+def owned_blob_links(volume, namespace, digest):
+    """Check layer, revision and tag links before touching globally shared bytes."""
+    repositories = volume / 'docker/registry/v2/repositories'
+    require(repositories.is_dir()
+            and not any(path.is_symlink() for path in (repositories, *repositories.parents)),
+            'Unsafe registry repository storage')
+    owned = []
+    # Inspect every link, including tag-current links whose path has no digest.
+    # Refuse symlink trees rather than skipping potentially shared references.
+    for path in repositories.rglob('*'):
+        require(not path.is_symlink(), 'Unsafe registry repository storage')
+        if path.name != 'link':
+            continue
+        require(path.is_file() and path.stat().st_size <= 256, 'Invalid registry repository link')
+        if path.read_bytes().strip() != digest.encode('ascii'):
+            continue
+        relative = path.relative_to(repositories).as_posix()
+        require(relative.startswith(namespace + '/'),
+                'Fixture blob is shared outside the exact qualification subtree')
+        owned.append(relative)
+    require(owned, 'Fixture blob has no owned repository references')
+    return owned
+
+
 def quarantine(ctx, args):
     """Reversible failure injection only in explicitly mounted fixture storage."""
     expected = json.loads((ctx.root / 'expected.json').read_text(encoding='utf-8'))
     require(args.case in OMISSIONS and args.registry_root is not None,
             'Specify an omission case and the disposable target registry volume mount')
-    require(expected['fixture'] == LABEL and expected['namespace'] == 'qualification'
-            and args.confirm_target == expected['target'] and expected['target'] != expected['source'],
-            'Storage injection is restricted to the explicitly confirmed qualification target')
     target = expected['omissions'][args.case]
-    require(target['repository'].startswith('qualification/'), 'Only qualification fixture objects may be quarantined')
+    check_quarantine_scope(expected, args.confirm_target, target['repository'])
     # Reuse the production parser to validate the digest before constructing paths.
     ctx.oci._reference(host(expected['target']) + '/' + target['repository'] + '@' + target['digest'])
     checksum = target['digest'].removeprefix('sha256:')
@@ -540,6 +575,7 @@ def quarantine(ctx, args):
     report_path = ctx.root / 'injections' / (args.case + '.json')
     if args.phase == 'quarantine':
         require(data.is_file() and not held.exists(), 'Fixture content must exist and not already be quarantined')
+        links = owned_blob_links(volume, expected['namespace'], target['digest'])
         baseline = fetch(ctx, expected, 'first')
         fetch(ctx, expected, 'successor')
         forbidden = {baseline['digest'], expected['receipts']['first']['release']['signature']['digest']}
@@ -551,6 +587,7 @@ def quarantine(ctx, args):
         require('sha256:' + hashlib.sha256(content).hexdigest() == target['digest'], 'Stored fixture bytes fail their hash')
         report = {'fixture': LABEL, 'target': expected['target'], 'case': args.case,
             'object': target, 'bytes': len(content), 'mechanism': 'same-directory reversible fixture blob rename',
+            'owned_repository_link_count': len(links),
             'prepared_at': datetime.now(timezone.utc).isoformat(), 'quarantined_at': None, 'restored_at': None}
         # Persist ownership first so an interrupted injection still has enough
         # information for the explicit restore command to recover its file.
