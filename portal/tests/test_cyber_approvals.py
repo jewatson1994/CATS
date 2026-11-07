@@ -113,6 +113,18 @@ def test_approval_enqueues_once_and_repeated_decision_conflicts(db):
     assert db.get(approvals.CyberApproval, identity).status == 'approved'
 
 
+def test_pending_request_cannot_rebind_frozen_signer_after_rotation(db, monkeypatch):
+    identity = create(db)['id']
+    row = db.get(approvals.CyberApproval, identity)
+    snapshot = copy.deepcopy(row.snapshot)
+    monkeypatch.setattr(approvals.signing, 'configuration', lambda _: {'fingerprint': 'replacement-key'})
+    with pytest.raises(HTTPException) as conflict:
+        decide(db, identity)
+    assert conflict.value.status_code == 409 and 'Signing key changed' in conflict.value.detail
+    assert row.snapshot == snapshot and row.status == 'pending'
+    assert not list(db.scalars(select(DurableJob)))
+
+
 def test_denial_never_enqueues_and_is_not_an_approved_release(db):
     identity = create(db)['id']
     denied = decide(db, identity, 'denied')

@@ -49,6 +49,181 @@ def test_complete_mirror_uses_local_host_and_preserves_evidence(environment):
     assert {item['kind'] for item in result['artifacts']} == {'image', 'chart'}
     assert all(item['reference'].startswith('offline.example/') for item in result['artifacts'])
     assert all(item['digest'] in item['manifests'] and item['blobs'] for item in result['artifacts'])
+    assert all(item['attestation']['receipts'][0]['subject'].startswith('approved.example/')
+               for item in result['artifacts'])
+
+
+@pytest.mark.parametrize('missing', ['manifest', 'payload', 'config'])
+def test_missing_attestation_graph_never_returns_complete(environment, missing):
+    receipt = publish(environment, [])
+    artifact = receipt['artifacts'][0]
+    host, repository, _ = release_oci._reference(artifact['reference'])
+    store = environment.stores[host, repository]
+    attestation = artifact['attestation']
+    manifest = json.loads(store['manifests'][attestation['digest']])
+    if missing == 'manifest':
+        del store['manifests'][attestation['digest']]
+    else:
+        target = manifest['config'] if missing == 'config' else manifest['layers'][0]
+        del store['blobs'][target['digest']]
+    with pytest.raises(ValueError):
+        fetch(environment, receipt)
+
+
+def test_moved_native_attestation_tag_cannot_substitute_signed_inventory(environment):
+    receipt = publish(environment, [])
+    artifact = receipt['artifacts'][0]
+    host, repository, _ = release_oci._reference(artifact['reference'])
+    environment.stores[host, repository]['manifests'][artifact['attestation']['tag']] = b'wrong tag content'
+    assert fetch(environment, receipt)['complete']
+
+
+def test_delayed_tag_only_replication_retains_both_same_artifact_approvals(environment, tmp_path):
+    first = publish(environment, [])
+    approval = environment.approval
+    approval.id, approval.release_key = 8, 'approval-successor'
+    approval.snapshot = deepcopy(approval.snapshot)
+    next_evidence = tmp_path / 'successor' / 'evidence.zip'
+    next_evidence.parent.mkdir()
+    next_evidence.write_bytes(Path(approval.snapshot['evidence']['path']).read_bytes())
+    approval.snapshot['evidence']['path'] = str(next_evidence)
+    approval.snapshot['portable_release'].update(release_uuid='8', release_sequence=2, supersedes_release_uuid='7')
+    approval.snapshot_digest = release_oci._digest(publication.canonical(approval.snapshot))
+    second = publish(environment, [])
+    for before, after in zip(first['artifacts'], second['artifacts']):
+        assert before['reference'] == after['reference']
+        host, repository, _ = release_oci._reference(before['reference'])
+        stored = environment.stores[host, repository]['manifests']
+        for kind in ('signature', 'attestation'):
+            old, new = before[kind], after[kind]
+            assert old['digest'] != new['digest']
+            assert release_oci._digest(stored[old['tag']]) == new['digest']
+            assert release_oci._digest(stored[old['retention_tag']]) == old['digest']
+            assert release_oci._digest(stored[new['retention_tag']]) == new['digest']
+    published = deepcopy(environment.stores)
+
+    def replicate_tagged_graphs(retain):
+        mirrored = {}
+        for (host, repository), source in published.items():
+            if host != 'approved.example':
+                continue
+            target = mirrored['offline.example', repository] = {'manifests': {}, 'blobs': {}}
+            def copy_graph(identity):
+                if identity in target['manifests']:
+                    return
+                content = source['manifests'][identity]
+                target['manifests'][identity] = content
+                document = json.loads(content)
+                for child in document.get('manifests', []):
+                    copy_graph(child['digest'])
+                for item in ([document['config']] if 'config' in document else []) + document.get('layers', []):
+                    target['blobs'][item['digest']] = source['blobs'][item['digest']]
+            for tag, content in source['manifests'].items():
+                if tag.startswith('sha256:') or (not retain and tag.startswith(('cats-signature-', 'cats-attestation-'))):
+                    continue
+                identity = release_oci._digest(content)
+                copy_graph(identity)
+                target['manifests'][tag] = content
+        environment.stores.clear()
+        environment.stores.update(mirrored)
+
+    # A mirror first created after both approvals must recover historical graphs
+    # from immutable tags; current native tags only retain the successor graph.
+    replicate_tagged_graphs(False)
+    with pytest.raises(ValueError):
+        portable.fetch_release(first['release']['reference'].replace('approved.example', 'offline.example'), {}, [environment.fingerprint])
+    replicate_tagged_graphs(True)
+    for receipt in (first, second):
+        assert portable.fetch_release(receipt['release']['reference'].replace('approved.example', 'offline.example'), {}, [environment.fingerprint])['complete']
+
+
+def _resign_release(environment, receipt, manifest):
+    reference = document_variant(environment, receipt, changed_manifest=manifest)
+    host, repository, digest = release_oci._reference(reference)
+    store = environment.stores[host, repository]
+    document = json.loads(store['manifests'][digest])
+    signature = environment.sign(portable.canonical(manifest)).encode()
+    for item in document['layers']:
+        if item['annotations']['org.opencontainers.image.title'] == 'release-manifest.sig':
+            item.update(descriptor(signature, item['mediaType']))
+            store['blobs'][item['digest']] = signature
+    content = portable.canonical(document)
+    digest = release_oci._digest(content)
+    store['manifests'][digest] = content
+    return host + '/' + repository + '@' + digest
+
+
+@pytest.mark.parametrize('kind', ['signature', 'attestation'])
+@pytest.mark.parametrize('legacy', [False, True])
+def test_attachment_retention_metadata_is_optional_but_exact(environment, kind, legacy):
+    receipt = publish(environment, [])
+    manifest = deepcopy(receipt['manifest'])
+    inventory = manifest['artifacts'][0][kind]
+    if legacy:
+        del inventory['retention_tag']
+        reference = _resign_release(environment, receipt, manifest)
+        assert portable.fetch_release(reference, {}, [environment.fingerprint])['complete']
+    else:
+        inventory['retention_tag'] = 'cats-' + kind + '-' + 'f' * 64
+        reference = _resign_release(environment, receipt, manifest)
+        with pytest.raises(ValueError, match='retention tag'):
+            portable.fetch_release(reference, {}, [environment.fingerprint])
+
+
+@pytest.mark.parametrize('tamper', ['signature', 'subject', 'evidence', 'receipt', 'missing_receipt', 'extra_layer', 'config'])
+def test_signed_inventory_cannot_substitute_invalid_attestations(environment, tamper):
+    import base64
+    receipt = publish(environment, [])
+    manifest = deepcopy(receipt['manifest'])
+    artifact = manifest['artifacts'][0]
+    inventory = artifact['attestation']
+    host, repository, _ = release_oci._reference(artifact['reference'])
+    store = environment.stores[host, repository]
+    attested = json.loads(store['manifests'][inventory['digest']])
+    layer = attested['layers'][0]
+    envelope = json.loads(store['blobs'][layer['digest']])
+    statement = json.loads(base64.b64decode(envelope['payload']))
+    if tamper == 'signature':
+        envelope['signatures'][0]['sig'] = base64.b64encode(b'invalid signature').decode()
+    elif tamper == 'subject':
+        statement['subject'][0]['digest']['sha256'] = 'f' * 64
+    elif tamper == 'evidence':
+        statement['predicate']['evidence']['evidence.zip'] = 'sha256:' + 'f' * 64
+    elif tamper == 'receipt':
+        inventory['receipts'][0]['evidence']['evidence.zip'] = 'sha256:' + 'f' * 64
+    elif tamper == 'missing_receipt':
+        missing = deepcopy(inventory['receipts'][0])
+        missing['evidence']['evidence.zip'] = 'sha256:' + 'f' * 64
+        inventory['receipts'].append(missing)
+    elif tamper == 'config':
+        config = portable.canonical({'config': {'Cmd': ['unapproved']}})
+        attested['config'] = descriptor(config, 'application/vnd.oci.image.config.v1+json')
+        store['blobs'][attested['config']['digest']] = config
+    else:
+        attested['layers'].append(descriptor(b'unsigned unrelated data'))
+        store['blobs'][attested['layers'][-1]['digest']] = b'unsigned unrelated data'
+    envelope['payload'] = base64.b64encode(portable.canonical(statement)).decode()
+    content = portable.canonical(envelope)
+    layer.update(descriptor(content, layer['mediaType']))
+    store['blobs'][layer['digest']] = content
+    content = portable.canonical(attested)
+    inventory.update(descriptor(content, inventory['mediaType']))
+    inventory['retention_tag'] = 'cats-attestation-' + inventory['digest'][7:]
+    inventory['blobs'] = sorted({attested['config']['digest'], *(item['digest'] for item in attested['layers'])})
+    store['manifests'][inventory['digest']] = content
+    reference = _resign_release(environment, receipt, manifest)
+    with pytest.raises(ValueError, match='attestation'):
+        portable.fetch_release(reference, {}, [environment.fingerprint])
+
+
+def test_pre_attestation_release_remains_valid(environment):
+    receipt = publish(environment, [])
+    manifest = deepcopy(receipt['manifest'])
+    for artifact in manifest['artifacts']:
+        del artifact['attestation']
+        del artifact['signature']['retention_tag']
+    reference = _resign_release(environment, receipt, manifest)
+    assert portable.fetch_release(reference, {}, [environment.fingerprint])['complete']
 
 
 @pytest.mark.parametrize('missing', ['layer', 'signature', 'evidence_signature'])

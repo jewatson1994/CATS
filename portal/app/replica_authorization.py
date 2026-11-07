@@ -15,7 +15,7 @@ from .release_validity import utc
 
 def trusted_release(db, release, state, timestamp=None):
     from .replica_integrity import verify_record
-    from .replica_models import ReplicaSource
+    from .replica_models import ReplicaSource, ReplicaPublisherTrust
     timestamp = utc(timestamp or datetime.now(timezone.utc))
     if (release is None or state is None or release.service_id != state.service_id
             or release.publisher != state.publisher or not release.verified or not release.complete
@@ -23,11 +23,23 @@ def trusted_release(db, release, state, timestamp=None):
         return False
     source = db.get(ReplicaSource, state.source_id, populate_existing=True)
     if (source is None or not source.enabled or source.upstream_id != state.upstream_id
-            or release.publisher not in (source.trusted_publishers or [])
-            or release.key_fingerprint != release.publisher):
+            or release.publisher not in (source.trusted_publishers or [])):
         return False
     try:
-        return verify_record(release)
+        if not verify_record(release):
+            return False
+        from .release_key_rotation import verify_trust, _sequence_allowed
+        trust = db.get(ReplicaPublisherTrust, (source.id, release.publisher), populate_existing=True)
+        if trust is None:
+            # Existing unrotated installations need no destructive backfill.
+            return release.key_fingerprint == release.publisher and not release.manifest.get('signing_key_chain')
+        if not verify_trust(trust):
+            return False
+        chain = release.manifest.get('signing_key_chain', [])
+        if chain != trust.key_chain[:len(chain)]:
+            return False
+        return (_sequence_allowed(trust.key_chain, release.key_fingerprint, state.source_service_id, release.sequence)
+                if trust.key_chain else release.key_fingerprint == release.publisher)
     except (ValueError, TypeError, KeyError, AttributeError):
         return False
 

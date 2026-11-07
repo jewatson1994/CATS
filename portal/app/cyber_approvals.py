@@ -346,6 +346,8 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
     bound = {}
     decided_at = utcnow()
     if decision == 'approved' and row.status == 'pending':
+        from .release_key_rotation import lock_configuration
+        lock_configuration(db)
         snapshot = dict(row.snapshot)
         try:
             snapshot['approval_validity'] = release_validity.for_service(db, db.get(Service, row.service_id), decided_at)
@@ -363,6 +365,8 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
             if not _signing_ready(db):
                 raise HTTPException(409, 'An administrator must enable signing before approving publication')
             snapshot['signing_fingerprint'] = signing.configuration(_settings(db))['fingerprint']
+        elif snapshot['signing_fingerprint'] != signing.configuration(_settings(db)).get('fingerprint'):
+            raise HTTPException(409, 'Signing key changed after this request. Request approval again with the current signing key.')
         from .replica_models import reserve_publication
         snapshot['portable_release'] = {**reserve_publication(db, db.get(Service, row.service_id), row.id),
             **snapshot['approval_validity'], 'service_version': snapshot.get('version'), 'revoked_at': None}

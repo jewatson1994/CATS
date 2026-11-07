@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -164,6 +164,48 @@ def test_upload_requires_csrf_and_admin(keys):
     assert client.post("/admin/configuration/signing", data={"csrf_token": "bad"}).status_code == 403
     guest = TestClient(app)
     assert guest.post("/admin/configuration/signing", data={"csrf_token": "bad"}, follow_redirects=False).status_code in {303, 401, 403}
+
+
+def test_admin_replacement_upload_authenticates_successor_and_reports_root(monkeypatch):
+    from app import release_key_rotation
+    monkeypatch.setenv('CATS_CONFIG_ENCRYPTION_KEY', Fernet.generate_key().decode())
+    monkeypatch.setattr(signing.shutil, 'which', lambda _: 'cosign')
+    def command(args, env):
+        key = Path(args[args.index('--key') + 1]).read_bytes()
+        if args[1] == 'public-key':
+            public = serialization.load_pem_private_key(key, None).public_key()
+            output = public.public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo).decode()
+        elif args[1] == 'sign-blob':
+            private = serialization.load_pem_private_key(key, None)
+            signature = private.sign(Path(args[-1]).read_bytes(), ec.ECDSA(hashes.SHA256()))
+            Path(args[args.index('--output-signature') + 1]).write_bytes(base64.b64encode(signature))
+            output = ''
+        else:
+            assert args[1] == 'verify-blob'
+            signature = Path(args[args.index('--signature') + 1]).read_bytes()
+            serialization.load_pem_public_key(key).verify(base64.b64decode(signature),
+                Path(args[-1]).read_bytes(), ec.ECDSA(hashes.SHA256()))
+            output = ''
+        return subprocess.CompletedProcess(args, 0, output, '')
+    monkeypatch.setattr(signing, '_command', command)
+    client = new_client()
+    fingerprints = []
+    for generation in range(3):
+        key = ec.generate_private_key(ec.SECP256R1())
+        private = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        public = key.public_key().public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        fingerprints.append(signing.public_key(public)[1])
+        response = client.post('/admin/configuration/signing',
+            data={'csrf_token': csrf(client), 'enabled': 'true'},
+            files={'private_key': ('cosign.key', private), 'public_key': ('cosign.pub', public)}, follow_redirects=False)
+        assert response.status_code == 303
+        page = client.get('/admin/configuration', headers={'Accept': 'application/vnd.cats.page+json'}).json()
+        assert page['data']['signing']['publisher_root'] == fingerprints[0]
+        assert page['data']['signing']['fingerprint'] == fingerprints[-1]
+        assert page['data']['signing']['rotation_generation'] == generation
+    with SessionLocal() as db:
+        saved = json.loads(db.scalar(select(PortalSetting.value).where(PortalSetting.key == signing.SETTING)))
+        assert release_key_rotation.validate_chain(saved['signing_key_chain']) == (fingerprints[0], fingerprints)
 
 
 @pytest.mark.parametrize("destination", ["team/alpine:patched", "cats:patched"])

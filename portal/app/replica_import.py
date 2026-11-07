@@ -179,11 +179,23 @@ def _projection(db, service, state, importer_id):
 def reconcile(db, source, verified, *, now=None):
     """Called only with portable_release.fetch_release output. Caller owns commit."""
     now = now or datetime.now(timezone.utc)
+    # SQLite ignores FOR UPDATE. Acquire its writer reservation before reading
+    # source/trust state so concurrent arrivals cannot regress the retained chain.
+    if db.get_bind().dialect.name == 'sqlite':
+        connection = db.connection()
+        if not connection.connection.driver_connection.in_transaction:
+            connection.exec_driver_sql('BEGIN IMMEDIATE')
+    from .replica_models import ReplicaSource
+    source = db.scalar(select(ReplicaSource).where(ReplicaSource.id == source.id)
+                       .with_for_update().execution_options(populate_existing=True))
+    if source is None:
+        raise ReplicaImportError('Configured replica source is unavailable')
     manifest = verified.get('manifest')
     if not isinstance(manifest, dict) or not verified.get('verified') or not verified.get('complete'):
         raise ReplicaImportError('Release has not passed cryptographic and completeness verification')
     metadata = manifest.get('portable', manifest.get('portable_release', {}))
-    publisher = verified.get('key_fingerprint')
+    signer = verified.get('key_fingerprint')
+    publisher = verified.get('publisher_root', signer)
     if not source.enabled or publisher not in source.trusted_publishers:
         raise ReplicaImportError('Publisher is not trusted by this source')
     source_id = metadata.get('service_uuid')
@@ -203,9 +215,12 @@ def reconcile(db, source, verified, *, now=None):
     events = db.scalars(select(ReplicaEvent).where(ReplicaEvent.publisher == publisher,
                         ReplicaEvent.source_service_id == source_id).order_by(ReplicaEvent.sequence.desc())).all()
     same = next((event for event in events if event.sequence == sequence), None)
+    from .release_key_rotation import reconcile_trust
+    identity = {**verified, 'publisher_root': publisher}
     if same:
         if same.manifest_digest != event_digest:
             raise ReplicaImportError('Signed sequence collision; release quarantine required')
+        reconcile_trust(db, source, identity, source_id, sequence, replay=True)
         if kind == 'release':
             from .replica_integrity import verify_record
             retained = db.scalar(select(ReplicaRelease).where(ReplicaRelease.publisher == publisher,
@@ -225,11 +240,13 @@ def reconcile(db, source, verified, *, now=None):
     if kind != 'revocation' and events and sequence <= events[0].sequence:
         raise ReplicaImportError('Rollback rejected by durable signed sequence high-water mark')
     state = db.scalar(select(ReplicaServiceState).where(ReplicaServiceState.publisher == publisher,
-                      ReplicaServiceState.source_service_id == source_id).with_for_update())
+                      ReplicaServiceState.source_service_id == source_id).with_for_update()
+                      .execution_options(populate_existing=True))
     if state and state.source_id != source.id:
         raise ReplicaImportError('Service is bound to another configured replica source')
     if kind != 'revocation' and state and sequence <= state.high_sequence:
         raise ReplicaImportError('Rollback rejected by service high-water mark')
+    reconcile_trust(db, source, identity, source_id, sequence)
     if kind == 'revocation':
         target = metadata.get('target_release_uuid')
         if not isinstance(target, str) or not target:
@@ -289,7 +306,7 @@ def reconcile(db, source, verified, *, now=None):
     maps = _projection(db, service, evidence, source.created_by_id)
     release = ReplicaRelease(service_id=service.id, publisher=publisher, source_release_id=release_id,
         sequence=sequence, manifest=manifest, manifest_digest=event_digest, artifacts=verified['artifacts'],
-        evidence_state=evidence, evidence_path=evidence_path, key_fingerprint=publisher,
+        evidence_state=evidence, evidence_path=evidence_path, key_fingerprint=signer,
         verified=True, complete=True, approved_at=approved_at, expires_at=expires_at,
         source_reference=verified['reference'])
     db.add(release)

@@ -114,7 +114,8 @@ def sync(ctx, payload):
                                 or configuration != (current.upstream_id, current.repository, tuple(current.trusted_publishers))):
                             raise jobs.JobError('Replica source changed during verification. Sync again.')
                         record_audit(db, None, 'replica.verified', 'replica_source', source_id,
-                                     reference=reference, publisher=verified['key_fingerprint'],
+                                     reference=reference, publisher=verified.get('publisher_root', verified['key_fingerprint']),
+                                     key_fingerprint=verified['key_fingerprint'],
                                      complete=True, correlation_id=ctx.job.correlation_id)
                         outcome = reconcile(db, current, verified)
                         db.commit()

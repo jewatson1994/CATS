@@ -80,9 +80,14 @@ def _unique_object(pairs):
 
 def _config(transport, repository, item, layers, bounded):
     """Only inert empty/config metadata may accompany subject-bound signatures."""
+    payload = _payload(transport, repository, item, bounded)
+    verify_config(payload, item, layers)
+
+
+def verify_config(payload, item, layers):
+    """Keep import and proxy acceptance of attestation config bytes identical."""
     if item.get('mediaType') not in CONFIG_TYPES:
         raise RegistryError('Unsupported signature configuration type')
-    payload = _payload(transport, repository, item, bounded)
     try:
         value = json.loads(payload, object_pairs_hook=_unique_object)
         if not isinstance(value, dict):
@@ -167,3 +172,48 @@ def discover_legacy_signature(transport, repository, subject, cache):
             return None
         raise
     return verify_legacy_signature(raw, media_type, digest, transport, repository, subject, cache)
+
+
+def verify_legacy_attestation(raw, media_type, digest, transport, repository, subject, cache,
+                              expected_receipts):
+    """Validate every envelope against the exact signed release inventory.
+
+    Like signature transport, this checks association and bytes. The portable
+    importer verifies DSSE authenticity before sealing the inventory; clients
+    may independently verify the transported envelopes with their trust roots.
+    """
+    from .oci_attestations import ATTESTATION_TYPE, decode_envelope
+    if not DIGEST.fullmatch(subject or '') or digest != 'sha256:' + hashlib.sha256(raw).hexdigest():
+        raise RegistryError('Attestation manifest digest mismatch')
+    try:
+        document = json.loads(raw, object_pairs_hook=_unique_object)
+        if (not isinstance(document, dict) or document.get('schemaVersion') != 2
+                or document.get('mediaType', media_type) not in MANIFEST_TYPES
+                or media_type not in MANIFEST_TYPES or 'manifests' in document):
+            raise ValueError()
+        layers = document.get('layers')
+        if (not isinstance(layers, list) or not 1 <= len(layers) <= MAX_LAYERS
+                or not isinstance(expected_receipts, list) or not expected_receipts):
+            raise ValueError()
+        if 'subject' in document and _descriptor(document['subject']) != subject:
+            raise ValueError()
+        bounded = _BoundedCache(cache)
+        _config(transport, repository, document['config'], layers, bounded)
+        blobs, matched = [_descriptor(document['config'])], set()
+        fields = ('subject', 'purpose', 'predicate_type', 'evidence')
+        for item in layers:
+            if item.get('mediaType') != ATTESTATION_TYPE:
+                raise ValueError()
+            receipt = decode_envelope(_payload(transport, repository, item, bounded), subject)
+            matches = [index for index, expected in enumerate(expected_receipts)
+                       if all(receipt.get(field) == expected.get(field) for field in fields)]
+            if len(matches) != 1:
+                raise ValueError()
+            matched.add(matches[0])
+            blobs.append(item['digest'])
+        if matched != set(range(len(expected_receipts))):
+            raise ValueError()
+    except (ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+        raise RegistryError('Attestation does not bind the signed release inventory') from None
+    descriptor = {'mediaType': media_type, 'digest': digest, 'size': len(raw), 'artifactType': ATTESTATION_TYPE}
+    return VerifiedSignature(raw, media_type, digest, document, descriptor, tuple(blobs))

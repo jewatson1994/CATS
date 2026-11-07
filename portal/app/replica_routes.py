@@ -156,8 +156,9 @@ def release_row(db, release):
               'active' if state and state.active_release_id == release.id else 'superseded')
     routes = list(db.scalars(select(OCIRepository).where(OCIRepository.service_id == release.service_id)))
     result = fields(release, ('id','service_id','source_release_id','sequence','manifest_digest','approved_at',
-        'expires_at','revoked_at','revocation_reason','imported_at','publisher','source_reference'))
+        'expires_at','revoked_at','revocation_reason','imported_at','publisher','key_fingerprint','source_reference'))
     result.update(service_key=service.service_key, service_name=service.name, status=status,
+        key_generation=len(release.manifest.get('signing_key_chain', [])),
         artifacts=[{**artifact, 'proxy_repositories': [route.public_repository for route in routes
             if route.upstream_repository == artifact.get('repository')]} for artifact in release.artifacts],
         evidence_url=f'/api/replica/releases/{release.id}/evidence',

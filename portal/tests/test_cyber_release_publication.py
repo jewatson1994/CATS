@@ -75,7 +75,33 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
 
     def command(args, env=None, **kwargs):
         operation = args[1]
-        if operation == "sign-blob":
+        if operation == 'attest':
+            reference = args[-1]
+            host, repository, subject = release_oci._reference(reference)
+            client = release_oci._Client(host, repository, env)
+            predicate = json.loads(Path(args[args.index('--predicate') + 1]).read_bytes())
+            payload_type = b'application/vnd.in-toto+json'
+            payload = publication.canonical({'_type': 'https://in-toto.io/Statement/v0.1',
+                'subject': [{'name': reference.rsplit('@', 1)[0], 'digest': {'sha256': subject[7:]}}],
+                'predicateType': args[args.index('--type') + 1], 'predicate': predicate})
+            pae = b'DSSEv1 ' + str(len(payload_type)).encode() + b' ' + payload_type + b' ' + str(len(payload)).encode() + b' ' + payload
+            envelope = publication.canonical({'payloadType': payload_type.decode(),
+                'payload': base64.b64encode(payload).decode(), 'signatures': [{'keyid': '', 'sig': sign(pae)}]})
+            layer = client.upload(envelope, 'application/vnd.dsse.envelope.v1+json')
+            content = publication.canonical({'schemaVersion': 2, 'mediaType': release_oci.MANIFEST_TYPE,
+                'config': client.upload(b'{}', 'application/vnd.oci.empty.v1+json'), 'layers': [layer]})
+            client.request('PUT', client.api + '/manifests/' + subject.replace(':', '-') + '.att',
+                body=content, media_type=release_oci.MANIFEST_TYPE)
+        elif operation == 'verify-attestation':
+            host, repository, subject = release_oci._reference(args[-1])
+            client = release_oci._Client(host, repository, env)
+            _, _, content = client.request('GET', client.api + '/manifests/' + subject.replace(':', '-') + '.att')
+            outputs = []
+            for layer in json.loads(content)['layers']:
+                _, _, envelope = client.request('GET', client.api + '/blobs/' + layer['digest'])
+                outputs.append(envelope.decode())
+            return SimpleNamespace(stdout='\n'.join(outputs))
+        elif operation == "sign-blob":
             Path(args[args.index("--output-signature") + 1]).write_text(sign(Path(args[-1]).read_bytes()))
         elif operation == "verify-blob":
             try:
@@ -147,9 +173,10 @@ def publication_environment(tmp_path, monkeypatch, *, in_memory_registry):
                                snapshot_digest=release_oci._digest(publication.canonical(snapshot)),
                                status="approved", decided_by_id=2, decided_at=decided_at,
                                decision_rationale="Reviewed retained findings and accepted release", revoked_at=None)
-    db = SimpleNamespace(scalars=lambda query: [])
+    db = SimpleNamespace(scalars=lambda query: [SimpleNamespace(key=signing.SETTING,
+        value=json.dumps({'enabled': True, 'public_key': pem, 'fingerprint': fingerprint}))])
     return SimpleNamespace(approval=approval, destination=destination, db=db, stores=stores,
-                           fingerprint=fingerprint, source=source, layer=layer, Registry=Registry)
+                           fingerprint=fingerprint, source=source, layer=layer, Registry=Registry, sign=sign)
 
 
 def publish(env, checkpoints):
@@ -217,6 +244,43 @@ def test_offline_verifier_rejects_wrong_trust_and_evidence_tamper(environment, t
         publication.verify_local(output, environment.fingerprint)
 
 
+@pytest.mark.parametrize('tamper', ['signature', 'subject', 'config'])
+def test_offline_attestation_verifier_rejects_rehashed_invalid_graph(environment, tmp_path, tamper):
+    receipt = publish(environment, [])
+    output = tmp_path / 'offline-attestation'
+    with ZipFile(receipt['bundle_path']) as archive:
+        archive.extractall(output)
+    namespace = {'__name__': 'test_attestation', '__file__': str(output / 'verify-import.py')}
+    exec(compile(publication.OFFLINE_SCRIPT, namespace['__file__'], 'exec'), namespace)
+    artifact = receipt['artifacts'][0]
+    inventory = artifact['attestation']
+    blobs = output / 'oci' / 'blobs' / 'sha256'
+    document = json.loads((blobs / inventory['digest'][7:]).read_bytes())
+    if tamper == 'config':
+        content = publication.canonical({'config': {'Cmd': ['unapproved']}})
+        item = descriptor(content, 'application/vnd.oci.image.config.v1+json')
+        document['config'] = item
+        (blobs / item['digest'][7:]).write_bytes(content)
+    else:
+        item = document['layers'][0]
+        envelope = json.loads((blobs / item['digest'][7:]).read_bytes())
+        if tamper == 'signature':
+            envelope['signatures'][0]['sig'] = base64.b64encode(b'invalid').decode()
+        else:
+            statement = json.loads(base64.b64decode(envelope['payload']))
+            statement['subject'][0]['digest']['sha256'] = 'f' * 64
+            envelope['payload'] = base64.b64encode(publication.canonical(statement)).decode()
+        content = publication.canonical(envelope)
+        item.update(descriptor(content, item['mediaType']))
+        (blobs / item['digest'][7:]).write_bytes(content)
+    content = publication.canonical(document)
+    inventory.update(descriptor(content, inventory['mediaType']))
+    inventory['blobs'] = sorted({document['config']['digest'], *(layer['digest'] for layer in document['layers'])})
+    (blobs / inventory['digest'][7:]).write_bytes(content)
+    with pytest.raises(ValueError, match='Attestation'):
+        namespace['verify_attestations'](output, artifact, {inventory['layout_name']: inventory}, output / 'release-public-key.pem')
+
+
 def test_copy_preserves_multi_platform_index(environment, tmp_path):
     source = environment.source
     original = environment.approval.snapshot["artifacts"][0]["digest"]
@@ -257,7 +321,17 @@ def test_chart_bytes_preserved_and_helm_media_types(environment):
 
 
 @pytest.mark.parametrize("corrupt", [False, True])
-def test_offline_import_retrieves_and_checks_every_blob(environment, tmp_path, monkeypatch, corrupt):
+@pytest.mark.parametrize("legacy_retention", [False, True])
+def test_offline_import_retrieves_and_checks_every_blob(environment, tmp_path, monkeypatch, corrupt, legacy_retention):
+    if legacy_retention:
+        def legacy_inventory(operation):
+            def publish_without_retention_metadata(*args, **kwargs):
+                result = operation(*args, **kwargs)
+                del result['retention_tag']
+                return result
+            return publish_without_retention_metadata
+        monkeypatch.setattr(publication, '_signature', legacy_inventory(publication._signature))
+        monkeypatch.setattr(publication, '_attestations', legacy_inventory(publication._attestations))
     receipt = publish(environment, [])
     output = tmp_path / "importable"
     with ZipFile(receipt["bundle_path"]) as archive:
@@ -295,7 +369,16 @@ def test_offline_import_retrieves_and_checks_every_blob(environment, tmp_path, m
     else:
         namespace["main"]()
         assert environment.layer["digest"] in checked
-        assert len(imported) == 2 * len(json.loads((output / "transport.json").read_bytes())["artifacts"])
+        artifacts = json.loads((output / 'transport.json').read_bytes())['artifacts']
+        assert len(imported) == sum(3 + 2 * ('attestation' in artifact) for artifact in artifacts)
+        assert all(set(artifact.get('attestation', {}).get('blobs', [])) <= checked for artifact in artifacts)
+        for artifact in artifacts:
+            for kind in ('signature', 'attestation'):
+                if kind in artifact:
+                    attachment = artifact[kind]
+                    target = 'offline.example/team/approved/' + artifact['repository_suffix'] + ':'
+                    retained_tag = 'cats-' + kind + '-' + attachment['digest'][7:]
+                    assert imported[target + retained_tag] == attachment['digest']
 
 
 def test_source_credentials_and_trust_are_host_scoped_and_temporary(tmp_path, monkeypatch):

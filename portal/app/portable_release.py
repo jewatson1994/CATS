@@ -229,13 +229,17 @@ class _Graph:
         for blob in blobs:
             if type(blob.get('size')) is not int or blob['size'] < 0 or blob['size'] > self.blob_limit:
                 raise ValueError('OCI blob exceeds configured byte limit')
-            if blob.get('mediaType') == 'application/vnd.dev.cosign.simplesigning.v1+json' and blob['size'] > 1024 * 1024:
+            retained_types = ('application/vnd.dev.cosign.simplesigning.v1+json',
+                              'application/vnd.dsse.envelope.v1+json', 'application/vnd.oci.empty.v1+json',
+                              'application/vnd.oci.image.config.v1+json',
+                              'application/vnd.docker.container.image.v1+json')
+            if blob.get('mediaType') in retained_types[:3] and blob['size'] > 1024 * 1024:
                 raise ValueError('OCI signature payload exceeds configured byte limit')
             _, _, content = client.request('GET', client.api + '/blobs/' + blob['digest'], limit=blob['size'])
             self.checked(content, blob)
             blob_ids.add(blob['digest'])
             # Only small signature/config blobs need to survive graph verification.
-            if blob.get('mediaType') == 'application/vnd.dev.cosign.simplesigning.v1+json':
+            if blob.get('mediaType') in retained_types and blob['size'] <= 1024 * 1024:
                 contents[blob['digest']] = content
         result = {'descriptor': descriptor, 'document': document,
                   'manifests': sorted(manifests), 'blobs': sorted(blob_ids), 'contents': contents}
@@ -252,6 +256,66 @@ def _verify_blob(content, signature, public, fingerprint):
         result = release_signing.verify_release_manifest(*paths, expected_fingerprint=fingerprint)
         if result.get('status') != 'verified':
             raise ValueError('Portable release signature verification failed')
+
+
+def _verify_attestation_graph(graph, client, artifact, public, fingerprint):
+    """Verify the optional signed immutable inventory, never a mutable .att tag."""
+    from .oci_attestations import ATTESTATION_TYPE, verify_envelope, AttestationError
+    from .oci_signatures import MANIFEST_TYPES, verify_config
+    from .oci_transport import RegistryError
+    if 'attestation' not in artifact:
+        return  # Publications before attestation inventories remain valid.
+    inventory = artifact['attestation']
+    if (not isinstance(inventory, dict) or not isinstance(inventory.get('receipts'), list)
+            or not 1 <= len(inventory['receipts']) <= 64):
+        raise ValueError('Signed attestation inventory is invalid')
+    subject = artifact['digest']
+    if inventory.get('tag') != subject.replace(':', '-', 1) + '.att':
+        raise ValueError('Signed attestation tag does not bind the artifact')
+    expected = {key: inventory.get(key) for key in ('digest', 'size', 'mediaType')}
+    if not oci._DIGEST.fullmatch(str(expected['digest'])):
+        raise ValueError('Signed attestation descriptor is missing')
+    retention_tag = 'cats-attestation-' + expected['digest'][7:]
+    if inventory.get('retention_tag', retention_tag) != retention_tag:
+        raise ValueError('Signed attestation retention tag is invalid')
+    actual = graph.graph(client, expected['digest'], expected)
+    document = actual['document']
+    layers = document.get('layers')
+    if (document.get('schemaVersion') != 2 or 'manifests' in document
+            or expected['mediaType'] not in MANIFEST_TYPES
+            or not isinstance(layers, list) or not 1 <= len(layers) <= 64
+            or actual['blobs'] != inventory.get('blobs')
+            or ('subject' in document and (not isinstance(document['subject'], dict)
+                or document['subject'].get('digest') != subject))):
+        raise ValueError('Replicated attestation graph differs from the signed inventory')
+    config = document.get('config')
+    try:
+        if not isinstance(config, dict):
+            raise ValueError()
+        verify_config(actual['contents'].get(config.get('digest')), config, layers)
+    except (RegistryError, ValueError, TypeError):
+        raise ValueError('Replicated attestation configuration is invalid') from None
+    matched = set()
+    for layer in layers:
+        if layer.get('mediaType') != ATTESTATION_TYPE:
+            raise ValueError('Replicated attestation contains an unsupported layer')
+        payload = actual['contents'].get(layer['digest'])
+        found = []
+        for index, receipt in enumerate(inventory['receipts']):
+            # Relocation changes transport location only. Predicates retain the
+            # exact source subject authenticated in the signed release manifest.
+            if not isinstance(receipt, dict) or receipt.get('subject') != artifact['reference']:
+                raise ValueError('Signed attestation subject differs from release artifact')
+            try:
+                verify_envelope(payload, subject, public, fingerprint, receipt)
+                found.append(index)
+            except (ValueError, AttestationError):
+                continue
+        if len(found) != 1:
+            raise ValueError('Replicated attestation signature or predicate is invalid')
+        matched.add(found[0])
+    if matched != set(range(len(inventory['receipts']))):
+        raise ValueError('Replicated attestation inventory is incomplete')
 
 
 def fetch_release(reference, env, trusted_fingerprints, *, repository_prefix=None):
@@ -280,15 +344,15 @@ Expiration is returned, not extended; the activation/proxy policy enforces it.
     if not {'release-manifest.json', 'release-manifest.sig', 'release-public-key.pem'} <= files.keys():
         raise ValueError('Incomplete signed release documents')
     _, fingerprint = signing.public_key(files['release-public-key.pem'])
-    if fingerprint not in trusted_fingerprints:
-        raise ValueError('Release publisher is not independently trusted')
     _verify_blob(files['release-manifest.json'], files['release-manifest.sig'], files['release-public-key.pem'], fingerprint)
     manifest = load_json(files['release-manifest.json'])
+    from .release_key_rotation import verify_identity
+    identity = verify_identity(manifest, files['release-public-key.pem'], trusted_fingerprints)
     metadata = validate_metadata(manifest.get('portable'))
     if manifest.get('signing_fingerprint') != fingerprint:
         raise ValueError('Signed publisher identity mismatch')
     result = {'manifest': manifest, 'portable_release': metadata, 'files': files,
-              'reference': reference, 'digest': digest, 'key_fingerprint': fingerprint,
+              'reference': reference, 'digest': digest, **identity,
               'artifacts': [], 'evidence': None, 'state': None}
     if metadata.get('kind') == 'revocation':
         revoked_at = datetime.fromisoformat(metadata.get('revoked_at', ''))
@@ -345,6 +409,9 @@ Expiration is returned, not extended; the activation/proxy policy enforces it.
         signature_digest = signature.get('digest', '')
         if not oci._DIGEST.fullmatch(signature_digest):
             raise ValueError('Signed artifact signature descriptor is missing')
+        retention_tag = 'cats-signature-' + signature_digest[7:]
+        if signature.get('retention_tag', retention_tag) != retention_tag:
+            raise ValueError('Signed signature retention tag is invalid')
         signature_graph = graph.graph(artifact_client, signature_digest)
         verified = False
         annotations = release_validity.annotations(manifest['release_key'], approval)
@@ -365,6 +432,7 @@ Expiration is returned, not extended; the activation/proxy policy enforces it.
                 continue
         if not verified:
             raise ValueError('Replicated artifact signature is not valid for this release')
+        _verify_attestation_graph(graph, artifact_client, artifact, files['release-public-key.pem'], fingerprint)
         result['artifacts'].append({**artifact, 'repository': local_repository,
             'reference': host + '/' + local_repository + '@' + artifact_digest,
             'manifests': actual['manifests'], 'blobs': actual['blobs'],

@@ -26,6 +26,9 @@ from .release_revisions import (resolve_distribution_tag as _full_distribution_t
                                 resolve_distribution_location as _full_distribution_location)
 from .secrets import decrypt_secret
 from .oci_signatures import legacy_subject, discover_legacy_signature, verify_legacy_signature
+from .oci_signatures import verify_legacy_attestation
+from .oci_attestations import ATTESTATION_TYPE, legacy_attestation_subject
+from . import oci_attestation_inventory
 
 app = FastAPI(title='CATS OCI distribution', docs_url=None, redoc_url=None, openapi_url=None)
 from .oci_evidence import router as evidence_router
@@ -188,6 +191,37 @@ def save_signature(db, mapping, subject, signature):
         link_object(db, mapping, subject, blob, 'blob')
 
 
+def attestation_inventory(db, mapping, subject):
+    owner = service_mapping(db, getattr(mapping, '_mapping', mapping), subject)
+    decision = authorize(db, owner, subject)
+    if not decision.allowed:
+        raise Denied(decision.reason, decision=decision)
+    return oci_attestation_inventory.inventory(db, mapping, subject, decision)
+
+
+def save_attestation(db, mapping, subject, attestation):
+    save_unique(db, OCIManifest, dict(repository_id=mapping.id, digest=attestation.digest),
+                media_type=attestation.media_type, content=attestation.raw.decode('utf-8'))
+    link_object(db, mapping, subject, attestation.digest, 'attestation')
+    for blob in attestation.blob_digests:
+        link_object(db, mapping, subject, blob, 'attestation_blob')
+
+
+def retained_attestation(db, mapping, transport, subject, inventory):
+    if inventory is None:
+        raise Denied('No attestation belongs to the currently authorized release')
+    raw, media, digest, _ = manifest(db, mapping, transport, inventory['digest'])
+    if (digest != inventory['digest'] or len(raw) != inventory.get('size')
+            or media != inventory.get('mediaType')):
+        raise RegistryError('Attestation descriptor differs from signed inventory')
+    verified = verify_legacy_attestation(raw, media, digest, transport,
+        mapping.upstream_repository, subject, content_cache(), inventory.get('receipts'))
+    if sorted(set(verified.blob_digests)) != inventory.get('blobs'):
+        raise RegistryError('Attestation blobs differ from signed inventory')
+    save_attestation(db, mapping, subject, verified)
+    return verified
+
+
 def require(db, mapping, digest):
     owner = service_mapping(db, getattr(mapping, '_mapping', mapping), digest)
     decision = authorize(db, owner, digest)
@@ -223,7 +257,7 @@ def manifest(db, mapping, transport, reference):
             # Reuse immutable bytes only after observing them in this concrete repo.
             link, scope = link_scope(mapping)
             query = query.where(select(link.root_digest).filter_by(**scope, object_digest=reference)
-                                .where(link.kind.in_(('manifest', 'signature'))).exists())
+                                .where(link.kind.in_(('manifest', 'signature', 'attestation'))).exists())
         row = db.scalar(query)
     if row:
         raw, media, digest = row.content.encode('utf-8'), row.media_type, row.digest
@@ -302,9 +336,11 @@ def graph(db, mapping, transport, reference, root=None, seen=None, depth=0):
 def authorize_object(db, mapping, digest, kind):
     mapping = getattr(mapping, '_mapping', mapping)
     model, scope = link_scope(mapping)
-    roots = db.scalars(select(model.root_digest).filter_by(**scope, object_digest=digest, kind=kind)).all()
+    kinds = (kind, 'attestation_blob') if kind == 'blob' else (kind,)
+    roots = db.execute(select(model.root_digest, model.kind).filter_by(**scope, object_digest=digest)
+                       .where(model.kind.in_(kinds))).all()
     last_denial = None
-    for root in roots:
+    for root, association_kind in roots:
         try:
             owner = service_mapping(db, mapping, root)
         except Denied:
@@ -313,6 +349,12 @@ def authorize_object(db, mapping, digest, kind):
         if not decision.allowed:
             last_denial = decision
             continue
+        if association_kind in ('attestation', 'attestation_blob'):
+            routed = effective_mapping(db, owner, root)
+            inventory = oci_attestation_inventory.inventory(db, routed, root, decision)
+            if inventory is None or (digest != inventory.get('digest') if association_kind == 'attestation'
+                                     else digest not in inventory.get('blobs', [])):
+                continue
         # Index children must remain authorized after graph construction too.
         members = db.scalars(select(model.object_digest).filter_by(**scope, root_digest=root, kind='manifest')).all()
         decisions = [(member, authorize(db, owner, member)) for member in members]
@@ -381,8 +423,9 @@ def get_manifest(repository: str, reference: str, request: Request):
         machine = principal(db, request, mapping.id)
         try:
             signature_root = legacy_subject(reference)
+            attestation_root = legacy_attestation_subject(reference)
             binding = None
-            if not isinstance(mapping, ProjectMapping) and not signature_root and not DIGEST.fullmatch(reference):
+            if not isinstance(mapping, ProjectMapping) and not signature_root and not attestation_root and not DIGEST.fullmatch(reference):
                 try:
                     binding = resolve_distribution_tag(db, mapping, reference)
                 except ValueError as exc:
@@ -391,14 +434,30 @@ def get_manifest(repository: str, reference: str, request: Request):
                     require(db, mapping, binding['digest'])
             transport = client(mapping)
             if DIGEST.fullmatch(reference):
+                for root in oci_attestation_inventory.candidate_subjects(db, mapping, reference):
+                    try:
+                        owner = service_mapping(db, mapping, root)
+                        routed = effective_mapping(db, owner, root)
+                        inventory = attestation_inventory(db, routed, root)
+                        if inventory and inventory.get('digest') == reference:
+                            attestation_root = root
+                            break
+                    except Denied:
+                        continue
                 try:
-                    signature_root = authorize_object(db, mapping, reference, 'signature')
+                    if not attestation_root:
+                        signature_root = authorize_object(db, mapping, reference, 'signature')
                 except Denied:
                     pass
-                if not signature_root:
+                if not signature_root and not attestation_root:
                     mapping = service_mapping(db, mapping, reference)
-            mapping = effective_mapping(db, mapping, signature_root or (binding['digest'] if binding else reference), binding)
-            if signature_root:
+            mapping = effective_mapping(db, mapping, attestation_root or signature_root or (binding['digest'] if binding else reference), binding)
+            if attestation_root:
+                require(db, mapping, attestation_root)
+                attestation = retained_attestation(db, mapping, transport, attestation_root,
+                    attestation_inventory(db, mapping, attestation_root))
+                raw, media, digest = attestation.raw, attestation.media_type, attestation.digest
+            elif signature_root:
                 require(db, mapping, signature_root)
                 raw, media, digest, _ = manifest(db, mapping, transport, reference)
                 signature = verify_legacy_signature(raw, media, digest, transport, mapping.upstream_repository, signature_root, content_cache())
@@ -411,7 +470,7 @@ def get_manifest(repository: str, reference: str, request: Request):
             db.expire_all()
             mapping = mapping_for(db, repository)
             principal(db, request, mapping.id)
-            if not signature_root and not DIGEST.fullmatch(reference):
+            if not signature_root and not attestation_root and not DIGEST.fullmatch(reference):
                 if isinstance(mapping, ProjectMapping):
                     check_project_tag(db, service_mapping(db, mapping, digest), reference, digest)
                 else:
@@ -421,7 +480,7 @@ def get_manifest(repository: str, reference: str, request: Request):
                         raise Denied(str(exc)) from None
                     if current_binding != binding:
                         raise Denied('Active release changed during retrieval; retry')
-            authorize_object(db, mapping, digest, 'signature' if signature_root else 'manifest')
+            authorize_object(db, mapping, digest, 'attestation' if attestation_root else 'signature' if signature_root else 'manifest')
             audit(db, machine, mapping, digest, 'allowed')
         except Denied as exc:
             db.rollback()
@@ -470,11 +529,19 @@ def referrers(repository: str, digest: str, request: Request):
             save_signature(db, mapping, digest, signature)
             if (not request.query_params.get('artifactType') or signature.descriptor.get('artifactType') == request.query_params['artifactType']) and not any(item['digest'] == signature.digest for item in retained):
                 retained.append(signature.descriptor)
+        inventory = attestation_inventory(db, mapping, digest)
+        if inventory:
+            attestation = retained_attestation(db, mapping, transport, digest, inventory)
+            if not request.query_params.get('artifactType') or request.query_params['artifactType'] == ATTESTATION_TYPE:
+                retained.append(attestation.descriptor)
         db.commit()
         db.expire_all()
         mapping = mapping_for(db, repository)
         principal(db, request, mapping.id)
         require(db, mapping, digest)
+        for item in retained:
+            if item.get('artifactType') == ATTESTATION_TYPE:
+                authorize_object(db, mapping, item['digest'], 'attestation')
         audit(db, machine, mapping, digest, 'referrers')
     return JSONResponse({'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': retained},
                         media_type='application/vnd.oci.image.index.v1+json', headers=V2)

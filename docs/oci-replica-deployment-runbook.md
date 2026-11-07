@@ -8,15 +8,21 @@ This is an operating procedure, not a qualification result. See [portable approv
 
 1. Keep System A in its existing full mode, with its durable database, artifact storage and publication worker. Configure a release destination under **Administration → Release Destinations**, including its HTTPS registry, namespace, publishing credentials and CA trust. Configure the signing key under **Settings** and deliver its SHA-256 public-key fingerprint to System B administrators through an independently trusted channel.
 2. Use the ordinary scan, remediation, Release Distribution and Cyber approval workflow. Publish the approved snapshot and wait for successful publication. Retain the signed manifest, complete evidence, receipt and artifact inventory. A legacy approval without complete portable evidence needs a new review; retrying it cannot manufacture the missing frozen evidence.
-3. Replicate the complete approved namespace from the System A registry into System B's registry. Preserve immutable manifest and blob bytes, all image-index children, chart packages, configs, layers, explicit Cosign signature manifests, and the service's `releases` repository. Discovery tags use `release-<sequence>-<release-id>` and `revocation-<sequence>-<release-id>`. Image-only tag filters are insufficient. If separately distributing native Cosign attestations through Harbor, also preserve their `.att` manifests, blobs and subject relationship; see the support boundary below.
+3. Replicate the complete approved namespace from the System A registry into System B's registry. Preserve immutable manifest and blob bytes, all image-index children, chart packages, configs, layers, explicit Cosign `.sig` and `.att` manifests and blobs, and the service's `releases` repository. Discovery tags use `release-<sequence>-<release-id>` and `revocation-<sequence>-<release-id>`. Image-only tag filters are insufficient.
 4. Preserve repository paths where possible. Configure retention so every referenced artifact and signature remains available while its release or history is required. Verify the actual registry replication product and version; ordinary OCI graph copying is not evidence that a Harbor replication rule works.
 5. Keep the publisher signing identity and approved destination available for later signed revocation publication. Copying a release or changing a registry tag never extends its signed expiration.
 
 Use a read-only registry identity on System B. TLS/registry credentials establish transport access; the independently delivered publisher fingerprint establishes release trust. These are separate controls.
 
-### Optional native Harbor attestation qualification
+### Integrated attestation routing
 
-The isolated native Harbor qualification preserved a Cosign `.att` graph and verified it directly from the target registry with the source stopped, an explicit CA and an independently retained signing key. The subject digest, predicate and original signed source reference remained unchanged. This qualifies direct Harbor transport: `.att` attachments are currently outside the approved-release publication inventory, replica import and proxy support. The proxy exposes supported signature referrers only. Consumers requiring attestations must verify them directly from the local Harbor registry; a successful replica import does not establish their availability.
+New approved publications include a native Cosign `cyber-approval` attestation for every image and chart. Its signed predicate binds the artifact digest, approval snapshot and evidence archive. The signed release inventory pins its immutable manifest, blobs and verified receipt. Replica import requires the complete declared graph and verifies the DSSE signature with the release's authenticated signing key. Legacy releases without an attestation inventory remain readable; import does not invent attestations for them.
+
+Replicate and retain the digest-derived `cats-signature-<manifesthex>` and `cats-attestation-<manifesthex>` tags as well as native `.sig` and `.att` tags. These immutable tags preserve earlier approvals when the same artifact is approved again before replication. Current offline imports create them too. Older publications and embedded import scripts are not retroactively updated; use the current importer or explicitly backfill retained graphs before relying on delayed replication.
+
+Consumers use the displayed proxy repository to request the subject's `sha256-<digest>.att` tag, its retained manifest digest, envelope blobs or OCI referrers. These routes enforce the same live release approval and exact-root Local Cyber override as the image. Expiration, supersession, revocation, removed trust or a revoked override denies access even when the envelope is cached. Mutable upstream tags cannot replace a retained release's pinned attestation.
+
+Registry relocation preserves the original signed source reference, subject digest and predicate. Verify that original claim against the signed inventory; do not rewrite it to the target registry name. The integrated qualification helper is `portal/tests/harbor_continuity_qualification.py`; it exercises publication, authenticated rotations, normal replica synchronization, proxy pulls and Local Cyber overrides. Its fixtures are explicitly synthetic and do not replace a real scan-and-approval qualification.
 
 The optional full-mode `verify_attestation` convenience helper expects the supplied reference inside the predicate. Supplying a relocated target reference does not reinterpret the original source-bound predicate. Verify the native signature at the target and check the original signed source subject, without rewriting that claim.
 
@@ -32,7 +38,7 @@ Run the actual Harbor replication policy for that exact subtree, retain its succ
 python <repository>/portal/tests/harbor_attestation_qualification.py verify --workspace <new-private-workspace> --source https://<source-registry> --target https://<target-registry> --namespace qualification/<unique-run> --ca <ca-bundle.pem> --docker-config <docker-config-directory>
 ```
 
-Retain `expected.json`, `verification.json`, `target-cosign-verified.jsonl`, the Harbor execution evidence and the observed source-offline state. These synthetic artifacts are not a Cyber approval or evidence of replica proxy attestation support.
+Retain `expected.json`, `verification.json`, `target-cosign-verified.jsonl`, the Harbor execution evidence and the observed source-offline state. This optional direct-transport check does not exercise the replica proxy; use the integrated qualification for that path.
 
 ### System A environment and publication prerequisites
 
@@ -175,11 +181,15 @@ Create the replacement registry identity/token with the same intended repository
 
 Verify a new signed publication and replication on System A, then synchronize and perform an uncached authorized pull on System B using the replacement credentials. A known release's unchanged sync alone may not exercise registry authentication, so also prove a fresh referenced object is readable. Revoke the old registry identity only after the new path succeeds; if validation fails, keep the old identity available, restore its configured credentials and investigate the transport/scope error. Registry credential rotation does not change publisher identity or signing trust.
 
-### Publisher key rotation boundary
+### Authenticated publisher key rotation
 
-Replica identity is bound to both publisher fingerprint and stable service key. Removing an old pin denies its releases. Adding a new pin does **not** authenticate continuity for that same service: a replacement key's release conflicts with the existing publisher identity and fails closed. There is no seamless signing-key migration workflow or hidden trust reset.
+Keep the original publisher fingerprint configured on System B. On System A, finish or retry every reserved release and revocation publication, then upload the replacement private/public key pair and password through the existing signing configuration form. CATS validates the replacement and creates a transition certificate signed by both the current and replacement keys before saving it. Concurrent changes are serialized; unfinished publications or a stale configuration prevent replacement with an actionable error.
 
-Before rotation, retain/export evidence and back up the replica and publisher state. Design and qualify a controlled migration or separate deployment with explicit identity continuity and consumer cutover. Do not clear identity/sequence rows, delete trusted history, or relabel releases to bypass the conflict. Retain old signing capability as required for existing-release revocations.
+The certificate binds the original trust root, both public keys, the preceding transition, generation and each service's next publication sequence. Subsequent releases and revocations carry the complete chain. System B verifies it from the original pin, retains a sealed continuity record and preserves service identity, history, local grants and overrides. The actual signer remains separately recorded. A fresh replica can authenticate a later successor directly from the original pin; old signed releases remain valid within their certified sequence intervals. Keys cannot authorize events beyond their cutover, and conflicting chains, rollback and altered certificates fail closed.
+
+Publish and replicate a new approved release, synchronize System B, and verify a cold artifact and attestation pull. Check that the service identity and original trust pin are unchanged and the release shows the replacement signer. The authenticated current key can publish a revocation for an earlier key's release, so previous private keys are not needed for that operation after a successful transition. Retain normal encrypted backups of publisher settings and replica state. Never clear identity, sequence or trust records to bypass validation.
+
+Removing the original pin denies its entire successor chain; adding an unrelated fingerprint does not establish continuity. Rotation supports at most 32 transitions in a bounded chain, with at most 10,000 service cutovers per certificate. A lost current private key cannot create a dual-signed transition: restoring its authorized backup or a separately planned trust migration is required.
 
 ## 6. Persistence, upgrade and disconnected operation
 

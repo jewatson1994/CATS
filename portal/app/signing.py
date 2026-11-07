@@ -37,7 +37,9 @@ def public_metadata(settings: dict) -> dict:
     except ValueError:
         return {"enabled": True, "configured": False, "error": "Signing configuration is invalid. Upload a key pair to repair it; publishing is blocked."}
     return {"enabled": value.get("enabled") is True, "configured": bool(value.get("private_key")),
-            "fingerprint": value.get("fingerprint", ""), "updated_at": value.get("updated_at", "")}
+            "fingerprint": value.get("fingerprint", ""), "updated_at": value.get("updated_at", ""),
+            "publisher_root": value.get("publisher_root", value.get("fingerprint", "")),
+            "rotation_generation": len(value.get("signing_key_chain", []))}
 
 
 def public_key(pem: bytes) -> tuple[str, str]:

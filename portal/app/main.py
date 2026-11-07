@@ -11729,6 +11729,9 @@ def save_signing_configuration(
     check_csrf(auth, csrf_token)
     try:
         from .oci_lifecycle import retain_public_key
+        from .release_key_rotation import lock_configuration, prepare_configuration
+        lock_configuration(db)
+        previous = {}
         # Keep public verification material available after rotation/removal.
         try:
             previous = signing.configuration(get_global_configuration(db))
@@ -11743,6 +11746,7 @@ def save_signing_configuration(
                 private = private_key.file.read(signing.MAX_KEY_BYTES + 1)
                 public = public_key.file.read(signing.MAX_KEY_BYTES + 1) if public_key and public_key.filename else b""
                 current = signing.store_keys(private, public, key_password, enabled)
+                current = prepare_configuration(db, previous, current)
             elif (public_key and public_key.filename) or key_password:
                 raise ValueError("Upload the private key again to change its public key or password.")
             else:

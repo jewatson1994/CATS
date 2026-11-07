@@ -21,6 +21,8 @@ class ReleasePublicationSequence(Base):
 def reserve_publication(db, service, approval_id, *, kind='release', target_release_id=None):
     """Allocate under the existing service row lock in the approval transaction."""
     from .models import Service
+    from .release_key_rotation import lock_configuration
+    lock_configuration(db)
     db.scalar(select(Service).where(Service.id == service.id).with_for_update())
     row = db.get(ReleasePublicationSequence, service.id)
     if row is None:
@@ -69,6 +71,17 @@ class ReplicaServiceState(Base):
     active_execution_id: Mapped[int | None] = mapped_column(ForeignKey('executions.id'))
     high_sequence: Mapped[int] = mapped_column(Integer, default=0)
     last_sync_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
+class ReplicaPublisherTrust(Base):
+    """Authenticated high-water mark shared by every service from one publisher."""
+    __tablename__ = 'replica_publisher_trust'
+    source_id: Mapped[int] = mapped_column(ForeignKey('replica_sources.id'), primary_key=True)
+    publisher_root: Mapped[str] = mapped_column(String(128), primary_key=True)
+    current_fingerprint: Mapped[str] = mapped_column(String(128))
+    generation: Mapped[int] = mapped_column(Integer, default=0)
+    key_chain: Mapped[list] = mapped_column(JSON, default=list)
+    integrity_seal: Mapped[str] = mapped_column(Text, default='')
 
 
 class ReplicaRelease(Base):
@@ -153,7 +166,7 @@ class ReplicaObservationDecision(Base):
 
 def upgrade_connection(connection):
     """Idempotent additive migration; no existing approval/evidence rows change."""
-    tables = [ReleasePublicationSequence.__table__, ReplicaSource.__table__,
+    tables = [ReleasePublicationSequence.__table__, ReplicaSource.__table__, ReplicaPublisherTrust.__table__,
               ReplicaServiceState.__table__, ReplicaRelease.__table__, ReplicaEvent.__table__,
               ReplicaRecordMap.__table__, ReplicaEvidenceRecord.__table__, ReplicaFindingDecision.__table__,
               ReplicaObservationDecision.__table__]

@@ -251,7 +251,58 @@ def _signature(transport, client, reference, config, credentials, env, layout_na
     digest = release_oci._digest(data)
     descriptor = transport.graph(client, digest)
     transport.entry(descriptor, layout_name)
-    return {"tag": tag, "digest": digest, "layout_name": layout_name, **result}
+    retention_tag = 'cats-signature-' + digest[7:]
+    transport.tag(client, descriptor, retention_tag)
+    return {"tag": tag, "digest": digest, "layout_name": layout_name,
+            "retention_tag": retention_tag, **result}
+
+
+def _attestations(transport, client, reference, evidence, config, credentials, env, layout_name):
+    """Publish and pin only this approval's verified native Cosign envelopes.
+
+    Cosign appends to a mutable per-subject tag. Rebuild an inert manifest from
+    the exact new predicate so prior approvals or key rotations cannot change
+    the immutable inventory retained by this release.
+    """
+    from .oci_attestations import ATTESTATION_TYPE, attest_and_verify, verify_envelope, AttestationError
+    receipt = attest_and_verify(reference, 'cyber-approval', evidence, (config, credentials), env)
+    subject = reference.rsplit('@', 1)[1]
+    tag = subject.replace(':', '-', 1) + '.att'
+    _, _, raw = client.request('GET', client.api + '/manifests/' + tag)
+    document = json.loads(raw)
+    layers = document.get('layers')
+    if not isinstance(layers, list) or not 1 <= len(layers) <= 64:
+        raise PublicationValidationError('Published attestation manifest is invalid')
+    retained = []
+    for layer in layers:
+        _descriptor(layer)
+        if layer['mediaType'] != ATTESTATION_TYPE or layer['size'] > 1024 * 1024:
+            continue
+        _, _, payload = client.request('GET', client.api + '/blobs/' + layer['digest'], limit=layer['size'])
+        if len(payload) != layer['size'] or release_oci._digest(payload) != layer['digest']:
+            raise PublicationValidationError('Published attestation content changed')
+        try:
+            verify_envelope(payload, subject, config['signing_public_key'].encode(),
+                            config['signing_fingerprint'], receipt)
+        except (AttestationError, ValueError):
+            continue
+        retained.append(layer)
+    if not retained:
+        raise PublicationValidationError('Published attestation does not bind the approved evidence')
+    empty = client.upload(b'{}', 'application/vnd.oci.empty.v1+json')
+    raw = canonical({'schemaVersion': 2, 'mediaType': release_oci.MANIFEST_TYPE,
+                     'config': empty, 'layers': retained})
+    digest = release_oci._digest(raw)
+    status, _, _ = client.request('PUT', client.api + '/manifests/' + tag,
+                                body=raw, media_type=release_oci.MANIFEST_TYPE)
+    if status != 201:
+        raise PublicationValidationError('Attestation publication failed')
+    descriptor = transport.graph(client, digest)
+    transport.entry(descriptor, layout_name)
+    retention_tag = 'cats-attestation-' + digest[7:]
+    transport.tag(client, descriptor, retention_tag)
+    return {**descriptor, 'tag': tag, 'layout_name': layout_name, 'retention_tag': retention_tag, 'receipts': [receipt],
+            'blobs': sorted({empty['digest'], *(layer['digest'] for layer in retained)})}
 
 
 def _publish_files(client, files, *, portable=False):
@@ -408,6 +459,8 @@ def publish(db, approval, destination, checkpoint):
             raise PublicationValidationError("Cyber-approved releases require configured Cosign signing")
         if config["signing_fingerprint"] != snapshot.get("signing_fingerprint"):
             raise PublicationValidationError("Signing identity changed after approval request")
+        from .release_key_rotation import manifest_identity
+        publisher_identity = manifest_identity(settings, portable['service_uuid'], portable['release_sequence'])
         if any(snapshot.get("destination", {}).get(key) != destination.get(key) for key in ("id", "endpoint", "namespace")):
             raise PublicationValidationError("Publication destination differs from approved snapshot")
         save()
@@ -448,7 +501,8 @@ def publish(db, approval, destination, checkpoint):
                 if retained_receipt.exists():
                     from .portable_release import fetch_release
                     previous = json.loads(retained_receipt.read_bytes())
-                    verified = fetch_release(previous['release']['reference'], env, [config['signing_fingerprint']])
+                    verified = fetch_release(previous['release']['reference'], env,
+                                             [publisher_identity.get('publisher_root', config['signing_fingerprint'])])
                     bundle_path = Path(previous['bundle_path'])
                     if (verified['manifest'].get('snapshot_digest') != approval.snapshot_digest
                             or verified['manifest'] != previous['manifest']
@@ -531,9 +585,12 @@ def publish(db, approval, destination, checkpoint):
                             raise PublicationValidationError("Another release is signing this service. Retry publication.")
                         check_worker()
                         artifact["signature"] = _signature(transport, target, reference, config, credentials, env, name + "-signature")
+                        artifact['attestation'] = _attestations(transport, target, reference,
+                            {'approval-snapshot': approval.snapshot_digest, 'evidence.zip': snapshot['evidence']['digest']},
+                            config, credentials, env, name + '-attestation')
                     save()
                 manifest = {"format": "cats-cyber-approved-release-v1", "release_key": approval.release_key,
-                            "portable": portable,
+                            "portable": portable, **publisher_identity,
                             "approval_id": approval.id, "snapshot_digest": approval.snapshot_digest,
                             "approval": {"id": approval.id, "status": approval.status,
                                          **snapshot['approval_validity'],
@@ -576,7 +633,7 @@ def publish(db, approval, destination, checkpoint):
                 (root / "verify-import.py").write_text(OFFLINE_SCRIPT, encoding="utf-8")
                 (root / "README.txt").write_text(
                     "Extract into an empty directory. Requires Python 3 and Cosign 2.x.\n"
-                    "Obtain the signing key fingerprint independently from your Cyber approver.\n"
+                    "Obtain the original publisher trust fingerprint independently from your Cyber approver.\n"
                     "Verify without registry/network access:\n"
                     "  python verify-import.py --fingerprint sha256:<trusted-key-fingerprint>\n"
                     "Import requires ORAS 1.2+ and prior oras/cosign registry login and trusted CA configuration:\n"
@@ -590,7 +647,7 @@ def publish(db, approval, destination, checkpoint):
                     "Publication alone does not restrict repository access or enforce approved-only deployment.\n",
                     encoding="utf-8")
                 stage = "Verifying offline bundle"
-                verify_local(root, config["signing_fingerprint"])
+                verify_local(root, publisher_identity.get("publisher_root", config["signing_fingerprint"]))
                 stage = "Packaging offline bundle"
                 archive = root / "offline-bundle.zip"
                 with ZipFile(archive, "w", ZIP_DEFLATED, allowZip64=True) as bundle:
@@ -652,8 +709,10 @@ def publish_revocation(db, approval, destination, metadata, checkpoint):
             raise PublicationValidationError('Revocation differs from the recorded Cyber decision')
         settings = {row.key: row.value for row in db.scalars(select(PortalSetting))}
         config, credentials = signing.job_material(settings, 'push')
-        if config.get('signing_enabled') is not True or config.get('signing_fingerprint') != approval.snapshot.get('signing_fingerprint'):
-            raise PublicationValidationError('Restore the original publisher signing identity to publish this revocation')
+        from .release_key_rotation import authorized_successor, manifest_identity
+        if config.get('signing_enabled') is not True or not authorized_successor(settings, approval.snapshot.get('signing_fingerprint')):
+            raise PublicationValidationError('An authenticated successor of the original publisher key is required to publish this revocation')
+        publisher_identity = manifest_identity(settings, metadata['service_uuid'], metadata['release_sequence'])
         if any(approval.snapshot.get('destination', {}).get(key) != destination.get(key) for key in ('id', 'endpoint', 'namespace')):
             raise PublicationValidationError('Revocation destination differs from the approved release')
         checkpoint(deepcopy(receipt))
@@ -661,7 +720,7 @@ def publish_revocation(db, approval, destination, metadata, checkpoint):
         if any(path.is_symlink() for path in (output, *output.parents)):
             raise PublicationValidationError('Unsafe revocation output path')
         output.mkdir(parents=True, exist_ok=True)
-        manifest = {'format': 'cats-cyber-release-v1', 'portable': metadata,
+        manifest = {'format': 'cats-cyber-release-v1', 'portable': metadata, **publisher_identity,
                     'release_key': approval.release_key, 'snapshot_digest': approval.snapshot_digest,
                     'approval': {'id': approval.id, 'status': 'approved',
                                  **approval.snapshot['approval_validity'],
@@ -689,7 +748,8 @@ def publish_revocation(db, approval, destination, metadata, checkpoint):
             digest = _publish_files(client, {name: output / name for name in
                 ('release-manifest.json', 'release-manifest.sig', 'release-public-key.pem')}, portable=True)
             reference = host + '/' + repository + '@' + digest
-            verified = fetch_release(reference, env, [config['signing_fingerprint']])
+            verified = fetch_release(reference, env,
+                                     [publisher_identity.get('publisher_root', config['signing_fingerprint'])])
             if verified['manifest'] != manifest:
                 raise PublicationValidationError('Published revocation verification failed')
             with tempfile.TemporaryDirectory(prefix='.transport-', dir=output) as temporary:
@@ -774,6 +834,189 @@ def verify_remote(root, target, descriptor, depth=0):
             raise ValueError("Imported OCI layer digest changed")
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError('Duplicate attestation JSON key')
+        result[key] = value
+    return result
+
+
+def canonical(value):
+    return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False).encode()
+
+
+def public_fingerprint(pem):
+    if not isinstance(pem, str) or len(pem) > 32768:
+        raise ValueError('Invalid publisher public key')
+    lines = pem.splitlines()
+    if len(lines) < 3 or lines[0] != '-----BEGIN PUBLIC KEY-----' or lines[-1] != '-----END PUBLIC KEY-----':
+        raise ValueError('Invalid publisher public key')
+    der = base64.b64decode(''.join(lines[1:-1]), validate=True)
+    encoded = base64.b64encode(der).decode()
+    normalized = '-----BEGIN PUBLIC KEY-----\n' + '\n'.join(encoded[i:i + 64] for i in range(0, len(encoded), 64)) + '\n-----END PUBLIC KEY-----\n'
+    if normalized != pem:
+        raise ValueError('Noncanonical publisher public key')
+    return digest(der)
+
+
+def verify_publisher(manifest, pem, fingerprint):
+    signer = public_fingerprint(pem)
+    if not isinstance(fingerprint, str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', fingerprint):
+        raise ValueError('Invalid independently trusted publisher fingerprint')
+    if manifest.get('signing_fingerprint') != signer:
+        raise ValueError('Release signing identity mismatch')
+    chain = manifest.get('signing_key_chain', [])
+    if not chain:
+        if chain != [] or manifest.get('publisher_root', signer) != signer or fingerprint != signer:
+            raise ValueError('Signing key does not match independently trusted fingerprint')
+        return
+    if not isinstance(chain, list) or len(chain) > 32 or len(canonical(chain)) > 4 * 1024 * 1024:
+        raise ValueError('Invalid publisher key transition chain size')
+    fields = {'format', 'publisher_root', 'generation', 'previous_digest', 'from_fingerprint',
+              'to_fingerprint', 'from_public_key', 'to_public_key', 'service_cutovers'}
+    previous, keys, prior_cutovers = None, [fingerprint], {}
+    with tempfile.TemporaryDirectory(prefix='cats-offline-key-transition-') as temporary:
+        certificate_path, signature_path, public_path = (Path(temporary) / name for name in ('certificate', 'signature', 'public.pem'))
+        for generation, entry in enumerate(chain, 1):
+            if not isinstance(entry, dict) or set(entry) != {'certificate', 'from_signature', 'to_signature'}:
+                raise ValueError('Malformed publisher key transition')
+            certificate = entry['certificate']
+            if not isinstance(certificate, dict) or set(certificate) != fields:
+                raise ValueError('Malformed publisher key transition certificate')
+            if (certificate['format'] != 'cats-publisher-key-transition-v1'
+                    or type(certificate['generation']) is not int or certificate['generation'] != generation
+                    or certificate['previous_digest'] != previous or certificate['publisher_root'] != fingerprint
+                    or certificate['from_fingerprint'] != keys[-1] or certificate['to_fingerprint'] in keys):
+                raise ValueError('Publisher key transition order or identity mismatch')
+            for field in ('publisher_root', 'from_fingerprint', 'to_fingerprint'):
+                if not isinstance(certificate[field], str) or not re.fullmatch(r'sha256:[0-9a-f]{64}', certificate[field]):
+                    raise ValueError('Invalid publisher key fingerprint')
+            cutovers = certificate['service_cutovers']
+            if (not isinstance(cutovers, dict) or len(cutovers) > 10000
+                    or any(not isinstance(service, str) or not 1 <= len(service) <= 120
+                           or type(sequence) is not int or not 1 <= sequence <= 2147483647
+                           for service, sequence in cutovers.items())
+                    or any(service not in cutovers or cutovers[service] < sequence for service, sequence in prior_cutovers.items())):
+                raise ValueError('Invalid or regressing service sequence cutover')
+            certificate_path.write_bytes(canonical(certificate))
+            for prefix in ('from', 'to'):
+                public = certificate[prefix + '_public_key']
+                signature = entry[prefix + '_signature']
+                if (public_fingerprint(public) != certificate[prefix + '_fingerprint']
+                        or not isinstance(signature, str) or not 1 <= len(signature) <= 16384):
+                    raise ValueError('Invalid publisher key transition proof')
+                public_path.write_text(public, encoding='utf-8')
+                signature_path.write_text(signature, encoding='utf-8')
+                run(['cosign', 'verify-blob', '--key', str(public_path), '--signature', str(signature_path),
+                     '--insecure-ignore-tlog=true', '--offline', str(certificate_path)])
+            keys.append(certificate['to_fingerprint'])
+            previous, prior_cutovers = digest(canonical(entry)), cutovers
+    metadata = manifest.get('portable', {})
+    sequence, service = metadata.get('release_sequence'), metadata.get('service_uuid')
+    if (manifest.get('publisher_root') != fingerprint or signer != keys[-1]
+            or type(sequence) is not int or not isinstance(service, str)
+            or sequence < prior_cutovers.get(service, 1)):
+        raise ValueError('Release is outside its certified signing key interval')
+
+
+def retention_tag(kind, inventory):
+    expected = 'cats-' + kind + '-' + inventory['digest'][7:]
+    if inventory.get('retention_tag', expected) != expected:
+        raise ValueError('Invalid immutable ' + kind + ' retention tag')
+    return expected
+
+
+def verify_attestations(root, artifact, index, public):
+    inventory = artifact.get('attestation')
+    if 'attestation' not in artifact:
+        return
+    if (not isinstance(inventory, dict) or not isinstance(inventory.get('receipts'), list)
+            or not 1 <= len(inventory['receipts']) <= 64
+            or inventory.get('tag') != artifact['digest'].replace(':', '-', 1) + '.att'):
+        raise ValueError('Invalid attestation inventory')
+    entry = index[inventory['layout_name']]
+    if any(entry.get(key) != inventory.get(key) for key in ('digest', 'size', 'mediaType')):
+        raise ValueError('Attestation transport identity mismatch')
+    attested = graph(root, entry)
+    layers = attested.get('layers')
+    if (attested.get('schemaVersion') != 2 or 'manifests' in attested
+            or entry['mediaType'] not in ('application/vnd.oci.image.manifest.v1+json', 'application/vnd.docker.distribution.manifest.v2+json')
+            or ('subject' in attested and (not isinstance(attested['subject'], dict)
+                or attested['subject'].get('digest') != artifact['digest']))
+            or not isinstance(layers, list) or not 1 <= len(layers) <= 64
+            or sorted({attested['config']['digest'], *(layer['digest'] for layer in layers)}) != inventory['blobs']):
+        raise ValueError('Attestation graph differs from signed inventory')
+    config = attested['config']
+    if (config['size'] > 1024 * 1024 or config.get('mediaType') not in (
+            'application/vnd.oci.empty.v1+json', 'application/vnd.oci.image.config.v1+json',
+            'application/vnd.docker.container.image.v1+json')):
+        raise ValueError('Invalid attestation configuration')
+    value = json.loads(blob(root, config), object_pairs_hook=unique_object)
+    zero = '0001-01-01T00:00:00Z'
+    if (not isinstance(value, dict) or (value and (
+            config['mediaType'] == 'application/vnd.oci.empty.v1+json'
+            or set(value) - {'architecture', 'os', 'config', 'rootfs', 'created', 'history'}
+            or value.get('architecture', '') not in ('', 'unknown') or value.get('os', '') not in ('', 'unknown')
+            or value.get('config', {}) != {} or ('created' in value and value['created'] != zero)
+            or ('history' in value and value['history'] != [{'created': zero} for _ in layers])
+            or value.get('rootfs') != {'type': 'layers', 'diff_ids': [layer['digest'] for layer in layers]}))):
+        raise ValueError('Attestation configuration is not inert metadata')
+    matched = set()
+    for layer in layers:
+        if layer.get('mediaType') != 'application/vnd.dsse.envelope.v1+json' or layer['size'] > 1024 * 1024:
+            raise ValueError('Invalid attestation layer')
+        envelope = json.loads(blob(root, layer), object_pairs_hook=unique_object)
+        if envelope.get('payloadType') != 'application/vnd.in-toto+json':
+            raise ValueError('Invalid attestation payload type')
+        payload = base64.b64decode(envelope['payload'], validate=True)
+        statement = json.loads(payload, object_pairs_hook=unique_object)
+        if (statement.get('_type') not in ('https://in-toto.io/Statement/v0.1', 'https://in-toto.io/Statement/v1')
+                or len(statement.get('subject', [])) != 1
+                or statement['subject'][0].get('digest') != {'sha256': artifact['digest'][7:]}):
+            raise ValueError('Attestation subject mismatch')
+        matches = []
+        for number, receipt in enumerate(inventory['receipts']):
+            purpose, evidence = receipt['purpose'], receipt['evidence']
+            if (purpose not in ('scan', 'patch', 'deployment-validation', 'cyber-approval', 'release')
+                    or receipt['predicate_type'] != 'https://cats.security/attestations/' + purpose + '/v1'
+                    or not isinstance(evidence, dict) or not 1 <= len(evidence) <= 64
+                    or any(not re.fullmatch(r'[a-zA-Z0-9_.-]{1,128}', key)
+                           or not re.fullmatch(r'sha256:[0-9a-f]{64}', value) for key, value in evidence.items())):
+                raise ValueError('Invalid typed attestation evidence')
+            predicate = dict(schemaVersion=1, subject=receipt['subject'], purpose=receipt['purpose'], evidence=receipt['evidence'])
+            if (receipt['subject'] == artifact['reference'] and statement.get('predicate') == predicate
+                    and statement.get('predicateType') == receipt['predicate_type']):
+                matches.append(number)
+        if len(matches) != 1:
+            raise ValueError('Attestation predicate differs from signed inventory')
+        payload_type = envelope['payloadType'].encode()
+        pae = b'DSSEv1 ' + str(len(payload_type)).encode() + b' ' + payload_type + b' ' + str(len(payload)).encode() + b' ' + payload
+        signatures = envelope.get('signatures')
+        if not isinstance(signatures, list) or not 1 <= len(signatures) <= 64:
+            raise ValueError('Invalid attestation signature list')
+        verified = False
+        with tempfile.TemporaryDirectory(prefix='cats-attestation-offline-') as temporary:
+            payload_path, signature_path = Path(temporary) / 'pae', Path(temporary) / 'signature'
+            payload_path.write_bytes(pae)
+            for signature in signatures:
+                base64.b64decode(signature['sig'], validate=True)
+                signature_path.write_text(signature['sig'])
+                try:
+                    run(['cosign', 'verify-blob', '--key', str(public), '--signature', str(signature_path),
+                         '--insecure-ignore-tlog=true', '--offline', str(payload_path)])
+                    verified = True
+                    break
+                except subprocess.CalledProcessError:
+                    pass
+        if not verified:
+            raise ValueError('Attestation signature verification failed')
+        matched.add(matches[0])
+    if matched != set(range(len(inventory['receipts']))):
+        raise ValueError('Incomplete attestation inventory')
+
+
 def approval_window(manifest, now=None):
     try:
         approval = manifest['approval']
@@ -811,16 +1054,12 @@ def approval_window(manifest, now=None):
 def verify(root, fingerprint):
     public = root / "release-public-key.pem"
     pem = public.read_text()
-    der = base64.b64decode("".join(line for line in pem.splitlines() if not line.startswith("---")), validate=True)
-    if not re.fullmatch(r"sha256:[0-9a-f]{64}", fingerprint) or digest(der) != fingerprint:
-        raise ValueError("Signing key does not match independently trusted fingerprint")
     for name, signature in (("release-manifest.json", "release-manifest.sig"),
                             ("evidence.zip", "evidence.zip.sig"), ("transport.json", "transport.sig")):
         run(["cosign", "verify-blob", "--key", str(public), "--signature", str(root / signature),
              "--insecure-ignore-tlog=true", "--offline", str(root / name)])
-    manifest = json.loads((root / "release-manifest.json").read_bytes())
-    if manifest["signing_fingerprint"] != fingerprint:
-        raise ValueError("Release signing identity mismatch")
+    manifest = json.loads((root / "release-manifest.json").read_bytes(), object_pairs_hook=unique_object)
+    verify_publisher(manifest, pem, fingerprint)
     expected_annotations = approval_window(manifest)
     for name in ("evidence", "candidate"):
         if name in manifest:
@@ -835,10 +1074,14 @@ def verify(root, fingerprint):
     if transport["artifacts"][:-1] != manifest["artifacts"]:
         raise ValueError("Transport inventory differs from signed approval manifest")
     for artifact in transport["artifacts"]:
+        for kind in ('signature', 'attestation'):
+            if kind in artifact:
+                retention_tag(kind, artifact[kind])
         entry = index[artifact["layout_name"]]
         if entry["digest"] != artifact["digest"]:
             raise ValueError("Transport artifact identity mismatch")
         graph(root, entry)
+        verify_attestations(root, artifact, index, public)
         signature = artifact["signature"]
         signed_entry = index[signature["layout_name"]]
         if signed_entry["digest"] != signature["digest"]:
@@ -872,6 +1115,16 @@ def verify(root, fingerprint):
     return transport
 
 
+def copy_attachment(root, target, inventory, index, kind):
+    # Preserve each approved graph when a later import moves the native tag.
+    source = str(root / 'oci') + ':' + inventory['layout_name']
+    for tag in (inventory['tag'], retention_tag(kind, inventory)):
+        run(['oras', 'cp', '--from-oci-layout', source, target + ':' + tag])
+        if digest(run(['oras', 'manifest', 'fetch', target + ':' + tag])) != inventory['digest']:
+            raise ValueError('Imported ' + kind + ' digest changed')
+    verify_remote(root, target, index[inventory['layout_name']])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fingerprint", required=True, help="Independently trusted SHA-256 public-key fingerprint")
@@ -899,10 +1152,13 @@ def main():
             tag = "sha256-" + artifact["digest"][7:] + ".sig"
             if signature["tag"] != tag:
                 raise ValueError("Invalid signature destination tag")
-            run(["oras", "cp", "--from-oci-layout", str(root / "oci") + ":" + signature["layout_name"], target + ":" + tag])
-            if digest(run(["oras", "manifest", "fetch", target + ":" + tag])) != signature["digest"]:
-                raise ValueError("Imported signature digest changed")
-            verify_remote(root, target, index[signature["layout_name"]])
+            copy_attachment(root, target, signature, index, 'signature')
+            attestation = artifact.get('attestation')
+            if attestation is not None:
+                tag = 'sha256-' + artifact['digest'][7:] + '.att'
+                if attestation['tag'] != tag:
+                    raise ValueError('Invalid attestation destination tag')
+                copy_attachment(root, target, attestation, index, 'attestation')
             reference = target + "@" + artifact["digest"]
             expected = approval_window(json.loads((root / 'release-manifest.json').read_bytes()))
             annotation_args = [arg for key, value in sorted(expected.items()) for arg in ('-a', key + '=' + value)]

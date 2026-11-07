@@ -63,6 +63,8 @@ export function Page({data}: {data: PageData}) {
     <p className="signing-intro">Manage the shared CATS keys used to sign images published by portal patch jobs.</p>
     {signing.error && <p role="alert">{signing.error}</p>}
     {signing.configured && <div className="signing-status"><span>Key <code>{signing.fingerprint}</code></span><span>Updated {signing.updated_at}</span><a href="/admin/configuration/signing/public-key">Download public key</a></div>}
+    {signing.rotation_generation > 0 && <p>Publisher trust anchor: <code>{signing.publisher_root}</code>. Key rotation {signing.rotation_generation}. Replicas keep this original trust anchor.</p>}
+    <p>Uploading a replacement key creates a signed transfer from the saved key. Complete queued or failed release and revocation publications first. Replicas accept the new key automatically while preserving service history and local overrides.</p>
     <Post data={data} action="/admin/configuration/signing" upload className="image-signing-form">
       <section className="signing-section"><h3>Signing keys</h3><div className="signing-key-grid">
         <label><span>Private key</span><input type="file" name="private_key" accept=".key,.pem"/><small>Cosign PEM, up to 32 KiB. Leave empty to keep the saved key.</small></label>

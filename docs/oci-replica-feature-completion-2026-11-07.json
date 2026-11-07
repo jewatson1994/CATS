@@ -1,0 +1,1773 @@
+{
+  "format": "cats-oci-replica-feature-completion-v1",
+  "date": "2026-11-07",
+  "generated_at": "2026-11-07T06:17:51.226732+00:00",
+  "baseline_commit": "c2f80eb48ad60bcf04cadafcf817c7f50688ca62",
+  "branch": "codex/oci-approved-release-replicas",
+  "implementation_status": {
+    "R13_integrated_attestation_routing": "Complete",
+    "R16_authenticated_key_continuity": "Complete"
+  },
+  "qualification_status": "Passed for the documented CATS/Harbor scope",
+  "fixture": "Explicitly synthetic multi-platform image, chart and approval evidence; actual Cosign, Harbor, PostgreSQL and deployed HTTP APIs",
+  "harbor_version": "v2.15.4-d8841742",
+  "cosign_version": "2.6.1",
+  "replica_image_id": "sha256:2af402982053cd8ce0130db016a2d618b595162d5027b99a017e0b203f7d6829",
+  "harbor_executions": [
+    {
+      "id": 22,
+      "label": "original-key",
+      "status": "Succeed",
+      "task_count": 4
+    },
+    {
+      "id": 23,
+      "label": "first-rotation",
+      "status": "Succeed",
+      "task_count": 4
+    },
+    {
+      "id": 24,
+      "label": "second-rotation",
+      "status": "Succeed",
+      "task_count": 4
+    },
+    {
+      "id": 25,
+      "label": "delayed-same-image",
+      "status": "Succeed",
+      "task_count": 4
+    },
+    {
+      "id": 26,
+      "label": "successor-revocation",
+      "status": "Succeed",
+      "task_count": 4
+    }
+  ],
+  "tests": {
+    "broad": {
+      "passed": 1283,
+      "skipped": [
+        {
+          "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[False]",
+          "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+        },
+        {
+          "name": "test_every_value_keeps_its_cast_or_uses_services_normalization[True]",
+          "reason": "needs CATS_TEST_DATABASE_URL (PostgreSQL)"
+        },
+        {
+          "name": "test_real_cosign_encrypted_key_roundtrip",
+          "reason": "Cosign not installed; set CATS_TEST_COSIGN to test encrypted Cosign keys"
+        },
+        {
+          "name": "test_real_cosign_key_upload_and_wrong_password",
+          "reason": "Set CATS_TEST_COSIGN to run real Cosign key validation"
+        }
+      ],
+      "failures": 0,
+      "errors": 0
+    },
+    "final-focused": {
+      "passed": 347,
+      "skipped": [
+        {
+          "name": "test_real_cosign_key_upload_and_wrong_password",
+          "reason": "Set CATS_TEST_COSIGN to run real Cosign key validation"
+        }
+      ],
+      "failures": 0,
+      "errors": 0
+    },
+    "postgres": {
+      "passed": 17,
+      "skipped": [],
+      "failures": 0,
+      "errors": 0
+    },
+    "native-cosign": {
+      "passed": 2,
+      "skipped": [],
+      "failures": 0,
+      "errors": 0
+    }
+  },
+  "frontend": {
+    "passed": 496,
+    "files": 66,
+    "build": "TypeScript and Vite build passed"
+  },
+  "live_results": {
+    "after_override_revocation_denied": [
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403
+    ],
+    "before_override_denied": [
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403
+    ],
+    "delayed_same_image_replication": {
+      "publisher_unavailable": [
+        {
+          "unavailable": true,
+          "url": "https://harbor-source.test:8443/v2/"
+        }
+      ],
+      "shared_image_digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+      "superseded_attestation_status": 403,
+      "verified_sequences": [
+        4,
+        5
+      ]
+    },
+    "direct_successor_bootstrap": {
+      "actual_signer": "sha256:f66bb0a4dbc586b8e75729b8cd785374024dd01eb15e5cdd6f583f59aa6b5f9d",
+      "generation": 2,
+      "original_pin": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+      "publisher_unavailable": [
+        {
+          "unavailable": true,
+          "url": "https://harbor-source.test:8443/v2/"
+        }
+      ],
+      "result": {
+        "release_id": 1,
+        "sequence": 3,
+        "service_id": 1,
+        "status": "activated"
+      },
+      "state": {
+        "approved_at": "2026-11-07T05:57:48.221427+00:00",
+        "expires_at": "2027-02-05T05:57:48.221427+00:00",
+        "high_sequence": 3,
+        "release_uuid": "3",
+        "revoked_at": null,
+        "sequence": 3
+      }
+    },
+    "disconnected": [
+      {
+        "unavailable": true,
+        "url": "https://harbor-source.test:8443/v2/"
+      }
+    ],
+    "fixture": "SYNTHETIC Harbor graph qualification; not scanned or approved production content",
+    "local_cyber": {
+      "assignment": {
+        "active": true,
+        "group": "Global",
+        "id": 3,
+        "may_remove": true,
+        "permissions": null,
+        "role": "Local Cyber",
+        "service": "Synthetic Harbor graph fixture",
+        "source": "local"
+      },
+      "service_id": 3,
+      "user_id": 3
+    },
+    "machine": {
+      "expires_at": "2027-02-05T05:53:39.505237+00:00",
+      "id": 2,
+      "name": "nginx-acceptance-355e1417aa",
+      "repository_ids": [
+        4,
+        5,
+        6
+      ]
+    },
+    "offline_original_pin": {
+      "bundle_digest": "sha256:81e4aba0dd4f9dc6d85eada228db8711cc827e6404c242a9e1776b1323d087e1",
+      "sequence": 5,
+      "signer": "sha256:f66bb0a4dbc586b8e75729b8cd785374024dd01eb15e5cdd6f583f59aa6b5f9d",
+      "trusted_fingerprint": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+      "verified": true
+    },
+    "override_pull": [
+      {
+        "attestation": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+        "graph": {
+          "blob_count": 2,
+          "blobs": [
+            {
+              "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "size": 2
+            },
+            {
+              "digest": "sha256:7eb92ef3c785fd3fa0d9db7298e6d14face38c19f13c80b046137fba56e8fdc9",
+              "size": 1204
+            }
+          ],
+          "complete": true,
+          "manifest_count": 1,
+          "manifests": [
+            {
+              "digest": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+              "mediaType": "application/vnd.oci.image.manifest.v1+json",
+              "size": 514
+            }
+          ],
+          "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+          "root_digest": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+          "verified_bytes": 1720
+        },
+        "original_subject_retained": true,
+        "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+        "root": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+      },
+      {
+        "attestation": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+        "graph": {
+          "blob_count": 2,
+          "blobs": [
+            {
+              "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "size": 2
+            },
+            {
+              "digest": "sha256:ea6451d8196772ee8dfb1467c49583f16e394f7653cdcb0f1275992fea49042f",
+              "size": 1224
+            }
+          ],
+          "complete": true,
+          "manifest_count": 1,
+          "manifests": [
+            {
+              "digest": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+              "mediaType": "application/vnd.oci.image.manifest.v1+json",
+              "size": 514
+            }
+          ],
+          "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+          "root_digest": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+          "verified_bytes": 1740
+        },
+        "original_subject_retained": true,
+        "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+        "root": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1"
+      }
+    ],
+    "override_uses": [
+      {
+        "matching_uses": [
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.026218+00:00",
+            "decision_at": "2026-11-07T06:05:16.003383+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2742,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:15.897668+00:00",
+            "decision_at": "2026-11-07T06:05:15.875485+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2738,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:15.779589+00:00",
+            "decision_at": "2026-11-07T06:05:15.757288+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2734,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:15.677040+00:00",
+            "decision_at": "2026-11-07T06:05:15.655039+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2730,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:15.560232+00:00",
+            "decision_at": "2026-11-07T06:05:15.537779+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2726,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:15.443823+00:00",
+            "decision_at": "2026-11-07T06:05:15.420051+00:00",
+            "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2722,
+            "override_id": 5,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "service_id": 3
+          }
+        ],
+        "override_id": 5
+      },
+      {
+        "matching_uses": [
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.525372+00:00",
+            "decision_at": "2026-11-07T06:05:16.518531+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2756,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.426378+00:00",
+            "decision_at": "2026-11-07T06:05:16.420160+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2754,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.347627+00:00",
+            "decision_at": "2026-11-07T06:05:16.340995+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2752,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.274114+00:00",
+            "decision_at": "2026-11-07T06:05:16.266929+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2750,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.196002+00:00",
+            "decision_at": "2026-11-07T06:05:16.188985+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2748,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          },
+          {
+            "approval_status": "superseded",
+            "authorization_source": "local_override",
+            "created_at": "2026-11-07T06:05:16.115937+00:00",
+            "decision_at": "2026-11-07T06:05:16.108949+00:00",
+            "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "effective_policy": {
+              "exact_digest": true,
+              "mode": "replica",
+              "repository_policy": {},
+              "trusted_publisher_required": true
+            },
+            "id": 2746,
+            "override_id": 6,
+            "override_status": "active",
+            "principal_id": 2,
+            "reason": "local_cyber_override",
+            "release_id": 5,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "service_id": 3
+          }
+        ],
+        "override_id": 6
+      }
+    ],
+    "overrides": [
+      {
+        "digests": [
+          "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+        ],
+        "expires_at": null,
+        "id": 5,
+        "release_id": 5
+      },
+      {
+        "digests": [
+          "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1"
+        ],
+        "expires_at": null,
+        "id": 6,
+        "release_id": 5
+      }
+    ],
+    "pulls": [
+      {
+        "attestations": [
+          {
+            "attestation": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:7eb92ef3c785fd3fa0d9db7298e6d14face38c19f13c80b046137fba56e8fdc9",
+                  "size": 1204
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+              "root_digest": "sha256:52e567bbeaf4bdb10165d1c3efb5b4bd28b30b6cde5bf57c58935c300b34154d",
+              "verified_bytes": 1720
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a"
+          },
+          {
+            "attestation": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:ea6451d8196772ee8dfb1467c49583f16e394f7653cdcb0f1275992fea49042f",
+                  "size": 1224
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+              "root_digest": "sha256:f3a0466f67cd58fef3989c2233543500851ef47b1c003c3169f4360491807134",
+              "verified_bytes": 1740
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1"
+          }
+        ],
+        "disconnected": false,
+        "images": [
+          {
+            "blob_count": 4,
+            "blobs": [
+              {
+                "digest": "sha256:b102ebd930f6530ec7cb9e938526a6f00140979523a8d7fa6c1d913334ee0f1d",
+                "size": 274
+              },
+              {
+                "digest": "sha256:9bf9e1375293a36aaef135f2150ca46faf25bf04b534720b0fe8a987fbf18c0c",
+                "size": 10240
+              },
+              {
+                "digest": "sha256:2ebe9577f941258bf102fdd3363ae7d33614356f631e1b649b19ec4649f7adf5",
+                "size": 274
+              },
+              {
+                "digest": "sha256:1e1965824d52590a71cc0d03cb465ba0e50dfff76ef21ab3a4538dfe176175e4",
+                "size": 10240
+              }
+            ],
+            "complete": true,
+            "manifest_count": 3,
+            "manifests": [
+              {
+                "digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "size": 491
+              },
+              {
+                "digest": "sha256:9251838b9555831560d5fced7fc9217c1251b20eb75c7557f45c917735bad6d9",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              },
+              {
+                "digest": "sha256:88d04fc8a1f379a5d94d69174c0b929bba46fd50e9bd86da13a873c2ba04a98a",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root_digest": "sha256:8b198e9d13d362d349394f8738c77fde33c74691501f2df280155c9e0497ed5a",
+            "verified_bytes": 22315
+          },
+          {
+            "blob_count": 2,
+            "blobs": [
+              {
+                "digest": "sha256:1334ac6a3afa1da042dd719c6a014ba495c9eec72c85d77d78687d16f405c40e",
+                "size": 113
+              },
+              {
+                "digest": "sha256:08fe65f5b31aaba6999df474eac23ad262f07025732676dc752c5fb08ca3ec6e",
+                "size": 354
+              }
+            ],
+            "complete": true,
+            "manifest_count": 1,
+            "manifests": [
+              {
+                "digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 409
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root_digest": "sha256:85ffc8782a1befd9783e760bcd19d8a53455c180fa903b4f74032d787643a5a1",
+            "verified_bytes": 876
+          }
+        ],
+        "sequence": 1
+      },
+      {
+        "attestations": [
+          {
+            "attestation": "sha256:5c7f009e040b8eb25f4a9da7987db86304308c841d75e16ec9be7f74b6b47505",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:657a464e56f731f15e6011c3aa042cd269b26e196191b6260dd20a4c0f7b320b",
+                  "size": 1204
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:5c7f009e040b8eb25f4a9da7987db86304308c841d75e16ec9be7f74b6b47505",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+              "root_digest": "sha256:5c7f009e040b8eb25f4a9da7987db86304308c841d75e16ec9be7f74b6b47505",
+              "verified_bytes": 1720
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f"
+          },
+          {
+            "attestation": "sha256:c0cc614fd9e089dde308196d44222de9a386881daf2cca16c2bb1e368378c39f",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:5c27082095bf0b9601ee05582df8510a21a0c0ca77698902b64b68eaa6aca853",
+                  "size": 1224
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:c0cc614fd9e089dde308196d44222de9a386881daf2cca16c2bb1e368378c39f",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+              "root_digest": "sha256:c0cc614fd9e089dde308196d44222de9a386881daf2cca16c2bb1e368378c39f",
+              "verified_bytes": 1740
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root": "sha256:19b0dcbd12562bb5e49ebc47c6735b817db24b94ca8cc4438f424388ea9be7f7"
+          }
+        ],
+        "disconnected": false,
+        "images": [
+          {
+            "blob_count": 4,
+            "blobs": [
+              {
+                "digest": "sha256:cf0c148ff3b4f554d87577577dd156f640914ae658a791f2ecfff77aa756de9c",
+                "size": 274
+              },
+              {
+                "digest": "sha256:8a586c1a4af6199601f4c19e0c9aa5fc231d24ab93c6d3c08ce6ad0c67782535",
+                "size": 10240
+              },
+              {
+                "digest": "sha256:6447dcf5c8418bb8f4476490290e9d90a2aeb010f5fb523adfa31419ece39a46",
+                "size": 274
+              },
+              {
+                "digest": "sha256:8e1d01314b290cb2e995ba8d982ff4742825bbee2252822e7502406866f092ef",
+                "size": 10240
+              }
+            ],
+            "complete": true,
+            "manifest_count": 3,
+            "manifests": [
+              {
+                "digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "size": 491
+              },
+              {
+                "digest": "sha256:be7ba10be55a76604427e4e48f458144209a61d6db0fea35ac39b8ebe0d12a71",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              },
+              {
+                "digest": "sha256:f378e1bd2e832d3991a6c9c4f59d5cd9443ce095518576105fe31bb771e6f70d",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root_digest": "sha256:0de5ff7fa7c8568428f4f32d6da898b688294113972ff0a257cfecd6c9429b3f",
+            "verified_bytes": 22315
+          },
+          {
+            "blob_count": 2,
+            "blobs": [
+              {
+                "digest": "sha256:59785605e86e88d1d1bda9a4504f9ffa307558226abed7824bbd332b362f0d64",
+                "size": 113
+              },
+              {
+                "digest": "sha256:333194c6cd577da4def018c0e117049c710ebff64e351573ee815b44c58a7dfe",
+                "size": 353
+              }
+            ],
+            "complete": true,
+            "manifest_count": 1,
+            "manifests": [
+              {
+                "digest": "sha256:19b0dcbd12562bb5e49ebc47c6735b817db24b94ca8cc4438f424388ea9be7f7",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 409
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root_digest": "sha256:19b0dcbd12562bb5e49ebc47c6735b817db24b94ca8cc4438f424388ea9be7f7",
+            "verified_bytes": 875
+          }
+        ],
+        "sequence": 2
+      },
+      {
+        "attestations": [
+          {
+            "attestation": "sha256:ba43d325a6bb2baf1f3db300006e6a1f6494b8a37ee6e6040c6dff736303073b",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:e81043442eaa83a2168c87db5bf923a332490f844620fc22f3e41f08b5868d55",
+                  "size": 1204
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:ba43d325a6bb2baf1f3db300006e6a1f6494b8a37ee6e6040c6dff736303073b",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+              "root_digest": "sha256:ba43d325a6bb2baf1f3db300006e6a1f6494b8a37ee6e6040c6dff736303073b",
+              "verified_bytes": 1720
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829"
+          },
+          {
+            "attestation": "sha256:710b70a7dbac2a4f0cd2f5db2e9de38a4a559b98feb245383fb24aeef3bf74bc",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:bbc6844c7a579ee1ced702a00ef92f55470c9527f9adacc15139cc4a838476c6",
+                  "size": 1224
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:710b70a7dbac2a4f0cd2f5db2e9de38a4a559b98feb245383fb24aeef3bf74bc",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+              "root_digest": "sha256:710b70a7dbac2a4f0cd2f5db2e9de38a4a559b98feb245383fb24aeef3bf74bc",
+              "verified_bytes": 1740
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root": "sha256:b3fd46ac0c9e5f89867925c2853b28889190b8e93935a21dc1cc2be4a911c750"
+          }
+        ],
+        "disconnected": true,
+        "images": [
+          {
+            "blob_count": 4,
+            "blobs": [
+              {
+                "digest": "sha256:557b39627304c9a98e1910b5082c51cce76573cb7b42258f34bb2014029929c2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2e494de843a8bf3e30ed5a1cce81d9154d5ce845e8c4c7f250c9b9172465079e",
+                "size": 10240
+              },
+              {
+                "digest": "sha256:7c51c966cc786f15a661a295553604795ba6233ffe300dd45274cbd9a4ca79d2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2c63fa5661360722113527ec746a300c5696ae3ad2bc4ce28ec1df2e03328db0",
+                "size": 10240
+              }
+            ],
+            "complete": true,
+            "manifest_count": 3,
+            "manifests": [
+              {
+                "digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "size": 491
+              },
+              {
+                "digest": "sha256:8529cfa81618a6a82395c52f24aa2f528dfbb947b129c4f3b21e3fbd752f70c7",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              },
+              {
+                "digest": "sha256:5dd43da7e0f8e37d58ff9c1869a8b9183e3c7788966896a5f2398720f6de23c4",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root_digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+            "verified_bytes": 22315
+          },
+          {
+            "blob_count": 2,
+            "blobs": [
+              {
+                "digest": "sha256:599114fce52b433c7a931166aa77268ce95212cedcbb033a73a2ca1be655f7ee",
+                "size": 113
+              },
+              {
+                "digest": "sha256:fac24d5887433b231c39677da157034f4805c79ad44101fd0c7352c2c804fc88",
+                "size": 354
+              }
+            ],
+            "complete": true,
+            "manifest_count": 1,
+            "manifests": [
+              {
+                "digest": "sha256:b3fd46ac0c9e5f89867925c2853b28889190b8e93935a21dc1cc2be4a911c750",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 409
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root_digest": "sha256:b3fd46ac0c9e5f89867925c2853b28889190b8e93935a21dc1cc2be4a911c750",
+            "verified_bytes": 876
+          }
+        ],
+        "sequence": 3
+      },
+      {
+        "attestations": [
+          {
+            "attestation": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:f5687ac765d4b37a1f14ad3e780b5cb2ed0b0ccbedb646d594858dbb69296bfd",
+                  "size": 1204
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+              "root_digest": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+              "verified_bytes": 1720
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829"
+          },
+          {
+            "attestation": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:05e4add3036e616ade47adf706acc4a23b7465a5dca4f132af52acf4fb07aca6",
+                  "size": 1224
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+              "root_digest": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+              "verified_bytes": 1740
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95"
+          }
+        ],
+        "disconnected": true,
+        "images": [
+          {
+            "blob_count": 4,
+            "blobs": [
+              {
+                "digest": "sha256:557b39627304c9a98e1910b5082c51cce76573cb7b42258f34bb2014029929c2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2e494de843a8bf3e30ed5a1cce81d9154d5ce845e8c4c7f250c9b9172465079e",
+                "size": 10240
+              },
+              {
+                "digest": "sha256:7c51c966cc786f15a661a295553604795ba6233ffe300dd45274cbd9a4ca79d2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2c63fa5661360722113527ec746a300c5696ae3ad2bc4ce28ec1df2e03328db0",
+                "size": 10240
+              }
+            ],
+            "complete": true,
+            "manifest_count": 3,
+            "manifests": [
+              {
+                "digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "size": 491
+              },
+              {
+                "digest": "sha256:8529cfa81618a6a82395c52f24aa2f528dfbb947b129c4f3b21e3fbd752f70c7",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              },
+              {
+                "digest": "sha256:5dd43da7e0f8e37d58ff9c1869a8b9183e3c7788966896a5f2398720f6de23c4",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root_digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+            "verified_bytes": 22315
+          },
+          {
+            "blob_count": 2,
+            "blobs": [
+              {
+                "digest": "sha256:f555aabd501e88ce4178d4dfcf8b6bb9a2153c7a57e3688f8b93a63d6e50bf2b",
+                "size": 113
+              },
+              {
+                "digest": "sha256:fd79ccb240ae804ff03c8eaf03105781402084b166a57667428a61483bc24559",
+                "size": 354
+              }
+            ],
+            "complete": true,
+            "manifest_count": 1,
+            "manifests": [
+              {
+                "digest": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 409
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root_digest": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95",
+            "verified_bytes": 876
+          }
+        ],
+        "sequence": 5
+      },
+      {
+        "attestations": [
+          {
+            "attestation": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:f5687ac765d4b37a1f14ad3e780b5cb2ed0b0ccbedb646d594858dbb69296bfd",
+                  "size": 1204
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+              "root_digest": "sha256:aed4ff924706dc0d63bcd0ccf1b5e66c96f3ea9ba79fa8b70e0dc5715b96c4e7",
+              "verified_bytes": 1720
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829"
+          },
+          {
+            "attestation": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+            "graph": {
+              "blob_count": 2,
+              "blobs": [
+                {
+                  "digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+                  "size": 2
+                },
+                {
+                  "digest": "sha256:05e4add3036e616ade47adf706acc4a23b7465a5dca4f132af52acf4fb07aca6",
+                  "size": 1224
+                }
+              ],
+              "complete": true,
+              "manifest_count": 1,
+              "manifests": [
+                {
+                  "digest": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+                  "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                  "size": 514
+                }
+              ],
+              "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+              "root_digest": "sha256:bad4747504d3fc400ba84908a9b36744f2d0f46c52950dd420ac818bc0b1d26f",
+              "verified_bytes": 1740
+            },
+            "original_subject_retained": true,
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95"
+          }
+        ],
+        "disconnected": true,
+        "images": [
+          {
+            "blob_count": 4,
+            "blobs": [
+              {
+                "digest": "sha256:557b39627304c9a98e1910b5082c51cce76573cb7b42258f34bb2014029929c2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2e494de843a8bf3e30ed5a1cce81d9154d5ce845e8c4c7f250c9b9172465079e",
+                "size": 10240
+              },
+              {
+                "digest": "sha256:7c51c966cc786f15a661a295553604795ba6233ffe300dd45274cbd9a4ca79d2",
+                "size": 274
+              },
+              {
+                "digest": "sha256:2c63fa5661360722113527ec746a300c5696ae3ad2bc4ce28ec1df2e03328db0",
+                "size": 10240
+              }
+            ],
+            "complete": true,
+            "manifest_count": 3,
+            "manifests": [
+              {
+                "digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "size": 491
+              },
+              {
+                "digest": "sha256:8529cfa81618a6a82395c52f24aa2f528dfbb947b129c4f3b21e3fbd752f70c7",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              },
+              {
+                "digest": "sha256:5dd43da7e0f8e37d58ff9c1869a8b9183e3c7788966896a5f2398720f6de23c4",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 398
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/application",
+            "root_digest": "sha256:52b6f65c805dd57da98373decb6006eda3afae86ace2032d60591bcb1abc3829",
+            "verified_bytes": 22315
+          },
+          {
+            "blob_count": 2,
+            "blobs": [
+              {
+                "digest": "sha256:f555aabd501e88ce4178d4dfcf8b6bb9a2153c7a57e3688f8b93a63d6e50bf2b",
+                "size": 113
+              },
+              {
+                "digest": "sha256:fd79ccb240ae804ff03c8eaf03105781402084b166a57667428a61483bc24559",
+                "size": 354
+              }
+            ],
+            "complete": true,
+            "manifest_count": 1,
+            "manifests": [
+              {
+                "digest": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95",
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "size": 409
+              }
+            ],
+            "repository": "services/3/qualification/completion-20261107/harbor-continuity-20261107/charts/application",
+            "root_digest": "sha256:c088de88962b912f8173b54d29350b88eb96fb1b45d7158b7e2643eb57c9ba95",
+            "verified_bytes": 876
+          }
+        ],
+        "sequence": 5
+      }
+    ],
+    "restart_persistence": {
+      "audit_retained": true,
+      "original_pin": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+      "releases": [
+        {
+          "id": 9,
+          "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+          "source_release_id": "5",
+          "status": "active"
+        },
+        {
+          "id": 8,
+          "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+          "source_release_id": "4",
+          "status": "superseded"
+        },
+        {
+          "id": 7,
+          "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+          "source_release_id": "3",
+          "status": "superseded"
+        },
+        {
+          "id": 6,
+          "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+          "source_release_id": "2",
+          "status": "superseded"
+        },
+        {
+          "id": 5,
+          "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+          "source_release_id": "1",
+          "status": "revoked"
+        }
+      ],
+      "revoked_override_ids": [
+        5,
+        6
+      ],
+      "source_id": 4
+    },
+    "setup": {
+      "source_id": 4,
+      "trusted_publishers": [
+        "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a"
+      ]
+    },
+    "successor_signed_revocation": true,
+    "successor_signed_revocation_denied": [
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403,
+      403
+    ],
+    "sync": [
+      {
+        "job_id": "5c62c28bfa924f43a9ddafeb16dcec92",
+        "releases": [
+          {
+            "id": 5,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "1",
+            "status": "active"
+          }
+        ],
+        "result": {
+          "activated": 0,
+          "discovered": 1,
+          "failed": 0,
+          "failure_code": null,
+          "revoked": 0,
+          "unchanged": 1
+        },
+        "sequence": 1,
+        "service_id": 3
+      },
+      {
+        "job_id": "7cfa6ef22ded47c5911038761b8d8e2a",
+        "releases": [
+          {
+            "id": 6,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "2",
+            "status": "active"
+          },
+          {
+            "id": 5,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "1",
+            "status": "superseded"
+          }
+        ],
+        "result": {
+          "activated": 1,
+          "discovered": 2,
+          "failed": 0,
+          "failure_code": null,
+          "revoked": 0,
+          "unchanged": 1
+        },
+        "sequence": 2,
+        "service_id": 3
+      },
+      {
+        "job_id": "35318e0b65da4297a293eda04bd1bda0",
+        "releases": [
+          {
+            "id": 7,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "3",
+            "status": "active"
+          },
+          {
+            "id": 6,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "2",
+            "status": "superseded"
+          },
+          {
+            "id": 5,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "1",
+            "status": "superseded"
+          }
+        ],
+        "result": {
+          "activated": 1,
+          "discovered": 3,
+          "failed": 0,
+          "failure_code": null,
+          "revoked": 0,
+          "unchanged": 2
+        },
+        "sequence": 3,
+        "service_id": 3
+      },
+      {
+        "job_id": "6197af0167d14f34ae538415ebed7836",
+        "releases": [
+          {
+            "id": 9,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "5",
+            "status": "active"
+          },
+          {
+            "id": 8,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "4",
+            "status": "superseded"
+          },
+          {
+            "id": 7,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "3",
+            "status": "superseded"
+          },
+          {
+            "id": 6,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "2",
+            "status": "superseded"
+          },
+          {
+            "id": 5,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "1",
+            "status": "superseded"
+          }
+        ],
+        "result": {
+          "activated": 2,
+          "discovered": 5,
+          "failed": 0,
+          "failure_code": null,
+          "revoked": 0,
+          "unchanged": 3
+        },
+        "sequence": 5,
+        "service_id": 3
+      },
+      {
+        "job_id": "f514a687f9754fe19798a2bbff031f90",
+        "releases": [
+          {
+            "id": 9,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "5",
+            "status": "active"
+          },
+          {
+            "id": 8,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "4",
+            "status": "superseded"
+          },
+          {
+            "id": 7,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "3",
+            "status": "superseded"
+          },
+          {
+            "id": 6,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "2",
+            "status": "superseded"
+          },
+          {
+            "id": 5,
+            "publisher": "sha256:7b03d415184711b7baf4d0f2e9568a7da40bedc762123ff24eebfc682583f44a",
+            "source_release_id": "1",
+            "status": "revoked"
+          }
+        ],
+        "result": {
+          "activated": 0,
+          "discovered": 6,
+          "failed": 0,
+          "failure_code": null,
+          "revoked": 1,
+          "unchanged": 5
+        },
+        "sequence": 5,
+        "service_id": 3
+      }
+    ]
+  },
+  "evidence_root": "C:\\Users\\lil-j\\.codex\\visualizations\\2026\\11\\05\\01a1ada8-46fc-7ae1-895c-a315b48a238b\\completion-20261107",
+  "evidence": [
+    {
+      "path": "attestation-final.xml",
+      "size": 33250,
+      "sha256": "672a1237057b8528545beba2eb74a68f90acb792f500586730105ebd9c04b77c"
+    },
+    {
+      "path": "attestation-retention-regression.xml",
+      "size": 19256,
+      "sha256": "5ad4d6d566887044d1fe4fb7dbde7250de11db64ecd956e43ca3851530e0d8ea"
+    },
+    {
+      "path": "harbor/harbor-replication.json",
+      "size": 16480,
+      "sha256": "73d873ea2df69436d52ab53e758b45266933ccc19b28eedec1653877e8171123"
+    },
+    {
+      "path": "harbor/logs/execution-22-task-55.log",
+      "size": 8193,
+      "sha256": "2f0879ba1c5f0a6391c253f68710f764c03d4e3db6ed69d79a3096702e494323"
+    },
+    {
+      "path": "harbor/logs/execution-22-task-56.log",
+      "size": 13291,
+      "sha256": "b7d745af5df956fe1725dd545bd4ebbbafcf85cf914a23d597283d23268057d3"
+    },
+    {
+      "path": "harbor/logs/execution-22-task-57.log",
+      "size": 18473,
+      "sha256": "a5f60ccfd3731b00e2bd4805b19f6bb0e82f23a028a4d8a1f04c7e33a16d1583"
+    },
+    {
+      "path": "harbor/logs/execution-22-task-58.log",
+      "size": 9169,
+      "sha256": "0124cf03d489e5af932254fdd4cfa90b65044a20b06be98a687364e4da1d6c8f"
+    },
+    {
+      "path": "harbor/logs/execution-23-task-59.log",
+      "size": 10824,
+      "sha256": "af6f0794611b10f0af666aea3f4d4024d4674e492e10afa9fcb6c3d97663eec7"
+    },
+    {
+      "path": "harbor/logs/execution-23-task-60.log",
+      "size": 19048,
+      "sha256": "0ccce94c9d33fd1ed20a3aca850f7127810b6c7ec06b5e786998e0026f9cd341"
+    },
+    {
+      "path": "harbor/logs/execution-23-task-61.log",
+      "size": 24096,
+      "sha256": "c776cc49540873fd6d3ccf9206fd7022cb6327778552d9104785e78ea7e43218"
+    },
+    {
+      "path": "harbor/logs/execution-23-task-62.log",
+      "size": 10688,
+      "sha256": "339058d058733cdcde3866398fc55559b22ac82ef6e44cc4cd710c8a589e15cc"
+    },
+    {
+      "path": "harbor/logs/execution-24-task-63.log",
+      "size": 13543,
+      "sha256": "53a59b275a4cf4334818ddff8be4fe9cabbd31ee492aa91e74abad50f6950647"
+    },
+    {
+      "path": "harbor/logs/execution-24-task-64.log",
+      "size": 24579,
+      "sha256": "c1e57d405ad596e12aa0a1aa9114258e509bcd630be80e8223d8b4a0017d696f"
+    },
+    {
+      "path": "harbor/logs/execution-24-task-65.log",
+      "size": 29510,
+      "sha256": "f766486183b169877f6f0580dd3b27b8ce501f73dfadfdaba85dce7961f5f132"
+    },
+    {
+      "path": "harbor/logs/execution-24-task-66.log",
+      "size": 10919,
+      "sha256": "cec5e12752b4d8ec04c68fa6e166993d79c00e572be1089b096908c0c13698e9"
+    },
+    {
+      "path": "harbor/logs/execution-25-task-67.log",
+      "size": 30798,
+      "sha256": "ec90e8ece7b8646da50400cbd6135df664cd08555790f13d8e13f3a21b29b67f"
+    },
+    {
+      "path": "harbor/logs/execution-25-task-68.log",
+      "size": 56580,
+      "sha256": "1ba4c85487c99961406200b53686921cbce40b55daa33e2216a852c7ee7269cb"
+    },
+    {
+      "path": "harbor/logs/execution-25-task-69.log",
+      "size": 56837,
+      "sha256": "f800a317e3bde6e24611b46f5c0ddd98dc1ab774fc166c9ad6cc4bd49e7a79e7"
+    },
+    {
+      "path": "harbor/logs/execution-25-task-70.log",
+      "size": 5234,
+      "sha256": "a0e9bb712b017f871ccd56e801495e92a567f845b72213872183631bbf63bdb7"
+    },
+    {
+      "path": "harbor/logs/execution-26-task-71.log",
+      "size": 21404,
+      "sha256": "adaae542e59c07c410a1e3ff85948eeab503f5c9ed405da5d137e5ada01cd76a"
+    },
+    {
+      "path": "harbor/logs/execution-26-task-72.log",
+      "size": 36834,
+      "sha256": "771955413f9c0702250c357e716667259682a2f1b6cb463c5aeab66c50104815"
+    },
+    {
+      "path": "harbor/logs/execution-26-task-73.log",
+      "size": 32740,
+      "sha256": "73eb9c02d8299e05fb14bd6829ba5ab3635c295b5efdd3e6a7a1bc9eeed0c73f"
+    },
+    {
+      "path": "harbor/logs/execution-26-task-74.log",
+      "size": 5234,
+      "sha256": "0d4ef994684159cc0ae024e2010bcfc91e11cb6d2770b2e9349ca6440a727eb4"
+    },
+    {
+      "path": "qualification/bootstrap.log",
+      "size": 89,
+      "sha256": "57390b2e6026c905666a43608413e777ace59cc0522c69222b10d9c55fd3a844"
+    },
+    {
+      "path": "qualification/offline-3.log",
+      "size": 66,
+      "sha256": "ddcb1f903cba58dc4c9cd59ca1b832da6ff8d5125e944a617ed815f503da7bc3"
+    },
+    {
+      "path": "qualification/offline-5.log",
+      "size": 66,
+      "sha256": "ddcb1f903cba58dc4c9cd59ca1b832da6ff8d5125e944a617ed815f503da7bc3"
+    },
+    {
+      "path": "qualification/override.log",
+      "size": 91,
+      "sha256": "08361c6ad083bc19d72207d9cffbe15fb875756d0fe9d5bdd82e6852ff3ded68"
+    },
+    {
+      "path": "qualification/publish-1.log",
+      "size": 209,
+      "sha256": "07ba0bbe4b8102e251b56881da2a726d8ff4f1a5927a5b7bb492d5b18601e876"
+    },
+    {
+      "path": "qualification/publish-2.log",
+      "size": 209,
+      "sha256": "48cb17a0663272de9355aa5936c178cb596edb302ceab85a133d0cafbc97eea2"
+    },
+    {
+      "path": "qualification/publish-3.log",
+      "size": 209,
+      "sha256": "f71fe9982bf78527f937e86b0c176329693e4d6c07e1eaef2e9fc80f0240b47c"
+    },
+    {
+      "path": "qualification/publish-4.log",
+      "size": 209,
+      "sha256": "544586e40243c51a8f42e9f50e75264183b0b76885fffe742ddbe812bc8fc268"
+    },
+    {
+      "path": "qualification/publish-5.log",
+      "size": 209,
+      "sha256": "8f69e73b927622c4816e1be71ff60939bfa1bcd3f59acbd74f15d7cf9fb45299"
+    },
+    {
+      "path": "qualification/report.json",
+      "size": 50080,
+      "sha256": "5cb00f6a469e8b3904ce9b9344fd1a8b1a3a83e49f963b3b52fcd6420c1dd3d1"
+    },
+    {
+      "path": "qualification/revoke.log",
+      "size": 58,
+      "sha256": "e8de562f70e6609bccff4121cddaf0fc9f68ab1cdac1c4734f3296ff3fd4e7e8"
+    },
+    {
+      "path": "qualification/setup.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/sync-1.log",
+      "size": 349,
+      "sha256": "b63447326a8287a0f1aea3cd7971e7725381c30a7a3eeee03fda8acecdf919c1"
+    },
+    {
+      "path": "qualification/sync-2.log",
+      "size": 498,
+      "sha256": "f52f4ded3fed37248be65e2c83ee6674192be44f3467fe794737097d8c51273e"
+    },
+    {
+      "path": "qualification/sync-3.log",
+      "size": 647,
+      "sha256": "fd6ac6f49c5d67af1a1bfcfaff939dd8f79adcb07ffbb2c34a8582ab6e17a471"
+    },
+    {
+      "path": "qualification/sync-5.log",
+      "size": 945,
+      "sha256": "330eeab2ec5082e43105b9cf8a1083b84a663d8555f4abb046fcd8d0084648fb"
+    },
+    {
+      "path": "qualification/sync-revocation.log",
+      "size": 942,
+      "sha256": "543d1ddbe613d763cb7461079cad8346f8c7e306179d6212fda54dab0557cfaa"
+    },
+    {
+      "path": "qualification/verify-1.log",
+      "size": 64,
+      "sha256": "cd896a1ec218af4649ffa2a647a291ea858ebb481e18f26ba1d9d3d31c176129"
+    },
+    {
+      "path": "qualification/verify-2.log",
+      "size": 64,
+      "sha256": "286d0a66cf6e4336a2773489f13b3fb90f019b239087d7fe68e6c7b71a65ce95"
+    },
+    {
+      "path": "qualification/verify-3.log",
+      "size": 64,
+      "sha256": "f73c25e44a8cfb12eccbe907707e7cf3170da72a2313b9e3c18124e29ee5f633"
+    },
+    {
+      "path": "qualification/verify-5-restarted.log",
+      "size": 64,
+      "sha256": "8d1ab56884da065091f4070ada9fa06067cad0e16fdff4af45500726d227fd67"
+    },
+    {
+      "path": "qualification/verify-5.log",
+      "size": 64,
+      "sha256": "8d1ab56884da065091f4070ada9fa06067cad0e16fdff4af45500726d227fd67"
+    },
+    {
+      "path": "qualification/verify-restart.log",
+      "size": 103,
+      "sha256": "053daee56a0ee2857cba4f72c0911e8f80181fdb8765038ac0e8c9480a012734"
+    },
+    {
+      "path": "qualification/verify-retention.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/verify-revocation-restarted.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "qualification/verify-revocation.log",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "replica-build-complete.log",
+      "size": 3175,
+      "sha256": "8873ec60b389093a9e1ea916f37a38ec3c2a246ab37d4fea989793605b348c87"
+    },
+    {
+      "path": "runtime-qualified.json",
+      "size": 8321,
+      "sha256": "676b8a2ba560b454f133e2c102f6377c045a46203bdae5698f93e9ec77f3e34b"
+    },
+    {
+      "path": "runtime-stopped.json",
+      "size": 8332,
+      "sha256": "7d09a7f08d2ffabb0cfa01ac0c8ad3e9a3c8c60729eb82d824d6b6bf3f1c6316"
+    },
+    {
+      "path": "tests/broad-files.txt",
+      "size": 2331,
+      "sha256": "9a116b0f8f3772d853f5e48d7f67dfc90b88f006c1c368d7dd0d31f1bb843839"
+    },
+    {
+      "path": "tests/broad.xml",
+      "size": 200510,
+      "sha256": "be94137cba6ab884e60b42bd4bc6456e73f306158e1e655c6864cfede660eb25"
+    },
+    {
+      "path": "tests/final-focused.xml",
+      "size": 52779,
+      "sha256": "ef48783c89879f9df606301a215b570f08d054e1d7bf04f55689646962556141"
+    },
+    {
+      "path": "tests/frontend.log",
+      "size": 2858,
+      "sha256": "5bc91bf20d79cef57d36d538282cddc1c5fb2683f5602991f448edf12c8b5d35"
+    },
+    {
+      "path": "tests/native-cosign.xml",
+      "size": 438,
+      "sha256": "30a83d3c0b936c9075b775942cdf1b0adff4e5bb8591afad9894be1e288f7849"
+    },
+    {
+      "path": "tests/postgres.xml",
+      "size": 2899,
+      "sha256": "7762377c60b19e71f39db6c8215cb49e314a28f9bc504a2401745ddd807ebf9e"
+    }
+  ],
+  "cleanup": {
+    "containers_stopped": 22,
+    "volumes_preserved": true
+  },
+  "limits": [
+    "This completion run does not repeat the earlier real nginx scan-and-patch or 100-image/23-replacement qualification.",
+    "Production infrastructure, other registry versions and arbitrary third-party attestation formats remain deployment-specific qualification.",
+    "Old publication graphs and embedded offline import scripts require explicit retention backfill or the current importer.",
+    "Rotation requires the current signing private key and supports at most 32 transitions and 10000 service cutovers per certificate.",
+    "Two unrelated cybersecurity evidence PostgreSQL cases remain skipped in the broad Windows run; both native Cosign skips were separately executed successfully."
+  ]
+}
