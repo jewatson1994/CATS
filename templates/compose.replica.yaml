@@ -1,6 +1,7 @@
 # Standalone CATS replica — deploy separately from the main CATS stack.
 # Portal, read-only OCI proxy, built-in Nginx HTTPS ingress, and a dedicated database.
-# Uses prebuilt images; no source checkout or build is needed on the replica host.
+# Uses the same prebuilt CATS image as main; Compose fixes its role to replica.
+# No source checkout or build is needed on the replica host.
 # Setup: templates/README.md (CATS replica); settings: templates/replica.env.example.
 # External prerequisites: local OCI registry, DNS, and trusted TLS certificates.
 # From the repository root, after preparing images and a private environment file:
@@ -11,7 +12,7 @@ name: cats-replica
 services:
   # 1. Portal — browse retained evidence and administer replica synchronization.
   portal:
-    image: ${CATS_REPLICA_IMAGE:?Set CATS_REPLICA_IMAGE to a built replica image}
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--ssl-certfile", "/app/certs/tls.crt", "--ssl-keyfile", "/app/certs/tls.key"]
     # The OCI proxy below reuses these settings through *replica_environment.
@@ -52,7 +53,7 @@ services:
     volumes:
       - replica_evidence:/var/lib/cats
       - type: bind
-        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs}
+        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs/portal}
         target: /app/certs
         read_only: true
         bind:
@@ -72,7 +73,7 @@ services:
 
   # 2. OCI access — enforce release approval and serve verified local content.
   oci-proxy:
-    image: ${CATS_REPLICA_IMAGE:?Set CATS_REPLICA_IMAGE to a built replica image}
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers", "--ssl-certfile", "/app/oci-certs/tls.crt", "--ssl-keyfile", "/app/oci-certs/tls.key"]
     environment: *replica_environment
@@ -81,7 +82,7 @@ services:
       - replica_evidence:/var/lib/cats:ro
       - replica_cache:/var/cache/cats-oci
       - type: bind
-        source: ${CATS_OCI_CERT_DIR:-/opt/cats/oci-certs}
+        source: ${CATS_OCI_CERT_DIR:-/opt/cats/certs/oci-proxy}
         target: /app/oci-certs
         read_only: true
         bind:

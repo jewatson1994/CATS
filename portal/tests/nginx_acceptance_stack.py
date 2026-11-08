@@ -1,8 +1,8 @@
 """Opt-in provisioning for the real nginx workflow/replica acceptance drivers.
 
 The default invocation prints a plan without invoking Docker or writing files.
-Use --provision to start services, adding --build to build the two runtime images
-from their real Dockerfiles. Supply existing images otherwise. For example::
+Use --provision to start services, adding --build to build the full runtime image
+once for both operating modes. Supply an existing image otherwise. For example::
 
     python portal/tests/nginx_acceptance_stack.py --repo . --workspace /tmp/nginx-check \
         --project cats-nginx-check --provision --build --scanner-base catscan-base:local \
@@ -249,11 +249,12 @@ def composition(canonical: dict, args, values: dict) -> dict:
                         "timeout": "5s", "retries": 20}, "restart": "no",
     }
     for name, host_port, port, application, endpoint in (
-        ("replica-portal", args.replica_port, 8000, "app.main:app", "/health"),
+        ("replica-portal", args.replica_port, 8000, "app.main:app", "/readyz"),
         ("replica-proxy", args.proxy_port, 5000, "app.oci_proxy:app", "/healthz"),
     ):
         result["services"][name] = {
             "image": args.replica_image,
+            "entrypoint": [],
             "command": ["uvicorn", application, "--host", "0.0.0.0", "--port", str(port), "--no-proxy-headers"],
             "environment": replica_env, "ports": [f"127.0.0.1:{host_port}:{port}"],
             "volumes": ["replica_evidence:/var/lib/cats" + (":ro" if name == "replica-proxy" else ""),
@@ -286,6 +287,18 @@ def seed_cache(docker: Docker, args, logical: str, source: str | None) -> None:
                "-c", "import shutil; shutil.copytree('/source','/target',dirs_exist_ok=True,symlinks=True)"])
 
 
+def prepare_images(docker: Docker, args) -> None:
+    if args.build:
+        docker.run("build-full", ["build", "-f", str(args.repo / "cats-image/Dockerfile.all-in-one"),
+                   "--build-arg", "CATSCAN_BASE_IMAGE=" + args.scanner_base,
+                   "--tag", args.full_image, str(args.repo)])
+    docker.run("inspect-full", ["image", "inspect", args.full_image])
+    if args.replica_image != args.full_image:
+        # Compatibility override: callers provide this image; never build a
+        # separate lightweight replica as part of single-image qualification.
+        docker.run("inspect-replica", ["image", "inspect", args.replica_image])
+
+
 def provision(args, owned: dict | None) -> None:
     workspace = args.workspace
     workspace.mkdir(parents=True, exist_ok=True)
@@ -304,14 +317,7 @@ def provision(args, owned: dict | None) -> None:
                 raise ValueError("Project name already has Docker resources; choose a fresh project name.")
         write_json(owner_file, {"owner": OWNER, "project": args.project, "repo": str(args.repo),
                                "compose_file": str(workspace / "compose.json")})
-    if args.build:
-        docker.run("build-full", ["build", "-f", str(args.repo / "cats-image/Dockerfile.all-in-one"),
-                   "--build-arg", "CATSCAN_BASE_IMAGE=" + args.scanner_base,
-                   "--tag", args.full_image, str(args.repo)])
-        docker.run("build-replica", ["build", "-f", str(args.repo / "portal/Dockerfile.replica"),
-                   "--tag", args.replica_image, str(args.repo / "portal")])
-    for label, image in (("full", args.full_image), ("replica", args.replica_image)):
-        docker.run("inspect-" + label, ["image", "inspect", image])
+    prepare_images(docker, args)
     values = credentials(workspace, args)
     values["full"]["CATS_IMAGE"] = args.full_image
     values["full"]["CATS_PORT"] = str(args.full_port)
@@ -379,10 +385,10 @@ def parse_args(argv=None):
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--provision", action="store_true")
     action.add_argument("--cleanup", action="store_true")
-    parser.add_argument("--build", action="store_true", help="Build the actual full and replica Dockerfiles; requires --provision")
+    parser.add_argument("--build", action="store_true", help="Build the full image once for both modes; requires --provision")
     parser.add_argument("--remove-volumes", action="store_true", help="With --cleanup, also remove this project's data volumes")
     parser.add_argument("--full-image", default="cats:nginx-acceptance")
-    parser.add_argument("--replica-image", default="cats-replica:nginx-acceptance")
+    parser.add_argument("--replica-image", help="Optional existing image override; defaults to --full-image")
     parser.add_argument("--scanner-base", default="catscan-base:local")
     parser.add_argument("--dind-image", default="docker:28.5.2-dind")
     parser.add_argument("--grype-source-volume")
@@ -391,6 +397,7 @@ def parse_args(argv=None):
     parser.add_argument("--replica-port", type=int, default=18887)
     parser.add_argument("--proxy-port", type=int, default=15887)
     args = parser.parse_args(argv)
+    args.replica_image = args.replica_image or args.full_image
     if args.build and not args.provision:
         parser.error("--build requires --provision")
     if args.remove_volumes and not args.cleanup:
@@ -399,7 +406,7 @@ def parse_args(argv=None):
     for path in (args.repo, args.workspace):
         if any(character in str(path) for character in (",", "\n", "\r", "$", "#", "'", '"')):
             parser.error("Repository/workspace paths contain characters unsafe for Docker mount or .env syntax")
-    for relative in ("compose.yaml", "cats-image/Dockerfile.all-in-one", "portal/Dockerfile.replica"):
+    for relative in ("compose.yaml", "cats-image/Dockerfile.all-in-one"):
         if not (args.repo / relative).is_file():
             parser.error(f"Required repository file missing: {relative}")
     ports = (args.full_port, args.replica_port, args.proxy_port)
@@ -435,7 +442,7 @@ def main(argv=None) -> int:
             "services": [*SELECTED_SERVICES, "patch-daemon", "publisher-registry", "replica-registry",
                          "replica-db", "replica-portal", "replica-proxy"],
             "ports": {"full": args.full_port, "replica": args.replica_port, "proxy": args.proxy_port},
-            "next": "Add --provision; add --build only when runtime images must be built."}))
+            "next": "Add --provision; add --build only when the full runtime image must be built."}))
     return 0
 
 

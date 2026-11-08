@@ -81,7 +81,7 @@ The provisioning worker:
    capacity and runtime prerequisites.
 2. Resolves the immutable image ID of its own running unified CATS container
    (or configured immutable runtime) and the Kind node base configured by
-   `CATS_DEPLOYMENT_KIND_NODE_IMAGE` (the shipped pin when unset).
+   `CATS_KIND_NODE_IMAGE` in the deployment `.env` (the shipped pin when unset).
 3. Acquires missing inputs only from approved internal digest references, prepares
    image archives and the isolated node recipe on demand, verifies checksums and
    records provenance. A matching verified cache can be reused.
@@ -111,17 +111,20 @@ Otherwise configure internal sources:
 ```dotenv
 CATS_PROVISIONING_INTERNAL_REGISTRIES=harbor.internal.example
 CATS_PROVISIONING_CATS_SOURCE=harbor.internal.example/cats/runtime@sha256:<digest>
-CATS_DEPLOYMENT_KIND_NODE_IMAGE=harbor.internal.example/cats/kindest-node:v<kubernetes-version>@sha256:<node-digest>
+CATS_KIND_NODE_IMAGE=harbor.internal.example/cats/kindest-node:v<kubernetes-version>@sha256:<node-digest>
 CATS_PROVISIONING_NODE_SOURCE=harbor.internal.example/cats/kindest-node:v<kubernetes-version>@sha256:<node-digest>
 ```
 
 These are configuration examples; replace the placeholders with actual immutable
-identities. `CATS_DEPLOYMENT_KIND_NODE_IMAGE` is the expected base image, optional
+identities. `CATS_KIND_NODE_IMAGE` is the expected base image, optional
 version tag, and required immutable SHA256 digest. When unset or blank, the
 shipped `kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5`
 pin remains the default. Use the registry manifest/index digest, not Docker's
 local image/config ID. To accept a different Harbor digest, change this setting;
 changing only `CATS_PROVISIONING_NODE_SOURCE` does not change the expected pin.
+Compose supplies this value to the runtime as `CATS_DEPLOYMENT_KIND_NODE_IMAGE`.
+Existing environment files using that older name still work when
+`CATS_KIND_NODE_IMAGE` is unset or blank; the new name takes precedence when set.
 
 `CATS_PROVISIONING_NODE_SOURCE` is optional when the exact expected image is
 already local. Otherwise set it to the same Harbor reference, as above, or to a

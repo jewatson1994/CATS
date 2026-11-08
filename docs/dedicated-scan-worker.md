@@ -42,7 +42,7 @@ Container recreation preserves host file ownership, but credential rotation, `do
 | --- | --- | --- |
 | `CATS_SCAN_CONCURRENCY` | 2 | Active attempts per worker process |
 | `CATS_SCAN_LEASE_SECONDS` | 90 | Lease renewed approximately every third of the interval |
-| `CATS_SCAN_JOB_TIMEOUT` | 3600 | Whole attempt deadline in seconds |
+| `CATS_SCAN_JOB_TIMEOUT` | 10800 in Compose; 3600 for a direct worker with no setting | Whole attempt deadline in seconds |
 | `CATS_SCAN_QUEUE_CAPACITY` | 100 | Nonterminal admission bound |
 | `CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY` | 10 | Anonymous bound, capped below total capacity to reserve an authenticated slot |
 | `CATS_SCAN_PREPARATION_TTL_SECONDS` | 900 | Expiry of interrupted preparation reservations |

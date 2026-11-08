@@ -1,16 +1,15 @@
 # Standalone replica: portal, read-only OCI proxy, and a dedicated database.
 # Setup: docs/oci-replica-deployment-runbook.md; settings: .env.replica.example.
-# This checkout supports local builds. For prebuilt images, use templates/compose.replica.yaml.
+# Uses the same prebuilt CATS image as main. For HTTPS ingress, use templates/compose.replica.yaml.
 # Keep this project separate from the full CATS Compose stack.
 name: cats-replica
 
 services:
   # 1. Portal — browse retained evidence and administer replica synchronization.
   portal:
-    image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
-    build:
-      context: ./portal
-      dockerfile: Dockerfile.replica
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
     # The OCI proxy below reuses these settings through *replica_environment.
     environment: &replica_environment
       # Fixed replica runtime settings.
@@ -65,7 +64,8 @@ services:
 
   # 2. OCI access — enforce release approval and serve verified local content.
   oci-proxy:
-    image: ${CATS_REPLICA_IMAGE:-cats-replica:local}
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers"]
     environment: *replica_environment
     volumes:

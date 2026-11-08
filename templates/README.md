@@ -1,5 +1,7 @@
 # CATS deployment templates
 
+For prompted setup and a small installer bundle without container images, start with the [guided main and replica installer](../docs/guided-setup.md). It uses these templates and images already loaded on the target host, preserves existing settings and secrets on upgrades, and selects the worker AppArmor overlay when required.
+
 Choose the appropriate deployment below. The example commands run from the repository root; the replica template can also be copied to its host as described below. Copy the matching environment example to a protected file outside Git and replace all placeholders. Do not replace an existing environment file or encryption key during an upgrade.
 
 | Deployment | Compose file | Environment example |
@@ -8,15 +10,17 @@ Choose the appropriate deployment below. The example commands run from the repos
 | Replica: retained evidence and local OCI access | [compose.replica.yaml](compose.replica.yaml) | [replica.env.example](replica.env.example) |
 | Separate validator sandbox | [compose.validator.yaml](compose.validator.yaml) | [validator.env.example](validator.env.example) |
 
-The replica is its own stack. Do not combine its Compose file with the main or validator templates.
+Main and replica use the same published full CATS image, selected with `CATS_IMAGE`, on Linux amd64. The replica is its own stack, with `CATS_MODE=replica` fixed in its Compose file. Do not combine its Compose file with the main or validator templates. Existing replica environment files may use `CATS_REPLICA_IMAGE` as a fallback when `CATS_IMAGE` is unset or blank; when both are set, `CATS_IMAGE` takes precedence.
 
 ## Main CATS
 
 The main template runs PostgreSQL, portal, the private portal-control listener, oci-proxy, patch-worker, scan-worker, remediation-worker, export-worker, provisioning-worker, and Nginx under the project name `cats`. All CATS services use the same already-built application image; Nginx uses a pinned official image. This template does not build either image. Local accounts are enabled by default; configure an external OIDC provider only when needed. No identity provider is deployed by this stack.
 
-Use Docker Compose v2 (`docker compose`). Set the required, distinct `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME` values, configure their DNS, and provide matching `tls.crt` and `tls.key` files in `/opt/cats/certs` and `/opt/cats/oci-certs` (or your configured certificate directories). See [HTTPS setup and migration](../docs/nginx-ingress.md) before startup. Nginx and its configuration are included in this one Compose file; no `compose.nginx.yml` or separate Nginx configuration files are needed.
+Use Docker Compose v2 (`docker compose`). Set the required, distinct `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME` values, configure their DNS, and provide matching `tls.crt` and `tls.key` files in `/opt/cats/certs/portal` and `/opt/cats/certs/oci-proxy` (or your configured certificate directories). See [HTTPS setup and migration](../docs/nginx-ingress.md) before startup. Nginx and its configuration are included in this one Compose file; no `compose.nginx.yml` or separate Nginx configuration files are needed.
 
 Prepare the built `CATS_IMAGE`, `postgres:16-alpine`, and the pinned Nginx image selected in Compose. Replace the environment example's image, passwords, worker/pipeline tokens and Fernet key before startup. For offline startup, preload every image and append `--pull never` to `up`. Main CATS also needs this checkout's `deploy/discovery-seccomp.json` and `deploy/discovery-mirror/` files. Its bundled paths resolve relative to `templates/`; keep the checkout layout or use explicit absolute paths when relocating it.
+
+Declare the Kind node image once as `CATS_KIND_NODE_IMAGE` in `.env`, including its approved registry manifest/index digest. Compose forwards it to the portal and background workers using the application's existing runtime setting. Older `.env` files using `CATS_DEPLOYMENT_KIND_NODE_IMAGE` remain supported when the new name is unset or blank. The scan attempt timeout defaults to three hours (`CATS_SCAN_JOB_TIMEOUT=10800`); explicit existing values still take precedence.
 
 Create the scan registry-auth directory before startup (it may be empty for public registries). The commands below create the default auth and backup directories at the repository root; create your chosen paths instead if you change `CATS_SCAN_REGISTRY_AUTH_SOURCE` or `CATS_DB_BACKUP_DIR`. Preserve existing absolute storage paths when upgrading.
 
@@ -60,6 +64,8 @@ The three new workers share common Compose settings through YAML anchors and wai
 
 The scan-worker requires its own random `CATS_SCAN_WORKER_TOKEN` of at least 32 characters, shared with the control listener. Scan-worker APIs are available only on `http://portal-control:8001` inside the private network; do not publish this port. The scan-worker has no PostgreSQL credentials or Docker socket. Its root broker has only the capabilities needed to launch isolated scanner subprocesses under a separate UID/GID (base 10002), with a read-only root filesystem and a disk workspace for large artifacts. The three new workers use PostgreSQL directly; only provisioning-worker has Docker-host access for preparing validator payloads. The existing patch-worker also retains Docker-host access.
 
+The portal itself does not mount the Docker socket. It queues work and calls the patch service or configured validator; scanning reads images from registries without a Docker daemon. Docker operations run in the patch/provisioning workers and on the validator's own host. Keeping the socket out of the public portal prevents that web process from directly controlling host containers.
+
 The registry-auth bind is read-only and missing-path creation is disabled. The default `../scan-registry-auth` is relative to the Compose file, resolving to the repository-root directory created above. Use an absolute path for a custom directory. An empty directory supports public sources; private sources require pull-only Docker `auths` entries scoped to approved repositories. Credentials are copied only for referenced hosts in authorized authenticated service scans. Anonymous submissions are disabled by default; enabling `CATS_SCAN_ALLOW_ANONYMOUS` does not grant service credentials.
 
 Scan inputs/results use plain tar envelopes; bounded submission preparation and evidence upload work run off the async request thread. Offline database imports publish immutable generations; each attempt receives a verified private snapshot. Durable PostgreSQL jobs survive restart, failed attempts follow bounded category-specific retry rules, and eligible unreferenced terminal scan evidence/history has a default 30-day retention; service/execution/image/definition references and output-bearing orphan directories are retained conservatively. Remediation candidate security checks run in patch-worker and fail closed when valid evidence is unavailable; Schrödinger remains independent.
@@ -98,14 +104,14 @@ For changes to remediation policy or other settings shared with background worke
 3. `nginx`: route the two HTTPS hostnames on port 443; its configuration is included.
 4. `db`: store local accounts, replica state and authorization records.
 
-Health dependencies determine startup order. No scanner, patch worker or validator is included. This template uses prebuilt images and has no build context, so it can also be copied to a replica host without the source checkout.
+Health dependencies determine startup order. The full image contains scanner and validator tools, but this stack starts no assessment workers or validator services and mounts no Docker socket. Replica runtime mode skips assessment and intelligence initialization. This template uses prebuilt images and has no build context, so it can also be copied to a replica host without the source checkout.
 
-Before starting, load the selected `CATS_REPLICA_IMAGE`, `postgres:16`, and pinned Nginx image selected in Compose onto that host. Set two distinct DNS hostnames pointing to the replica, and provide their readable full-chain `tls.crt` and `tls.key` files in the configured certificate directories. The built-in HTTPS routing works like [main CATS ingress](../docs/nginx-ingress.md); no extra proxy configuration is needed. Only Nginx publishes a host port; the portal and OCI backends stay private. Main and replica both use port 443, so deploy them on separate hosts or adapt ingress/port mappings if sharing a host.
+Before starting, load the selected full `CATS_IMAGE`, `postgres:16`, and pinned Nginx image selected in Compose onto that host. Set two distinct DNS hostnames pointing to the replica, and provide their readable full-chain `tls.crt` and `tls.key` files in the configured certificate directories. The built-in HTTPS routing works like [main CATS ingress](../docs/nginx-ingress.md); no extra proxy configuration is needed. Only Nginx publishes a host port; the portal and OCI backends stay private. Main and replica both use port 443, so deploy them on separate hosts or adapt ingress/port mappings if sharing a host.
 
-Set the image, unique database/admin passwords and stable Fernet key in the environment file. Generate a new key with the loaded replica image (replace `YOUR_REPLICA_IMAGE` with its actual tag):
+Set `CATS_IMAGE`, unique database/admin passwords and a stable Fernet key in the environment file. Generate a new key with the loaded full image (replace `YOUR_CATS_IMAGE` with its actual tag):
 
 ```sh
-docker run --rm --pull never --entrypoint python YOUR_REPLICA_IMAGE -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+docker run --rm --pull never --entrypoint python YOUR_CATS_IMAGE -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
 For disconnected release access, provide a local OCI registry containing the complete replicated release graphs. Registry replication and publisher trust are configured after startup; see [the deployment runbook](../docs/oci-replica-deployment-runbook.md#2-prepare-the-separate-system-b-deployment).
@@ -121,11 +127,11 @@ docker compose --env-file C:/secure/replica.env -f templates/compose.replica.yam
 docker compose --env-file C:/secure/replica.env -f templates/compose.replica.yaml ps
 ```
 
-On Linux, use `cp templates/replica.env.example /secure/replica.env` and the corresponding `--env-file` path. If you copied the Compose file elsewhere, substitute its actual path. `--pull never` makes a missing image fail locally without contacting a registry. Protect the environment file and preserve the encryption key, credentials, project name and volumes during upgrades. Portal and proxy must use the same replica image version.
+On Linux, use `cp templates/replica.env.example /secure/replica.env` and the corresponding `--env-file` path. If you copied the Compose file elsewhere, substitute its actual path. `--pull never` makes a missing image fail locally without contacting a registry. Protect the environment file and preserve the encryption key, credentials, project name and volumes during upgrades. Portal and proxy must use the same full image version.
 
 Once healthy, use **Replica administration** to configure the local registry, independently trusted publisher fingerprint and synchronization. Follow [startup and trust configuration](../docs/oci-replica-deployment-runbook.md#3-start-and-configure-the-replica) before enabling consumer pulls; starting the containers alone does not import or trust a release.
 
-The repository-root [compose.replica.yaml](../compose.replica.yaml) remains a three-service local-build option with loopback HTTP backends and separately supplied HTTPS ingress. The deployment template adds built-in HTTPS while sharing its replica settings, project and volume names, so both address the same replica when used on the same Docker host. For an existing replica, retain its original credentials, encryption key and project name. When switching to this template, provision certificates and release port 443 from any existing ingress before startup; the old `CATS_PORT`/`CATS_OCI_PORT` settings do not apply here.
+The repository-root [compose.replica.yaml](../compose.replica.yaml) remains a three-service option with loopback HTTP backends and separately supplied HTTPS ingress. It uses the same full `CATS_IMAGE`. The deployment template adds built-in HTTPS while sharing its replica settings, project and volume names, so both address the same replica when used on the same Docker host. For an existing replica, retain its original credentials, encryption key and project name. When switching to this template, provision certificates and release port 443 from any existing ingress before startup; the old `CATS_PORT`/`CATS_OCI_PORT` settings do not apply here.
 
 ## Validator sandbox
 

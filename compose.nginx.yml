@@ -24,7 +24,7 @@ services:
       CATS_PUBLIC_URL: https://${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}
     volumes:
       - type: bind
-        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs}
+        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs/portal}
         target: /app/certs
         read_only: true
         bind:
@@ -50,7 +50,7 @@ services:
       - /app/oci-certs/tls.key
     volumes:
       - type: bind
-        source: ${CATS_OCI_CERT_DIR:-/opt/cats/oci-certs}
+        source: ${CATS_OCI_CERT_DIR:-/opt/cats/certs/oci-proxy}
         target: /app/oci-certs
         read_only: true
         bind:

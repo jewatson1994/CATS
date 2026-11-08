@@ -8,6 +8,10 @@ Assess container services, retain the evidence, and manage remediation and secur
 
 The React interface provides service workspaces, scan results, remediation views, and administration. Docker builds compile the frontend automatically, so the UI shipped in an image comes from the checkout used for that build.
 
+For a guided main or replica deployment, use the [setup scripts and offline ingress checklist](docs/guided-setup.md). The small installer bundle contains scripts and configuration files; images are already loaded on the target host. Setup prompts for settings, validates certificates and local images, configures OCI access, and applies the worker AppArmor profile where required.
+
+Main and replica deployments use the same published full `cats-tool` image, selected with `CATS_IMAGE`, on Linux amd64. Choose the separate Compose file for each deployment: the replica sets `CATS_MODE=replica`, runs the portal and OCI proxy with its own database, starts no assessment workers and mounts no Docker socket. Its image contains the full toolset, but runtime mode and the replica Compose file restrict its services. Existing replica environment files can still use `CATS_REPLICA_IMAGE` when `CATS_IMAGE` is unset or blank.
+
 ## License
 
 CATS-authored code and documentation are available under the [MIT License with Commons Clause v1.0](LICENSE). This is a **source-available** license, not an OSI-approved open-source license. It permits use, modification, and redistribution subject to the full license terms, including the restriction on selling products or services whose value derives entirely or substantially from CATS. The restriction also covers qualifying paid hosting, consulting, and support services; ordinary internal use is permitted. See the [Commons Clause terms](https://commonsclause.com/) for the definition of "Sell".
@@ -168,6 +172,8 @@ The `risk-worker` handles queued assessments and native VEX evaluations using th
 | --- | --- |
 | `compose.yaml` + `.env.example` | Repository-root runtime and Windows rebuild utility. |
 | `templates/compose.main.yaml` + `templates/main.env.example` | Deployment with an explicitly selected image; staged validator releases are optional. |
+| `compose.replica.yaml` + `.env.replica.example` | Separate replica runtime using the same full `CATS_IMAGE`; supply HTTPS ingress. |
+| `templates/compose.replica.yaml` + `templates/replica.env.example` | Separate replica deployment with built-in HTTPS ingress and the same full `CATS_IMAGE`. |
 | `compose.validator.yml` | Source-built validator on a dedicated Linux amd64 sandbox. |
 | `templates/compose.validator.yaml` + `templates/validator.env.example` | Matching validator deployment template and trust settings. |
 | `portal/.env.example` | Reference for direct portal development; the root Compose setup uses `.env.example`. |

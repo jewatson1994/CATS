@@ -1,4 +1,6 @@
-# Runtime for both the replica portal and the OCI proxy; no scanner/validator tools.
+# Legacy lightweight build retained for reproducing historical qualifications.
+# Current deployments use the full cats-tool image and CATS_MODE=replica instead.
+# This Dockerfile is not used by the deployment templates or publishing workflow.
 FROM --platform=$BUILDPLATFORM node:24.19.0-alpine AS frontend
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./

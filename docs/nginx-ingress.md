@@ -17,16 +17,16 @@ Neither backend publishes a host port. Clients use port 443 without adding `:500
 
 Keep your existing environment file, credentials, database volumes and encryption key when upgrading.
 
-1. Keep the portal certificate at `/opt/cats/certs/tls.crt` and its private key at `/opt/cats/certs/tls.key`.
-2. Place the issued registry certificate at `/opt/cats/oci-certs/tls.crt` and its private key at `/opt/cats/oci-certs/tls.key`. Create that separate directory first. Each `tls.crt` must contain the leaf certificate followed by any intermediate certificates. The service user inside its container must be able to read its key; do not make private keys world-readable. Missing files or unreadable keys prevent startup.
+1. Place the portal certificate at `/opt/cats/certs/portal/tls.crt` and its private key at `/opt/cats/certs/portal/tls.key`, or retain the existing directory through `CATS_PORTAL_CERT_DIR`.
+2. Place the issued registry certificate at `/opt/cats/certs/oci-proxy/tls.crt` and its private key at `/opt/cats/certs/oci-proxy/tls.key`. Create that separate directory first. Each `tls.crt` must contain the leaf certificate followed by any intermediate certificates. The service user inside its container must be able to read its key; do not make private keys world-readable. Missing files or unreadable keys prevent startup.
 3. In the DNS used by client machines, point **both hostnames to the VM's reachable IP**, not `127.0.0.1`. Allow inbound TCP 443 through the VM firewall/network rules from those clients. Configure an AAAA record only if IPv6 connectivity to that VM is available. Remove any earlier `registry.example.com -> 127.0.0.1` hosts entry on remote clients.
 4. Add these settings to your existing deployment environment file, replacing the example hostnames:
 
 ```dotenv
 CATS_PORTAL_HOSTNAME=portal.example.com
 CATS_OCI_HOSTNAME=registry.example.com
-CATS_PORTAL_CERT_DIR=/opt/cats/certs
-CATS_OCI_CERT_DIR=/opt/cats/oci-certs
+CATS_PORTAL_CERT_DIR=/opt/cats/certs/portal
+CATS_OCI_CERT_DIR=/opt/cats/certs/oci-proxy
 ```
 
 The existing portal certificate can cover both services only if its Subject Alternative Names include **both** hostnames. In that case both certificate directory settings can point to the same directory. A certificate that only covers `portal.example.com` cannot authenticate `registry.example.com`. For an internal CA, install its CA certificate in client trust stores, including Docker's registry trust configuration; do not mark the registry insecure. DNS ownership and certificate issuance are outside Compose.

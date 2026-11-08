@@ -135,7 +135,7 @@ services:
       CATS_SCAN_WORKER_TOKEN: ${CATS_SCAN_WORKER_TOKEN:?Set CATS_SCAN_WORKER_TOKEN in .env}
       CATS_SCAN_WORKER_ID: ${CATS_SCAN_WORKER_ID:-scan-worker}
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
-      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
+      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-10800}
       CATS_SCAN_WORKER_CREDENTIALS: ${CATS_SCAN_WORKER_CREDENTIALS:-}
       CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
       CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY: ${CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY:-10}
@@ -197,7 +197,7 @@ services:
       # kind
       # -------------------------------------------------------
 
-      CATS_DEPLOYMENT_KIND_NODE_IMAGE: ${CATS_DEPLOYMENT_KIND_NODE_IMAGE:-kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5}
+      CATS_DEPLOYMENT_KIND_NODE_IMAGE: ${CATS_KIND_NODE_IMAGE:-${CATS_DEPLOYMENT_KIND_NODE_IMAGE:-kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5}}
 
       # Optional offline kind node image archive.
       CATS_DEPLOYMENT_KIND_NODE_ARCHIVE: ${CATS_DEPLOYMENT_KIND_NODE_ARCHIVE:-}
@@ -397,7 +397,7 @@ services:
       - security_grype_db:/opt/catscan/grype-db
       - security_trivy_db:/opt/catscan/trivy-cache
       - type: bind
-        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs}
+        source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs/portal}
         target: /app/certs
         read_only: true
         bind:
@@ -589,7 +589,7 @@ services:
       - oci_proxy_cache:/var/cache/cats-oci
       - remediation_jobs:/tmp/cats-remediation-jobs:ro
       - type: bind
-        source: ${CATS_OCI_CERT_DIR:-/opt/cats/oci-certs}
+        source: ${CATS_OCI_CERT_DIR:-/opt/cats/certs/oci-proxy}
         target: /app/oci-certs
         read_only: true
         bind:
@@ -709,7 +709,7 @@ services:
       CATS_SCAN_JOB_ROOT: /var/lib/cats-scan
       CATS_SCAN_CONCURRENCY: ${CATS_SCAN_CONCURRENCY:-2}
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
-      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-3600}
+      CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-10800}
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
       CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
       CATS_IMAGE_SOURCE: daemonless

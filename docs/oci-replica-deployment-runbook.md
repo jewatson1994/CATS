@@ -73,25 +73,26 @@ Expect healthy running services and a successful signed publication receipt befo
 
 Use Docker Compose v2 and a separate project, database and volumes. The [replica Compose file](../compose.replica.yaml) is standalone. Do not combine it with the full `compose.yaml` or the full deployment template: those deploy assessment infrastructure that a replica does not need.
 
-For deployment with prebuilt images, use the dedicated [replica template and environment example](../templates/README.md#cats-replica). That template requires an explicit image and has no build context; it can be deployed without a source checkout. It adds a fourth service, Nginx, for built-in HTTPS routing with private TLS backends. Prepare the pinned Nginx image, two DNS names and matching certificate directories as described there. It preserves the root file's `cats-replica` project, volume names and replica settings. The commands below use the root file, which also supports local builds.
+For deployment with built-in HTTPS ingress, use the dedicated [replica template and environment example](../templates/README.md#cats-replica). That template requires an explicit image and has no build context; it can be deployed without a source checkout. It adds a fourth service, Nginx, for built-in HTTPS routing with private TLS backends. Prepare the pinned Nginx image, two DNS names and matching certificate directories as described there. It preserves the root file's `cats-replica` project, volume names and replica settings. The commands below use the root file, which also consumes a prebuilt image.
 
-The root replica file has exactly three services, ordered `portal`, `oci-proxy`, then `db`. Both variants have no Docker socket, scanner worker, patch worker, validator, intelligence database or intelligence initialization job. The image contains the signature verifier and portal runtime, not scanner/validator tools.
+The root replica file has exactly three services, ordered `portal`, `oci-proxy`, then `db`. Both variants use the same full `CATS_IMAGE` as main CATS, with `CATS_MODE=replica` fixed by Compose. The image contains the full scanner/validator toolset and signature verifier, but neither replica stack starts assessment workers, validator services or intelligence initialization, mounts a Docker socket, or requires scanner databases. Main and replica remain separate deployments with independent databases and storage.
 
-Prepare the image while build dependencies are reachable, or deliver a previously built and verified image into the disconnected environment. Prepare the `postgres:16` image too. The replica Dockerfile supports `linux/amd64` and `linux/arm64`, selecting the checksum-pinned Cosign binary for the target architecture. Use BuildKit/buildx and an explicit `--platform` when cross-building; other target architectures fail the build. ARM64 qualification covers a complete image build, native ARM64 tool binaries, signed graph verification and portal/proxy startup under Docker Desktop emulation. Native ARM hardware, deployment capacity and performance still require qualification on the intended host.
+Deliver the published, verified full Linux amd64 CATS image into the disconnected environment, using the same release artifact as System A. Prepare the `postgres:16` image too. No lightweight replica image build is required. Historical ARM64 qualification applies only to the legacy `portal/Dockerfile.replica` image; it does not qualify the shared full image for ARM hosts. Deployment capacity and performance still require qualification on the intended host.
 
 From the repository root:
 
 ```powershell
-docker build -f portal/Dockerfile.replica -t cats-replica:local portal
 Copy-Item .env.replica.example .env.replica
-docker run --rm --entrypoint python cats-replica:local -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# Replace YOUR_CATS_IMAGE with the full release image already loaded on this host.
+docker run --rm --pull never --entrypoint python YOUR_CATS_IMAGE -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Put the generated key into `CATS_CONFIG_ENCRYPTION_KEY` in the private `.env.replica`. Set unique `POSTGRES_PASSWORD` and `CATS_BOOTSTRAP_PASSWORD` values; the example passwords are placeholders. Keep the environment file and encryption key in your secret-management/backup process and out of source control. Existing encrypted credentials depend on the same encryption key after restart or restore.
+Set `CATS_IMAGE` to that full image reference and put the generated key into `CATS_CONFIG_ENCRYPTION_KEY` in the private `.env.replica`. Set unique `POSTGRES_PASSWORD` and `CATS_BOOTSTRAP_PASSWORD` values; the example passwords are placeholders. Keep the environment file and encryption key in your secret-management/backup process and out of source control. Existing encrypted credentials depend on the same encryption key after restart or restore.
 
 | Setting | Deployment use |
 | --- | --- |
-| `CATS_REPLICA_IMAGE` | Image built or loaded for this release; default `cats-replica:local` |
+| `CATS_IMAGE` | Explicit published full CATS image loaded for this release; required unless the legacy fallback is set |
+| `CATS_REPLICA_IMAGE` | Legacy replica image setting; used only when `CATS_IMAGE` is unset or blank |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Dedicated replica database; do not point at System A |
 | `CATS_BOOTSTRAP_USERNAME`, `CATS_BOOTSTRAP_PASSWORD` | Initial local administrator; changing these is not a password-reset procedure for an existing account |
 | `CATS_CONFIG_ENCRYPTION_KEY` | Persistent secret encryption/integrity key; preserve with backups |
@@ -121,7 +122,7 @@ docker compose --env-file .env.replica -f compose.replica.yaml up -d --wait
 docker compose --env-file .env.replica -f compose.replica.yaml ps
 ```
 
-For an offline start with both images already loaded, use `up -d --wait --no-build --pull never` in place of `up -d --wait`. This makes a missing image fail clearly without attempting a build or registry pull. Keep the same Compose project name on subsequent starts so the deployment retains its volumes; choose different host ports when another installation already uses the defaults.
+For an offline start with both images already loaded, use `up -d --wait --pull never` in place of `up -d --wait`. This makes a missing image fail clearly without attempting a registry pull; the replica Compose file has no build context. Keep the same Compose project name on subsequent starts so the deployment retains its volumes; choose different host ports when another installation already uses the defaults.
 
 Log in through the HTTPS portal and open **Replica administration** at `/admin/replica`.
 
@@ -207,7 +208,7 @@ Back up PostgreSQL and the retained evidence consistently, and protect the match
 
 For a quiesced backup drill, stop the portal and proxy writers before capturing the database and evidence. Either take a consistent PostgreSQL logical dump while writers remain stopped or snapshot a stopped database volume and start only its isolated clone to create the dump. Restore the dump with error checking into fresh PostgreSQL storage and restore the matching evidence before starting the isolated portal. Preserve the matching encryption key through the secret store. Compare every retained table, sequence and evidence-file digest with the captured state, then verify login, scoped access, signed evidence downloads and an uncached graph pull through restored registry credentials. A successful local restore does not establish off-host backup durability, a recovery-time target or recovery from loss of the encryption key.
 
-For an application update, preserve project/volume names, review schema compatibility, take the backups, build or load the chosen image, update `CATS_REPLICA_IMAGE`, then run the same Compose `up -d --wait` command. Upgrade portal and proxy together. Verify login, source health, retained release IDs/history, local role separation, a complete pull and persisted override audit after restart. Rollback involving a schema change may require the consistent backup; do not assume an older image can read a newer schema.
+For an application update, preserve project/volume names, review schema compatibility, take the backups, load the chosen full release image, update `CATS_IMAGE`, then run the same Compose `up -d --wait` command. The legacy `CATS_REPLICA_IMAGE` fallback remains supported, but an explicit `CATS_IMAGE` takes precedence. Upgrade portal and proxy together. Verify login, source health, retained release IDs/history, local role separation, a complete pull and persisted override audit after restart. Rollback involving a schema change may require the consistent backup; do not assume an older image can read a newer schema.
 
 To qualify independence, first prove System A is reachable, then stop/isolate System A and its registry while leaving System B's registry, database, portal, proxy and local authentication available. Synchronize a completely replicated successor and make a fresh full pull through System B. Verify no successor content was already in the proxy cache before the first pull. Retained evidence browsing must also work. A DNS/TLS configuration error is not proof that the source was disconnected.
 

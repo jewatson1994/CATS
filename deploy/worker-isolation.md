@@ -63,8 +63,10 @@ docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml config --q
 docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml up -d --no-build --pull never --force-recreate discovery-worker scan-worker patch-worker remediation-worker
 ```
 
-For the TLS deployment use `--project-directory . -f templates/compose.main.yaml`
-in place of `-f compose.yaml` (or copy the template to `compose.yaml` first).
+For the TLS deployment use `--env-file /secure/cats.env -f templates/compose.main.yaml`
+in place of `-f compose.yaml`. Keep the template in `templates/`: its bundled
+paths resolve relative to that directory. The [guided installer](../docs/guided-setup.md)
+detects AppArmor, loads this profile and saves a launcher with the correct files.
 Keep the AppArmor overlay on every deployment/recreate, including
 release upgrades; a restart does not change a container's security options. The
 profile file in `/etc/apparmor.d` is reloaded by the host AppArmor service at boot.

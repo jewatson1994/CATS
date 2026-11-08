@@ -61,6 +61,10 @@ jobs:
           docker run --rm --network none -e BACKUP_MODULE=/opt/backup/backup.py --entrypoint python3 \
             -v "$PWD/deploy/backup:/tests:ro" "$IMAGE:${{ github.sha }}" /tests/test_backup.py
 
+      - name: Verify full image in replica mode
+        timeout-minutes: 10
+        run: python3 scripts/verify-replica-image.py --image "$IMAGE:${{ github.sha }}"
+
       - name: Push image
         run: |
           docker push "$IMAGE:${{ github.sha }}"

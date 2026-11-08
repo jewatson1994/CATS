@@ -108,7 +108,7 @@ The opt-in drivers use a dedicated private workspace and disposable Harbor proje
 | `portal/tests/harbor_nginx_qualification.py` | Create a fresh three-service replica from the completed real nginx acceptance, verify disconnected pulls and override enforcement, and check persistence after restart |
 | `portal/tests/harbor_graph_qualification.py` | Publish clearly labeled synthetic multiarchitecture/Helm releases, verify signed evidence and monotonic events, and inject reversible omissions into the disposable target |
 
-Provision with `harbor_acceptance_stack.py --repo <repository> --workspace <private-workspace> --provision`, then run `harbor_replication_qualification.py setup --workspace <private-workspace>`. Preserve the completed nginx acceptance's Docker network and locally built replica image as well as its workspace: the fresh replica reads these from the retained Compose definition and joins that external network for publisher-disconnection probes. The generated `harbor-stack.json` records the Harbor bridge network, Compose file and service names. Host-side controller commands use authenticated HTTPS and the generated CA. The registered destination uses the `harbor` adapter with TLS verification enabled. Projects are public for anonymous replica pulls; publishing and replication use one-day robots scoped to the two disposable projects. The rules preserve repository paths and include all tags, signatures and the release repository. Do not add image-only tag filters or retention that removes referenced objects.
+Provision with `harbor_acceptance_stack.py --repo <repository> --workspace <private-workspace> --provision`, then run `harbor_replication_qualification.py setup --workspace <private-workspace>`. Preserve the completed nginx acceptance's Docker network and selected CATS image as well as its workspace: the fresh replica reads these from the retained Compose definition and joins that external network for publisher-disconnection probes. Current runs use the same full image for publisher and replica. The generated `harbor-stack.json` records the Harbor bridge network, Compose file and service names. Host-side controller commands use authenticated HTTPS and the generated CA. The registered destination uses the `harbor` adapter with TLS verification enabled. Projects are public for anonymous replica pulls; publishing and replication use one-day robots scoped to the two disposable projects. The rules preserve repository paths and include all tags, signatures and the release repository. Do not add image-only tag filters or retention that removes referenced objects.
 
 Run the source publication and graph-verification phases in a CATS image on the generated bridge network. Mount this checkout read-only at `/source`, the private workspace at `/verification`, set `PYTHONPATH=/source/portal`, `SSL_CERT_FILE=/verification/tls/ca-bundle.crt`, and `DOCKER_CONFIG=/verification/docker`. For source seeding, also mount the completed real nginx acceptance read-only, make its publisher registry reachable, and include that registry's CA in the trusted bundle. The `seed` command copies the original signed receipt graphs into source Harbor only and preserves their immutable identities; it does not rescan nginx or create new approvals.
 
@@ -125,17 +125,15 @@ Use the controller's read-only `inspect` phase before stopping the source to ret
 
 `portal/tests/portable_registry_integration.py` uses synthetic relational evidence and real HTTPS registries, real Cosign signing/verification, image indexes and Helm packages. It copies immutable signature manifests explicitly while omitting mutable Cosign tags/referrers, then verifies the replica after stopping the publisher. It also rejects an untrusted signer and a deleted architecture child. It does not test Harbor itself or manufacture a production Cyber review.
 
-The following PowerShell example starts only an isolated internal network and disposable containers, without public registry ports. Run from the repository root with Docker available. Build the full publisher and lightweight replica test images, or substitute existing images built from the corresponding Dockerfiles with their pinned Cosign version. The verification phase uses the code baked into the replica image. Use a new workspace and name prefix for each run.
+The following PowerShell example starts only an isolated internal network and disposable containers, without public registry ports. Run from the repository root with Docker available on Linux amd64. Load the full CATS image built from `cats-image/Dockerfile.all-in-one`, with its pinned Cosign version, and use that same image for publication and replica verification. Replace the example tag with the loaded release image. The verification phase uses the code baked into that image in `CATS_MODE=replica`. Use a new workspace and name prefix for each run.
 
 ```powershell
 $repository = (Get-Location).Path
 $testRoot = Join-Path $env:TEMP ('cats-portable-' + [guid]::NewGuid().ToString('N'))
 $testPrefix = 'cats-portable-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
-$testImage = 'cats-portable-test:local'
-$replicaImage = 'cats-portable-replica-test:local'
+$testImage = 'cats:1.3' # Replace with the loaded full release image.
+$replicaImage = $testImage
 New-Item -ItemType Directory -Path $testRoot | Out-Null
-docker build -t $testImage -f portal/Dockerfile portal
-docker build -t $replicaImage -f portal/Dockerfile.replica portal
 $mounts = @('--mount', "type=bind,source=$repository,target=/workspace,readonly",
             '--mount', "type=bind,source=$testRoot,target=/verification")
 $runner = @('--rm', '--entrypoint', 'python', '-e', 'PYTHONPATH=/workspace/portal',
@@ -165,7 +163,7 @@ try {
 }
 ```
 
-Each successful phase emits a compact JSON result. The successful implementation check used `registry:2.8.3` and Cosign `v2.6.1`; its final verification ran in the lightweight replica image with `CATS_MODE=replica` and the publisher stopped. It verified both image architectures and one Helm chart, preserved the exact digest on retry, and passed the disconnected-source, immutable-signature fallback, standalone revocation, wrong-key and missing-child checks. This synthetic release test does not validate a real scanned/patched nginx approval workflow or Harbor replication. The temporary workspace contains only synthetic test data and ephemeral signing/TLS keys; retain it for inspection or remove that explicitly named workspace after review.
+Each successful phase emits a compact JSON result. The historical successful implementation check used `registry:2.8.3` and Cosign `v2.6.1`; its final verification ran in the lightweight replica image with `CATS_MODE=replica` and the publisher stopped. It verified both image architectures and one Helm chart, preserved the exact digest on retry, and passed the disconnected-source, immutable-signature fallback, standalone revocation, wrong-key and missing-child checks. That record does not establish a completed rerun with the shared full image. This synthetic release test does not validate a real scanned/patched nginx approval workflow or Harbor replication. The temporary workspace contains only synthetic test data and ephemeral signing/TLS keys; retain it for inspection or remove that explicitly named workspace after review.
 
 ## Repeating the real nginx acceptance workflow
 
@@ -183,7 +181,7 @@ $testRoot = Join-Path $env:TEMP ('cats-nginx-' + [guid]::NewGuid().ToString('N')
 $project = 'cats-nginx-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
 $python = 'python' # Or the repository virtual environment's Python executable.
 $fullImage = "${project}-full:local"
-$replicaImage = "${project}-replica:local"
+$replicaImage = $fullImage
 $scannerBase = 'catscan-base:local' # Replace with the available scanner base.
 $trivyCache = 'existing-fresh-trivy-cache' # Replace with a populated volume.
 function Invoke-NginxStep {
@@ -201,7 +199,7 @@ Invoke-NginxStep portal/tests/nginx_workflow_integration.py source --workspace $
     --image docker.io/library/nginx:1.28.0-alpine3.21
 ```
 
-`--build` explicitly builds the full `cats-image/Dockerfile.all-in-one` image and the lightweight replica image. Omit it when supplying existing images built from the intended code. Provisioning starts Discovery and the real daemonless scanner, an isolated patch Docker daemon, separate PostgreSQL databases, and TLS registries. Portal ports bind only to loopback (defaults 18886/18887; replica proxy 15887); registry ports remain internal. Clients receive public CA files only. The setup phase configures signing, registry trust and scoped Cyber permissions. The source phase discovers, confirms, scans and approves nginx through normal routes, then requires a verified signed publication receipt.
+`--build` builds the full `cats-image/Dockerfile.all-in-one` image once for both systems. Omit it when supplying an existing full image built from the intended code. System B uses `CATS_MODE=replica` with no assessment workers or Docker socket. The dated acceptance records above retain their original image provenance; rerun this procedure to qualify a new full-image release. Provisioning starts Discovery and the real daemonless scanner on System A, an isolated patch Docker daemon, separate PostgreSQL databases, and TLS registries. Portal ports bind only to loopback (defaults 18886/18887; replica proxy 15887); registry ports remain internal. Clients receive public CA files only. The setup phase configures signing, registry trust and scoped Cyber permissions. The source phase discovers, confirms, scans and approves nginx through normal routes, then requires a verified signed publication receipt.
 
 The isolated patch daemon explicitly enables `--feature containerd-snapshotter=true`, and its health check requires the containerd backend. Copa's Docker BuildKit path needs this image store for its merge/diff operations; classic `overlay2` is insufficient. This changes only the dedicated daemon, not the host Docker settings. Switching an existing test daemon's store retains its old data volume but hides the previous image cache, so a retry may pull images again. See [Copa's BuildKit requirements](https://project-copacetic.github.io/copacetic/website/v0.11.x/custom-address) and [Docker's containerd configuration](https://docs.docker.com/engine/storage/containerd/).
 
