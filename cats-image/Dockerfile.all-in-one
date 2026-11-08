@@ -152,9 +152,10 @@ RUN addgroup -g 10001 cats-scan \
     && chmod 0711 /var/lib/cats-scan \
     && chown 0:0 /var/lib/cats-scan
 # Discovery shares the release image; Compose supplies its restricted identity.
+# Do not create/chown its home: /tmp must remain shared root-owned 1777 storage.
 COPY --from=discovery-compose /docker-compose /usr/local/bin/docker-compose
 RUN addgroup -g 10003 discovery \
-    && adduser -D -u 10003 -G discovery -h /tmp discovery \
+    && adduser -D -H -u 10003 -G discovery -h /tmp discovery \
     && mkdir -p /data/discovery-uploads /opt/discovery \
     && chown 10003:10003 /data/discovery-uploads
 # Static tools work in the empty action filesystem without mounting host libs.

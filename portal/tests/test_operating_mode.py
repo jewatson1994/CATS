@@ -1,5 +1,8 @@
 """The replica boundary must remain closed as authoritative APIs evolve."""
 import asyncio
+import os
+import subprocess
+import sys
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -150,6 +153,34 @@ def test_replica_lifespan_skips_intelligence_scanning_and_validation(monkeypatch
             assert steps == ['start']
     asyncio.run(run())
     assert steps == ['start', 'stop']
+
+
+@pytest.mark.parametrize('operating_mode,blocked', [('replica', True), ('full', True), ('full', False)])
+def test_portal_import_only_requires_assessment_storage_in_full_mode(tmp_path, operating_mode, blocked):
+    # A fresh interpreter exercises actual module initialization in both modes.
+    # A file in place of the parent makes storage unavailable on every OS.
+    parent = tmp_path / 'assessment'
+    if blocked:
+        parent.write_text('Assessment storage is unavailable')
+    roots = {f'CATS_{name}_JOB_ROOT': str(parent / name.lower())
+             for name in ('PUBLIC', 'PATCH', 'REMEDIATION')}
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(('CATS_', 'INTELLIGENCE_'))}
+    env.update(roots, CATS_MODE=operating_mode, DATABASE_URL='sqlite://',
+               CATS_BOOTSTRAP_USERNAME='admin', CATS_BOOTSTRAP_PASSWORD='test-password-long',
+               CATS_DEPLOYMENT_VALIDATION_ENABLED='false')
+    result = subprocess.run([sys.executable, '-c', 'import app.main'], env=env,
+                            cwd=Path(__file__).resolve().parents[1],
+                            capture_output=True, text=True, timeout=60)
+    if operating_mode == 'full' and blocked:
+        assert result.returncode != 0
+        assert repr(str(parent))[1:-1] in result.stderr
+    else:
+        assert result.returncode == 0, result.stderr
+        if operating_mode == 'full':
+            assert all(Path(path).is_dir() for path in roots.values())
+        else:
+            assert parent.is_file()
 
 
 @pytest.mark.parametrize('compose_path,expected_services', [

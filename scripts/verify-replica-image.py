@@ -68,10 +68,16 @@ def isolated_config(config: dict, *, image: str, project: str) -> dict:
 # database access and the replica middleware; the process check catches accidental
 # worker/scanner launch while retaining the tools bundled in the full image.
 CONTAINER_CHECK = r'''
-import json, os, sys, urllib.error, urllib.request
+import json, os, stat, sys, tempfile, urllib.error, urllib.request
 from pathlib import Path
 from app.operating_mode import is_replica
 assert is_replica(), 'Container is not operating in replica mode'
+# Shared temporary storage must remain usable after dropping all capabilities.
+# Creating a service user must not take ownership of /tmp as its home directory.
+temporary = Path('/tmp').stat()
+assert temporary.st_uid == 0 and stat.S_IMODE(temporary.st_mode) == 0o1777, 'Invalid /tmp ownership or permissions'
+with tempfile.TemporaryDirectory(dir='/tmp', prefix='cats-replica-check-'):
+    pass
 service = sys.argv[1]
 application, port, endpoint = (('app.main:app', 8000, '/readyz') if service == 'portal'
                               else ('app.oci_proxy:app', 5000, '/healthz'))

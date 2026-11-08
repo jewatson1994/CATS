@@ -50,6 +50,7 @@ from openpyxl import Workbook
 import yaml
 
 from .database import Base, background_engine, engine, get_db, SessionLocal, portal_tables
+from .operating_mode import is_replica
 from . import scan_coordination
 from .durable_jobs import DurableJob
 from . import scan_protocol
@@ -615,7 +616,6 @@ async def unexpected_error(request: Request, exc: Exception):
 # Public scan jobs retain immutable artifacts in a persistent directory.
 # PostgreSQL owns durable execution and recovery state.
 PUBLIC_JOB_ROOT = Path(os.getenv("CATS_PUBLIC_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-public-jobs"))
-PUBLIC_JOB_ROOT.mkdir(parents=True, exist_ok=True)
 PUBLIC_JOBS = scan_coordination.DurableJobs()
 PUBLIC_PROCESSES: dict[str, subprocess.Popen] = {}
 PUBLIC_JOB_LOCK = threading.Lock()
@@ -628,14 +628,16 @@ SBOM_OUTPUT_FORMATS = {
 }
 CYCLONEDX_SPEC_VERSIONS = ("1.4", "1.5", "1.6")
 PATCH_JOB_ROOT = Path(os.getenv("CATS_PATCH_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-patch-jobs"))
-PATCH_JOB_ROOT.mkdir(parents=True, exist_ok=True)
 PATCH_JOBS: dict[str, dict] = {}
 PATCH_PROCESSES: dict[str, subprocess.Popen] = {}
 PATCH_JOB_LOCK = threading.Lock()
 PATCH_WORKER_URL = os.getenv("CATS_PATCH_WORKER_URL", "").rstrip("/")
 PATCH_WORKER_TOKEN = os.getenv("CATS_PATCH_WORKER_TOKEN", "")
 REMEDIATION_JOB_ROOT = Path(os.getenv("CATS_REMEDIATION_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-remediation-jobs"))
-REMEDIATION_JOB_ROOT.mkdir(parents=True, exist_ok=True)
+# Replicas never run assessment jobs and need no access to their working paths.
+if not is_replica():
+    for job_root in (PUBLIC_JOB_ROOT, PATCH_JOB_ROOT, REMEDIATION_JOB_ROOT):
+        job_root.mkdir(parents=True, exist_ok=True)
 # Remediation work is consumed exclusively by app.remediation_worker.
 from . import remediation_jobs
 DEPLOYMENT_VALIDATION_WORKERS = ThreadPoolExecutor(max_workers=max(1, int(os.getenv("CATS_DEPLOYMENT_VALIDATION_WORKERS", "1"))))
