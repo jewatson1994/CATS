@@ -86,27 +86,16 @@ Enter the machine account's secret at the password prompt. Replace the repositor
 
 ## Legacy root-stack override
 
-The repository-root `compose.yaml` remains a local HTTP stack. If keeping that file or an older deployment definition, `compose.nginx.yml` remains supported to add the same HTTPS routing. This legacy path needs Docker Compose **2.24.4 or newer** because its `!reset` entries remove previously published backend ports, including a customized `443:8000` mapping.
+The local HTTP stack now lives at `templates/compose.local.yaml`. Add `templates/compose.local-nginx.yaml` for HTTPS routing when retaining this stack instead of using the integrated main template. This override needs Docker Compose **2.24.4 or newer** because its `!reset` entries remove previously published backend ports.
 
-Copy these files from the checkout into the existing installation, preserving their relative locations:
+Keep `deploy/nginx/nginx.conf.template` and `deploy/nginx/start-nginx.sh` in the checkout. Merge the certificate, DNS and hostname settings from `deploy/nginx/.env.example` into your existing `.env` without replacing credentials. From the repository root, use:
 
-- `compose.nginx.yml`
-- `deploy/nginx/nginx.conf.template`
-- `deploy/nginx/start-nginx.sh`
-
-Use the certificate, DNS and hostname settings above. `deploy/nginx/.env.example` contains the legacy settings; merge them into your existing `.env` without replacing credentials. If no other overrides are active, set:
-
-```dotenv
-COMPOSE_FILE=compose.yaml:compose.nginx.yml
+```sh
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f templates/compose.local-nginx.yaml config --quiet
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f templates/compose.local-nginx.yaml up -d --wait
 ```
 
-For older deployments that still need a separate OCI overlay, retain it:
-
-```dotenv
-COMPOSE_FILE=compose.yaml:compose.oci-proxy.yml:compose.nginx.yml
-```
-
-Merge these entries with any other active overrides, keeping `compose.nginx.yml` last. These lists use the Linux separator `:`; Windows uses `;`. Explicit `-f` options replace this selection and must also keep the Nginx override last. Follow the same [staged application commands](#apply-when-certificates-and-dns-are-ready) above. Keep this file selection for subsequent upgrades while using the legacy path.
+Keep these arguments for subsequent commands and upgrades; `--project-directory .` preserves repository-relative bind paths. Preserve any additional required overrides, with the Nginx override last. The retired `compose.oci-proxy.yml` was a no-op; remove it from file selections. The proxy is already part of the local stack. See [layout migration](../templates/README.md#repository-layout-migration) for other renamed files. For the operations below, substitute this full Compose prefix when using the local stack; bare commands refer to the installed `/opt/cats/compose.yaml` described above.
 
 ## Operations and rollback
 
@@ -123,7 +112,7 @@ docker compose stop nginx
 docker compose rm -f nginx
 ```
 
-For an integrated-template migration, restore the saved previous Compose definition and previous file selection, preserving credentials and unrelated overrides. For a legacy-override rollback, remove only `compose.nginx.yml` from `COMPOSE_FILE` or the explicit `-f` list, preserving any previously required OCI and other overlays. Validate and recreate the backends with that original selection:
+For an integrated-template migration, restore the saved previous Compose definition and previous file selection, preserving credentials and unrelated overrides. For a legacy-override rollback, remove only the local Nginx override from the explicit `-f` list, preserving unrelated required overlays. Validate and recreate the backends with that original selection:
 
 ```sh
 docker compose config --quiet

@@ -184,7 +184,7 @@ def test_portal_import_only_requires_assessment_storage_in_full_mode(tmp_path, o
 
 
 @pytest.mark.parametrize('compose_path,expected_services', [
-    ('compose.replica.yaml', {'db', 'portal', 'oci-proxy'}),
+    ('templates/compose.replica.external-ingress.yaml', {'db', 'portal', 'oci-proxy'}),
     ('templates/compose.replica.yaml', {'db', 'portal', 'oci-proxy', 'nginx'}),
 ])
 def test_replica_compose_has_no_assessment_infrastructure(compose_path, expected_services):

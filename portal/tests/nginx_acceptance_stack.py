@@ -328,8 +328,8 @@ def provision(args, owned: dict | None) -> None:
         write_json(workspace / "registry-auth/config.json", {"auths": {}})
     docker.run("tls-signer", ["run", "--rm", "--network", "none", *helper_user_arguments(), "--entrypoint", "python",
                "--mount", f"type=bind,src={workspace},dst=/runtime", args.full_image, "-c", TLS_AND_SIGNER])
-    resolved = docker.run("resolve-compose", ["compose", "--env-file", str(workspace / ".env"),
-                          "-f", str(args.repo / "compose.yaml"), "config", "--format", "json"])
+    resolved = docker.run("resolve-compose", ["compose", "--project-directory", str(args.repo), "--env-file", str(workspace / ".env"),
+                          "-f", str(args.repo / "templates/compose.local.yaml"), "config", "--format", "json"])
     config = composition(json.loads(resolved.stdout), args, values)
     compose_file = workspace / "compose.json"
     write_json(compose_file, config)
@@ -406,7 +406,7 @@ def parse_args(argv=None):
     for path in (args.repo, args.workspace):
         if any(character in str(path) for character in (",", "\n", "\r", "$", "#", "'", '"')):
             parser.error("Repository/workspace paths contain characters unsafe for Docker mount or .env syntax")
-    for relative in ("compose.yaml", "cats-image/Dockerfile.all-in-one"):
+    for relative in ("templates/compose.local.yaml", "cats-image/Dockerfile.all-in-one"):
         if not (args.repo / relative).is_file():
             parser.error(f"Required repository file missing: {relative}")
     ports = (args.full_port, args.replica_port, args.proxy_port)

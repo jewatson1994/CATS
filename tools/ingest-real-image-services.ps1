@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env",
-    [string]$ComposeFile = "compose.yaml",
+    [string]$ComposeFile = "templates/compose.local.yaml",
     [string]$ResultsRoot = ".demo-scan-results",
     [string]$PortalUrl = "http://portal:8000",
     [string]$NetworkName = "cats_default",
@@ -92,6 +92,14 @@ if ($Plan) {
 
 $envPath = Resolve-RepositoryPath $EnvFile
 $composePath = Resolve-RepositoryPath $ComposeFile
+$composeProjectOptions = @()
+$composeProjectOptionText = ""
+if ($composePath -eq (Resolve-RepositoryPath "templates/compose.local.yaml")) {
+    # The relocated local stack retains checkout-relative bind mounts. Custom
+    # Compose files keep Docker's normal directory resolution for their paths.
+    $composeProjectOptions = @("--project-directory", $repositoryRoot)
+    $composeProjectOptionText = " --project-directory `"$repositoryRoot`""
+}
 $resultsPath = Resolve-RepositoryPath $ResultsRoot
 if (-not (Test-Path -LiteralPath $envPath -PathType Leaf)) { throw "Environment file not found: $envPath" }
 if (-not (Test-Path -LiteralPath $composePath -PathType Leaf)) { throw "Compose file not found: $composePath" }
@@ -104,12 +112,11 @@ $pipelineToken = if ($env:PIPELINE_API_TOKEN) { $env:PIPELINE_API_TOKEN } else {
 $catsImage = if ($env:CATS_IMAGE) { $env:CATS_IMAGE } elseif ($dotenv["CATS_IMAGE"]) { $dotenv["CATS_IMAGE"] } else { "cats:1.3" }
 if (-not $pipelineToken) { throw "PIPELINE_API_TOKEN is missing from $envPath" }
 
-$runningServices = @(Invoke-Docker -Capture -Arguments @(
-    "compose", "--env-file", $envPath, "-f", $composePath,
-    "ps", "--services", "--status", "running"
-))
+$runningServices = @(Invoke-Docker -Capture -Arguments (@("compose") + $composeProjectOptions + @(
+    "--env-file", $envPath, "-f", $composePath, "ps", "--services", "--status", "running"
+)))
 if ($runningServices -notcontains "portal" -or $runningServices -notcontains "db") {
-    throw "The canonical portal stack is not running. Start it with: docker compose --env-file `"$envPath`" -f `"$composePath`" up -d --wait"
+    throw "The canonical portal stack is not running. Start it with: docker compose$composeProjectOptionText --env-file `"$envPath`" -f `"$composePath`" up -d --wait"
 }
 Invoke-Docker -Capture -Arguments @("network", "inspect", $NetworkName) | Out-Null
 Invoke-Docker -Capture -Arguments @("image", "inspect", $catsImage) | Out-Null

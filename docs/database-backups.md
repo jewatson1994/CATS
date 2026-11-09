@@ -9,9 +9,9 @@ The `intelligence-db` service owns feed data; `intelligence-importer` installs t
 image's signed package independently. The portal waits for the short schema-only
 `intelligence-init` job, never for the importer. It sees the previous committed
 package while an upgrade runs (or no package on the first import). Check progress
-with `docker compose logs -f intelligence-importer`. A successful importer exits 0;
+with `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml logs -f intelligence-importer`. A successful importer exits 0;
 a failed import exits 1 and retries up to three times. Retry manually with
-`docker compose run --rm intelligence-importer`. Imports stay atomic.
+`docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm intelligence-importer`. Imports stay atomic.
 
 These containers still share the VM's CPU and disk. Separate database volumes and
 processes isolate storage and transactions, but do not provide separate hardware.
@@ -69,13 +69,13 @@ copy the matching Compose file. Existing PostgreSQL service images must also be
 available locally, as for the rest of the stack. Keep your existing `.env` and
 set `CATS_IMAGE` to the updated image tag. `CATS_BACKUP_IMAGE` is no longer used.
 
-Start offline: `docker compose up -d --no-build --pull never db-backup intelligence-db-backup`.
+Start offline: `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-build --pull never db-backup intelligence-db-backup`.
 Run an immediate backup without starting the portal:
-`docker compose run --rm --no-deps --pull never db-backup once`.
-For intelligence, run `docker compose run --rm --no-deps --pull never intelligence-db-backup once`.
+`docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm --no-deps --pull never db-backup once`.
+For intelligence, run `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm --no-deps --pull never intelligence-db-backup once`.
 The corresponding database service must already be running and initialized.
 It exits nonzero on failure. A lock prevents concurrent jobs using the same
-backup directory. View health with `docker compose ps db-backup`, and inspect
+backup directory. View health with `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml ps db-backup`, and inspect
 the mounted `status.json` for the last successful archive. Required table names
 can be set through `BACKUP_REQUIRED_TABLES` as comma-separated schema.table
 identifiers; the default is `public.services,public.users,public.executions`.

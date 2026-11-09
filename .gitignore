@@ -1,8 +1,6 @@
 # Local configuration and credentials
 .env
 .env.*
-!.env.example
-!.env.replica.example
 !**/.env.example
 *.env.txt
 
@@ -71,3 +69,23 @@ deploy/discovery-mirror-local/
 
 # Local database backup archives contain production data.
 backups/
+
+# Disposable local test outputs and nested/archived checkouts
+/.discovery-*/
+/.pytest-*/
+/.renderer-tests*/
+/.test-*/
+/.tmp-*/
+/tmp-discovery-*/
+/test-artifacts/
+/.worktrees/
+/archived-worktrees-*/
+
+# Local credentials and generated runtime/test output
+/scan-registry-auth/
+/portal/cats-patch-jobs/
+/portal/cats-public-jobs/
+/portal/cats-remediation-jobs/
+/portal/tmp-helm-repro/
+/portal/frontend/.test-tmp/
+/temp_*/

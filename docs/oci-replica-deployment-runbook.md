@@ -44,7 +44,7 @@ Retain `expected.json`, `verification.json`, `target-cosign-verified.jsonl`, the
 
 ### System A environment and publication prerequisites
 
-Start from the full deployment's existing [.env.example](../.env.example) and [compose.yaml](../compose.yaml), preserving its persistent storage and configured services. The publication-related settings below supplement that deployment; they are not a replacement environment file for System A.
+Start from the full deployment's existing [templates/local.env.example](../templates/local.env.example) and [templates/compose.local.yaml](../templates/compose.local.yaml), preserving its persistent storage and configured services. The publication-related settings below supplement that deployment; they are not a replacement environment file for System A.
 
 | Setting | Required configuration / default |
 | --- | --- |
@@ -59,30 +59,30 @@ Start from the full deployment's existing [.env.example](../.env.example) and [c
 
 Store the signing private key/password and destination credentials in their authorized CATS configuration interfaces. `CATS_SIGNING_PRIVATE_KEY` and `CATS_SIGNING_PASSWORD` are transient internal job material, not required deployment secrets to add to `.env`. Keep destination CA certificates configured and TLS verification enabled. Publisher trust on System B remains an independently provisioned public-key fingerprint.
 
-The full deployment's `remediation-worker` executes release publication and must have the same encryption key, retained release storage and publication environment as the portal. After an intentional publication environment change, use the same Compose files/project/env-file as the existing deployment. For the root Compose deployment, these commands validate configuration and recreate the affected services without printing secrets:
+The full deployment's `remediation-worker` executes release publication and must have the same encryption key, retained release storage and publication environment as the portal. After an intentional publication environment change, use the same Compose files/project/env-file as the existing deployment. For the local Compose deployment, these commands validate configuration and recreate the affected services without printing secrets:
 
 ```powershell
-docker compose --env-file .env -f compose.yaml config --quiet
-docker compose --env-file .env -f compose.yaml up -d --no-deps --force-recreate --wait portal portal-control remediation-worker
-docker compose --env-file .env -f compose.yaml ps portal portal-control remediation-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml config --quiet
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-deps --force-recreate --wait portal portal-control remediation-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml ps portal portal-control remediation-worker
 ```
 
 Expect healthy running services and a successful signed publication receipt before treating the release as ready for registry replication. For a deployment template, use that deployment's actual files and environment path instead.
 
 ## 2. Prepare the separate System B deployment
 
-Use Docker Compose v2 and a separate project, database and volumes. The [replica Compose file](../compose.replica.yaml) is standalone. Do not combine it with the full `compose.yaml` or the full deployment template: those deploy assessment infrastructure that a replica does not need.
+Use Docker Compose v2 and a separate project, database and volumes. The [replica Compose file](../templates/compose.replica.external-ingress.yaml) is standalone. Do not combine it with the full `templates/compose.local.yaml` or the full deployment template: those deploy assessment infrastructure that a replica does not need.
 
-For deployment with built-in HTTPS ingress, use the dedicated [replica template and environment example](../templates/README.md#cats-replica). That template requires an explicit image and has no build context; it can be deployed without a source checkout. It adds a fourth service, Nginx, for built-in HTTPS routing with private TLS backends. Prepare the pinned Nginx image, two DNS names and matching certificate directories as described there. It preserves the root file's `cats-replica` project, volume names and replica settings. The commands below use the root file, which also consumes a prebuilt image.
+For deployment with built-in HTTPS ingress, use the dedicated [replica template and environment example](../templates/README.md#cats-replica). That template requires an explicit image and has no build context; it can be deployed without a source checkout. It adds a fourth service, Nginx, for built-in HTTPS routing with private TLS backends. Prepare the pinned Nginx image, two DNS names and matching certificate directories as described there. It preserves the external-ingress file's `cats-replica` project, volume names and replica settings. The commands below use the external-ingress file, which also consumes a prebuilt image.
 
-The root replica file has exactly three services, ordered `portal`, `oci-proxy`, then `db`. Both variants use the same full `CATS_IMAGE` as main CATS, with `CATS_MODE=replica` fixed by Compose. The image contains the full scanner/validator toolset and signature verifier, but neither replica stack starts assessment workers, validator services or intelligence initialization, mounts a Docker socket, or requires scanner databases. Main and replica remain separate deployments with independent databases and storage.
+The external-ingress replica file has exactly three services, ordered `portal`, `oci-proxy`, then `db`. Both variants use the same full `CATS_IMAGE` as main CATS, with `CATS_MODE=replica` fixed by Compose. The image contains the full scanner/validator toolset and signature verifier, but neither replica stack starts assessment workers, validator services or intelligence initialization, mounts a Docker socket, or requires scanner databases. Main and replica remain separate deployments with independent databases and storage.
 
 Deliver the published, verified full Linux amd64 CATS image into the disconnected environment, using the same release artifact as System A. Prepare the `postgres:16` image too. No lightweight replica image build is required. Historical ARM64 qualification applies only to the legacy `portal/Dockerfile.replica` image; it does not qualify the shared full image for ARM hosts. Deployment capacity and performance still require qualification on the intended host.
 
 From the repository root:
 
 ```powershell
-Copy-Item .env.replica.example .env.replica
+Copy-Item templates/replica.external-ingress.env.example .env.replica
 # Replace YOUR_CATS_IMAGE with the full release image already loaded on this host.
 docker run --rm --pull never --entrypoint python YOUR_CATS_IMAGE -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
@@ -106,9 +106,9 @@ Compose fixes `CATS_MODE=replica`, production mode, disabled development-auth by
 
 Select your actual portal and OCI hostnames, DNS records and trusted certificates. The deployment template includes TLS passthrough routing on port 443, with certificates mounted in the private portal and proxy backends; no forwarded-header trust is needed for that path. Both full and replica templates use port 443, so use separate hosts or adapt ingress/port mappings when sharing a host. Neither variant creates DNS records or issues certificates.
 
-When using the root replica file instead, place a TLS ingress in front of its loopback portal and proxy ports. Preserve the original Host and HTTPS forwarding information; configure the ingress/forwarded-header trust for your topology. Do not expose those plain HTTP backend ports to consumer networks. The root file does not include ingress.
+When using the external-ingress replica file instead, place a TLS ingress in front of its loopback portal and proxy ports. Preserve the original Host and HTTPS forwarding information; configure the ingress/forwarded-header trust for your topology. Do not expose those plain HTTP backend ports to consumer networks. The root file does not include ingress.
 
-The portal sets secure cookies, so use its HTTPS address for browser login. The root file's local health probes use loopback HTTP; the deployment template verifies backend certificates over HTTPS. OCI clients must trust the ingress certificate; the replica must separately trust the local upstream registry certificate. Use your actual hostnames in client commands, not the examples from other deployment documents. Do not layer a full-stack ingress template onto this replica merely to obtain TLS.
+The portal sets secure cookies, so use its HTTPS address for browser login. The external-ingress file's local health probes use loopback HTTP; the deployment template verifies backend certificates over HTTPS. OCI clients must trust the ingress certificate; the replica must separately trust the local upstream registry certificate. Use your actual hostnames in client commands, not the examples from other deployment documents. Do not layer a full-stack ingress template onto this replica merely to obtain TLS.
 
 For disconnected use, keep a tested local login or configure an OIDC/Keycloak issuer reachable within System B's environment. A login that depends on an unreachable external identity provider cannot provide offline access.
 
@@ -117,9 +117,9 @@ For disconnected use, keep a tested local login or configure an OIDC/Keycloak is
 Validate and start only the replica project:
 
 ```powershell
-docker compose --env-file .env.replica -f compose.replica.yaml config --quiet
-docker compose --env-file .env.replica -f compose.replica.yaml up -d --wait
-docker compose --env-file .env.replica -f compose.replica.yaml ps
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml config --quiet
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml up -d --wait
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml ps
 ```
 
 For an offline start with both images already loaded, use `up -d --wait --pull never` in place of `up -d --wait`. This makes a missing image fail clearly without attempting a registry pull; the replica Compose file has no build context. Keep the same Compose project name on subsequent starts so the deployment retains its volumes; choose different host ports when another installation already uses the defaults.
@@ -219,8 +219,8 @@ System B needs its own local registry for discovery and uncached bytes. Losing t
 Inspect `/admin/replica`, the audit page and service logs. Keep correlation IDs and secret-free diagnostics with the incident record:
 
 ```powershell
-docker compose --env-file .env.replica -f compose.replica.yaml ps
-docker compose --env-file .env.replica -f compose.replica.yaml logs --tail 100 portal oci-proxy
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml ps
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml logs --tail 100 portal oci-proxy
 ```
 
 Portal `/health` is process liveness and deliberately remains successful during a database outage. Anonymous `/readyz` executes a database query: it returns `200 {"status":"ready"}` when the database is available and a redacted `503 {"status":"unavailable"}` when it is unavailable. Readiness responses are not cached. The standalone Compose portal health check uses `/readyz`; the proxy uses its database-aware `/healthz`. Neither probe establishes registry connectivity or validates a complete retrieval, so monitor source synchronization and a scoped artifact retrieval separately.
@@ -244,7 +244,7 @@ Public sync diagnostics intentionally avoid registry response secrets. Preserve 
 
 For disposable qualification fault injection, holding one repository's layer link may still leave its blob available through a cached registry descriptor. The caller must also quarantine and restore only the exact repository-scoped cached descriptor, preserving global blob data and unrelated cache entries; never flush a shared cache. Restore both the link and descriptor in cleanup, and prove missing content through the normal target HTTP route before treating the injection as effective. A storage-link change alone is not that proof.
 
-One discovery budget spans catalog pages and every discovered release repository during a source sync. These variables are forwarded by `compose.replica.yaml`; set positive values in `.env.replica` and recreate the services after an intentional change:
+One discovery budget spans catalog pages and every discovered release repository during a source sync. These variables are forwarded by `templates/compose.replica.external-ingress.yaml`; set positive values in `.env.replica` and recreate the services after an intentional change:
 
 | Variable | Default | Limit |
 | --- | --- | --- |

@@ -1,4 +1,0 @@
-# Compatibility overlay for existing deployment commands.
-# The OCI proxy and its cache volume now ship in compose.yaml and
-# templates/compose.main.yaml and start with a normal `docker compose up -d`.
-services: {}

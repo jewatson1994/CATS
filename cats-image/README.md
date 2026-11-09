@@ -62,7 +62,7 @@ the same offline validation, so `.gitkeep` cannot satisfy the release build.
 The image also disables Grype's application-version update check so runtime
 scans do not contact Anchore in a disconnected environment.
 
-The root `compose.yaml` runs the versioned image for both the portal and patch
+The local `templates/compose.local.yaml` runs the versioned image for both the portal and patch
 worker. Set `CATS_IMAGE=cats-portal:local` in the root `.env` to run an
 unversioned local build instead.
 

@@ -17,13 +17,13 @@ The certificates need not be missing or stale in the worker. Publication reads c
 | Concern | Patch push | Cyber-approved Publication |
 | --- | --- | --- |
 | Entry | portal/app/main.py: public_patch_submit, _run_patch_job | portal/app/cyber_approvals.py: publication submission, publish_job |
-| Executor | app.patch_worker subprocess, normally via dedicated patch worker API; local fallback exists | app.remediation_worker dispatches cyber_release_publish to publish_job; compose.yaml runs this worker separately |
+| Executor | app.patch_worker subprocess, normally via dedicated patch worker API; local fallback exists | app.remediation_worker dispatches cyber_release_publish to publish_job; templates/compose.local.yaml runs this worker separately |
 | Registry configuration | Submitted destination_image and destination credentials; optional reuse of source credentials | ApprovedReleaseDestination record, checked against frozen endpoint, namespace and destination CA digest; separate from patch input and source oci_registries |
 | Managed CAs | main.py copies trusted_ca_certificates into job configuration and sends it to patch worker | cyber_release_publication.publish reads PortalSetting directly through the worker DB session |
 | Trust application | patch_worker.main builds system-plus-managed CA file and sets SSL_CERT_FILE, REQUESTS_CA_BUNDLE and Grype CA variables | Before fix: registry_environment -> destination_trust -> ephemeral_trust used only destination.ca_pem. After fix: system + current managed CAs + destination CA |
 | Network transport | docker login/push via host Docker socket | release_oci._Client uses verified Python HTTPS; Skopeo for retained Docker archives; Cosign for registry signatures |
 
-Patch worker code passes no registry TLS-disable flags. However, docker push is performed by the Docker daemon; setting a CA environment variable in the CLI process does not configure that daemon's registry trust. compose.yaml mounts /var/run/docker.sock into patch-worker. Whether the successful push actually verified Harbor must be checked on that daemon: inspect its effective insecure-registry settings and registry/system CA trust. Do not infer verification from success alone. No patch behavior was changed.
+Patch worker code passes no registry TLS-disable flags. However, docker push is performed by the Docker daemon; setting a CA environment variable in the CLI process does not configure that daemon's registry trust. templates/compose.local.yaml mounts /var/run/docker.sock into patch-worker. Whether the successful push actually verified Harbor must be checked on that daemon: inspect its effective insecure-registry settings and registry/system CA trust. Do not infer verification from success alone. No patch behavior was changed.
 
 ## Hostnames, authentication and redirects
 

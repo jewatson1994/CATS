@@ -12,7 +12,7 @@ later does not change an already initialized PostgreSQL user's password.
    take a restore-verified full backup without starting the updated application:
 
    ```sh
-   docker compose run --rm --no-deps --pull never db-backup once
+   docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm --no-deps --pull never db-backup once
    ```
 
    Proceed only if it exits successfully. Schedule a maintenance window and stop **all**
@@ -25,14 +25,14 @@ later does not change an already initialized PostgreSQL user's password.
    For the checked-in Compose stack, run:
 
    ```sh
-   docker compose stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker patch-worker scan-worker db-backup
+   docker compose --project-directory . --env-file .env -f templates/compose.local.yaml stop portal portal-control intelligence-importer discovery-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker patch-worker scan-worker db-backup
    ```
 
    Also stop any additional replicas or jobs outside this Compose project. Stop the
    backup job to prevent overlapping snapshots during schema retirement.
-2. Start only the databases: `docker compose up -d db intelligence-db`.
+2. Start only the databases: `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d db intelligence-db`.
    Initialize the destination's schema without ingesting any data:
-   `docker compose run --rm intelligence-init`. The copy refuses a destination with
+   `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm intelligence-init`. The copy refuses a destination with
    any rows in the nine intelligence tables. It also refuses foreign keys crossing
    the selected table boundary in either database. Schema/version differences can
    cause a restore error; align application schema before retrying.

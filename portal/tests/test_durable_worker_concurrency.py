@@ -205,7 +205,7 @@ def test_five_active_jobs_can_renew_leases_while_retaining_sessions(monkeypatch)
         engine.dispose()
 
 
-@pytest.mark.parametrize("relative", ["compose.yaml", "templates/compose.main.yaml"])
+@pytest.mark.parametrize("relative", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_deployment_wires_capacity_without_raising_container_limits(relative):
     root = Path(__file__).resolve().parents[2]
     services = yaml.safe_load((root / relative).read_text(encoding="utf-8"))["services"]

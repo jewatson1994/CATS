@@ -40,7 +40,7 @@ def test_readiness_checks_database_and_redacts_failures(monkeypatch, failure):
 
 
 @pytest.mark.parametrize('compose_path', [
-    'compose.replica.yaml', 'templates/compose.replica.yaml',
+    'templates/compose.replica.external-ingress.yaml', 'templates/compose.replica.yaml',
 ])
 def test_standalone_replica_health_uses_database_readiness(compose_path):
     compose = yaml.safe_load((Path(__file__).resolve().parents[2] / compose_path).read_text())

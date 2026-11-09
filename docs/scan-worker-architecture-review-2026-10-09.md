@@ -143,7 +143,7 @@ Rollback must pair the previous image with its matching Compose configuration af
 
 Runtime: `scan_worker.py`, `scan_runtime.py`, `scan_artifacts.py`, `scan_protocol.py`, `candidate_worker.py`, `remediation_verification.py` under `portal/app`.
 
-Deployment: `compose.yaml`, `templates/compose.main.yaml`, `cats-image/Dockerfile.all-in-one`.
+Deployment: `templates/compose.local.yaml`, `templates/compose.main.yaml`, `cats-image/Dockerfile.all-in-one`.
 
 Tests: `test_scan_worker_security.py`, `test_scan_ingest_cancellation.py`, `test_candidate_worker.py`, `test_remediation_verification.py`, `test_scan_deployment_topology.py` under `portal/tests`.
 

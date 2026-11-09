@@ -1,5 +1,7 @@
 # Standalone replica: portal, read-only OCI proxy, and a dedicated database.
-# Setup: docs/oci-replica-deployment-runbook.md; settings: .env.replica.example.
+# Setup: docs/oci-replica-deployment-runbook.md; settings: templates/replica.external-ingress.env.example.
+# Run from the repository root with --project-directory . --env-file .env.replica.
+# docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml up -d --wait
 # Uses the same prebuilt CATS image as main. For HTTPS ingress, use templates/compose.replica.yaml.
 # Keep this project separate from the full CATS Compose stack.
 name: cats-replica

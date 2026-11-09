@@ -9,7 +9,7 @@ import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-COMPOSE_FILES = ("compose.replica.yaml", "templates/compose.replica.yaml")
+COMPOSE_FILES = ("templates/compose.replica.external-ingress.yaml", "templates/compose.replica.yaml")
 
 
 def resolve_compose(tmp_path, compose_file, image_settings):
@@ -49,7 +49,7 @@ def test_shared_image_and_legacy_settings_keep_replica_isolated(tmp_path, compos
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
     assert set(services) == ({"portal", "oci-proxy", "db", "nginx"}
-                             if compose_file.startswith("templates/") else {"portal", "oci-proxy", "db"})
+                             if compose_file == "templates/compose.replica.yaml" else {"portal", "oci-proxy", "db"})
     for name, module in (("portal", "app.main:app"), ("oci-proxy", "app.oci_proxy:app")):
         service = services[name]
         assert service["image"] == expected

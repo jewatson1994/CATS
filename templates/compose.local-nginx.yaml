@@ -1,4 +1,6 @@
-# Apply LAST, after the main Compose file and (if needed) compose.oci-proxy.yml.
+# Apply LAST, after templates/compose.local.yaml.
+# REQUIRED: use --project-directory . --env-file .env from the repository root.
+# docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f templates/compose.local-nginx.yaml up -d --wait
 # Requires Docker Compose 2.24.4+ and certificates for both hostnames.
 # Set CATS_PORTAL_HOSTNAME and CATS_OCI_HOSTNAME; there are no hostname defaults.
 # Deployment, migration and rollback: docs/nginx-ingress.md

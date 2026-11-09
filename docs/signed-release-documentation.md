@@ -41,14 +41,14 @@ For a registry that redirects blob downloads to object storage, confirm the stor
 
 On the approved release page, a blocked redirect shows the registry operation, registry origin, and the target origin when it is safe to display. If a recorded HTTP 307 has none of those details, retry with the updated worker. For `GET blob` or `HEAD blob`, use the confirmed storage origin. For a cross-origin manifest, token, or upload redirect, check the registry's external URL and reverse proxy settings. The blob setting applies only to blob reads.
 
-After editing the root deployment's `.env`, recreate the services to load it. Replace the example origin in the check with the value you configured. A result of `True` confirms the running publication worker received that entry.
+After editing the local deployment's `.env`, recreate the services to load it. Replace the example origin in the check with the value you configured. A result of `True` confirms the running publication worker received that entry.
 
 ```sh
-docker compose up -d --no-deps --force-recreate --wait portal portal-control remediation-worker
-docker compose exec -T remediation-worker python -c "import os; print('https://registry-storage.example' in [v.strip() for v in os.getenv('CATS_OCI_BLOB_REDIRECT_ORIGINS', '').split(',')])"
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-deps --force-recreate --wait portal portal-control remediation-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml exec -T remediation-worker python -c "import os; print('https://registry-storage.example' in [v.strip() for v in os.getenv('CATS_OCI_BLOB_REDIRECT_ORIGINS', '').split(',')])"
 ```
 
-For the deployment template, edit the environment file used at startup and add `--env-file /secure/cats.env -f templates/compose.main.yaml` immediately after `docker compose` in both commands, substituting your actual file path. Retry the failed publication once the worker reports the expected setting.
+For the deployment template, edit the environment file used at startup and replace `--project-directory . --env-file .env -f templates/compose.local.yaml` with `--env-file /secure/cats.env -f templates/compose.main.yaml` in both commands, substituting your actual file path. Retry the failed publication once the worker reports the expected setting.
 
 The private signing key and password remain in encrypted configuration. Only the public key is exported. The public-key fingerprint is SHA-256 over DER SubjectPublicKeyInfo, recorded with the `sha256:` prefix. Obtain the expected fingerprint through a trusted administrative channel; trusting a key solely because it accompanies a signature does not authenticate the publisher.
 

@@ -1,10 +1,12 @@
 name: cats
 
-# Canonical CATS runtime.
+# Local HTTP CATS runtime.
+# Relative host paths and build contexts are rooted at the checkout.
+# REQUIRED: keep --project-directory . --env-file .env in local-stack commands.
 #
 # Run from the repository root with:
 #
-#   docker compose up -d --wait
+#   docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --wait
 #
 # Authentication:
 #   - CATS provides local authentication by default.
@@ -732,7 +734,7 @@ services:
       PYTHONDONTWRITEBYTECODE: "1"
       CATS_APPROVED_RELEASE_ROOT: /tmp/cats-remediation-jobs/approved-releases
     ports:
-      # For external HTTPS on shared port 443, apply compose.nginx.yml last.
+      # For external HTTPS on shared port 443, apply -f templates/compose.local-nginx.yaml last.
       # Otherwise terminate HTTPS at a trusted reverse proxy before exposure.
       - "127.0.0.1:${CATS_OCI_PORT:-5000}:5000"
     volumes:

@@ -46,7 +46,7 @@ All owned qualification services were stopped after verification, retaining volu
 
 ## Repeating the qualification
 
-Use a new private workspace and disposable, explicitly owned Harbor source/target subtrees. Start with the [Harbor setup procedure](portable-approved-releases.md#repeating-the-isolated-harbor-qualification) and a fresh worker-free replica from `compose.replica.yaml`. Preserve its actual project name and API/proxy/bootstrap settings in the private `stack.json` used by the verifier. Supply a unique `--service-key` to the existing fresh nginx workflow; execute its scan, patch, independent rescan, approvals and publication before the Harbor nginx phases.
+Use a new private workspace and disposable, explicitly owned Harbor source/target subtrees. Start with the [Harbor setup procedure](portable-approved-releases.md#repeating-the-isolated-harbor-qualification) and a fresh worker-free replica from `templates/compose.replica.external-ingress.yaml`. Preserve its actual project name and API/proxy/bootstrap settings in the private `stack.json` used by the verifier. Supply a unique `--service-key` to the existing fresh nginx workflow; execute its scan, patch, independent rescan, approvals and publication before the Harbor nginx phases.
 
 The new drivers have the following responsibilities:
 

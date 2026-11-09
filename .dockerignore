@@ -14,3 +14,22 @@ portal/.pytest_cache
 .env
 .env.*
 !.env.example
+
+# Keep local test artifacts and other checkouts out of image build contexts.
+.discovery-*
+.pytest-*
+.renderer-tests*
+.test-*
+tmp-discovery-*
+test-artifacts
+.worktrees
+archived-worktrees-*
+
+# Local credentials and generated runtime/test output
+scan-registry-auth/
+portal/cats-patch-jobs/
+portal/cats-public-jobs/
+portal/cats-remediation-jobs/
+portal/tmp-helm-repro/
+portal/frontend/.test-tmp/
+temp_*/

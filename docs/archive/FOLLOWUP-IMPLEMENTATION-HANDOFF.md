@@ -1,5 +1,7 @@
 # CATS follow-up implementation and local testing
 
+> Historical implementation record, retained for traceability. Status statements and acceptance checklists describe the work when written; they are not a current release qualification. Start with the [current documentation index](../README.md) for operating instructions. Paths mentioned in this record may reflect the former repository layout.
+
 Date: 2026-09-28. Repository: `C:\Users\lil-j\Projects\Cyber Hygiene`.
 Branch: `fix/helm-classification`. Changes remain uncommitted; earlier changes were preserved. No fetch, pull, push, or commit was performed. This report supersedes the earlier handoff where they differ.
 
