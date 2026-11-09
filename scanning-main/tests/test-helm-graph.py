@@ -1,5 +1,6 @@
 import importlib.util
 import json
+from collections import Counter
 from pathlib import Path
 import shutil
 import subprocess
@@ -34,6 +35,107 @@ def discover(root: Path):
     finally:
         sys.argv = old
     return json.loads(output.read_text(encoding="utf-8")), [json.loads(line) for line in entries.read_text(encoding="utf-8").splitlines() if line]
+
+
+def count_yaml_reads(monkeypatch):
+    reads = Counter()
+    original_read_text = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path.suffix.lower() in {".yaml", ".yml"} and path.name != "Chart.yaml":
+            reads[path.resolve()] += 1
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    return reads
+
+
+def test_yaml_inventory_reads_siblings_and_nested_sources_once(tmp_path, monkeypatch):
+    chart(tmp_path, "apps/api", "api")
+    parent = chart(tmp_path, "apps/platform", "platform")
+    nested = chart(tmp_path, "apps/platform/components/nested", "nested")
+    chart(tmp_path, "apps/worker", "worker")
+    (parent / "values.yml").write_text(
+        "services:\n  nestedInstance:\n    chart: ./components/nested\n", encoding="utf-8")
+    (nested / "values.yml").write_text(
+        "services:\n  helper:\n    chart: helper\n    repository: https://charts.example.invalid\n",
+        encoding="utf-8")
+    (tmp_path / "first.yaml").write_text("replicas: 2\n", encoding="utf-8")
+    (tmp_path / "second.yaml").write_text("replicas: 3\n", encoding="utf-8")
+    (tmp_path / "release.yaml").write_text(
+        "services:\n  customer:\n    chart: ./apps/api\n    values: [first.yaml, second.yaml]\n"
+        "---\nservices:\n  admin:\n    chart: ./apps/api\n    values: [second.yaml, first.yaml]\n",
+        encoding="utf-8")
+    sources = {path.resolve() for path in tmp_path.rglob("*")
+               if path.suffix in {".yaml", ".yml"} and path.name != "Chart.yaml"}
+    reads = count_yaml_reads(monkeypatch)
+
+    graph, entries = discover(tmp_path)
+
+    instances = {entry["instance"]: entry for entry in entries if entry.get("name") == "api"}
+    assert set(instances) == {"customer", "admin"}
+    assert all(entry["parent_chart_name"] == "Root" and entry["declared_by"] == "release.yaml"
+               for entry in instances.values())
+    assert instances["customer"]["values"] == [str(tmp_path / "first.yaml"), str(tmp_path / "second.yaml")]
+    assert instances["admin"]["values"] == [str(tmp_path / "second.yaml"), str(tmp_path / "first.yaml")]
+    assert any(reference.get("reference") == "./components/nested"
+               and reference.get("parent_chart_name") == "platform" for reference in graph["references"])
+    assert any(reference.get("reference") == "helper"
+               and reference.get("parent_chart_name") == "nested" for reference in graph["references"])
+    assert reads == Counter({path: 1 for path in sources})
+
+
+def test_yaml_inventory_does_not_reload_malformed_sources(tmp_path, monkeypatch):
+    for name in ("alpha", "beta", "gamma"):
+        chart(tmp_path, name, name)
+    broken = tmp_path / "broken.yaml"
+    broken.write_text("services: [unterminated\n", encoding="utf-8")
+    release = tmp_path / "release.yaml"
+    release.write_text("services:\n  healthy:\n    chart: ./beta\n", encoding="utf-8")
+    reads = count_yaml_reads(monkeypatch)
+
+    _, entries = discover(tmp_path)
+
+    assert any(entry.get("instance") == "healthy" for entry in entries)
+    assert reads[broken.resolve()] == 1
+    assert reads[release.resolve()] == 1
+
+
+def test_yaml_inventory_prunes_skipped_trees_but_reads_extracted_packages(tmp_path, monkeypatch):
+    healthy = chart(tmp_path, "healthy", "healthy")
+    source = chart(tmp_path, "staging/packaged", "packaged")
+    (source / "values.yml").write_text(
+        "services:\n  packageHelper:\n    chart: helper\n    repository: https://charts.example.invalid\n",
+        encoding="utf-8")
+    with tarfile.open(tmp_path / "packaged.tgz", "w:gz") as archive:
+        archive.add(source, arcname="packaged")
+    shutil.rmtree(tmp_path / "staging")
+    chart(tmp_path, "results/ignored", "ignored")
+    chart(healthy, "helm-rendered/ignored-nested", "ignored-nested")
+    skipped = {(tmp_path / "results").resolve(), (healthy / "helm-rendered").resolve()}
+    traversed_skipped = []
+    original_scandir = MODULE.os.scandir
+
+    def scandir(path):
+        if not isinstance(path, int):
+            resolved = Path(path).resolve()
+            if any(resolved == directory or directory in resolved.parents for directory in skipped):
+                traversed_skipped.append(resolved)
+        return original_scandir(path)
+
+    reads = count_yaml_reads(monkeypatch)
+    with monkeypatch.context() as traversal_patch:
+        traversal_patch.setattr(MODULE.os, "scandir", scandir)
+        graph, entries = discover(tmp_path)
+
+    assert {item["chart"] for item in graph["charts"]} == {"healthy", "packaged"}
+    assert any(entry.get("instance") == "packageHelper" for entry in entries)
+    reference, = [item for item in graph["references"] if item.get("instance") == "packageHelper"]
+    assert reference["parent_chart_name"] == "packaged"
+    extracted_values = Path(reference["source_path"])
+    assert ".cats-helm-graph" in extracted_values.parts
+    assert reads[extracted_values.resolve()] == 1
+    assert traversed_skipped == []
 
 
 def test_unconventional_recursive_yaml_references_and_instances(tmp_path):

@@ -56,20 +56,28 @@ def inside(path: Path, roots: list[Path]) -> bool:
     return any(resolved == root.resolve() or root.resolve() in resolved.parents for root in roots)
 
 
-def read_yaml_files(root: Path):
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or any(part in SKIP_DIRS for part in path.relative_to(root).parts):
-            continue
-        if path.suffix.lower() not in {".yaml", ".yml"}:
-            continue
-        try:
-            text = path.read_text(encoding="utf-8-sig")
-            documents = list(yaml.safe_load_all(text))
-        except (OSError, UnicodeDecodeError, yaml.YAMLError):
-            continue
-        for document_index, document in enumerate(documents):
-            if document is not None:
-                yield path, document_index, document
+def source_files(root: Path) -> list[Path]:
+    # Prune generated trees before descending into them. Filtering rglob's
+    # results still walks every generated file, once for every chart.
+    paths = []
+    for directory, names, files in os.walk(root, followlinks=False):
+        names[:] = [name for name in names if name not in SKIP_DIRS]
+        for name in files:
+            path = Path(directory) / name
+            if name not in SKIP_DIRS and path.is_file():
+                paths.append(path)
+    return sorted(paths)
+
+
+def read_yaml_documents(path: Path):
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+        documents = list(yaml.safe_load_all(text))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        return
+    for document_index, document in enumerate(documents):
+        if document is not None:
+            yield document_index, document
 
 
 def chart_meta(chart_path: Path) -> tuple[str, str, str]:
@@ -270,7 +278,9 @@ def main() -> int:
     roots = [root]
 
     charts: dict[tuple[str, str], dict] = {}
-    chart_paths = sorted({path.parent.resolve() for path in root.rglob("Chart.yaml") if inside(path, roots) and not any(part in SKIP_DIRS for part in path.relative_to(root).parts)})
+    file_inventories = {root: source_files(root)}
+    chart_paths = sorted({path.parent.resolve() for path in file_inventories[root]
+                          if path.name == "Chart.yaml" and inside(path, roots)})
     for chart_path in chart_paths:
         name, version, chart_type = chart_meta(chart_path)
         chart_id = chart_identity(chart_path, name, version, {})
@@ -284,9 +294,8 @@ def main() -> int:
     # Packaged charts are first-class artifact inputs even when no YAML file
     # happens to point at them. Extraction is content-addressed and guarded by
     # the archive path/symlink checks in ``extract_package``.
-    package_paths = sorted({path.resolve() for suffix in ("*.tgz", "*.tar.gz", "*.zip")
-                            for path in root.rglob(suffix)
-                            if path.is_file() and not any(part in SKIP_DIRS for part in path.relative_to(root).parts)})
+    package_paths = sorted({path.resolve() for path in file_inventories[root]
+                            if path.name.endswith((".tgz", ".tar.gz", ".zip"))})
     for package_path in package_paths:
         packaged_chart = extract_package(package_path, extraction_root, roots)
         if not packaged_chart or not (packaged_chart / "Chart.yaml").is_file():
@@ -320,20 +329,32 @@ def main() -> int:
             chart["parent_chart_name"] = parent["chart"]
             chart["embedded_dependency"] = (Path(parent["path"]) / "charts") in chart_path.parents
 
-    def source_owner(source_file: Path):
-        candidates = [item for item in charts.values()
-                      if Path(item["path"]).resolve() == source_file.resolve() or
-                      Path(item["path"]).resolve() in source_file.resolve().parents]
+    owners_by_path = {}
+    for chart in charts.values():
+        owners_by_path.setdefault(Path(chart["path"]).resolve(), chart)
+
+    def source_owner(resolved_file: Path):
         # A values file outside a chart is an artifact-level/root occurrence.
         # It must never inherit whichever top-level chart happened to be
-        # traversed first.
-        return max(candidates, key=lambda item: len(Path(item["path"]).parts)) if candidates else None
+        # traversed first. Walk ancestors instead of resolving every chart for
+        # every document; the nearest chart owns the source.
+        return next((owners_by_path[path] for path in (resolved_file, *resolved_file.parents)
+                     if path in owners_by_path), None)
+
+    def document_sources(document_roots: list[Path]):
+        for document_root in document_roots:
+            if document_root not in file_inventories:
+                file_inventories[document_root] = source_files(document_root)
+            for path in file_inventories[document_root]:
+                if path.suffix.lower() in {".yaml", ".yml"} and path.name not in {"Chart.yaml", "Chart.lock"}:
+                    yield path
 
     references: list[dict] = []
     unresolved: list[dict] = []
     queue = list(charts.values())
     visited_sources: set[tuple[str, str]] = set()
     processed_documents: set[tuple[str, int]] = set()
+    processed_files: set[Path] = set()
     while queue and len(charts) < MAX_CHARTS and len(references) < MAX_REFS:
         chart = queue.pop(0)
         chart_path = Path(chart["path"])
@@ -359,72 +380,83 @@ def main() -> int:
         # values. Also inspect the extracted chart, excluded from root walks.
         if chart.get("discovery_method") == "packaged chart" and chart_path not in document_roots:
             document_roots.append(chart_path)
-        documents = (document for document_root in document_roots for document in read_yaml_files(document_root))
-        for source_file, document_index, document in documents:
-            # Chart.yaml/Chart.lock declare dependency edges, not deployable
-            # chart occurrences. In particular an OCI repository is not a
-            # complete artifact reference.
-            if source_file.name in {"Chart.yaml", "Chart.lock"}:
+        for source_file in document_sources(document_roots):
+            resolved_source = source_file.resolve()
+            if resolved_source in processed_files:
                 continue
-            owner = source_owner(source_file)
-            if owner and Path(owner["path"]).resolve() != chart_path.resolve():
+            owner = source_owner(resolved_source)
+            if owner and Path(owner["path"]) != chart_path:
                 continue
-            document_key = (str(source_file.resolve()), document_index)
-            if document_key in processed_documents:
-                continue
-            processed_documents.add(document_key)
-            for candidate in walk_references(document, source_file, root, roots, extraction_root):
-                raw = str(candidate.get("reference") or "")
-                resolved = candidate.get("resolved")
-                relationship_parent = chart["chart_id"] if owner else None
-                ref_entry = {"parent_chart": relationship_parent, "parent_chart_name": chart.get("chart") if owner else "Root", "instance": candidate.get("instance") or "",
-                             "reference": raw, "repository": candidate.get("repository"),
-                             "version": (candidate.get("context") or {}).get("version"), "discovery_method": "recursive YAML reference",
-                             "source_file": canonical_source(source_file, root), "yaml_path": candidate.get("yaml_path") or "—",
-                             "source_path": str(source_file.resolve()), "context": candidate.get("context") or {},
-                             "confidence": "MEDIUM", "resolution_status": "UNRESOLVED"}
-                if resolved:
-                    ref_entry["confidence"] = "HIGH"
-                elif raw.startswith("oci://"):
-                    ref_entry["confidence"] = "HIGH"
-                elif candidate.get("repository") and raw:
-                    ref_entry["confidence"] = "MEDIUM"
-                elif raw.startswith(("http://", "https://")):
-                    # A bare URL is evidence, but is never an automatic
-                    # render candidate without an explicitly configured repo.
-                    ref_entry["confidence"] = "LOW"
-                else:
+            # Ownership and deduplication must precede parsing: a large input
+            # may contain many independent charts and large CRD documents.
+            deferred_documents = False
+            for document_index, document in read_yaml_documents(source_file):
+                owner = source_owner(resolved_source)
+                if owner and Path(owner["path"]) != chart_path:
+                    deferred_documents = True
                     continue
-                references.append(ref_entry)
-                child_path = resolved
-                if child_path and child_path.is_file():
-                    child_path = extract_package(child_path, extraction_root, roots)
-                if child_path and child_path.is_dir() and (child_path / "Chart.yaml").is_file():
-                    child_name, child_version, child_type = chart_meta(child_path)
-                    context = candidate.get("context") or {}
-                    instance = str(candidate.get("instance") or "")
-                    key = (str(child_path), json.dumps({"context": context, "instance": instance}, sort_keys=True, default=str))
-                    if key not in charts and len(charts) < MAX_CHARTS:
-                        child_id = chart_identity(child_path, child_name, child_version, {**context, "__instance": instance})
-                        embedded = bool(relationship_parent and (chart_path / "charts") in child_path.parents)
-                        charts[key] = {"chart_id": child_id, "chart": child_name, "instance": instance, "version": child_version, "path": str(child_path),
-                        "source": canonical_source(child_path, root), "parent": relationship_parent, "parent_chart_name": chart.get("chart") if relationship_parent else "Root", "discovery_method": ref_entry["discovery_method"],
-                            "discovery_source_file": ref_entry["source_file"], "discovery_source_path": str(source_file.resolve()),
-                            "yaml_path": ref_entry["yaml_path"], "reference": raw,
-                            "confidence": ref_entry["confidence"], "resolution": "LOCAL_CHART", "status": "Discovered",
-                            "embedded_dependency": embedded, "chart_type": child_type, "context": context}
-                        queue.append(charts[key])
-                    ref_entry.update(resolution_status="LOCAL_CHART", resolved_path=str(child_path), chart_name=child_name, chart_version=child_version)
-                elif raw.startswith(("oci://", "http://", "https://")) or candidate.get("repository"):
-                    unresolved.append({"type": "Helm Chart", "item": raw, "reason": "External chart resolution is controlled by configured Helm/OCI access and was not available during discovery.",
-                                       "source_file": ref_entry["source_file"], "yaml_path": ref_entry["yaml_path"],
-                                       "repository": ref_entry.get("repository"), "version": ref_entry.get("version"),
-                                       "parent_chart": relationship_parent, "instance": ref_entry.get("instance") or ""})
-                else:
-                    unresolved.append({"type": "Helm Chart", "item": raw, "reason": "Referenced path did not resolve to a chart inside the uploaded artifact.",
-                                       "source_file": ref_entry["source_file"], "yaml_path": ref_entry["yaml_path"],
-                                       "repository": ref_entry.get("repository"), "version": ref_entry.get("version"),
-                                       "parent_chart": relationship_parent, "instance": ref_entry.get("instance") or ""})
+                document_key = (str(resolved_source), document_index)
+                if document_key in processed_documents:
+                    continue
+                processed_documents.add(document_key)
+                for candidate in walk_references(document, source_file, root, roots, extraction_root):
+                    raw = str(candidate.get("reference") or "")
+                    resolved = candidate.get("resolved")
+                    relationship_parent = chart["chart_id"] if owner else None
+                    ref_entry = {"parent_chart": relationship_parent, "parent_chart_name": chart.get("chart") if owner else "Root", "instance": candidate.get("instance") or "",
+                                 "reference": raw, "repository": candidate.get("repository"),
+                                 "version": (candidate.get("context") or {}).get("version"), "discovery_method": "recursive YAML reference",
+                                 "source_file": canonical_source(source_file, root), "yaml_path": candidate.get("yaml_path") or "—",
+                                 "source_path": str(source_file.resolve()), "context": candidate.get("context") or {},
+                                 "confidence": "MEDIUM", "resolution_status": "UNRESOLVED"}
+                    if resolved:
+                        ref_entry["confidence"] = "HIGH"
+                    elif raw.startswith("oci://"):
+                        ref_entry["confidence"] = "HIGH"
+                    elif candidate.get("repository") and raw:
+                        ref_entry["confidence"] = "MEDIUM"
+                    elif raw.startswith(("http://", "https://")):
+                        # A bare URL is evidence, but is never an automatic
+                        # render candidate without an explicitly configured repo.
+                        ref_entry["confidence"] = "LOW"
+                    else:
+                        continue
+                    references.append(ref_entry)
+                    child_path = resolved
+                    if child_path and child_path.is_file():
+                        child_path = extract_package(child_path, extraction_root, roots)
+                    if child_path and child_path.is_dir() and (child_path / "Chart.yaml").is_file():
+                        child_name, child_version, child_type = chart_meta(child_path)
+                        context = candidate.get("context") or {}
+                        instance = str(candidate.get("instance") or "")
+                        key = (str(child_path), json.dumps({"context": context, "instance": instance}, sort_keys=True, default=str))
+                        if key not in charts and len(charts) < MAX_CHARTS:
+                            child_id = chart_identity(child_path, child_name, child_version, {**context, "__instance": instance})
+                            embedded = bool(relationship_parent and (chart_path / "charts") in child_path.parents)
+                            charts[key] = {"chart_id": child_id, "chart": child_name, "instance": instance, "version": child_version, "path": str(child_path),
+                            "source": canonical_source(child_path, root), "parent": relationship_parent, "parent_chart_name": chart.get("chart") if relationship_parent else "Root", "discovery_method": ref_entry["discovery_method"],
+                                "discovery_source_file": ref_entry["source_file"], "discovery_source_path": str(source_file.resolve()),
+                                "yaml_path": ref_entry["yaml_path"], "reference": raw,
+                                "confidence": ref_entry["confidence"], "resolution": "LOCAL_CHART", "status": "Discovered",
+                                "embedded_dependency": embedded, "chart_type": child_type, "context": context}
+                            owners_by_path.setdefault(child_path.resolve(), charts[key])
+                            queue.append(charts[key])
+                        ref_entry.update(resolution_status="LOCAL_CHART", resolved_path=str(child_path), chart_name=child_name, chart_version=child_version)
+                    elif raw.startswith(("oci://", "http://", "https://")) or candidate.get("repository"):
+                        unresolved.append({"type": "Helm Chart", "item": raw, "reason": "External chart resolution is controlled by configured Helm/OCI access and was not available during discovery.",
+                                           "source_file": ref_entry["source_file"], "yaml_path": ref_entry["yaml_path"],
+                                           "repository": ref_entry.get("repository"), "version": ref_entry.get("version"),
+                                           "parent_chart": relationship_parent, "instance": ref_entry.get("instance") or ""})
+                    else:
+                        unresolved.append({"type": "Helm Chart", "item": raw, "reason": "Referenced path did not resolve to a chart inside the uploaded artifact.",
+                                           "source_file": ref_entry["source_file"], "yaml_path": ref_entry["yaml_path"],
+                                           "repository": ref_entry.get("repository"), "version": ref_entry.get("version"),
+                                           "parent_chart": relationship_parent, "instance": ref_entry.get("instance") or ""})
+            # Empty/malformed sources are also attempted only once. If a
+            # reference introduced a nearer owner mid-file, leave remaining
+            # documents available for that chart's turn.
+            if not deferred_documents:
+                processed_files.add(resolved_source)
 
     # Resolve the local portion of standard dependency declarations after the
     # recursive walk. Vendored directories are already in ``charts``; this
