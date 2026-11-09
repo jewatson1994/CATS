@@ -144,7 +144,7 @@ After installing a CATS image containing this fix, update the three node-related
 settings above in HQ's `.env`, then recreate these services to load them:
 
 ```sh
-docker compose up -d --force-recreate --wait portal portal-control provisioning-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --force-recreate --wait portal portal-control provisioning-worker
 ```
 
 The provisioning worker inherits the expected pin from the existing shared
@@ -208,10 +208,10 @@ mandatory staged-release setting unless deliberately retaining that path.
 
 ```sh
 # Select the newly built/imported image in the existing .env first.
-docker compose config --quiet
-docker compose up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
-docker compose ps
-docker compose logs --tail=100 discovery-worker remediation-worker security-data-worker export-worker provisioning-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml config --quiet
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --force-recreate --wait portal portal-control oci-proxy discovery-worker scan-worker patch-worker remediation-worker risk-worker security-data-worker export-worker provisioning-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml ps
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml logs --tail=100 discovery-worker remediation-worker security-data-worker export-worker provisioning-worker
 ```
 
 Discovery uses the same `CATS_IMAGE`. Its image must contain any newly enabled
@@ -255,7 +255,7 @@ CATS_CANDIDATE_VERIFICATION_CONCURRENCY=5
 ```
 
 Recreate the affected services with
-`docker compose up -d --force-recreate --wait scan-worker patch-worker remediation-worker`.
+`docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --force-recreate --wait scan-worker patch-worker remediation-worker`.
 These are two independent ceilings, allowing up to ten jobs across those queues.
 The remediation limit includes campaign image patches, plans, verification,
 delivery and other remediation work; it is not five additional slots for each

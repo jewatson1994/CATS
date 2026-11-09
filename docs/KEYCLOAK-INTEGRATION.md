@@ -412,14 +412,14 @@ Restart the portal, then sign in with the existing local administrator account. 
 After changing the portal source, requirements, compose values, or templates:
 
 ```powershell
-docker compose up -d --build portal
-docker compose logs --tail=200 portal
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --build portal
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml logs --tail=200 portal
 ```
 
 For a clean local identity-mode check:
 
 ```powershell
-docker compose exec portal python -c "import os; print(os.getenv('CATS_IDENTITY_MODE', 'local'))"
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml exec portal python -c "import os; print(os.getenv('CATS_IDENTITY_MODE', 'local'))"
 ```
 
 Do not place the client secret in the repository or in a public package. Add it only in the target environment’s secret configuration.

@@ -22,7 +22,7 @@ Supply these environment variables through your deployment secret mechanism or a
 Build and launch from the repository root:
 
 ```sh
-docker compose --env-file /secure/validator.env -f compose.validator.yml up -d --build
+docker compose --env-file /secure/validator.env -p cats-validator -f templates/compose.validator.yaml up -d --build
 ```
 
 The image pins Docker CLI 27.5.1, Kind 0.27.0, kubectl 1.32.2, and Helm 3.17.1. All downloads undergo SHA256 verification; Kind, Kubernetes, and Helm checksums come from their official release endpoints. Build-time internet access is needed for these tools, OS packages, and Python dependencies. Review and update version pins as part of appliance maintenance.
@@ -35,6 +35,8 @@ Default execution is strict. `CATS_VALIDATOR_EXECUTION_MODE=permissive` is an op
 
 An uploaded administrator CA bundle persists as `ca-bundle.pem` in the state volume and is used for worker subprocess HTTPS trust. Neither this bundle nor `SSL_CERT_FILE` installs trust into the host Docker daemon or workload images; configure those trust stores separately when required.
 
+For an existing validator, replace `cats-validator` with its original project name so its state volume remains attached.
+
 ## Connect and operate
 
 1. Open `https://<validator-hostname>:8444` through your management network and sign in using the bootstrap local account. Change its password in **Local credentials**.
@@ -43,4 +45,4 @@ An uploaded administrator CA bundle persists as `ca-bundle.pem` in the state vol
 4. On the appliance page, select **Test appliance readiness** to check local tooling, Docker and disk capacity. Main CATS tests the connection in the production-to-project direction; no reverse production connection is attempted.
 5. Submit a small deployment validation from a service in CATS. Confirm the job appears under **Recent jobs**, completes, and reports successful cleanup. Validate your NSG rules independently; a readiness test does not prove network isolation.
 
-Check both HTTPS services after startup using the provisioned trust roots; validation API requests must include an allowlisted client certificate. Confirm the administrator bootstrap and persisted account work, then submit a small test job from production and verify its result. `docker compose -f compose.validator.yml logs` reports startup failures. Removing the named state volume deletes job and administrator state; preserve it when updating the image.
+Check both HTTPS services after startup using the provisioned trust roots; validation API requests must include an allowlisted client certificate. Confirm the administrator bootstrap and persisted account work, then submit a small test job from production and verify its result. `docker compose --env-file /secure/validator.env -p cats-validator -f templates/compose.validator.yaml logs` reports startup failures. Removing the named state volume deletes job and administrator state; preserve it when updating the image.

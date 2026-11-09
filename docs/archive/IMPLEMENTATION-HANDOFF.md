@@ -1,5 +1,7 @@
 # CATS implementation handoff — 2026-09-28
 
+> Historical implementation record, retained for traceability. Status statements and acceptance checklists describe the work when written; they are not a current release qualification. Start with the [current documentation index](../README.md) for operating instructions. Paths mentioned in this record may reflect the former repository layout.
+
 Later work supersedes the portable-bundle limitations below. See [SERVICE-DEFINITION-IMPLEMENTATION.md](SERVICE-DEFINITION-IMPLEMENTATION.md) for the current input-only portability contract, service-definition implementation, and local acceptance checklist. This file records the earlier batch.
 
 ## Status

@@ -1,5 +1,7 @@
 # Helm acquisition resource policy
 
+> Historical implementation record, retained for traceability. Status statements and acceptance checklists describe the work when written; they are not a current release qualification. Start with the [current documentation index](../README.md) for operating instructions. Paths mentioned in this record may reflect the former repository layout.
+
 HTTP chart archives are copied in at most 1 MiB chunks to private temporary
 files, using `CATS_PUBLIC_MAX_CHART_BYTES` (default 512 MiB) as the compressed
 byte limit, including responses without Content-Length. Owned downloads close

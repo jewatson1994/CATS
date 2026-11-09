@@ -23,13 +23,13 @@ For default rootful Docker deployments, the host registry-auth directory and `co
 Before replacing containers, check access using the new image and the actual Compose mount:
 
 ```bash
-docker compose run --rm --no-deps --entrypoint /opt/cats-venv/bin/python scan-worker -m app.scan_worker --check-registry-auth
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python scan-worker -m app.scan_worker --check-registry-auth
 ```
 
 For an existing container:
 
 ```bash
-docker compose exec -T scan-worker /opt/cats-venv/bin/python -m app.scan_worker --check-registry-auth
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml exec -T scan-worker /opt/cats-venv/bin/python -m app.scan_worker --check-registry-auth
 ```
 
 Substitute your deployment's service name if it uses `scan_worker`. The check reads and validates the configuration without printing credentials or changing host permissions. An absent `config.json` permits anonymous pulls. The local `build.ps1` runs this preflight before replacing services.

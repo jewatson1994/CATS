@@ -29,7 +29,7 @@ def test_global_header_uses_runtime_value_without_hardcoded_release():
 def test_build_and_compose_propagate_one_requested_image_version():
     root = Path(__file__).parents[2]
     build = runpy.run_path(str(root / "scripts" / "build-cats-release.py"))
-    compose = (root / "compose.yaml").read_text(encoding="utf-8")
+    compose = (root / "templates/compose.local.yaml").read_text(encoding="utf-8")
     dockerfile = (root / "cats-image" / "Dockerfile.all-in-one").read_text(encoding="utf-8")
     version = "9.8.7"
     commands = build["commands"](SimpleNamespace(image="unified", scanner_base=None,

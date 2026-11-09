@@ -1,11 +1,12 @@
 """Validate both shipped deployment topologies without a Docker daemon."""
 from pathlib import Path
+import re
 
 import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOYMENTS = (ROOT / "compose.yaml", ROOT / "templates/compose.main.yaml")
+DEPLOYMENTS = (ROOT / "templates/compose.local.yaml", ROOT / "templates/compose.main.yaml")
 
 
 @pytest.fixture(params=DEPLOYMENTS, ids=("canonical", "main-template"))
@@ -46,13 +47,18 @@ def test_internal_control_listener_and_network_connectivity(deployment):
         assert portal["ports"] == ["${CATS_PORT:-8080}:8000"]
 
 
-def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
+def test_scanner_identity_and_disk_backed_temporary_storage(deployment, request):
     worker = deployment["services"]["scan-worker"]
     assert worker["user"] == "0:0"
     assert worker["cap_drop"] == ["ALL"]
     assert set(worker["cap_add"]) == {"SETUID", "SETGID", "CHOWN", "KILL"}
     assert worker["read_only"] is True
-    assert worker["security_opt"] == ["no-new-privileges:true", "seccomp=./deploy/discovery-seccomp.json"]
+    assert worker["security_opt"][0] == "no-new-privileges:true"
+    assert len(worker["security_opt"]) == 2
+    seccomp = worker["security_opt"][1].removeprefix("seccomp=")
+    compose = request.node.callspec.params["deployment"]
+    project_directory = ROOT if compose == DEPLOYMENTS[0] else compose.parent
+    assert (project_directory / seccomp).resolve() == ROOT / "deploy/discovery-seccomp.json"
     assert worker["environment"]["CATS_SCAN_SCANNER_UID"] == "10002"
     assert worker["environment"]["CATS_SCAN_SCANNER_GID"] == "10002"
     assert worker["environment"]["TMPDIR"] == "/var/lib/cats-scan/tmp"
@@ -73,10 +79,18 @@ def test_scanner_identity_and_disk_backed_temporary_storage(deployment):
 def test_required_worker_settings_are_equivalent():
     documents = [yaml.safe_load(path.read_text(encoding="utf-8")) for path in DEPLOYMENTS]
     workers = [document["services"]["scan-worker"] for document in documents]
+    # Local commands explicitly use the checkout as their project directory;
+    # the HTTPS template resolves its default host paths from templates/.
+    for compose, worker in zip(DEPLOYMENTS, workers):
+        project_directory = ROOT if compose == DEPLOYMENTS[0] else compose.parent
+        auth = next(mount for mount in worker["volumes"] if isinstance(mount, dict))
+        match = re.fullmatch(r"\$\{CATS_SCAN_REGISTRY_AUTH_SOURCE:-([^}]+)\}", auth["source"])
+        assert match
+        auth["source"] = str((project_directory / match.group(1)).resolve())
     for key in ("environment", "networks", "volumes", "healthcheck", "cap_add", "tmpfs"):
         assert workers[0][key] == workers[1][key], key
 
 
 def test_environment_examples_match_worker_concurrency_default():
-    for path in (ROOT / ".env.example", ROOT / "portal/.env.example", ROOT / "templates/main.env.example"):
+    for path in (ROOT / "templates/local.env.example", ROOT / "portal/.env.example", ROOT / "templates/main.env.example"):
         assert "CATS_SCAN_CONCURRENCY=2" in path.read_text(encoding="utf-8").splitlines()

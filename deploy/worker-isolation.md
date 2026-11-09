@@ -59,12 +59,12 @@ these steps on the Linux Docker host, from the matching release checkout:
 sudo install -m 0644 deploy/cats-worker-actions.apparmor /etc/apparmor.d/cats-worker-actions
 sudo apparmor_parser --replace /etc/apparmor.d/cats-worker-actions
 sudo aa-status
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml config --quiet
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml up -d --no-build --pull never --force-recreate discovery-worker scan-worker patch-worker remediation-worker
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml config --quiet
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml up -d --no-build --pull never --force-recreate discovery-worker scan-worker patch-worker remediation-worker
 ```
 
 For the TLS deployment use `--env-file /secure/cats.env -f templates/compose.main.yaml`
-in place of `-f compose.yaml`. Keep the template in `templates/`: its bundled
+in place of `--project-directory . --env-file .env -f templates/compose.local.yaml`. Keep the template in `templates/`: its bundled
 paths resolve relative to that directory. The [guided installer](../docs/guided-setup.md)
 detects AppArmor, loads this profile and saves a launcher with the correct files.
 Keep the AppArmor overlay on every deployment/recreate, including
@@ -85,11 +85,11 @@ profile again if the Bubblewrap version or host security stack changes.
 Before accepting work, run each preflight with the same Compose files:
 
 ```sh
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python discovery-worker -m app.rendering --probe
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python scan-worker -m app.rendering --probe
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python patch-worker -m app.rendering --probe
-docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python remediation-worker -m app.rendering --probe
-docker inspect --format '{{.Name}} {{.AppArmorProfile}} {{json .HostConfig.SecurityOpt}}' $(docker compose -f compose.yaml -f deploy/compose.worker-apparmor.yaml ps -q discovery-worker scan-worker patch-worker remediation-worker)
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python discovery-worker -m app.rendering --probe
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python scan-worker -m app.rendering --probe
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python patch-worker -m app.rendering --probe
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml run --rm --no-deps --entrypoint /opt/cats-venv/bin/python remediation-worker -m app.rendering --probe
+docker inspect --format '{{.Name}} {{.AppArmorProfile}} {{json .HostConfig.SecurityOpt}}' $(docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.worker-apparmor.yaml ps -q discovery-worker scan-worker patch-worker remediation-worker)
 ```
 
 On failure, inspect the worker health output and host kernel audit log

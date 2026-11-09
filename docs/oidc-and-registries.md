@@ -21,21 +21,13 @@ The key is intentionally an environment-level secret. If it is replaced, existin
 5. Save, then use **Test OIDC discovery**. The test performs discovery only and records a sanitized status.
 6. Users can use the provider button on the login page. Group and role claims are mapped through the existing CATS provisioning rules.
 
-The canonical Compose stack includes local Keycloak. Set its administrator
-password in `.env`, then start the normal stack:
+CATS does not bundle an identity provider. Configure an independently operated Keycloak or another compatible OIDC provider reachable by both the portal and users' browsers. For an example Keycloak deployment, use these externally reachable HTTPS URLs, replacing the hostnames and realm:
 
-```powershell
-docker compose up -d --wait
-```
+- **Issuer URL:** `https://identity.example.com/realms/cats`
+- **Redirect URI:** `https://cats.example.com/auth/oidc/callback`
+- **Post-logout redirect URI:** `https://cats.example.com/login`
 
-Keycloak is then available to the browser at `http://localhost:8081` and to CATS on the Compose network at `http://keycloak:8080`. Create a realm and client in Keycloak, then configure:
-
-- **Issuer URL:** `http://keycloak:8080/realms/cats`
-- **Browser issuer URL:** `http://localhost:8081/realms/cats`
-- **Redirect URI:** `http://localhost:8080/auth/oidc/callback`
-- **Post-logout redirect URI:** `http://localhost:8080/login`
-
-The internal issuer prevents the CATS container from trying to reach itself through `localhost`. The browser issuer rewrites only the browser-facing authorization URL. HTTP issuers require the explicit local-development setting `CATS_OIDC_ALLOW_INSECURE_HTTP=true` and must not be used in production.
+Register the exact redirect URLs with the provider and configure its CA trust if needed. See [Keycloak integration](KEYCLOAK-INTEGRATION.md) for client and claim mapping. HTTP issuers require the explicit local-development setting `CATS_OIDC_ALLOW_INSECURE_HTTP=true` and must not be used in production.
 
 ## OIDC clock tolerance
 

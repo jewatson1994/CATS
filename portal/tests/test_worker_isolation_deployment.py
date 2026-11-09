@@ -9,12 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKERS = ("discovery-worker", "scan-worker", "patch-worker", "remediation-worker")
 
 
-@pytest.mark.parametrize("path", ["compose.yaml", "templates/compose.main.yaml"])
+@pytest.mark.parametrize("path", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_every_action_worker_has_setup_policy_and_runtime_probe(path):
     services = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]
     for name in WORKERS:
         service = services[name]
-        seccomp = "../deploy/discovery-seccomp.json" if path.startswith("templates/") else "./deploy/discovery-seccomp.json"
+        seccomp = "../deploy/discovery-seccomp.json" if path == "templates/compose.main.yaml" else "./deploy/discovery-seccomp.json"
         assert service["security_opt"] == ["no-new-privileges:true", "seccomp=" + seccomp]
         assert not service.get("privileged", False)
         assert "SYS_ADMIN" not in service.get("cap_add", [])

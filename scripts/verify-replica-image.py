@@ -144,8 +144,8 @@ def run_smoke(image: str, repo: Path, timeout: int) -> None:
         env_file.write_text("", encoding="utf-8")
         # An explicit empty env file prevents this checkout's .env from changing
         # the generated smoke deployment or importing real site credentials.
-        resolved = docker("compose", "--project-name", project, "--env-file", str(env_file),
-                          "--file", str(repo / "compose.replica.yaml"), "config", "--format", "json")
+        resolved = docker("compose", "--project-directory", str(repo), "--project-name", project, "--env-file", str(env_file),
+                          "--file", str(repo / "templates/compose.replica.external-ingress.yaml"), "config", "--format", "json")
         config = isolated_config(json.loads(resolved.stdout), image=image, project=project)
         config_file = folder / "compose.json"
         descriptor = os.open(config_file, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)

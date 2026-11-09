@@ -108,7 +108,7 @@ The pre-existing README change and untracked training work are outside this impl
 - `.env.example`
 - `build.ps1`
 - `cats-image/Dockerfile.all-in-one`
-- `compose.yaml`
+- `templates/compose.local.yaml`
 - `docs/dedicated-scan-worker.md`
 - `docs/scan-worker-remediation-completion.md`
 - `portal/.env.example`

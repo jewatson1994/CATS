@@ -57,7 +57,7 @@ def test_selftest_requires_observed_ready_workload(pods):
 def test_compose_keeps_socket_out_of_hq_and_preserves_worker():
     import yaml
     root = Path(__file__).resolve().parents[2]
-    for filename in ('compose.yaml', 'templates/compose.main.yaml'):
+    for filename in ('templates/compose.local.yaml', 'templates/compose.main.yaml'):
         services = yaml.safe_load((root / filename).read_text(encoding='utf-8-sig'))['services']
         assert not any('docker.sock' in str(volume) for volume in services['portal']['volumes'])
         assert any('docker.sock' in str(volume) for volume in services['patch-worker']['volumes'])

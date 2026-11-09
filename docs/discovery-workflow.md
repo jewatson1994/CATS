@@ -30,12 +30,12 @@ GitLab imports are disabled until an administrator sets `CATS_DISCOVERY_GITLAB_S
 CATS_DISCOVERY_GITLAB_SOURCES=https://gitlab.com/gitlab-org/charts/gitlab,https://gitlab.example.com
 ```
 
-Recreate the public portal after editing the setting. For the root stack run `docker compose up -d --no-deps --force-recreate portal`. For the main deployment template run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate portal`. The portal needs direct HTTPS access to the GitLab API. For private Helm dependencies found inside the snapshot, the Discovery worker uses its existing approved sources, scoped OCI registry credentials and configured chart mirrors.
+Recreate the public portal after editing the setting. For the local stack run `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-deps --force-recreate portal`. For the main deployment template run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate portal`. The portal needs direct HTTPS access to the GitLab API. For private Helm dependencies found inside the snapshot, the Discovery worker uses its existing approved sources, scoped OCI registry credentials and configured chart mirrors.
 
-The portal uses system trust and certificates saved under **Administration → Trusted CA certificates**. For an internal GitLab instance, upload the issuing CA's public PEM certificate there. Alternatively, to supply the CA through Compose, set `CATS_DISCOVERY_GITLAB_CA_FILE` to the absolute host path of the PEM CA bundle. Include the supplied override when creating the portal and on subsequent Compose updates. It mounts the file read-only into the portal. For the main deployment template, substitute `--env-file /secure/cats.env -f templates/compose.main.yaml` for `-f compose.yaml`.
+The portal uses system trust and certificates saved under **Administration → Trusted CA certificates**. For an internal GitLab instance, upload the issuing CA's public PEM certificate there. Alternatively, to supply the CA through Compose, set `CATS_DISCOVERY_GITLAB_CA_FILE` to the absolute host path of the PEM CA bundle. Include the supplied override when creating the portal and on subsequent Compose updates. It mounts the file read-only into the portal. For the main deployment template, substitute `--env-file /secure/cats.env -f templates/compose.main.yaml` for `--project-directory . --env-file .env -f templates/compose.local.yaml`.
 
 ```sh
-docker compose -f compose.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d --no-deps --force-recreate portal
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.discovery-gitlab-ca.yaml up -d --no-deps --force-recreate portal
 ```
 
 ## Helm charts declared in values.yaml
@@ -65,7 +65,7 @@ The wildcard also permits HTTPS chart downloads, CDN redirects and public anonym
 
 Private OCI registry credentials remain limited to their configured namespaces. To send those credentials to a separate bearer-token service, explicitly list its HTTPS origin in `CATS_DISCOVERY_HELM_TOKEN_ORIGINS`, for example `["https://auth.registry.example"]`. An unlisted token service may be contacted anonymously; the wildcard does not authorize forwarding private registry credentials to it.
 
-After editing the environment file, recreate the worker and retry Discovery. For the root stack, run `docker compose up -d --no-deps --force-recreate discovery-worker`. For the main deployment template, run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate discovery-worker`.
+After editing the environment file, recreate the worker and retry Discovery. For the local stack, run `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --no-deps --force-recreate discovery-worker`. For the main deployment template, run `docker compose --env-file /secure/cats.env -f templates/compose.main.yaml up -d --no-deps --force-recreate discovery-worker`.
 
 ### Release a service distribution
 

@@ -1,5 +1,7 @@
 # Service definitions and portable inputs — current implementation
 
+> Historical implementation record, retained for traceability. Status statements and acceptance checklists describe the work when written; they are not a current release qualification. Start with the [current documentation index](../README.md) for operating instructions. Paths mentioned in this record may reflect the former repository layout.
+
 This document supersedes the portable-bundle status and acceptance criteria in `IMPLEMENTATION-HANDOFF.md` and `FOLLOWUP-IMPLEMENTATION-HANDOFF.md`. A portable service is authoritative input for a fresh assessment, not a backup of generated CATS output.
 
 ## Architecture and use

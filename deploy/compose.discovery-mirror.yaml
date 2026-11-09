@@ -1,5 +1,5 @@
 # Opt-in administrator-managed, read-only offline artifact mirror.
-# docker compose -f compose.yaml -f deploy/compose.discovery-mirror.yaml up -d
+# docker compose --project-directory . --env-file .env -f templates/compose.local.yaml -f deploy/compose.discovery-mirror.yaml up -d
 services:
   discovery-worker:
     environment:

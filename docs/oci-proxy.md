@@ -4,16 +4,16 @@ The CATS OCI facade is included in the main Compose stack and serves approved ar
 
 ## Deployment
 
-Build or load the CATS image containing this feature and configure the normal deployment environment. Both `compose.yaml` and `templates/compose.main.yaml` include `oci-proxy` by default. For a shared deployment, use the [main deployment template](../templates/README.md#main-cats) with Docker Compose v2 (`docker compose`): it includes Nginx and its configuration in one Compose file, with the portal and OCI proxy on distinct HTTPS hostnames sharing host port 443. Set the required `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME`, configure DNS, and provide matching certificates before startup. Follow [HTTPS setup and migration](nginx-ingress.md) when upgrading an existing installation.
+Build or load the CATS image containing this feature and configure the normal deployment environment. Both `templates/compose.local.yaml` and `templates/compose.main.yaml` include `oci-proxy` by default. For a shared deployment, use the [main deployment template](../templates/README.md#main-cats) with Docker Compose v2 (`docker compose`): it includes Nginx and its configuration in one Compose file, with the portal and OCI proxy on distinct HTTPS hostnames sharing host port 443. Set the required `CATS_PORTAL_HOSTNAME` and `CATS_OCI_HOSTNAME`, configure DNS, and provide matching certificates before startup. Follow [HTTPS setup and migration](nginx-ingress.md) when upgrading an existing installation.
 
-The repository-root `compose.yaml` remains the local HTTP stack. From the repository root, start that stack with:
+The local `templates/compose.local.yaml` remains the local HTTP stack. From the repository root, start that stack with:
 
 ```sh
-docker compose config --quiet
-docker compose up -d --wait
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml config --quiet
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up -d --wait
 ```
 
-No OCI overlay is required for either file. `compose.oci-proxy.yml` remains a no-op compatibility file so existing commands that include it continue to work with the main Compose file.
+No OCI overlay is required for either file. The former `compose.oci-proxy.yml` was a no-op and has been removed. Remove it from existing `COMPOSE_FILE` settings and `-f` lists.
 
 The proxy uses the same `CATS_IMAGE`, database, and `CATS_CONFIG_ENCRYPTION_KEY` as the portal. Its separate named `oci_proxy_cache` volume survives restarts and service recreation. It has no Docker socket, privileged execution, or registry storage backend. In the deployment template, the application serves HTTPS privately on port 5000 and Nginx passes through TLS from host port 443; neither backend publishes a host port. Clients use `registry.example.com` (replace with your configured hostname), without `:5000`, and must trust its certificate. The root local stack instead publishes HTTP only on host loopback at `127.0.0.1:5000` by default (`CATS_OCI_PORT` changes that host port). Do not send machine credentials over a public HTTP connection.
 
@@ -87,7 +87,7 @@ does not rule out this database lock chain.
 If PostgreSQL activity shows proxy startup waiting on schema DDL and blocking page
 queries, stop `oci-proxy` to release its migration transaction. Keep it stopped
 until an image containing the startup migration fix is deployed; a normal
-`docker compose up` will start the old image again. Updated images retain existing
+`docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up` will start the old image again. Updated images retain existing
 triggers, defaults, and indexes. Actual schema changes have a five-second lock
 timeout after acquiring the migration advisory lock. A timeout rolls back the
 whole migration and fails startup, rather than serving with a partially upgraded
@@ -99,12 +99,12 @@ upgrade during a quiet period before restarting the affected service.
 To take the proxy out of service immediately, stop it:
 
 ```sh
-docker compose stop oci-proxy
+docker compose --project-directory . --env-file .env -f templates/compose.local.yaml stop oci-proxy
 ```
 
-When using the deployment template, include your existing `--env-file` and `-f templates/compose.main.yaml` arguments. Stopping or removing the container does not disable this default service: a later normal `docker compose up` starts it again. Keep it stopped during the rollback and account for it in subsequent deployment commands.
+When using the HTTPS deployment template, replace `--project-directory . --env-file .env -f templates/compose.local.yaml` with your existing `--env-file /secure/cats.env -f templates/compose.main.yaml` arguments, substituting your environment path. Stopping or removing the container does not disable this default service: a later normal `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml up` starts it again. Keep it stopped during the rollback and account for it in subsequent deployment commands.
 
-Remove its reverse-proxy route and revoke its machine credentials. Preserve the cache volume for investigation or later reuse; deleting it is optional and only removes reproducible upstream content. The normal portal, workers, database, and Harbor remain in place. Do not use `docker compose down -v` as a proxy rollback because it can remove unrelated persisted services and data. Reverting clients to direct Harbor access requires an explicit access-policy decision; do not automatically bypass compliance enforcement.
+Remove its reverse-proxy route and revoke its machine credentials. Preserve the cache volume for investigation or later reuse; deleting it is optional and only removes reproducible upstream content. The normal portal, workers, database, and Harbor remain in place. Do not use `docker compose --project-directory . --env-file .env -f templates/compose.local.yaml down -v` as a proxy rollback because it can remove unrelated persisted services and data. Reverting clients to direct Harbor access requires an explicit access-policy decision; do not automatically bypass compliance enforcement.
 
 
 ## Reassessment, renewal and verification
@@ -128,10 +128,10 @@ Use the existing evidence and offline bundle downloads at `/api/cyber-approvals/
 
 `CATS_MODE=full` remains the default for existing installations. Deploy a replica with a separate database and storage; do not change an authoritative installation into a replica by toggling its environment. The replica is a read-only evidence browser and OCI distribution service. Its local accounts, source configuration, machine credentials and explicitly approved Cyber overrides are writable; imported services, findings, approvals, POA&Ms and evidence remain immutable through the API, including for administrators.
 
-Copy `.env.replica.example` to `.env.replica`, set unique database and bootstrap passwords, and generate a persistent Fernet encryption key (for example, `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`). Keep this key with the backup secrets. Load the same published full Linux amd64 image used for main CATS and select it with `CATS_IMAGE`. Existing replica settings can use `CATS_REPLICA_IMAGE` as a fallback when `CATS_IMAGE` is unset or blank. Load `postgres:16` too, then use the standalone file:
+Copy `templates/replica.external-ingress.env.example` to `.env.replica`, set unique database and bootstrap passwords, and generate a persistent Fernet encryption key (for example, `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`). Keep this key with the backup secrets. Load the same published full Linux amd64 image used for main CATS and select it with `CATS_IMAGE`. Existing replica settings can use `CATS_REPLICA_IMAGE` as a fallback when `CATS_IMAGE` is unset or blank. Load `postgres:16` too, then use the standalone file:
 
 ```sh
-docker compose --env-file .env.replica -f compose.replica.yaml up -d --wait --pull never
+docker compose --project-directory . --env-file .env.replica -f templates/compose.replica.external-ingress.yaml up -d --wait --pull never
 ```
 
 Do not merge this file with the full Compose stack. It fixes `CATS_MODE=replica` and starts only PostgreSQL, the portal and the OCI proxy. It does not start scan, patch, discovery, deployment-validation, intelligence refresh, maintenance or export workers; it does not mount the Docker socket or require scanner databases. Database migrations and authentication still run. Synchronization runs in the background and does not block portal startup on registry availability. The shared image contains the full scanner/validator toolset and checksum-pinned Cosign verifier, while replica runtime mode skips assessment and intelligence initialization. The replica Compose file has no build context; no separate replica image build is needed.

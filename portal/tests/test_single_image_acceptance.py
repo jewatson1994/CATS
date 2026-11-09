@@ -28,7 +28,8 @@ def test_acceptance_defaults_to_one_image_and_one_build(tmp_path):
     # the full image, including when callers choose a different full-image tag.
     (tmp_path / "cats-image").mkdir()
     (tmp_path / "cats-image/Dockerfile.all-in-one").touch()
-    (tmp_path / "compose.yaml").touch()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates/compose.local.yaml").touch()
     _, args = stack.parse_args(["--repo", str(tmp_path), "--workspace", str(tmp_path / "workspace"),
                                "--full-image", "cats:qualification", "--provision", "--build"])
     calls = []

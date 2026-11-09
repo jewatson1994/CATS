@@ -64,7 +64,7 @@ def test_offline_companion_includes_exact_policy_and_image(tmp_path, monkeypatch
         release.export_discovery(output, 'discovery:release')
 
 
-@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+@pytest.mark.parametrize("filename", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_discovery_uses_shared_image_with_isolated_worker_entrypoint(filename):
     import yaml
     root = Path(__file__).resolve().parents[2]
@@ -80,7 +80,7 @@ def test_discovery_uses_shared_image_with_isolated_worker_entrypoint(filename):
     assert "docker.sock" not in str(worker.get("volumes", []))
 
 
-@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+@pytest.mark.parametrize("filename", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_discovery_large_input_deployment_settings(filename):
     import yaml
     root = Path(__file__).resolve().parents[2]
@@ -94,13 +94,13 @@ def test_discovery_large_input_deployment_settings(filename):
     assert "discovery_scratch:/tmp" in worker["volumes"]
     assert not worker.get("tmpfs")
     assert "discovery_scratch" in deployment["volumes"]
-    example = "templates/main.env.example" if filename.startswith("templates/") else ".env.example"
+    example = "templates/main.env.example" if filename == "templates/compose.main.yaml" else "templates/local.env.example"
     settings = (root / example).read_text().splitlines()
     for suffix in ("UPLOAD_BYTES", "FILE_BYTES", "EXTRACTED_BYTES", "FILES", "RENDERED_BYTES"):
         assert "CATS_DISCOVERY_MAX_" + suffix + "=0" in settings
 
 
-@pytest.mark.parametrize("filename", ["compose.yaml", "templates/compose.main.yaml"])
+@pytest.mark.parametrize("filename", ["templates/compose.local.yaml", "templates/compose.main.yaml"])
 def test_gitlab_import_settings_apply_only_to_public_portal(filename):
     import yaml
     root = Path(__file__).resolve().parents[2]

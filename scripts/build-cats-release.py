@@ -76,7 +76,7 @@ def export_discovery(output, reference):
         'Set CATS_IMAGE=' + saved_reference + ' in the CATS deployment environment.\n'
         'Copy deploy/discovery-seccomp.json and deploy/discovery-mirror/manifest.json into the matching CATS deployment paths.\n'
         'Optionally copy deploy/compose.discovery-mirror.yaml and set CATS_DISCOVERY_MIRROR_DIR to your verified local mirror.\n'
-        'Add -f deploy/compose.discovery-mirror.yaml after -f compose.yaml to enable that read-only mirror.\n'
+        'Add -f deploy/compose.discovery-mirror.yaml after your selected templates/compose.*.yaml to enable that read-only mirror.\n'
         'On AppArmor hosts, follow deploy/worker-isolation.md to load cats-worker-actions.apparmor and keep compose.worker-apparmor.yaml enabled.\n'
         'Run the four isolated-action preflights in that guide before accepting work.\n'
         'Start the matching CATS Compose release with --no-build --pull never.\n', encoding='utf-8')
