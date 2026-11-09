@@ -44,6 +44,7 @@ def api(monkeypatch, tmp_path):
     engine = create_engine('sqlite://', connect_args={'check_same_thread':False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     monkeypatch.setenv('CATS_DISCOVERY_UPLOAD_ROOT', str(tmp_path))
+    monkeypatch.setenv('CATS_DISCOVERY_RENDER_CACHE_DIR', str(tmp_path / 'render-cache'))
     with Session(engine) as db:
         db.add_all([Service(id=1, service_key='one', name='One'), Service(id=2, service_key='two', name='Two'),
             Group(id=1, name='One group'), Group(id=2, name='Two group')])
@@ -249,7 +250,7 @@ def test_worker_checks_source_hash_before_rendering(tmp_path,monkeypatch,api):
     with encrypted_writer(folder/'images.txt','a'*32) as stream:
         stream.write(b'nginx:1.2')
     with pytest.raises(JobError,match='integrity'):
-        worker.handle(SimpleNamespace(check=lambda:None,stage=lambda *args:None,session_factory=lambda: nullcontext(api[1])),{'source_id':'a'*32,'filename':'images.txt','source_hash':'0'*64})
+        worker.handle(SimpleNamespace(check=lambda:None,stage=lambda *args:None,session_factory=lambda: nullcontext(api[1])),{'source_id':'a'*32,'filename':'images.txt','source_hash':'0'*64,'group_id':1})
 
 
 def test_upload_and_reference_admission_are_group_scoped(api):
@@ -427,6 +428,7 @@ def test_expired_retry_requires_reupload(api):
 
 def test_retention_preserves_active_sibling_and_inventory(api):
     from app.discovery_retention import cleanup_sources
+    from app.discovery_render_cache import cache_directory
     client,db,_=api
     old,item=job(db)
     old.created_at=utcnow()-timedelta(days=2)
@@ -435,12 +437,14 @@ def test_retention_preserves_active_sibling_and_inventory(api):
     folder.mkdir()
     source=folder/'images.txt'
     source.write_text('nginx:1.2')
+    cached = cache_directory() / (old.payload['source_id'] + '-' + '1' * 64 + '.cache')
+    cached.parent.mkdir(); cached.write_bytes(b'encrypted render')
     db.commit()
     factory=lambda:Session(db.get_bind())
-    assert cleanup_sources(factory) == 0 and source.exists()
+    assert cleanup_sources(factory) == 0 and source.exists() and cached.exists()
     active.status='completed'
     db.commit()
-    assert cleanup_sources(factory) == 1 and not source.exists()
+    assert cleanup_sources(factory) == 1 and not source.exists() and not cached.exists()
     db.expire_all()
     assert db.get(DiscoveryInventory,item.id).inventory['roots'] == [{'id':'root'}]
     assert db.get(DurableJob,old.id).result['source_expired'] is True
@@ -465,6 +469,9 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
     stages=[]
     checkpoints=[]
     def discover(source,options,runner,progress,artifact_resolver=None,supplemental_inputs=None,check_cancelled=None,gitlab_archive=False):
+        from app.discovery_render_cache import RenderCache
+        assert isinstance(runner, RenderCache)
+        runner = runner.runner
         assert runner.func is discovery_renderer.render_action
         assert runner.keywords['check_cancelled'] is ctx.check
         assert runner.keywords['max_output'] == 12345
@@ -480,10 +487,50 @@ def test_worker_persists_inventory_and_uses_isolated_runner(api,monkeypatch):
     item=db.get(DiscoveryInventory,result['inventory_id'])
     assert item.group_id == 1 and item.source_hash == payload['source_hash']
     assert item.inventory['archive_hash'] == payload['source_hash']
+    assert item.inventory['workspace_id'] == row.id
     assert stages and checkpoints == [{'metrics':{'images':1}}]
     repeated=worker.handle(ctx,payload)
     assert repeated['inventory_id'] == item.id
     assert len(db.scalars(select(DiscoveryInventory).where(DiscoveryInventory.job_id==row.id)).all()) == 1
+
+
+def test_worker_withholds_detected_secret_overrides_from_inventory_and_retry(api, monkeypatch):
+    from app import discovery_engine
+    client, db, _ = api
+    source_id = 'b' * 32
+    folder = worker.upload_root() / source_id
+    folder.mkdir()
+    data = b'nginx:1.2\n'
+    with encrypted_writer(folder / 'images.txt', source_id) as stream:
+        stream.write(data)
+    payload = {'source_id': source_id, 'filename': 'images.txt', 'source_hash': hashlib.sha256(data).hexdigest(),
+               'group_id': 1, 'options': {'component_overrides': {
+                   'legacy-id': 'password: sensitive-rendered-value', 'safe': 'replicas: 2'}}}
+    row = DurableJob(id='worker-redaction', kind='discovery', status='running', payload=payload, result={})
+    db.add(row)
+    db.commit()
+    def discover(*args, **kwargs):
+        return {'completeness': 'complete', 'roots': [], 'nodes': [], 'images': [],
+                '_redacted_component_overrides': ['legacy-id'],
+                'configurable_components': [{'id': 'current-id', 'values_yaml': '', 'values_redacted': True}]}
+    monkeypatch.setattr(discovery_engine, 'run_discovery', discover)
+    ctx = SimpleNamespace(check=lambda: None, stage=lambda *args: None, checkpoint=lambda *args: None,
+        session_factory=lambda: Session(db.get_bind()), _owned=lambda session: session.get(DurableJob, row.id))
+    result = worker.handle(ctx, payload)
+    db.expire_all()
+    item = db.get(DiscoveryInventory, result['inventory_id'])
+    expected = {'legacy-id': '', 'safe': 'replicas: 2'}
+    assert item.inventory['selection']['component_overrides'] == expected
+    assert '_redacted_component_overrides' not in item.inventory
+    assert db.get(DurableJob, row.id).payload['options']['component_overrides'] == expected
+    response = client.get('/api/discovery/' + row.id)
+    assert response.status_code == 200 and 'sensitive-rendered-value' not in response.text
+    row = db.get(DurableJob, row.id)
+    row.status = 'completed'
+    db.commit()
+    retry = post(client, '/' + row.id + '/retry')
+    assert retry.status_code == 200, retry.text
+    assert db.get(DurableJob, retry.json()['job_id']).payload['options']['component_overrides'] == expected
 
 
 def test_source_encryption_authenticates_and_removes_scratch(tmp_path):
@@ -551,11 +598,15 @@ def test_confirm_cannot_stage_without_accounts_authority_or_valid_inventory(api)
 def test_supplements_are_scoped_immutable_and_encrypted(api, tmp_path):
     client, db, _ = api
     old, original = job(db)
+    old.payload = {**old.payload, 'options': {'component_values': {'one': ['one.yaml']},
+                                           'component_overrides': {'one': 'replicas: 2'}}}
+    db.commit()
     job(db, 'foreign', 2)
     folder=tmp_path/old.payload['source_id']; folder.mkdir()
     (folder/old.payload['filename']).write_bytes(b'original encrypted source')
     endpoint='/api/discovery/own/supplements'
-    fields={'acknowledge_non_secret':'true', 'target_path':'chart'}
+    fields={'acknowledge_non_secret':'true', 'target_path':'chart',
+            'options': json.dumps({'component_values': {'two': ['chart/values.yaml']}})}
     upload={'upload':('values.yaml', b'image: nginx:1', 'text/plain')}
     assert client.post('/api/discovery/foreign/supplements', data=fields, files=upload).status_code == 404
     assert client.post(endpoint, data=fields, files=upload).status_code == 403
@@ -564,6 +615,9 @@ def test_supplements_are_scoped_immutable_and_encrypted(api, tmp_path):
     new=db.get(DurableJob, response.json()['job_id'])
     supplement=new.payload['supplements'][0]
     assert new.payload['source_id'] == old.payload['source_id']
+    assert new.payload['options'] == {'component_values': {'one': ['one.yaml'], 'two': ['chart/values.yaml']},
+                                      'component_overrides': {'one': 'replicas: 2'}}
+    assert new.payload['workspace_id'] == old.id and new.payload['last_inventory_job_id'] == old.id
     assert supplement['parent_inventory_id'] == original.id
     assert supplement['parent_content_hash'] == original.content_hash
     assert 'supplements' not in old.payload
@@ -574,6 +628,41 @@ def test_supplements_are_scoped_immutable_and_encrypted(api, tmp_path):
         assert plain.read_bytes() == b'image: nginx:1'
     fields['target_path']='../outside'
     assert client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token':'csrf'}).status_code == 422
+
+
+@pytest.mark.parametrize('status, invalid_inventory', [('failed', False), ('cancelled', False), ('completed', True)])
+def test_supplement_recovers_latest_pass_using_retained_inventory(api, status, invalid_inventory):
+    client, db, _ = api
+    original, evidence = job(db)
+    folder = worker.upload_root() / original.payload['source_id']
+    folder.mkdir()
+    (folder / original.payload['filename']).write_bytes(b'original encrypted source')
+    selected = {'component_overrides': {'one': 'replicas: 3'}, 'profiles': ['production']}
+    latest = DurableJob(id='latest', kind='discovery', status='running', result={},
+        payload={**original.payload, 'options': selected, 'workspace_id': original.id,
+                 'previous_job_id': original.id, 'last_inventory_job_id': original.id})
+    db.add(latest)
+    if invalid_inventory:
+        db.add(DiscoveryInventory(id='invalid-result', job_id=latest.id, group_id=1,
+            source_hash='0' * 64, content_hash='2' * 64, inventory={'completeness': 'invalid'}))
+    db.commit()
+    endpoint = '/api/discovery/latest/supplements'
+    fields = {'acknowledge_non_secret': 'true', 'target_path': 'dependencies',
+              'options': json.dumps({'component_values': {'two': ['dependencies/values.yaml']}})}
+    upload = {'upload': ('values.yaml', b'replicas: 2', 'text/plain')}
+    assert client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token': 'csrf'}).status_code == 409
+    latest.status = status
+    db.commit()
+    response = client.post(endpoint, data=fields, files=upload, headers={'X-CSRF-Token': 'csrf'})
+    assert response.status_code == 200, response.text
+    refined = db.get(DurableJob, response.json()['job_id'])
+    assert refined.payload['previous_job_id'] == latest.id
+    assert refined.payload['workspace_id'] == original.id
+    assert refined.payload['last_inventory_job_id'] == original.id
+    assert refined.payload['options'] == {**selected, 'component_values': {'two': ['dependencies/values.yaml']}}
+    record = refined.payload['supplements'][-1]
+    assert (record['parent_job_id'], record['parent_inventory_id'], record['parent_content_hash']) == (
+        original.id, evidence.id, evidence.content_hash)
 
 
 def test_discovery_upload_default_exceeds_old_limit_and_optional_budget(api, monkeypatch):
@@ -643,3 +732,109 @@ def test_component_values_requires_ordered_path_lists(api, selection):
     with encrypted_writer(folder / 'images.txt', 'a'*32) as stream:
         stream.write(b'nginx:1.2')
     assert post(client, '/own/retry', {'options': {'component_values': selection}}).status_code == 422
+
+
+def test_refinement_merges_component_settings_and_preserves_source_identity(api):
+    client, db, _ = api
+    old, original = job(db)
+    original_options = {'profiles': ['production'], 'component_values': {'one': ['base.yaml'], 'two': ['two.yaml']},
+                        'component_overrides': {'one': 'replicas: 2'}, 'source_map': {'existing': 'local'}}
+    old.payload = {**old.payload, 'options': original_options,
+                   'gitlab_source': {'repository_url': 'https://gitlab.example/team/repo', 'commit_sha': 'b' * 40}}
+    db.commit()
+    folder = worker.upload_root() / old.payload['source_id']; folder.mkdir()
+    (folder / old.payload['filename']).write_bytes(b'encrypted-original')
+    first = post(client, '/own/retry', {'options': {'component_values': {'two': ['two-prod.yaml']},
+                    'component_overrides': {'two': 'replicas: 3'}}, 'acknowledge_non_secret': True})
+    assert first.status_code == 200, first.text
+    child = db.get(DurableJob, first.json()['job_id'])
+    assert child.payload['options'] == {**original_options,
+        'component_values': {'one': ['base.yaml'], 'two': ['two-prod.yaml']},
+        'component_overrides': {'one': 'replicas: 2', 'two': 'replicas: 3'}}
+    for key in ('source_id', 'source_hash', 'gitlab_source'):
+        assert child.payload[key] == old.payload[key]
+    assert child.payload['workspace_id'] == old.id
+    assert child.payload['last_inventory_job_id'] == old.id
+    child.status = 'failed'; db.commit()
+    second = post(client, '/' + child.id + '/retry', {'options': {'component_values': {'one': []},
+                        'component_overrides': {'one': ''}, 'profiles': []}})
+    assert second.status_code == 200, second.text
+    latest = db.get(DurableJob, second.json()['job_id'])
+    assert latest.payload['options']['component_values'] == {'one': [], 'two': ['two-prod.yaml']}
+    assert latest.payload['options']['component_overrides'] == {'one': '', 'two': 'replicas: 3'}
+    assert latest.payload['options']['profiles'] == []
+    assert latest.payload['options']['source_map'] == {'existing': 'local'}
+    assert latest.payload['workspace_id'] == old.id and latest.payload['previous_job_id'] == child.id
+    detail = client.get('/api/discovery/' + latest.id).json()
+    assert detail['inventory'] is None
+    assert detail['previous_inventory'] == original.inventory
+    assert detail['previous_inventory_job_id'] == old.id
+    assert detail['job']['options'] == latest.payload['options']
+    assert old.payload['options'] == original_options
+
+
+@pytest.mark.parametrize('text', ['scalar', '[one, two]', 'kind: Secret\ndata: {}', '---\none: 1\n---\ntwo: 2',
+                                'one: &x {two: 2}\nthree: *x', 'one: .nan', 'one: 2020-01-01', '1: value', 'bad: ['])
+def test_component_overrides_reject_invalid_values_without_submitting(api, text):
+    client, db, _ = api
+    old, _ = job(db)
+    folder = worker.upload_root() / old.payload['source_id']; folder.mkdir()
+    (folder / old.payload['filename']).write_bytes(b'encrypted-original')
+    response = post(client, '/own/retry', {'options': {'component_overrides': {'one': text}}, 'acknowledge_non_secret': True})
+    assert response.status_code == 422
+    assert len(db.scalars(select(DurableJob)).all()) == 1
+
+
+def test_component_overrides_require_nonsecret_acknowledgement(api):
+    client, db, _ = api
+    old, _ = job(db)
+    folder = worker.upload_root() / old.payload['source_id']; folder.mkdir()
+    (folder / old.payload['filename']).write_bytes(b'encrypted-original')
+    selected = {'component_overrides': {'one': 'image:\n  tag: stable'}}
+    assert post(client, '/own/retry', {'options': selected}).status_code == 422
+    assert post(client, '/own/retry', {'options': selected, 'acknowledge_non_secret': 'true'}).status_code == 422
+    assert post(client, '/own/retry', {'options': selected, 'acknowledge_non_secret': True}).status_code == 200
+
+
+def test_previous_inventory_does_not_cross_group_or_source(api):
+    client, db, _ = api
+    foreign, _ = job(db, 'foreign', group=2)
+    current = DurableJob(id='own', kind='discovery', status='failed',
+                         payload={**foreign.payload, 'group_id': 1, 'previous_job_id': foreign.id}, result={})
+    db.add(current)
+    db.commit()
+    assert client.get('/api/discovery/own').json()['previous_inventory'] is None
+    foreign.payload = {**foreign.payload, 'group_id': 1, 'source_id': 'b' * 32}
+    db.commit()
+    assert client.get('/api/discovery/own').json()['previous_inventory'] is None
+
+
+def test_forget_source_removes_only_lineage_render_cache(api):
+    from app.discovery_render_cache import cache_directory
+    client, db, _ = api
+    old, item = job(db)
+    child, _ = job(db, 'child')
+    child.payload = {**child.payload, 'previous_job_id': old.id, 'workspace_id': old.id}
+    db.commit()
+    folder = worker.upload_root() / old.payload['source_id']; folder.mkdir()
+    source = folder / old.payload['filename']; source.write_bytes(b'encrypted source')
+    cached = cache_directory() / (old.payload['source_id'] + '-' + '1' * 64 + '.cache')
+    other = cache_directory() / ('b' * 32 + '-' + '2' * 64 + '.cache')
+    cached.parent.mkdir(); cached.write_bytes(b'encrypted render'); other.write_bytes(b'unrelated')
+    assert post(client, '/child/forget-source').status_code == 200
+    assert not source.exists() and not cached.exists() and other.exists()
+    assert db.get(DiscoveryInventory, item.id) is not None
+
+
+def test_forget_source_reports_cache_cleanup_failure(api, monkeypatch):
+    from app import discovery_render_cache
+    client, db, _ = api
+    old, _ = job(db)
+    folder = worker.upload_root() / old.payload['source_id']; folder.mkdir()
+    source = folder / old.payload['filename']; source.write_bytes(b'encrypted source')
+    def fail(source_id):
+        raise OSError('private filesystem path')
+    monkeypatch.setattr(discovery_render_cache, 'remove_source_cache', fail)
+    response = post(client, '/own/forget-source')
+    assert response.status_code == 503 and 'storage access' in response.text
+    assert source.exists() and 'private filesystem path' not in response.text

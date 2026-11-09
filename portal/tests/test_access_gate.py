@@ -1,6 +1,7 @@
 """Exercise real login, cookies, middleware and claim transitions in a disposable DB."""
 from datetime import timedelta
 from html.parser import HTMLParser
+from http.cookies import SimpleCookie
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,7 @@ from app.access_requests import ClaimInput, claim_route
 from app.account_models import AccountAccessRequest
 from app.auth import AuthContext, SESSION_COOKIE, SYSTEM_ROLES, hash_password
 from app.database import Base
+from app.frontend import PAGE_MEDIA_TYPE
 from app.models import Group, Role, User, UserRoleAssignment, UserSession, utcnow
 
 PASSWORD = "integration-test-password"
@@ -131,3 +133,51 @@ def test_oidc_login_without_roles_registers_pending_request(environment, monkeyp
         assert user.role_assignments == []
     assert client.cookies.get(SESSION_COOKIE)
     assert main.ACCESS_PENDING_MESSAGE in client.get("/").text
+
+
+@pytest.mark.parametrize("next_path", [None, "/?lifecycle=staged", "/home"])
+def test_oidc_callback_session_is_ready_for_first_landing_page(environment, monkeypatch, next_path):
+    client, factory, ids = environment
+    claims = {"iss": "https://issuer.example", "sub": "cyber-subject", "preferred_username": "cyber"}
+    with factory() as db:
+        # This flow exercises the full dashboard; the shared fixture's role is
+        # limited to an empty group for access-request tests.
+        assignment = db.scalar(select(UserRoleAssignment).where(UserRoleAssignment.user_id == ids[1]))
+        assignment.group_id = None
+        main.provision_oidc_user(db, claims, {
+            "account_links": {claims["iss"]: {claims["sub"]: "cyber"}},
+        })
+        db.commit()
+    monkeypatch.setattr(main, "configured_ca_bundle", lambda configuration: None)
+    monkeypatch.setattr(main, "oidc_authorization_url", lambda state, *args: f"https://issuer.example/authorize?state={state}")
+    monkeypatch.setattr(main, "oidc_exchange_code", lambda *args: ({"access_token": "test"}, {}))
+    monkeypatch.setattr(main, "verify_oidc_id_token", lambda *args: claims)
+    monkeypatch.setenv("SESSION_COOKIE_SECURE", "true")
+    client.base_url = "https://testserver"
+
+    response = client.get("/auth/oidc/login", params={"next": next_path} if next_path else {})
+    assert response.status_code == 303
+    state = client.cookies.get("cats_oidc_state")
+    assert state and client.cookies.get("cats_oidc_nonce")
+    response = client.get("/auth/oidc/callback", params={"state": state, "code": "code"})
+    assert response.status_code == 303
+    assert response.headers["location"] == (next_path or "/")
+    assert response.headers["cache-control"] == "no-store"
+
+    # TestClient does not enforce browser SameSite rules. Assert Lax explicitly:
+    # Strict loses the session on the first redirect back from the external IdP.
+    cookies = SimpleCookie()
+    for header in response.headers.get_list("set-cookie"):
+        cookies.load(header)
+    session_cookie = cookies[SESSION_COOKIE]
+    assert session_cookie["samesite"] == "lax"
+    assert session_cookie["httponly"] and session_cookie["secure"]
+    assert session_cookie["path"] == "/"
+    assert int(session_cookie["max-age"]) > 0
+    assert all(not client.cookies.get(name) for name in ("cats_oidc_state", "cats_oidc_nonce", "cats_oidc_next"))
+
+    landing = client.get(response.headers["location"], headers={"Accept": PAGE_MEDIA_TYPE}, follow_redirects=True)
+    assert landing.status_code == 200
+    assert landing.json()["page"] == "dashboard"
+    with factory() as db:
+        assert db.scalar(select(UserSession).where(UserSession.user_id == ids[1], UserSession.token_hash != "cyber"))

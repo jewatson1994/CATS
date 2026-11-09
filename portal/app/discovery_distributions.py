@@ -58,7 +58,8 @@ def _catalog(inventory, roots):
     charts = {}
     for root in inventory.get('roots', []):
         identity = root['id']
-        if identity not in roots or root.get('technology') != 'helm':
+        if (identity not in roots or root.get('technology') != 'helm'
+                or root.get('chart_type') == 'library' or root.get('state') == 'library'):
             continue
         # Flux also records chart source directories as roots. Only top-level
         # Helm render targets can be independently included in a distribution.

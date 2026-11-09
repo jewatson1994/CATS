@@ -2,15 +2,28 @@ import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {requestJson, type PageData} from '../api';
 import '../styles/discovery.css';
 import {StageProgress} from '../components/ui';
+import {DiscoveryTuning, type TuningInventory} from './discovery-tuning';
 type Id = string | number;
 interface GitLabSource {repository_url: string; requested_ref: string; commit_sha: string; ref_kind?: 'branch' | 'tag'}
 interface GitLabRevision {name: string; kind?: string}
 interface GitLabRefs {branches: string[]; tags: string[]; truncated: boolean}
-interface Job {id: string; status: string; stage?: string; progress?: number; group_id?: Id; filename?: string; created_at?: string; cancel_requested?: boolean; error?: string; result?: {confirmed_inventory_id?: Id}; gitlab_source?: GitLabSource}
-interface Root {id: string; path: string; chart_name?: string; chart_version?: string; technology: string; completeness?: unknown}
+interface Job {id: string; status: string; stage?: string; progress?: number; group_id?: Id; filename?: string; created_at?: string; cancel_requested?: boolean; error?: string; result?: {confirmed_inventory_id?: Id}; gitlab_source?: GitLabSource; options?: Record<string, unknown>; workspace_id?: string; previous_job_id?: string}
+interface Root {id: string; path: string; chart_name?: string; chart_version?: string; technology: string; completeness?: unknown; state?: string; chart_type?: string}
 interface Node {id: string; kind: string; name: string; root_id?: string; state?: string; provenance?: unknown}
-interface Inventory {gitlab_source?: GitLabSource; roots: Root[]; nodes: Node[]; edges?: unknown[]; images: {reference: string; root_id?: string; component_id?: string; provenance?: unknown}[]; diagnostics?: {code?: string; component_name?: string; path?: string; message?: string; value_paths?: string[]; renderer?: string}[]; completeness?: unknown; metrics?: Record<string, unknown>; selection?: Record<string, unknown>; candidate_values_files?: string[]; candidate_environments?: unknown[]; configurable_components?: {id: string; label: string; path: string; technology: string; values_origin?: string}[]}
+interface Inventory extends TuningInventory {completeness?: unknown; images: {reference: string; root_id?: string; component_id?: string; provenance?: unknown}[]; gitlab_source?: GitLabSource; roots: Root[]; nodes: Node[]; metrics?: Record<string, unknown>; selection?: Record<string, unknown>; candidate_environments?: unknown[]}
 interface Catalog {jobs: Job[]; services: {id: Id; name: string; service_key: string; group_id?: Id}[]; groups: {id: Id; name: string; can_stage?: boolean}[]}
+interface ResolutionOptions extends Record<string, unknown> {values_files?: string[]; component_values?: Record<string, string[]>; component_overrides?: Record<string, string>}
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+function parseSettings(text: string): ResolutionOptions {
+  let value: unknown;
+  try {value = JSON.parse(text);} catch {throw new Error('Correct the advanced settings JSON before rendering.');}
+  if (!isRecord(value)) throw new Error('Settings must be a JSON object.');
+  const paths = (item: unknown): item is string[] => Array.isArray(item) && item.every(path => typeof path === 'string');
+  if ('values_files' in value && !paths(value.values_files)) throw new Error('values_files must be a list of file paths.');
+  if ('component_values' in value && (!isRecord(value.component_values) || !Object.values(value.component_values).every(paths))) throw new Error('component_values must map each resource to a list of file paths.');
+  if ('component_overrides' in value && (!isRecord(value.component_overrides) || !Object.values(value.component_overrides).every(item => typeof item === 'string'))) throw new Error('component_overrides must map each resource to YAML text.');
+  return value as ResolutionOptions;
+}
 const terminal = new Set(['complete', 'completed', 'failed', 'cancelled', 'succeeded']);
 const runLabel = (job: Job) => [job.gitlab_source?.repository_url || job.filename, job.id].filter(Boolean).join(' · ');
 const runStatus = (job: Job) => job.cancel_requested && !terminal.has(job.status) ? 'Cancellation requested' : [job.status, job.stage].filter(Boolean).join(' · ');
@@ -82,8 +95,15 @@ export function Page({data}: {data: PageData}) {
   const sourceForm = useRef<HTMLFormElement>(null);
   const [selected, setSelected] = useState(''); const [job, setJob] = useState<Job | null>(null);
   const [inventory, setInventory] = useState<Inventory | null>(null);
+  const [failedPassInventory, setFailedPassInventory] = useState<Inventory | null>(null);
+  const [inventoryJobId, setInventoryJobId] = useState('');
+  const loadedInventory = useRef('');
+  const loadedSettings = useRef('');
+  const pendingSettings = useRef('');
+  const missingFiles = useRef<HTMLDetailsElement>(null);
+  const [sourceExpanded, setSourceExpanded] = useState(true);
+  const [acknowledgeNonSecret, setAcknowledgeNonSecret] = useState(false);
   const [resolution, setResolution] = useState('{}');
-  const [valuesSearch, setValuesSearch] = useState('');
   const [newService, setNewService] = useState('');
   const [group, setGroup] = useState(''); const [service, setService] = useState('');
   const [roots, setRoots] = useState<string[]>([]); const [acknowledged, setAcknowledged] = useState(false);
@@ -124,20 +144,45 @@ export function Page({data}: {data: PageData}) {
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       try {
-        const response = await requestJson<{job: Job; inventory: Inventory | null}>(`/api/discovery/${encodeURIComponent(selected)}`, {signal: controller.signal});
+        const response = await requestJson<{job: Job; inventory: Inventory | null; previous_inventory?: Inventory; previous_inventory_job_id?: string}>(`/api/discovery/${encodeURIComponent(selected)}`, {signal: controller.signal});
         if (controller.signal.aborted) return;
-        setJob(response.job); setInventory(response.inventory);
-        if (response.inventory) setResolution(JSON.stringify(response.inventory.selection || {}, null, 2));
+        setJob(response.job);
+        const savedOptions = response.job.options ?? response.inventory?.selection ?? response.previous_inventory?.selection;
+        const finished = terminal.has(response.job.status);
+        if (loadedSettings.current !== selected) {
+          setResolution(JSON.stringify(savedOptions || {}, null, 2));
+          loadedSettings.current = selected;
+          if (!finished) pendingSettings.current = selected;
+        } else if (pendingSettings.current === selected && finished && savedOptions) {
+          setResolution(JSON.stringify(savedOptions, null, 2));
+        }
+        if (pendingSettings.current === selected && finished) pendingSettings.current = '';
+        const invalidPass = response.inventory?.completeness === 'invalid';
+        const retainPrevious = invalidPass && Boolean(response.previous_inventory || (loadedInventory.current && loadedInventory.current !== selected));
+        setFailedPassInventory(retainPrevious ? response.inventory : null);
+        const visibleInventory = retainPrevious ? response.previous_inventory : response.inventory || (!loadedInventory.current ? response.previous_inventory : null);
+        const visibleJob = retainPrevious || !response.inventory ? response.previous_inventory_job_id : selected;
+        if (visibleInventory && visibleJob && loadedInventory.current !== visibleJob) {
+          setInventory(visibleInventory); setInventoryJobId(visibleJob); loadedInventory.current = visibleJob;
+          setRoots(current => current.filter(id => visibleInventory.roots.some(root => root.id === id && root.state !== 'library' && root.chart_type !== 'library')));
+          setSourceExpanded(false);
+        }
         if (response.job.result?.confirmed_inventory_id) setConfirmed(true);
         if (!terminal.has(response.job.status)) timer = setTimeout(poll, 2000);
       } catch (cause) {if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not refresh discovery.');}
     };
     void poll(); return () => {controller.abort(); clearTimeout(timer);};
   }, [selected, refresh]);
-  const open = (id: string) => {setSelected(id); setJob(null); setInventory(null); setRoots([]); setAcknowledged(false); setConfirmed(false); setService(''); setNewService(''); setScanUrl(''); setComparison(null); setPrevious(''); setError(''); setResolution('{}'); setValuesSearch('');};
+  const open = (id: string) => {setSelected(id); setJob(null); setInventory(null); setFailedPassInventory(null); setInventoryJobId(''); loadedInventory.current = ''; loadedSettings.current = ''; pendingSettings.current = ''; setRoots([]); setAcknowledged(false); setAcknowledgeNonSecret(false); setConfirmed(false); setService(''); setNewService(''); setScanUrl(''); setComparison(null); setPrevious(''); setError(''); setResolution('{}');};
+  const continuePass = (id: string) => {
+    loadedSettings.current = id;
+    pendingSettings.current = id;
+    setSelected(id); setJob({id, status: 'queued', group_id: job?.group_id, filename: job?.filename, gitlab_source: job?.gitlab_source});
+    setFailedPassInventory(null); setConfirmed(false); setAcknowledged(false); setScanUrl(''); setComparison(null); setPrevious(selected);
+  };
   const startFresh = () => {
-    open(''); sourceForm.current?.reset(); setGroup(''); setSource('upload'); setGitRevision({name: ''});
-    sourceForm.current?.querySelector('select')?.focus();
+    open(''); setSourceExpanded(true); sourceForm.current?.reset(); setGroup(''); setSource('upload'); setGitRevision({name: ''});
+    setTimeout(() => sourceForm.current?.querySelector('select')?.focus(), 0);
   };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); const body = new FormData(event.currentTarget);
@@ -158,15 +203,14 @@ export function Page({data}: {data: PageData}) {
     const body = new FormData(event.currentTarget);
     body.set('csrf_token', data.csrf_token || '');
     try {
-      const options: unknown = JSON.parse(resolution);
-      if (!options || Array.isArray(options) || typeof options !== 'object') throw new Error('Settings must be a JSON object.');
+      const options = validatedOptions();
       body.set('options', JSON.stringify(options));
     } catch (cause) {setError(cause instanceof Error ? cause.message : 'Invalid settings.'); return;}
     setActionBusy(true); setError('');
     try {
       const result = await requestJson<{job_id: string}>(`/api/discovery/${encodeURIComponent(selected)}/supplements`, {method: 'POST', body});
       if (!result.job_id) throw new Error('Discovery did not return a job ID.');
-      open(result.job_id); setRefresh(value => value + 1);
+      continuePass(result.job_id); setRefresh(value => value + 1);
     } catch (cause) {setError(cause instanceof Error ? cause.message : 'Could not supply dependencies.');}
     finally {setActionBusy(false);}
   };
@@ -181,19 +225,36 @@ export function Page({data}: {data: PageData}) {
       }
       if (name === 'confirm') setConfirmed(true);
       if (name === 'scan' && result.url) {const url = new URL(result.url, window.location.origin); if (url.origin === window.location.origin) setScanUrl(url.pathname + url.search);}
-      if (name === 'retry' && result.job_id) open(result.job_id);
+      if (name === 'retry') {
+        if (!result.job_id) throw new Error('Discovery did not return a job ID. Your settings and previous results are preserved.');
+        continuePass(result.job_id);
+      }
       if (target === selected) setRefresh(value => value + 1);
       else setOngoingRefresh(value => value + 1);
     } catch (cause) {setError(cause instanceof Error ? cause.message : 'The action could not be completed.');} finally {setActionBusy(false);}
   };
-  let selectedValues: string[] = [];
-  try { const paths = JSON.parse(resolution).values_files; selectedValues = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string') : []; } catch { /* Advanced editor may be incomplete. */ }
-  const chooseValues = (paths: string[]) => {try {setResolution(JSON.stringify({...JSON.parse(resolution), values_files: paths}, null, 2));} catch {setError('Correct the advanced settings JSON first.');}};
-  let componentValues: Record<string, string[]> = {};
-  try { componentValues = JSON.parse(resolution).component_values || {}; } catch { /* Preserve incomplete advanced edits. */ }
-  const chooseComponentValues = (id: string, paths: string[]) => {try {const options = JSON.parse(resolution); setResolution(JSON.stringify({...options, component_values: {...options.component_values, [id]: paths}}, null, 2));} catch {setError('Correct the advanced settings JSON first.');}};
-  const resolutionDiagnostics = inventory?.diagnostics?.filter(item => item.code === 'native_render_failed' || item.code === 'worker_isolation_unavailable' || item.component_name) || [];
-  const needsAttention = Boolean(inventory && (isPartial(inventory.completeness) || !inventory.images.length));
+  let settings: ResolutionOptions = {};
+  try {settings = parseSettings(resolution);} catch { /* Preserve incomplete or invalid advanced edits without breaking resource controls. */ }
+  const selectedValues = settings.values_files || [];
+  const componentValues = settings.component_values || {};
+  const componentOverrides = settings.component_overrides || {};
+  const chooseValues = (paths: string[]) => {try {setResolution(JSON.stringify({...parseSettings(resolution), values_files: paths}, null, 2));} catch {setError('Correct the advanced settings JSON first.');}};
+  const chooseComponentValues = (id: string, paths: string[]) => {try {const options = parseSettings(resolution); setResolution(JSON.stringify({...options, component_values: {...options.component_values, [id]: paths}}, null, 2));} catch {setError('Correct the advanced settings JSON first.');}};
+  const chooseComponentOverride = (id: string, yaml: string) => {try {const options = parseSettings(resolution); setResolution(JSON.stringify({...options, component_overrides: {...options.component_overrides, [id]: yaml}}, null, 2)); setAcknowledgeNonSecret(false);} catch {setError('Correct the advanced settings JSON first.');}};
+  const validatedOptions = () => {
+    const options = parseSettings(resolution);
+    if (Object.values(options.component_overrides || {}).some(value => value.trim()) && !acknowledgeNonSecret) throw new Error('Confirm that the configuration overrides contain no secrets before rendering.');
+    return options;
+  };
+  const renderChanges = () => {
+    try {
+      const options = validatedOptions();
+      void action('retry', {options, ...(acknowledgeNonSecret ? {acknowledge_non_secret: true} : {})});
+    } catch (cause) {setError(cause instanceof Error ? cause.message : 'Invalid settings.');}
+  };
+  const rendering = Boolean(job && !terminal.has(job.status));
+  const currentInventory = Boolean(inventory && inventoryJobId === selected);
+  const needsAttention = Boolean(inventory && isPartial(inventory.completeness));
   const partial = inventory ? isPartial(inventory.completeness) || inventory.roots.filter(root => roots.includes(root.id)).some(root => isPartial(root.completeness)) : false;
   const jobGroup = job?.group_id == null ? group : String(job.group_id);
   const gitlabSource = inventory?.gitlab_source || job?.gitlab_source;
@@ -201,7 +262,7 @@ export function Page({data}: {data: PageData}) {
   return <div className="discovery-workspace"><section className="heading"><div><p className="eyebrow">DEPLOYMENT INTELLIGENCE</p><h1>Discovery</h1><p>Understand a deployment before you choose what to scan.</p></div></section>
     <section className="panel padded discovery-progress" aria-label="Discovery workflow"><StageProgress label="Discovery workflow" stages={[
       {key: 'discover', label: '1. Discover', state: !job ? 'pending' : job.status === 'failed' ? 'failed' : job.status === 'cancelled' ? 'skipped' : terminal.has(job.status) ? 'complete' : 'current', detail: job ? job.stage || job.status : 'Choose a source'},
-      {key: 'review', label: '2. Review', state: confirmed ? 'complete' : inventory ? 'current' : 'pending', detail: inventory ? `${inventory.images.length} images found` : 'Inventory appears after discovery'},
+      {key: 'review', label: '2. Render and tune', state: confirmed ? 'complete' : inventory ? 'current' : 'pending', detail: inventory ? `${inventory.images.length} images found` : 'Inventory appears after discovery'},
       {key: 'confirm', label: '3. Confirm', state: confirmed ? 'complete' : 'pending', detail: confirmed ? 'Inventory recorded' : 'Associate with a service'},
       {key: 'scan', label: '4. Scan', state: scanUrl ? 'current' : 'pending', detail: scanUrl ? <a href={scanUrl}>View scan progress</a> : confirmed ? 'Ready to start' : 'Separate action after confirmation'},
     ]}/></section>
@@ -222,7 +283,7 @@ export function Page({data}: {data: PageData}) {
             <button className="secondary-button" disabled={busy || item.cancel_requested} aria-label={`Cancel discovery ${runLabel(item)}`} onClick={() => void action('cancel', {}, item.id)}>Cancel</button></div>
         </li>)}</ul>}
     </section>
-    <div className="discovery-layout"><aside><section className="panel"><h2>1. Discover a source</h2><form ref={sourceForm} onSubmit={submit}>
+    <div className="discovery-layout"><aside><details className="panel discovery-source" open={sourceExpanded} onToggle={event => setSourceExpanded(event.currentTarget.open)}><summary>1. Discover a source</summary><form ref={sourceForm} onSubmit={submit}>
       <label>Owning group<select name="group_id" value={group} required onChange={event => {setGroup(event.target.value); resetGitLookup();}}><option value="">Select a group</option>{catalog.groups.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
       <label>Source type<select value={source} onChange={event => {setSource(event.target.value); setGitRevision({name: ''});}}><option value="upload">Upload files or archive</option><option value="reference">Remote reference</option><option value="gitlab">GitLab repository</option></select></label>
       {source === 'upload' && <label>Deployment input<input type="file" name="upload" required/></label>}
@@ -239,44 +300,38 @@ export function Page({data}: {data: PageData}) {
       <details><summary>Configuration context (optional)</summary>{source !== 'gitlab' && <label>Chart version (for a mirror reference)<input name="reference_version" placeholder="Exact mirrored version or digest"/></label>}<label>Environment<input name="environment" placeholder="e.g. staging"/></label><label>Values files, in override order<textarea name="values_files" rows={3} placeholder={'values.yaml\nvalues-staging.yaml'}/></label><p className="muted">Paths are relative to the input. Later values files override earlier files. Provide non-secret configuration only.</p></details>
       <p className="muted">Inspect repository archives, Helm charts, Kubernetes YAML, Kustomize and Compose definitions. Unsupported or incomplete content is reported for review.</p>
       <button disabled={busy || !catalog.groups.length}>{submittingSource === 'gitlab' ? 'Fetching repository…' : busy ? 'Working…' : 'Start discovery'}</button>
-    </form></section></aside>
-    <div><section className="panel"><h2>2. Review inventory</h2>{!selected ? <div className="discovery-empty"><h3>No discovery selected</h3><p>Start a discovery or open a run above to review its progress and inventory.</p></div> : <>
+    </form></details></aside>
+    <div><section className="panel"><h2>2. Render and tune</h2>{!selected ? <div className="discovery-empty"><h3>No discovery selected</h3><p>Start a discovery or open a run above to review its progress and inventory.</p></div> : <>
       <div className="discovery-review-header"><p><strong>{job ? runLabel(job) : selected}</strong><br/><span className="muted">Owning group: {catalog.groups.find(item => String(item.id) === jobGroup)?.name || jobGroup || 'Loading…'}</span></p>
         <button className="secondary-button" disabled={busy} onClick={startFresh}>New discovery</button></div>
       <p className="discovery-status" role="status">{job ? job.status === 'completed' && needsAttention ? 'Needs attention - Review unresolved configuration' : runStatus(job) : 'Loading discovery…'}</p>
       {job && <>{!(job.status === 'completed' && needsAttention) && <progress aria-label="Discovery progress" max={100} value={Math.max(0, Math.min(100, job.progress || 0))}/>} {job.error && <p role="alert">{job.error}</p>}
-        <div className="discovery-actions">{!terminal.has(job.status) && <button className="secondary-button" disabled={busy || job.cancel_requested} onClick={() => void action('cancel')}>Cancel discovery</button>}{terminal.has(job.status) && <button className="secondary-button" disabled={busy} onClick={() => void action('retry')}>{job.status === 'completed' ? 'Rediscover as new version' : 'Retry discovery'}</button>}</div></>}
+        <div className="discovery-actions">{!terminal.has(job.status) && <button className="secondary-button" disabled={busy || job.cancel_requested} onClick={() => void action('cancel')}>Cancel discovery</button>}{terminal.has(job.status) && !inventory && <button className="secondary-button" disabled={busy} onClick={() => void action('retry')}>{job.status === 'completed' ? 'Rediscover as new version' : 'Retry discovery'}</button>}</div></>}
       {gitlabSource && <div className="discovery-image"><h3>GitLab source</h3><p><code>{gitlabSource.repository_url}</code></p>
         <p>{gitlabSource.ref_kind === 'tag' ? 'Tag ' : gitlabSource.ref_kind === 'branch' ? 'Branch ' : ''}<code>{gitlabSource.requested_ref || 'Default branch'}</code></p>
         <p>Resolved commit <code>{gitlabSource.commit_sha}</code></p></div>}
       {inventory && <><div className="discovery-metrics"><div><strong>{inventory.roots.length}</strong> Deployment roots</div><div><strong>{inventory.nodes.length}</strong> Components</div><div><strong>{inventory.images.length}</strong> Image references</div></div><p><strong>Completeness:</strong> {describe(inventory.completeness)}</p>
       {!inventory.roots.length && <p>No deployment roots were found. Review the diagnostics and try another input.</p>}
-      <details className="discovery-resolution" open={Boolean(inventory.images.length === 0 || resolutionDiagnostics.length)}><summary>Resolve configuration and rediscover</summary>{inventory.images.length === 0 && <p className="notice"><strong>No images were rendered.</strong> Review the deployment roots and diagnostics below before retrying.</p>}
-      {resolutionDiagnostics.map((item, index) => {
-        const kustomize = item.renderer === 'kustomize' || (!item.renderer && /(?:^|\/)kustomization(?:\.ya?ml)?$/i.test(item.path || ''));
-        return <div className="notice" key={index}>
-          <strong>{kustomize ? 'Could not build this Kustomize configuration' : item.component_name ? `${item.component_name} needs attention` : 'Chart configuration needs attention'}</strong>
-          <p>{item.path}</p><p>{item.message}</p>
-          {kustomize ? <p>An overlay can change which images deploy. If your service uses this overlay, include its referenced files and retry. If it belongs to a different deployment, you can review the images from your service’s other roots.</p> : <>
-            {Boolean(item.value_paths?.length) && <><p>Values referenced by the chart validation (missing or invalid):</p><ul>{item.value_paths?.map(path => <li key={path}><code>{path}</code></li>)}</ul></>}
-            {item.code === 'native_render_failed' && <p>Choose values for your deployment. Review example files before using them and omit secrets.</p>}
-          </>}
-        </div>;
-      })}
-      <p className="discovery-config-help">Chart defaults are already loaded. Add overrides for your environment below; files apply in the order shown. Your previous inventory is preserved.</p><h3>Select values files</h3><label>Find configuration in this archive<input type="search" value={valuesSearch} onChange={event => setValuesSearch(event.target.value)} placeholder="Search by file name, environment or directory"/></label>
-      <select aria-label="Add values file" value="" onChange={event => {if(event.target.value) chooseValues([...selectedValues, event.target.value]);}}><option value="">Choose a values file from the archive</option>{(inventory.candidate_values_files || []).filter(path => !selectedValues.includes(path) && path.toLowerCase().includes(valuesSearch.toLowerCase())).map(path => <option key={path} value={path}>{path}</option>)}</select>
-      <p className="muted">{selectedValues.length ? `${selectedValues.length} override files selected, in application order` : 'Using chart defaults only. No additional values files selected.'}</p><ol className="discovery-values-order">{selectedValues.map((path, index) => <li key={path}><span className="discovery-values-path">{path}</span><span className="discovery-values-actions"><button className="secondary-button" type="button" disabled={index === 0} onClick={() => {const next = [...selectedValues]; [next[index - 1], next[index]] = [next[index], next[index - 1]]; chooseValues(next);}}>Move earlier</button> <button className="secondary-button" type="button" onClick={() => chooseValues(selectedValues.filter(item => item !== path))}>Remove</button></span></li>)}</ol>
-      {Boolean(inventory.configurable_components?.length) && <details><summary>Component-specific values</summary><p>Configure the parent chart first. Use these overrides only when a particular chart or generated release needs different values. Later files override earlier files, after the component’s generated configuration.</p>{inventory.configurable_components?.map(component => {
-        const paths = Array.isArray(componentValues[component.id]) ? componentValues[component.id] : [];
-        return <fieldset key={component.id}><legend>{component.label}</legend><p className="muted">{component.path} · {component.technology}</p><p>Base configuration: {component.values_origin || 'Chart defaults'}</p><label>Add values for {component.label}<select value="" disabled={busy} onChange={event => {if(event.target.value) chooseComponentValues(component.id, [...paths, event.target.value]);}}><option value="">Choose a values file</option>{(inventory.candidate_values_files || []).filter(path => !paths.includes(path)).map(path => <option key={path} value={path}>{path}</option>)}</select></label><ol>{paths.map((path, index) => <li key={path}><code>{path}</code> <button type="button" disabled={busy || index === 0} aria-label={`Move ${path} earlier for ${component.label}`} onClick={() => {const ordered = [...paths]; [ordered[index - 1], ordered[index]] = [ordered[index], ordered[index - 1]]; chooseComponentValues(component.id, ordered);}}>Move earlier</button> <button type="button" disabled={busy} aria-label={`Remove ${path} for ${component.label}`} onClick={() => chooseComponentValues(component.id, paths.filter((_, i) => i !== index))}>Remove</button>{!(inventory.candidate_values_files || []).includes(path) && <p role="alert">This file is no longer available. Remove it or supply the missing file before rendering.</p>}</li>)}</ol></fieldset>;
-      })}</details>}
-      <button disabled={busy} onClick={() => {try {void action('retry', {options: JSON.parse(resolution)});} catch {setError('Correct the advanced settings JSON first.');}}}>Render with selected values</button><p className="muted">Select non-secret paths from this source. Supported settings: environment, ordered values_files, compose_files, profiles, chart_map and source_map. Each retry preserves the previous inventory. Administrators configure external artifacts in the worker mirror.</p>{Boolean(inventory.candidate_environments?.length) && <Evidence value={inventory.candidate_environments}/>}<details><summary>Advanced configuration</summary><label>Resolution settings<textarea rows={10} value={resolution} onChange={event => setResolution(event.target.value)}/></label><button disabled={busy} onClick={() => {try {const options: unknown = JSON.parse(resolution); if (!options || Array.isArray(options) || typeof options !== 'object') throw new Error('Settings must be a JSON object.'); void action('retry', {options});} catch (cause) {setError(cause instanceof Error ? cause.message : 'Invalid settings.');}}}>Resolve as new version</button></details></details>
-      {inventory.roots.map(root => <article className="discovery-root" key={root.id}><label className="discovery-root-choice"><input type="checkbox" checked={roots.includes(root.id)} disabled={confirmed || busy} onChange={event => setRoots(previous => event.target.checked ? [...previous, root.id] : previous.filter(id => id !== root.id))}/>{root.chart_name
+      {!currentInventory && <p className="notice" role="status">{rendering ? 'Rendering your changes. Previous results stay visible until this pass finishes.' : 'This pass did not produce a new inventory. Your previous results and tuning settings are preserved; correct the issue and render again.'}</p>}
+      {failedPassInventory && <details className="discovery-diagnostics notice notice-error" open><summary>Latest render errors ({failedPassInventory.diagnostics?.length || 0})</summary><p>These errors are from your latest attempt. The inventory below is from the last usable render.</p>{failedPassInventory.diagnostics?.map((diagnostic, index) => <pre key={index}>{describe(diagnostic)}</pre>)}</details>}
+      <DiscoveryTuning inventory={inventory} selectedValues={selectedValues} componentValues={componentValues}
+        componentOverrides={componentOverrides} acknowledgeNonSecret={acknowledgeNonSecret} busy={busy || rendering}
+        onValuesChange={chooseValues} onComponentValuesChange={chooseComponentValues} onComponentOverrideChange={chooseComponentOverride}
+        onAcknowledgeNonSecret={setAcknowledgeNonSecret} onRender={renderChanges} onSupplyFiles={() => {
+          if (missingFiles.current) {missingFiles.current.open = true; missingFiles.current.scrollIntoView?.({behavior: 'smooth', block: 'center'}); missingFiles.current.querySelector('input')?.focus();}
+        }}/>
+      <details><summary>Advanced configuration</summary><p className="muted">Settings are retained between renders. Later values files override earlier files. External artifacts must be available in the worker mirror.</p>
+        {Boolean(inventory.candidate_environments?.length) && <Evidence value={inventory.candidate_environments}/>}
+        <label>Resolution settings<textarea rows={10} value={resolution} disabled={busy || rendering} onChange={event => {setResolution(event.target.value); setAcknowledgeNonSecret(false);}}/></label>
+      </details>
+      <details className="discovery-inventory"><summary>Review discovered inventory and select deployment roots ({inventory.roots.length})</summary>
+      {inventory.roots.map(root => <article className="discovery-root" key={root.id}><label className="discovery-root-choice"><input type="checkbox" checked={roots.includes(root.id)} disabled={confirmed || busy || root.state === 'library' || root.chart_type === 'library'} onChange={event => setRoots(previous => event.target.checked ? [...previous, root.id] : previous.filter(id => id !== root.id))}/>{root.chart_name
           ? <><strong>{root.chart_name}{root.chart_version && ` ${root.chart_version}`}</strong><span>{root.path || root.id}</span></>
-          : <strong>{root.path || root.id}</strong>}<span className="badge">{root.technology}</span></label><p className="muted">{describe(root.completeness)}</p><details><summary>Components and source evidence</summary><ul>{inventory.nodes.filter(node => node.root_id === root.id).map(node => <li key={node.id}><strong>{node.name}</strong> · {node.kind} · {node.state || 'unknown'} <ChartDefault node={node}/><Evidence value={node.provenance}/></li>)}</ul></details><h4>Images</h4>{inventory.images.filter(image => image.root_id === root.id).map((image, index) => <div className="discovery-image" key={`${image.reference}-${index}`}><code>{image.reference}</code><Evidence value={image.provenance}/></div>)}</article>)}
+          : <strong>{root.path || root.id}</strong>}<span className="badge">{root.technology}</span></label><p className="muted">{root.state === 'library' || root.chart_type === 'library' ? 'Library · evidence only' : describe(root.completeness)}</p><details><summary>Components and source evidence</summary><ul>{inventory.nodes.filter(node => node.root_id === root.id).map(node => <li key={node.id}><strong>{node.name}</strong> · {node.kind} · {node.state || 'unknown'} <ChartDefault node={node}/><Evidence value={node.provenance}/></li>)}</ul></details><h4>Images</h4>{inventory.images.filter(image => image.root_id === root.id).map((image, index) => <div className="discovery-image" key={`${image.reference}-${index}`}><code>{image.reference}</code><Evidence value={image.provenance}/></div>)}</article>)}
+      </details>
       <details className="discovery-diagnostics" ><summary>Diagnostics ({inventory.diagnostics?.length || 0})</summary>{inventory.diagnostics?.length ? inventory.diagnostics.map((diagnostic, index) => <pre key={index}>{describe(diagnostic)}</pre>) : <p>No diagnostics reported.</p>}</details>
-<details><summary>Supply missing files</summary><p className="muted">Add non-secret values, charts or dependency files to this discovery. Existing files are preserved. Use a new path and update the resolution settings above to select replacement configuration. The new version retains the earlier inventory and records the supplied artifact hash.</p><form onSubmit={supplement}><label>Missing files or archive<input type="file" name="upload" required disabled={busy}/></label><label>Destination directory<input name="target_path" defaultValue="dependencies" required placeholder="dependencies" disabled={busy}/><span className="muted">Relative to the original source root. Archive paths are preserved within this directory.</span></label><label className="discovery-root-choice"><input type="checkbox" name="acknowledge_non_secret" value="true" required disabled={busy}/>These files contain no passwords, tokens, private keys or other secrets.</label><p className="muted">Uses the resolution settings above. Unchanged supported renders can be reused when worker caching is enabled.</p><button disabled={busy || job?.status !== 'completed'}>Add files and resolve new version</button></form></details><details><summary>Compare immutable versions</summary><label>Previous discovery<select value={previous} onChange={event => {setPrevious(event.target.value); setComparison(null);}}><option value="">Choose a previous discovery</option>{catalog.jobs.filter(item => item.id !== selected && item.status === 'completed' && String(item.group_id) === jobGroup).map(item => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label><button className="secondary-button" disabled={!previous || busy} onClick={async () => {setActionBusy(true); try {setComparison(await requestJson(`/api/discovery/${encodeURIComponent(selected)}/compare/${encodeURIComponent(previous)}`));} catch (cause) {setError(cause instanceof Error ? cause.message : 'Comparison failed.');} finally {setActionBusy(false);}}}>Compare versions</button>{comparison !== null && <pre>{describe(comparison)}</pre>}<p className="muted">Added, removed and changed component IDs are reported. Rediscovery creates a new inventory and preserves earlier evidence.</p></details><details><summary>Complete inventory and relationships</summary><pre className="discovery-raw">{describe(inventory)}</pre></details></>}
+<details ref={missingFiles}><summary>Supply missing files</summary><p className="muted">Add non-secret values, charts or dependency files to this discovery. Existing files are preserved. Use a new path and update the resolution settings above to select replacement configuration. The new version retains the earlier inventory and records the supplied artifact hash.</p><form onSubmit={supplement}><label>Missing files or archive<input type="file" name="upload" required disabled={busy}/></label><label>Destination directory<input name="target_path" defaultValue="dependencies" required placeholder="dependencies" disabled={busy}/><span className="muted">Relative to the original source root. Archive paths are preserved within this directory.</span></label><label className="discovery-root-choice"><input type="checkbox" name="acknowledge_non_secret" value="true" required disabled={busy}/>These files contain no passwords, tokens, private keys or other secrets.</label><p className="muted">Keeps your tuning settings and previous results. Successful unchanged renders are reused when caching is available.</p><button disabled={busy || rendering}>Add files and render again</button></form></details><details><summary>Compare immutable versions</summary><label>Previous discovery<select value={previous} onChange={event => {setPrevious(event.target.value); setComparison(null);}}><option value="">Choose a previous discovery</option>{catalog.jobs.filter(item => item.id !== selected && item.status === 'completed' && String(item.group_id) === jobGroup).map(item => <option key={item.id} value={item.id}>{item.id}</option>)}</select></label><button className="secondary-button" disabled={!previous || busy} onClick={async () => {setActionBusy(true); try {setComparison(await requestJson(`/api/discovery/${encodeURIComponent(selected)}/compare/${encodeURIComponent(previous)}`));} catch (cause) {setError(cause instanceof Error ? cause.message : 'Comparison failed.');} finally {setActionBusy(false);}}}>Compare versions</button>{comparison !== null && <pre>{describe(comparison)}</pre>}<p className="muted">Added, removed and changed component IDs are reported. Rediscovery creates a new inventory and preserves earlier evidence.</p></details><details><summary>Complete inventory and relationships</summary><pre className="discovery-raw">{describe(inventory)}</pre></details></>}
       </>}</section>{inventory && <section className="panel"><h2>3. Confirm service inventory</h2><p className="muted">{['blocked', 'invalid'].includes(String(inventory.completeness)) ? 'This inventory cannot be confirmed. Resolve the diagnostics and rediscover.' : 'Choose a service in the owning group, or stage a new service when your role permits it.'}</p><p>Select deployment roots above and associate the reviewed inventory with a service. Confirmation records the inventory; scanning is a separate action.</p><label>Service<select value={service} disabled={confirmed || busy} onChange={event => setService(event.target.value)}><option value="">Select an existing service</option>{catalog.groups.find(item => String(item.id) === jobGroup)?.can_stage && <option value="new">Stage a new service</option>}{services.map(item => <option key={item.id} value={item.id}>{item.name} ({item.service_key})</option>)}</select></label>{service === 'new' && <label>New service key<input value={newService} maxLength={120} disabled={confirmed || busy} onChange={event => setNewService(event.target.value)} placeholder="A unique service key"/><span className="muted">Created in this discovery's owning group when you confirm.</span></label>}{partial && <label className="discovery-root-choice"><input type="checkbox" checked={acknowledged} disabled={confirmed || busy} onChange={event => setAcknowledged(event.target.checked)}/>I acknowledge this inventory is partial or unresolved and have reviewed its diagnostics.</label>}
-      <button disabled={busy || confirmed || job?.status !== 'completed' || ['blocked', 'invalid'].includes(String(inventory.completeness)) || !service || (service === 'new' && !newService.trim()) || !roots.length || (partial && !acknowledged)} onClick={() => void action('confirm', {...(service === 'new' ? {new_service_key: newService.trim()} : {service_id: Number(service)}), root_ids: roots, acknowledge_partial: acknowledged})}>{confirmed ? 'Inventory confirmed' : 'Confirm inventory'}</button>
+      <button disabled={busy || confirmed || !currentInventory || job?.status !== 'completed' || ['blocked', 'invalid'].includes(String(inventory.completeness)) || !service || (service === 'new' && !newService.trim()) || !roots.length || (partial && !acknowledged)} onClick={() => void action('confirm', {...(service === 'new' ? {new_service_key: newService.trim()} : {service_id: Number(service)}), root_ids: roots, acknowledge_partial: acknowledged})}>{confirmed ? 'Inventory confirmed' : 'Confirm inventory'}</button>
       {confirmed && <div className="discovery-scan"><h3>4. Scan confirmed inventory</h3><p>Start a scan only when you are ready to assess the confirmed image inventory.</p>{scanUrl ? <a href={scanUrl} className="secondary-button">View scan progress</a> : <button disabled={busy} onClick={() => void action('scan')}>Start scan</button>}</div>}</section>}</div></div></div>;
 }

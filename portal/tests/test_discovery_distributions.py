@@ -8,7 +8,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.discovery_models import DiscoveryConfirmation, DiscoveryDistributionScan, DiscoveryInventory
-from app.discovery_distributions import _selection
+from app.discovery_distributions import _catalog, _selection
 from app.durable_jobs import DurableJob
 from app.models import Group, Service, ServiceGroup
 from app.scan_coordination import ScanJob
@@ -57,6 +57,24 @@ BASE = '/api/services/one/distributions'
 def save(client, enabled, name='Release', **extra):
     return client.post(BASE, json=dict(name=name, confirmation_id='confirmed', enabled_chart_ids=enabled,
                        csrf_token='csrf') | extra)
+
+
+def test_library_roots_are_evidence_not_selectable_deployments():
+    graph = dict(completeness='complete', roots=[
+        dict(id='application', technology='helm', chart_name='app', chart_version='1.0.0',
+             chart_sha256='a' * 64, chart_digest_kind='tree', path='app', state='rendered'),
+        dict(id='library', technology='helm', chart_name='common', chart_version='1.0.0',
+             chart_sha256='b' * 64, chart_digest_kind='tree', path='common', state='library', chart_type='library'),
+    ], nodes=[], edges=[], images=[dict(reference='app:1', root_id='application', component_id='application')],
+       diagnostics=[dict(code='helm_library_chart', root_id='library', blocking=False)])
+    confirmation = SimpleNamespace(id='confirmed', root_ids=['application', 'library'], acknowledge_partial=False)
+    item = SimpleNamespace(id='inventory', inventory=graph, source_hash='source', content_hash='content')
+    assert [chart['id'] for chart in _catalog(graph, set(confirmation.root_ids))] == ['application']
+    selection = _selection(1, 'Release', confirmation, item, ['application'])
+    assert selection['images'] == ['app:1']
+    assert selection['enabled_chart_ids'] == ['application'] and selection['disabled_chart_ids'] == []
+    with pytest.raises(HTTPException, match='distinct IDs'):
+        _selection(1, 'Release', confirmation, item, ['application', 'library'])
 
 
 def test_two_immutable_distributions_from_same_confirmation(candidate):

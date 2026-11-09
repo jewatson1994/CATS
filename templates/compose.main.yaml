@@ -91,6 +91,7 @@ services:
       CATS_JOB_LEASE_SECONDS: ${CATS_JOB_LEASE_SECONDS:-120}
       CATS_EXPORT_JOB_ROOT: /data/export-jobs
       CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
+      CATS_DISCOVERY_RENDER_CACHE_DIR: /data/discovery-render-cache
       CATS_DISCOVERY_MAX_UPLOAD_BYTES: ${CATS_DISCOVERY_MAX_UPLOAD_BYTES:-0}
       CATS_DISCOVERY_MAX_FILE_BYTES: ${CATS_DISCOVERY_MAX_FILE_BYTES:-0}
       CATS_DISCOVERY_MAX_EXTRACTED_BYTES: ${CATS_DISCOVERY_MAX_EXTRACTED_BYTES:-0}
@@ -374,6 +375,7 @@ services:
       - validator_data:/app/data
       - export_jobs:/data/export-jobs
       - discovery_uploads:/data/discovery-uploads
+      - discovery_render_cache:/data/discovery-render-cache
 
       - patch_jobs:/tmp/cats-patch-jobs
 
@@ -389,6 +391,7 @@ services:
       - validator_data:/app/data
       - export_jobs:/data/export-jobs
       - discovery_uploads:/data/discovery-uploads
+      - discovery_render_cache:/data/discovery-render-cache
       - patch_jobs:/tmp/cats-patch-jobs
       - public_jobs:/tmp/cats-public-jobs
       - validator_payloads:/app/data/validator-payloads
@@ -644,10 +647,13 @@ services:
       CATS_DISCOVERY_HELM_ORIGINS: ${CATS_DISCOVERY_HELM_ORIGINS:-[]}
       CATS_DISCOVERY_HELM_TOKEN_ORIGINS: ${CATS_DISCOVERY_HELM_TOKEN_ORIGINS:-[]}
       CATS_DISCOVERY_ARTIFACT_MANIFEST: /opt/discovery-mirror/manifest.json
+      CATS_DISCOVERY_RENDER_CACHE: ${CATS_DISCOVERY_RENDER_CACHE:-true}
+      CATS_DISCOVERY_RENDER_CACHE_DIR: /data/discovery-render-cache
       PYTHONDONTWRITEBYTECODE: "1"
     volumes:
       - discovery_uploads:/data/discovery-uploads:ro
       - discovery_scratch:/tmp
+      - discovery_render_cache:/data/discovery-render-cache
       - type: bind
         source: ${CATS_DISCOVERY_MIRROR_DIR:-../deploy/discovery-mirror}
         target: /opt/discovery-mirror
@@ -1034,6 +1040,7 @@ volumes:
 
   discovery_uploads:
   discovery_scratch:
+  discovery_render_cache:
 
 networks:
   default:

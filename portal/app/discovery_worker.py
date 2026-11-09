@@ -69,7 +69,7 @@ def handle(ctx, payload):
     from .discovery_engine import run_discovery, DiscoveryError
     from .rendering import render_action, tool_version
     from .discovery_limits import limit
-    from .discovery_render_cache import RenderCache
+    from .discovery_render_cache import RenderCache, cache_directory
     import tempfile
     token = payload.get('source_id', '')
     if len(token) != 32 or any(c not in '0123456789abcdef' for c in token):
@@ -94,9 +94,10 @@ def handle(ctx, payload):
             models.PortalSetting.key.in_(['oci_registries', 'trusted_ca_certificates'])))}
     artifact_resolver = configured_artifact_resolver(settings)
     runner = partial(render_action, check_cancelled=ctx.check, max_output=limit('RENDERED_BYTES'))
-    if os.getenv('CATS_DISCOVERY_RENDER_CACHE', '').lower() == 'true':
-        runner = RenderCache(runner, Path(tempfile.gettempdir()) / 'cats-discovery-render-cache',
-                             str(payload['group_id']) + ':' + token, tool_version)
+    if os.getenv('CATS_DISCOVERY_RENDER_CACHE', 'true').lower() == 'true':
+        runner = RenderCache(runner, cache_directory(),
+                             str(payload['group_id']) + ':' + token + ':output-limit=' + str(limit('RENDERED_BYTES')),
+                             tool_version, source_id=token)
     try:
         with ExitStack() as stack:
             plaintext = stack.enter_context(decrypted_source(source, token, payload['source_hash'], ctx.check))
@@ -136,25 +137,38 @@ def handle(ctx, payload):
         inventory['supplemental_sources'] = payload['supplements']
     if 'gitlab_source' in payload:
         inventory['gitlab_source'] = payload['gitlab_source']
+    redacted_overrides = inventory.pop('_redacted_component_overrides', [])
+    if redacted_overrides:
+        # Do not reintroduce values the engine withheld after inspecting Secrets.
+        # Empty tombstones also prevent a later refinement from inheriting them.
+        selected['component_overrides'] = {key: '' if key in redacted_overrides else value
+            for key, value in selected.get('component_overrides', {}).items()}
     inventory['selection'] = selected
     inventory['archive_hash'] = payload['source_hash']
+    if payload.get('previous_job_id'):
+        inventory['previous_job_id'] = payload['previous_job_id']
     ctx.check()
-    content = hashlib.sha256(json.dumps(inventory, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     with ctx.session_factory() as db:
         job = ctx._owned(db)
         if job.cancel_requested:
             from .durable_jobs import JobCancelled
             raise JobCancelled()
+        inventory['workspace_id'] = payload.get('workspace_id', job.id)
+        content = hashlib.sha256(json.dumps(inventory, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
         existing = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == job.id))
         if existing is None:
             existing = DiscoveryInventory(id=uuid.uuid4().hex, job_id=job.id, group_id=payload['group_id'],
                 source_hash=payload['source_hash'], content_hash=content, inventory=inventory)
             db.add(existing)
         result = {**job.result, 'inventory_id': existing.id, 'completeness': existing.inventory.get('completeness'), 'metrics': existing.inventory.get('metrics', {})}
+        publication = {'result': result}
+        if redacted_overrides:
+            publication['payload'] = {**job.payload, 'options': {**job.payload.get('options', {}),
+                'component_overrides': selected['component_overrides']}}
         # SQLite has no SELECT FOR UPDATE. Fence publication with the same
         # active lease and cancellation flag in the inventory transaction.
         changed = db.execute(update(DurableJob).where(DurableJob.id == job.id, DurableJob.status == 'running',
-            DurableJob.lease_token == job.lease_token, DurableJob.cancel_requested.is_(False)).values(result=result))
+            DurableJob.lease_token == job.lease_token, DurableJob.cancel_requested.is_(False)).values(**publication))
         if not changed.rowcount:
             db.rollback()
             ctx.check()

@@ -51,8 +51,19 @@ def test_apparmor_overlay_is_scoped_and_preserves_seccomp():
     assert "unconfined" not in profile.replace("peer=unconfined", "")
     assert "deny /{,oldroot/}proc/sys/** wklx," in profile
     assert "deny /{,oldroot/}sys/** wklx," in profile
+    # Loopback setup uses AF_NETLINK/SOCK_RAW. A cross-family raw deny wins
+    # over the network allow and silently breaks every worker's health probe.
+    assert "\n  network," in profile
+    assert "deny network raw," not in profile
+    assert "deny network netlink" not in profile
+    for restriction in ("inet raw", "inet6 raw", "packet", "vsock", "alg"):
+        assert f"deny network {restriction}," in profile
     # Bubblewrap setup needs propagation and mounts only under its temporary root.
     assert "mount options=(rw,rslave,silent) -> /," in profile
+    # After pivoting into the temporary root, fd-based setup needs a precise
+    # proc bind, then private propagation before detaching the original root.
+    assert "mount options=(rw,rbind,silent) /oldroot/proc/ -> /proc/," in profile
+    assert "mount options=(rw,rprivate,silent) -> /oldroot/," in profile
     assert "\n  mount," not in profile
 
 

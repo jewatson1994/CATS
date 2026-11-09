@@ -7,6 +7,15 @@ scratch space. The action has a separate network, PID, mount and user namespace,
 no capabilities, no worker environment, no Docker socket and a child seccomp filter
 that denies further namespace or mount changes. Unsupported isolation fails closed.
 
+The final action filesystem has no `/proc` mount. The private PID namespace
+remains enabled, and Docker's default masked and read-only system paths remain
+intact. Creating a fresh procfs inside a nested user namespace can fail with
+`Can't mount proc on /proc: Operation not permitted` when Docker has locked
+submounts under its existing `/proc`. The runner avoids that unnecessary mount;
+it does not bind the broker's `/proc` into the action or disable system-path
+protections. This correction is part of the unified image, so older images need
+the updated runner as well as the AppArmor profile corrections below.
+
 The unified image carries Bubblewrap, static Helm 4.2.3, kubectl 1.37.0 and Compose
 2.39.4 plus static Syft 1.31.0, Grype 0.98.0, Trivy 0.69.3 and Dockle 0.4.15.
 Syft and Grype use checksum-pinned upstream archives because the Alpine package
@@ -81,6 +90,30 @@ Bubblewrap uses. It keeps an enforcing profile, denies writes to `/proc/sys` and
 broker is intentionally broader than the isolated action; isolation still relies
 on the runner's explicit mounts, dropped identity and child filter. Qualify the
 profile again if the Bubblewrap version or host security stack changes.
+
+The raw-socket deny is scoped to IPv4 and IPv6. Bubblewrap creates a raw
+`NETLINK_ROUTE` socket to bring up loopback in its private network namespace;
+a blanket `deny network raw,` also denies that socket. Explicit AppArmor denies
+are quiet by default, so an empty kernel audit log does not rule out this
+failure. Replace the old blanket deny with `deny network inet raw,` and
+`deny network inet6 raw,`, then reload the profile with `apparmor_parser --replace`.
+The existing broad broker network allow also permits raw sockets in other
+non-IP families unless denied separately; packet, vsock and alg remain denied.
+The isolated action still has a separate network namespace and no capabilities.
+Profile replacement applies to attached containers immediately; rerun the actual
+worker health probe before resuming startup. Update the release profile too,
+with its bundle manifest checksum, before rerunning setup so it cannot reinstall
+the old rule. No image rebuild is needed for this profile-only correction.
+
+Bubblewrap also temporarily binds `/oldroot/proc/` to `/proc/` after its first
+pivot, so fd-based mount setup can use `/proc/self/fd`. This is a recursive bind,
+not a new proc filesystem mount; the `/newroot/` mount rules do not cover it.
+A denial with `name="/proc/"`, `srcname="/oldroot/proc/"` and `flags="rw, rbind"`
+requires `mount options=(rw,rbind,silent) /oldroot/proc/ -> /proc/,`.
+The subsequent cleanup requires `mount options=(rw,rprivate,silent) -> /oldroot/,`
+before detaching that root. Both rules stay scoped to Bubblewrap's setup paths;
+the existing `/proc/sys` and `/sys` write denials remain in effect. Reload the
+profile and rerun the worker health probe after applying these corrections.
 
 Before accepting work, run each preflight with the same Compose files:
 

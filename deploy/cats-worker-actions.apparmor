@@ -9,7 +9,10 @@ include <tunables/global>
 profile cats-worker-actions flags=(attach_disconnected,mediate_deleted) {
   network,
   network unix,
-  deny network raw,
+  # Bubblewrap uses a raw Netlink route socket to configure private loopback.
+  # A cross-family raw deny also blocks that socket, even with a Netlink allow.
+  deny network inet raw,
+  deny network inet6 raw,
   deny network packet,
   deny network vsock,
   deny network alg,
@@ -29,10 +32,14 @@ profile cats-worker-actions flags=(attach_disconnected,mediate_deleted) {
   mount options=(rw,rslave,silent) -> /,
   mount fstype=tmpfs -> /tmp/,
   mount options=(rw,rbind,silent) /tmp/newroot/ -> /tmp/newroot/,
+  # After the first pivot, Bubblewrap needs proc for fd-based mount setup.
+  mount options=(rw,rbind,silent) /oldroot/proc/ -> /proc/,
   mount fstype=(tmpfs,proc,devpts) -> /newroot/{,**},
   mount options in (rw,ro,bind,rbind,silent,nosuid,nodev,noexec,relatime,noatime,nodiratime) /** -> /newroot/{,**},
   remount options in (rw,ro,bind,nosuid,nodev,noexec,relatime,noatime,nodiratime,silent) /newroot/{,**},
   pivot_root /tmp/,
+  # Stop propagation before detaching the original root inside the namespace.
+  mount options=(rw,rprivate,silent) -> /oldroot/,
   pivot_root /newroot/,
   umount,
 

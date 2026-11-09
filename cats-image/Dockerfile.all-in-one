@@ -156,8 +156,9 @@ RUN addgroup -g 10001 cats-scan \
 COPY --from=discovery-compose /docker-compose /usr/local/bin/docker-compose
 RUN addgroup -g 10003 discovery \
     && adduser -D -H -u 10003 -G discovery -h /tmp discovery \
-    && mkdir -p /data/discovery-uploads /opt/discovery \
-    && chown 10003:10003 /data/discovery-uploads
+    && mkdir -p /data/discovery-uploads /data/discovery-render-cache /opt/discovery \
+    && chown 10003:10003 /data/discovery-uploads /data/discovery-render-cache \
+    && chmod 0700 /data/discovery-render-cache
 # Static tools work in the empty action filesystem without mounting host libs.
 COPY deploy/verify-worker-tools.py /tmp/verify-worker-tools.py
 RUN for tool in syft grype; do if [ ! -x "/usr/local/bin/$tool" ]; then ln -s "/usr/bin/$tool" "/usr/local/bin/$tool"; fi; done

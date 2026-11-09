@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import threading
 import uuid
+import yaml
 from starlette.datastructures import UploadFile
 from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -62,6 +63,10 @@ def get_job(db, auth, job_id, lock=False):
 def job_view(job):
     view = {key: getattr(job, key) for key in ('id', 'status', 'stage', 'progress', 'result', 'error', 'created_at', 'completed_at', 'cancel_requested')}
     view.update(group_id=job.payload['group_id'], filename=job.payload.get('filename'))
+    view.update(workspace_id=job.payload.get('workspace_id', job.id),
+                previous_job_id=job.payload.get('previous_job_id'),
+                last_inventory_job_id=job.payload.get('last_inventory_job_id'),
+                options=job.payload.get('options', {}))
     if 'gitlab_source' in job.payload:
         view['gitlab_source'] = job.payload['gitlab_source']
     return view
@@ -108,13 +113,46 @@ async def body(request, auth, max_bytes=65536):
 def options(value):
     if not isinstance(value, dict) or len(json.dumps(value)) > 32768:
         raise HTTPException(422, 'Invalid discovery configuration')
-    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'source_map', 'reference_kind', 'reference_version', 'component_values'}
+    allowed = {'environment', 'values_files', 'profiles', 'compose_files', 'chart_map', 'source_map', 'reference_kind', 'reference_version', 'component_values', 'component_overrides'}
     if set(value) - allowed: raise HTTPException(422, 'Unsupported discovery option')
     for key in ('values_files', 'profiles', 'compose_files'):
         if key in value and (not isinstance(value[key], list) or len(value[key]) > 100 or any(not isinstance(v, str) or len(v)>512 for v in value[key])):
             raise HTTPException(422, 'Invalid configuration selection')
-    if 'component_values' in value and (not isinstance(value['component_values'], dict) or any(not isinstance(k, str) or len(k) > 128 or not isinstance(v, list) or any(not isinstance(item, str) or len(item) > 512 for item in v) for k, v in value['component_values'].items())):
+    if 'component_values' in value and (not isinstance(value['component_values'], dict) or len(value['component_values']) > 100 or any(not isinstance(k, str) or not k or len(k) > 128 or not isinstance(v, list) or len(v) > 100 or any(not isinstance(item, str) or len(item) > 512 for item in v) for k, v in value['component_values'].items())):
         raise HTTPException(422, 'Invalid component values selection')
+    overrides = value.get('component_overrides', {})
+    if not isinstance(overrides, dict) or len(overrides) > 100:
+        raise HTTPException(422, 'Invalid component overrides')
+    for component_id, text in overrides.items():
+        if not isinstance(component_id, str) or not component_id or len(component_id) > 128 or not isinstance(text, str) or len(text) > 16384:
+            raise HTTPException(422, 'Invalid component overrides')
+        if not text.strip():
+            continue
+        try:
+            # Reject references before construction so aliases cannot amplify input.
+            if any(isinstance(event, yaml.AliasEvent) for event in yaml.parse(text)):
+                raise ValueError()
+            parsed = yaml.safe_load(text)
+            if not isinstance(parsed, dict) or any(key in parsed for key in ('apiVersion', 'kind')):
+                raise ValueError()
+            remaining = 2048
+            def validate(item, depth=0):
+                nonlocal remaining
+                remaining -= 1
+                if remaining < 0 or depth > 24:
+                    raise ValueError()
+                if isinstance(item, dict):
+                    if any(not isinstance(key, str) for key in item):
+                        raise ValueError()
+                    for child in item.values(): validate(child, depth + 1)
+                elif isinstance(item, list):
+                    for child in item: validate(child, depth + 1)
+                elif item is not None and not isinstance(item, (str, bool, int, float)):
+                    raise ValueError()
+            validate(parsed)
+            json.dumps(parsed, allow_nan=False)
+        except (ValueError, TypeError, RecursionError, yaml.YAMLError):
+            raise HTTPException(422, 'Component overrides must be one ordinary YAML values mapping without aliases or Kubernetes resources') from None
     if 'environment' in value and (not isinstance(value['environment'], str) or len(value['environment']) > 128):
         raise HTTPException(422, 'Invalid environment selection')
     if 'source_map' in value and (not isinstance(value['source_map'], dict) or len(value['source_map']) > 100 or any(not isinstance(k, str) or not isinstance(v, str) or len(k) > 512 or len(v) > 512 for k,v in value['source_map'].items())):
@@ -127,6 +165,52 @@ def options(value):
         raise HTTPException(422, 'Invalid artifact kind')
     # Only local non-secret files can be selected; credentials are never accepted here.
     return value
+
+
+def merge_options(previous, patch):
+    """Refinement changes one component without discarding other selections."""
+    patch = options(patch)
+    merged = {**previous, **patch}
+    for key in ('component_values', 'component_overrides', 'source_map', 'chart_map'):
+        if key in patch:
+            merged[key] = {**previous.get(key, {}), **patch[key]}
+    return options(merged)
+
+
+def refinement_payload(db, old, selected):
+    payload = {**old.payload, 'options': selected, 'previous_job_id': old.id,
+               'workspace_id': old.payload.get('workspace_id', old.id)}
+    previous = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == old.id))
+    if previous is not None and previous.inventory.get('completeness') != 'invalid':
+        payload['last_inventory_job_id'] = old.id
+    return payload
+
+
+def acknowledge_overrides(selected, acknowledged):
+    if any(text.strip() for text in selected.get('component_overrides', {}).values()) and not acknowledged:
+        raise HTTPException(422, 'Confirm that component overrides contain no secrets or credentials')
+
+
+def previous_inventory(db, job):
+    """Recover a workspace's latest usable result without crossing source/group scope."""
+    previous_id = job.payload.get('last_inventory_job_id') or job.payload.get('previous_job_id')
+    visited = {job.id}
+    for _ in range(20):
+        if not previous_id or previous_id in visited:
+            return None
+        visited.add(previous_id)
+        previous = db.scalar(select(DurableJob).where(DurableJob.id == previous_id,
+            DurableJob.kind == 'discovery',
+            DurableJob.payload['group_id'].as_integer() == job.payload['group_id'],
+            DurableJob.payload['source_id'].as_string() == job.payload['source_id']))
+        if previous is None:
+            return None
+        item = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == previous.id,
+            DiscoveryInventory.group_id == job.payload['group_id']))
+        if item is not None and item.inventory.get('completeness') != 'invalid':
+            return item
+        previous_id = previous.payload.get('last_inventory_job_id') or previous.payload.get('previous_job_id')
+    return None
 
 def can_stage(db, auth, group_id):
     # Match Accounts' existing staging authority; discovery permission alone is insufficient.
@@ -194,6 +278,7 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
         group_scope(db, auth, group_id)
         try: selected = options(json.loads(str(form.get('options', '{}'))))
         except (ValueError, TypeError): raise HTTPException(422, 'Invalid discovery options') from None
+        acknowledge_overrides(selected, form.get('acknowledge_non_secret') == 'true')
         upload, reference = form.get('upload'), str(form.get('reference', '')).strip()
         repository_url = form.get('repository_url', '')
         if sum(map(bool, (upload, reference, repository_url))) != 1:
@@ -283,7 +368,15 @@ async def create(request: Request, auth: AuthContext = Depends(require_user), db
 def detail(job_id: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     job = get_job(db, auth, job_id)
     item = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == job.id))
-    return {'job':job_view(job), 'inventory':item.inventory if item else None}
+    view = job_view(job)
+    if item is not None and item.inventory.get('completeness') != 'invalid':
+        view['last_inventory_job_id'] = job.id
+    retained = previous_inventory(db, job) if item is None or item.inventory.get('completeness') == 'invalid' else None
+    if retained is not None:
+        view['last_inventory_job_id'] = retained.job_id
+    return {'job':view, 'inventory':item.inventory if item else None,
+            'previous_inventory': retained.inventory if retained else None,
+            'previous_inventory_job_id': retained.job_id if retained else None}
 
 @router.post('/{job_id}/cancel')
 async def cancel(job_id: str, request: Request, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
@@ -313,9 +406,14 @@ async def retry(job_id: str, request: Request, auth: AuthContext = Depends(requi
     if old.result.get('source_expired') or not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
         raise HTTPException(410, 'Discovery source expired. Submit the source again.')
     if old.status in ('queued','running'): raise HTTPException(409, 'Discovery is still running')
-    payload = {**old.payload, 'previous_job_id': old.id}
-    if 'options' in data: payload['options'] = options(data['options'])
-    job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id)
+    patch = options(data.get('options', {}))
+    acknowledge_overrides(patch, data.get('acknowledge_non_secret') is True)
+    selected = merge_options(old.payload.get('options', {}), patch)
+    payload = refinement_payload(db, old, selected)
+    job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id, commit=False)
+    record_audit(db, auth, 'discovery.refinement.submitted', 'discovery', job.id,
+                 parent_job_id=old.id, workspace_id=payload['workspace_id'])
+    db.commit()
     return {'job_id':job.id}
 
 @router.post('/{job_id}/supplements')
@@ -325,10 +423,14 @@ async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(
     from .compose_ingestion import _relative, ComposeInputError
     old = get_job(db, auth, job_id, True)
     parent = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == old.id))
-    if old.status != 'completed' or parent is None:
+    if old.status not in ('completed', 'failed', 'cancelled'):
         raise HTTPException(409, 'Discovery must finish before supplying dependencies')
+    if parent is None or parent.inventory.get('completeness') == 'invalid':
+        parent = previous_inventory(db, old) or parent
+    if parent is None:
+        raise HTTPException(409, 'An earlier discovery inventory is required before supplying dependencies')
     chain = old.payload.get('supplements', [])
-    if not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
+    if old.result.get('source_expired') or not (upload_root() / old.payload['source_id'] / old.payload['filename']).is_file():
         raise HTTPException(410, 'Discovery source expired. Submit the source again.')
     maximum = discovery_limit('UPLOAD_BYTES')
     receive, received = request._receive, 0
@@ -347,7 +449,7 @@ async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(
             raise HTTPException(422, 'Confirm that supplemental files contain no secrets or credentials')
         try:
             target_path = _relative(str(form.get('target_path', '.')))
-            selected = options(json.loads(str(form.get('options', json.dumps(old.payload.get('options', {}))))))
+            selected = merge_options(old.payload.get('options', {}), json.loads(str(form.get('options', '{}'))))
         except (ValueError, TypeError, ComposeInputError):
             raise HTTPException(422, 'Invalid supplemental path or options') from None
         upload = form.get('upload')
@@ -381,8 +483,8 @@ async def supplement(job_id: str, request: Request, auth: AuthContext = Depends(
                 os.chown(target, -1, gid)
                 target.chmod(0o640)
             record = dict(source_id=identity, filename=filename, source_hash=digest.hexdigest(), target_path=target_path,
-                          parent_job_id=old.id, parent_inventory_id=parent.id, parent_content_hash=parent.content_hash)
-            payload = {**old.payload, 'options': selected, 'previous_job_id': old.id, 'supplements': [*chain, record]}
+                          parent_job_id=parent.job_id, parent_inventory_id=parent.id, parent_content_hash=parent.content_hash)
+            payload = {**refinement_payload(db, old, selected), 'supplements': [*chain, record]}
             job = submit(db, kind='discovery', payload=payload, requested_by_id=auth.user.id, commit=False)
             record_audit(db, auth, 'discovery.supplement.submitted', 'discovery', job.id, parent_job_id=old.id, parent_inventory_id=parent.id, source_hash=digest.hexdigest())
             db.commit()
@@ -497,6 +599,11 @@ async def forget_source(job_id: str, request: Request, auth: AuthContext = Depen
     siblings = db.scalars(select(DurableJob).where(DurableJob.kind == 'discovery', DurableJob.payload['source_id'].as_string() == source_id)).all()
     if any(j.payload.get('source_id') == source_id and j.status in ('queued','running') for j in siblings):
         raise HTTPException(409, 'Source is still in use')
+    from .discovery_render_cache import remove_source_cache
+    try:
+        remove_source_cache(source_id)
+    except OSError:
+        raise HTTPException(503, 'Retained render outputs could not be removed. Check cache storage access and retry.') from None
     path = upload_root() / source_id / job.payload['filename']
     if not path.is_symlink() and path.resolve().is_relative_to(upload_root().resolve()):
         path.unlink(missing_ok=True)

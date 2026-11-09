@@ -22,6 +22,14 @@ MAX_REPOSITORY_ENTRIES = limit("FILES")
 MAX_REPOSITORY_BYTES = limit("EXTRACTED_BYTES")
 MAX_REPOSITORY_FILE_BYTES = limit("FILE_BYTES")
 _CHART_VERSION = re.compile(r'v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?')
+# These configure existing controllers and do not describe additional pod workloads.
+# Unknown custom kinds still carry an explicit inventory coverage limitation.
+_NONWORKLOAD_CUSTOM_RESOURCES = {
+    'cert-manager.io': {'Issuer', 'ClusterIssuer'},
+    'trust.cert-manager.io': {'Bundle'},
+    'velero.io': {'BackupStorageLocation', 'VolumeSnapshotLocation'},
+    'monitoring.coreos.com': {'ServiceMonitor', 'PodMonitor', 'PrometheusRule', 'AlertmanagerConfig'},
+}
 
 def _exceeds(value, limit):
     return bool(limit and value > limit)
@@ -93,7 +101,7 @@ class DiscoveryError(ValueError):
 def _id(*parts):
     return hashlib.sha256(json.dumps(parts, separators=(',', ':')).encode()).hexdigest()[:24]
 
-def _documents(text):
+def _documents(text, *, allow_duplicate_keys=False):
     if not isinstance(text, str) or _exceeds(len(text.encode()), MAX_REPOSITORY_FILE_BYTES):
         raise DiscoveryError('Document exceeds limits.')
     class BoundedLoader(yaml.SafeLoader):
@@ -120,7 +128,7 @@ def _documents(text):
                     raise DiscoveryError('Document structure exceeds limits.')
                 if isinstance(n, yaml.MappingNode):
                     keys = [k.value for k, _ in n.value if isinstance(k, yaml.ScalarNode)]
-                    if len(keys) != len(set(keys)):
+                    if not allow_duplicate_keys and len(keys) != len(set(keys)):
                         raise DiscoveryError('Duplicate document keys.')
                 children = ([c for pair in n.value for c in pair] if isinstance(n, yaml.MappingNode)
                             else n.value if isinstance(n, yaml.SequenceNode) else [])
@@ -206,6 +214,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     mapping = options.get('chart_map', {})
     if not isinstance(mapping, dict) or len(mapping) > 200 or any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapping.items()):
         raise DiscoveryError('Invalid local chart mapping.')
+    overrides = options.get('component_overrides', {})
+    if (not isinstance(overrides, dict) or len(overrides) > 100
+            or any(not isinstance(key, str) or not key or len(key) > 128
+                   or not isinstance(value, str) or len(value) > 16384 for key, value in overrides.items())):
+        raise DiscoveryError('Invalid component values overrides.')
     if progress:
         progress({'stage': 'reading'})
     result = dict(schema_version=SCHEMA_VERSION, source_hash='', roots=[], nodes=[], edges=[], images=[],
@@ -238,16 +251,17 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         text = _text(value)
         return '[redacted]' if any(secret in text for secret in secret_values) else text
     diagnostic_component = None
-    def issue(code, rid=None, path=None):
+    def issue(code, rid=None, path=None, *, blocking=True, **details):
         if len(result['diagnostics']) >= 30000:
             raise DiscoveryError('Diagnostic limit exceeded.')
-        result['diagnostics'].append(dict(code=code, severity='warning', root_id=rid, path=path,
-                                          message=code.replace('_', ' ') + '.', blocking=True))
+        result['diagnostics'].append(dict(code=code, severity='warning' if blocking else 'info', root_id=rid, path=path,
+                                          message=code.replace('_', ' ') + '.', blocking=blocking, **details))
         if diagnostic_component:
             result['diagnostics'][-1].update(component_id=diagnostic_component[0], component_name=clean(diagnostic_component[1]))
-        result['completeness'] = 'partial'
-        if rid in roots_by_id:
-            roots_by_id[rid]['completeness'] = 'partial'
+        if blocking:
+            result['completeness'] = 'partial'
+            if rid in roots_by_id:
+                roots_by_id[rid]['completeness'] = 'partial'
     def root(path, technology, **metadata):
         item = dict(id=_id('root', path, technology), path=path, technology=technology, completeness='complete', **metadata)
         if item['id'] not in roots_by_id:
@@ -271,8 +285,10 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     def component_values(component_id, label, path, rid, inherited=(), previous_id=None):
         selections = options.get('component_values', {})
         selected = selections.get(component_id, selections.get(previous_id, []))
-        result['configurable_components'].append(dict(id=component_id, label=clean(label), path=path,
-            technology='helm', root_id=rid, values_origin=list(inherited), selected_values=list(selected)))
+        inline = options.get('component_overrides', {}).get(component_id, options.get('component_overrides', {}).get(previous_id, ''))
+        configuration = dict(id=component_id, label=clean(label), path=path,
+            technology='helm', root_id=rid, values_origin=list(inherited), selected_values=list(selected), values_yaml=inline)
+        result['configurable_components'].append(configuration)
         arguments = []
         for selected_file in selected:
             try:
@@ -280,6 +296,41 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
             except (ValueError, TypeError, OSError, yaml.YAMLError):
                 issue('component_values_file_unavailable', rid, clean(selected_file))
                 result['diagnostics'][-1].update(component_id=component_id, message='Selected component values are missing or are not an ordinary values mapping. Select a current non-secret values file.')
+                return None
+        if inline.strip():
+            try:
+                if any(isinstance(token, yaml.tokens.AliasToken) for token in yaml.scan(inline)):
+                    raise ValueError()
+                document, = _documents(inline)
+                if not isinstance(document, dict) or any(key in document for key in ('apiVersion', 'kind')):
+                    raise ValueError()
+                count = 0
+                def validate(value, depth=0):
+                    nonlocal count
+                    count += 1
+                    if count > 2048 or depth > 24:
+                        raise ValueError()
+                    if isinstance(value, dict):
+                        if not all(isinstance(key, str) for key in value):
+                            raise ValueError()
+                        for child in value.values():
+                            validate(child, depth + 1)
+                    elif isinstance(value, list):
+                        for child in value:
+                            validate(child, depth + 1)
+                    elif value is not None and not isinstance(value, (str, bool, int, float)):
+                        raise ValueError()
+                validate(document)
+                # Separate from catalog/Flux inline values: this is the final file layer.
+                value_path = base / ('.discovery-override-' + component_id + '.yaml')
+                with value_path.open('x', encoding='utf-8') as output:
+                    yaml.safe_dump(document, output)
+                arguments += ['-f', str(value_path)]
+            except (ValueError, OSError, yaml.YAMLError):
+                configuration['values_yaml'] = ''
+                issue('component_override_invalid', rid, path)
+                result['diagnostics'][-1].update(component_id=component_id,
+                    message='Enter one non-secret YAML values mapping for this component; aliases, Kubernetes resources and oversized values are not supported.')
                 return None
         return arguments
 
@@ -298,6 +349,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
     def image(ref, rid, nid, path):
         if isinstance(ref, str) and any(secret in ref for secret in secret_values):
             issue('secret_derived_image_not_retained', rid, path)
+            result['diagnostics'][-1]['message'] = 'An image reference overlaps a rendered Secret value and was withheld. Supply an image repository and tag that do not contain credentials, then rerender this component.'
             return
         if _image(ref):
             item = dict(reference=ref, root_id=rid, component_id=nid, completeness='complete', provenance=[dict(path=path)])
@@ -416,7 +468,12 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     api_group == 'admissionregistration.k8s.io' and kind in {
                         'MutatingWebhookConfiguration', 'ValidatingWebhookConfiguration'}):
                 if 'toolkit.fluxcd.io/' not in str(doc.get('apiVersion', '')):
-                    issue('custom_resource_workloads_not_evaluated', rid, path)
+                    known_configuration = kind in _NONWORKLOAD_CUSTOM_RESOURCES.get(api_group, ())
+                    issue('custom_resource_configuration' if known_configuration else 'custom_resource_workloads_not_evaluated',
+                          rid, path, blocking=not known_configuration, resource_kind=clean(kind), api_group=clean(api_group))
+                    result['diagnostics'][-1]['message'] = (
+                        f'{clean(kind)} configures an existing controller and declares no pod workload to inventory.' if known_configuration else
+                        f'{clean(kind)} is present, but workloads created later by its controller cannot be determined offline. Supply those workload manifests to extend image coverage.')
     if options.get('reference') and source_path is None:
         reference = options['reference']
         result['source_hash'] = 'sha256:' + hashlib.sha256(str(reference).encode()).hexdigest()
@@ -521,6 +578,37 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
         source_digest = _tree_hash(base, files, check)
         result['source_hash'] = 'sha256:' + source_digest
         parsed = {}
+        source_parse_diagnostics = []
+        native_only_values = set()
+        render_input_results = {}
+        def document_failure(exc, path, rid=None):
+            if any(d['path'] == path for d in source_parse_diagnostics):
+                return
+            issue('invalid_or_unsupported_document', rid, path)
+            diagnostic = result['diagnostics'][-1]
+            reason = ('duplicate_keys' if isinstance(exc, DiscoveryError) and str(exc) == 'Duplicate document keys.' else
+                      'unsupported_scalar' if isinstance(exc, DiscoveryError) and str(exc) == 'Unsupported document scalar type.' else
+                      'structure_limit' if isinstance(exc, (DiscoveryError, RecursionError)) else 'invalid_yaml')
+            diagnostic['reason'] = reason
+            diagnostic['message'] = {
+                'duplicate_keys': 'This YAML file contains duplicate mapping keys. Keep one value per key to make the configuration unambiguous.',
+                'unsupported_scalar': 'This file contains a value type that the inventory parser cannot interpret. Use ordinary YAML strings, numbers, booleans, lists and mappings.',
+                'structure_limit': 'This document exceeds the supported nesting or structure limits. Reduce its size or nesting.',
+                'invalid_yaml': 'This file could not be parsed as YAML or JSON. Correct its syntax and rerun discovery.',
+            }[reason]
+            mark = getattr(exc, 'problem_mark', None)
+            if mark is not None:
+                diagnostic.update(line=mark.line + 1, column=mark.column + 1)
+            source_parse_diagnostics.append(diagnostic)
+            if reason == 'duplicate_keys':
+                try:
+                    compatible, = _documents((base / path).read_text(encoding='utf-8-sig'), allow_duplicate_keys=True)
+                    # Preserve catalog discovery gaps even if the parent happens
+                    # to render successfully without consuming its service catalog.
+                    if isinstance(compatible, dict) and not any(key in compatible for key in ('services', 'apiVersion', 'kind')):
+                        native_only_values.add(path)
+                except (ValueError, OSError, UnicodeError, yaml.YAMLError, RecursionError):
+                    pass
         charts = [p for p in files if Path(p).name == 'Chart.yaml']
         helm_templates = {Path(chart).parent / 'templates' for chart in charts}
         kustomizations = {p for p in files if Path(p).name in ('kustomization.yaml', 'kustomization.yml', 'Kustomization')
@@ -533,11 +621,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 continue
             try:
                 parsed[path] = _documents((base / path).read_text(encoding='utf-8-sig'))
-            except (ValueError, yaml.YAMLError, UnicodeError, RecursionError):
+            except (ValueError, yaml.YAMLError, UnicodeError, RecursionError) as exc:
                 # Compose owns custom tags such as !reset and !override. Its
                 # native/fallback pass below reports invalid selected inputs.
                 if path not in compose_files and Path(path).name not in ('compose.override.yaml', 'compose.override.yml', 'docker-compose.override.yaml', 'docker-compose.override.yml'):
-                    issue('invalid_or_unsupported_document', path=path)
+                    document_failure(exc, path)
         kustomizations = {p for p in kustomizations if not any(isinstance(doc, dict) and 'toolkit.fluxcd.io/' in str(doc.get('apiVersion', '')) for doc in parsed.get(p, []))}
         collect_secrets([doc for docs in parsed.values() for doc in docs])
         managed_paths = {p for p in parsed if any(Path(k).parent == Path('.') or Path(k).parent in Path(p).parents for k in kustomizations)}
@@ -802,10 +890,14 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         chart_hashes[local] = chart_hash(acquired)
                     evidence.update(version=clean(actual_version), **chart_hash(local))
                     nodes_by_id[dep_id]['state'] = 'resolved'
-                    if (dependency.get('condition') or dependency.get('tags')) and enabled is not True:
-                        issue('helm_dependency_images_not_verified', rid, path)
+                    # A successful parent render inventories all selected dependency
+                    # workloads. Disabled dependencies and template libraries add none.
+                    library = child[0].get('type') == 'library'
+                    if library or enabled is False:
+                        issue('helm_library_chart' if library else 'helm_dependency_disabled', rid, path, blocking=False)
                         result['diagnostics'][-1].update(component_id=dep_id, component_name=clean(alias),
-                            message='This optional dependency is available. Its images cannot be verified independently from the parent Helm render.')
+                            message='This library chart supplies templates to its parent and has no standalone workloads.' if library else
+                                    'This dependency is disabled by the effective parent values and contributes no workloads to this render.')
                     scoped_values = values.get(alias, {}) if values is not None else None
                     if not prepare_chart(local, rid, path, dep_id, [], scoped_values, (*ancestry, identity), in_archive):
                         ready = False
@@ -820,6 +912,15 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
 
         def render(tool, args, rid, path, postrenderers=None, output_transform=None, owner=None, catalog_scope=None):
             check()
+            active_tool = tool
+            input_results = []
+            if tool == 'helm':
+                inputs = [Path(args[2]) / 'values.yaml', *(Path(arg) for index, arg in enumerate(args) if index and args[index - 1] == '-f')]
+                for source_file in inputs:
+                    if source_file.is_relative_to(base):
+                        record = dict(root_id=rid, component_id=owner or rid, success=False)
+                        render_input_results.setdefault(source_file.relative_to(base).as_posix(), []).append(record)
+                        input_results.append(record)
             if runner is None:
                 issue('native_renderer_unavailable', rid, path)
                 return
@@ -849,6 +950,7 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         (postbase / 'resources.yaml').write_text(yaml.safe_dump_all(documents), encoding='utf-8')
                         configuration = {'apiVersion': 'kustomize.config.k8s.io/v1beta1', 'kind': 'Kustomization', 'resources': ['resources.yaml'], **transform}
                         (postbase / 'kustomization.yaml').write_text(yaml.safe_dump(configuration), encoding='utf-8')
+                        active_tool = 'kustomize'
                         output = runner('kustomize', ['build', str(postbase)], str(base))
                         if isinstance(output, dict):
                             result['tool_versions']['kustomize'] = _text(output.get('version', 'unknown'))
@@ -874,18 +976,38 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         if not owner:
                             edge(rid, controller, 'declares')
                         rendered_documents.append((path, document, True, (rid, catalog_scope or owner or rid, controller)))
+                for record in input_results:
+                    record['success'] = True
                 return True
             except (MemoryError, OSError):
                 raise
             except Exception as exc:
                 check()
+                if isinstance(exc, (yaml.YAMLError, DiscoveryError)):
+                    invalidate = getattr(runner, 'invalidate_last', None)
+                    if callable(invalidate):
+                        invalidate()
                 issue('native_render_failed', rid, path)
                 diagnostic = result['diagnostics'][-1]
-                diagnostic['renderer'] = tool
+                diagnostic['renderer'] = active_tool
                 diagnostic['message'] = 'Rendering could not produce workloads. Review the chart configuration and select appropriate values files below. Required values may be reported one at a time; rerun after each correction.'
-                if tool == 'kustomize':
+                if active_tool == 'kustomize':
                     diagnostic['message'] = 'Kustomize build failed. Review this overlay, its resources, bases, components and patches; Helm values files do not configure Kustomize.'
-                from .discovery_renderer import RendererError
+                from .discovery_renderer import RendererError, renderer_failure_reason
+                reason = getattr(exc, 'reason', None) or renderer_failure_reason(str(exc))
+                explanations = {
+                    'helm_unavailable': 'The overlay requires Helm support that this rendering command cannot provide. Vendor the chart output as local manifests or use a supported Helm rendering root.',
+                    'artifact_retrieval_failed': 'The renderer could not retrieve a chart or remote resource. Supply the chart and its dependencies locally, or configure an approved artifact source; rendering runs without network access.',
+                    'invalid_values_or_yaml': 'The renderer rejected YAML or values schema validation. Correct the source syntax or supply values matching the chart schema, then rerender this component.',
+                    'missing_resource': 'A required local file, chart dependency or resource is missing. Supply the referenced content and check its path before rerendering.',
+                    'required_values': 'The chart requires configuration values before it can render. Set the listed value paths in a component values file or non-secret override, then rerender. Additional requirements may appear after this correction.',
+                    'template_error': 'A chart template failed to evaluate. Check the chart version and its documented values requirements, then correct this component configuration or template.',
+                    'patch_target_missing': 'A Kustomize patch could not match its target. Check the target name, kind and namespace against the resources in this overlay.',
+                }
+                if reason in explanations:
+                    diagnostic.update(reason=reason, message=explanations[reason])
+                elif isinstance(exc, (yaml.YAMLError, DiscoveryError)):
+                    diagnostic.update(reason='invalid_rendered_document', message='The renderer output could not be read as workload YAML. Check the chart templates or overlay output for invalid syntax, duplicate keys or unsupported structure.')
                 if isinstance(exc, RendererError):
                     if exc.infrastructure:
                         diagnostic['code'] = 'worker_isolation_unavailable'
@@ -914,8 +1036,8 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                     docs = parsed.get(relative)
                     if docs is None:
                         docs = _documents(value_file.read_text(encoding='utf-8-sig'))
-                except (ValueError, yaml.YAMLError):
-                    issue('invalid_or_unsupported_document', rid, relative)
+                except (ValueError, yaml.YAMLError) as exc:
+                    document_failure(exc, relative, rid)
                     return
                 if len(docs) == 1 and isinstance(docs[0], dict) and 'services' in docs[0]:
                     catalog = _merge(catalog, {'services': docs[0]['services']})
@@ -1078,6 +1200,11 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         if isinstance(value, str):
                             metadata['chart_' + field] = clean(value)
                 rid = root(Path(path).parent.as_posix(), adapter.technology, **metadata)
+                if adapter.tool == 'helm' and len(parsed.get(path, ())) == 1 and isinstance(parsed[path][0], dict) and parsed[path][0].get('type') == 'library':
+                    roots_by_id[rid].update(state='library', chart_type='library')
+                    issue('helm_library_chart', rid, path, blocking=False)
+                    result['diagnostics'][-1]['message'] = 'This library chart supplies templates to consuming charts and has no standalone workloads to render.'
+                    continue
                 args = [*adapter.prefix, str(directory)]
                 if adapter.tool == 'helm':
                     args[1] = metadata.get('chart_name') or directory.name
@@ -1638,9 +1765,32 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                         issue('missing_submodule_content', path=path)
         if not result['roots']:
             issue('no_supported_deployment_roots')
-        if result['completeness'] == 'partial' and not result['images'] and all(
-                n['kind'] == 'HelmDependency' and n['state'] == 'unresolved' for n in result['nodes']):
-            result['completeness'] = 'invalid' if any(d['code'] == 'invalid_or_unsupported_document' for d in result['diagnostics']) else 'blocked'
+        for diagnostic in source_parse_diagnostics:
+            uses = render_input_results.get(diagnostic['path'], [])
+            if uses:
+                # Native Helm owns its values format. An independently unsupported
+                # values file is not a failed deployment when Helm rendered it.
+                original = dict(diagnostic)
+                for index, usage in enumerate(uses):
+                    target = diagnostic if index == 0 else dict(original)
+                    target.update(root_id=usage['root_id'], component_id=usage['component_id'])
+                    component = nodes_by_id.get(usage['component_id'], roots_by_id.get(usage['component_id'], {}))
+                    label = component.get('name') or component.get('chart_name')
+                    if label:
+                        target['component_name'] = clean(label)
+                    else:
+                        target.pop('component_name', None)
+                    if usage['success'] and diagnostic['path'] in native_only_values:
+                        target.update(code='source_values_parser_limitation', severity='info', blocking=False,
+                                      message='The inventory parser could not independently read this values file. Native Helm successfully consumed it and rendered this component; workload images are inventoried from that output.')
+                    if index:
+                        result['diagnostics'].append(target)
+            else:
+                matching = [item for item in result['roots'] if item['technology'] == 'helm' and
+                            (item['path'] == '.' or diagnostic['path'].startswith(item['path'] + '/'))]
+                if matching:
+                    owner = max(matching, key=lambda item: len(item['path']))
+                    diagnostic.update(root_id=owner['id'], component_id=owner['id'])
         for item in result['nodes']:
             for field in ('name', 'namespace', 'kind'):
                 item[field] = clean(item[field])
@@ -1649,18 +1799,49 @@ def run_discovery(source_path, options=None, runner=None, progress=None, artifac
                 if field in item:
                     item[field] = clean(item[field])
         for item in result['diagnostics']:
-            if 'component_name' in item:
-                item['component_name'] = clean(item['component_name'])
-                item['message'] = clean(item['message'])
+            for field in ('component_name', 'message', 'resource_kind', 'api_group'):
+                if field in item:
+                    item[field] = clean(item[field])
+            if 'value_paths' in item:
+                item['value_paths'] = [clean(value) for value in item['value_paths']]
         for item in result['configurable_components']:
             item['label'] = clean(item['label'])
+            if any(secret in item.get('values_yaml', '') for secret in secret_values):
+                item.update(values_yaml='', values_redacted=True)
+        # Publication also carries the submitted options. Report input identities
+        # privately so callers can scrub historical aliases and unused overrides,
+        # not just the current configurable component IDs shown above.
+        redacted_overrides = sorted(key for key, value in options.get('component_overrides', {}).items()
+                                    if any(secret in value for secret in secret_values))
+        if redacted_overrides:
+            result['_redacted_component_overrides'] = redacted_overrides
         retained_images = []
         for item in result['images']:
             if any(secret in item['reference'] for secret in secret_values):
                 issue('secret_derived_image_not_retained', item['root_id'], item['provenance'][0]['path'])
+                result['diagnostics'][-1].update(component_id=item['component_id'],
+                    message='An image reference overlaps a rendered Secret value and was withheld. Supply an image repository and tag that do not contain credentials, then rerender this component.')
             else:
                 retained_images.append(item)
         result['images'] = retained_images
+        # Group repeated observations without merging distinct roots, components,
+        # resource kinds, paths or failure details. Counts retain their occurrence.
+        grouped = {}
+        for diagnostic in result['diagnostics']:
+            key = json.dumps(diagnostic, sort_keys=True, separators=(',', ':'))
+            if key in grouped:
+                grouped[key]['occurrences'] = grouped[key].get('occurrences', 1) + 1
+            else:
+                grouped[key] = dict(diagnostic)
+        result['diagnostics'] = list(grouped.values())
+        blocking = [diagnostic for diagnostic in result['diagnostics'] if diagnostic['blocking']]
+        result['completeness'] = 'partial' if blocking else 'complete'
+        blocking_roots = {diagnostic['root_id'] for diagnostic in blocking}
+        for item in result['roots']:
+            item['completeness'] = 'partial' if item['id'] in blocking_roots else 'complete'
+        if blocking and not result['images'] and all(
+                n['kind'] == 'HelmDependency' and n['state'] == 'unresolved' for n in result['nodes']):
+            result['completeness'] = 'invalid' if any(d['code'] == 'invalid_or_unsupported_document' for d in blocking) else 'blocked'
         partial_roots = {item['id'] for item in result['roots'] if item['completeness'] != 'complete'}
         for item in result['nodes'] + result['images']:
             item['completeness'] = 'partial' if item['root_id'] in partial_roots or item.get('state') == 'unresolved' else 'complete'

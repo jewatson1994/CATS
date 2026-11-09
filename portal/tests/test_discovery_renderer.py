@@ -48,6 +48,11 @@ def test_renderer_mounts_only_source_and_tool(linux, tmp_path):
     assert "--unshare-all" in command
     assert "--clearenv" in command
     assert "--unshare-user" in command
+    assert command[command.index("--cap-drop") + 1] == "ALL"
+    # A private PID namespace does not require procfs. Its nested mount fails
+    # on hosts enforcing Docker's locked proc masks; do not unmask the broker.
+    assert "--proc" not in command
+    assert "/proc" not in command
     assert command.count("--ro-bind") == 2
     assert "/app" not in command
     assert command[-4:] == ["/tool", "template", "test", "/source"]

@@ -2836,7 +2836,9 @@ def _oidc_callback(request: Request, db: Session):
     response = RedirectResponse(next_path if has_access else "/account/access", status_code=303)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="strict", secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true", max_age=int(os.getenv("SESSION_HOURS", "8")) * 3600)
+    # The IdP callback and this redirect form a cross-site navigation. Strict
+    # suppresses the new session on the landing request; Lax allows its GET.
+    response.set_cookie(SESSION_COOKIE, raw_token, httponly=True, samesite="lax", secure=os.getenv("SESSION_COOKIE_SECURE", "false").lower() == "true", max_age=int(os.getenv("SESSION_HOURS", "8")) * 3600)
     response.delete_cookie("cats_oidc_state")
     response.delete_cookie("cats_oidc_nonce")
     response.delete_cookie("cats_oidc_next")

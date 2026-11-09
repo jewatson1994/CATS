@@ -649,9 +649,10 @@ def test_native_conditional_dependency_stays_with_parent_and_records_verified_co
         assert evidence['enabled'] is enabled and evidence['chart'] == 'worker' and evidence['version'] == '1.2.3'
         assert evidence['chart_sha256'] == digest and evidence['chart_digest_kind'] == 'archive'
         assert {'source': root['id'], 'target': dep['id'], 'kind': 'declares'} in result['edges']
-        assert (result['completeness'] == 'complete') == enabled
-        warnings = [d['component_id'] for d in result['diagnostics'] if d['code'] == 'helm_dependency_images_not_verified']
-        assert warnings == ([] if enabled else [dep['id']])
+        assert result['completeness'] == 'complete'
+        statuses = [d for d in result['diagnostics'] if d['code'] == 'helm_dependency_disabled']
+        assert [d['component_id'] for d in statuses] == ([] if enabled else [dep['id']])
+        assert all(d['severity'] == 'info' and d['blocking'] is False for d in statuses)
         assert {i['reference'] for i in result['images']} == ({'suite:1', 'worker:1'} if enabled else {'suite:1'})
 
 

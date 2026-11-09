@@ -37,7 +37,7 @@ it('rediscovers ongoing runs on return and lets the user start fresh while a run
   fireEvent.change(screen.getByLabelText('Environment'), {target: {value: 'old-environment'}});
   fireEvent.click(screen.getByRole('button', {name: 'New discovery'}));
   expect(screen.getByText('No discovery selected')).toBeVisible();
-  expect(screen.getByLabelText('Owning group')).toHaveFocus();
+  await waitFor(() => expect(screen.getByLabelText('Owning group')).toHaveFocus());
   expect(screen.getByLabelText('Environment')).toHaveValue('');
   expect(screen.getByRole('button', {name: 'Open discovery stack.zip · older'})).toBeEnabled();
   expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(false);
@@ -212,16 +212,17 @@ it('shows a product chart identity with its source path and identifies unresolve
   const product = {...inventory,
     roots: [{...inventory.roots[0], chart_name: 'payments', chart_version: '2.1.0'}],
     nodes: [{id: 'wiki', root_id: 'root', name: 'dokuwiki', kind: 'ChartReference', state: 'rendered', provenance: [{path: 'values.yaml', enabled: false}]}],
-    diagnostics: [{code: 'catalog_chart_unresolved', component_name: 'billing-db', message: 'Missing chart archive.'}],
+    diagnostics: [{code: 'catalog_chart_unresolved', root_id: 'root', component_id: 'billing-db', component_name: 'billing-db', message: 'Missing chart archive.'}],
   };
   vi.stubGlobal('fetch', async (url: string) => new Response(JSON.stringify(
     url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: product} : catalog),
     {headers: {'Content-Type': 'application/json'}}));
   render(<Page data={{csrf_token: 'token'}}/>);
   await openRecent();
-  expect(await screen.findByRole('checkbox', {name: 'payments 2.1.0 deploy/chart helm'})).toBeVisible();
-  expect(screen.getByText('billing-db needs attention')).toBeVisible();
+  expect(await screen.findByRole('button', {name: 'Tune billing-db'})).toHaveTextContent('1 issue');
   expect(screen.getByText('Missing chart archive.')).toBeVisible();
+  fireEvent.click(screen.getByText(/Review discovered inventory and select deployment roots/));
+  expect(screen.getByRole('checkbox', {name: 'payments 2.1.0 deploy/chart helm'})).toBeVisible();
   fireEvent.click(screen.getByText('Components and source evidence'));
   const wiki = screen.getByText('dokuwiki', {selector: 'strong'}).closest('li');
   expect(wiki).toHaveTextContent('rendered');
@@ -236,6 +237,8 @@ it('requires selected roots and partial acknowledgement, confirms without scanni
 
   await openRecent();
   await screen.findByText('nginx:1');
+
+  fireEvent.click(screen.getByText(/Review discovered inventory and select deployment roots/));
 
   expect(screen.queryByRole('option', {name: 'Other (other)'})).not.toBeInTheDocument();
 
@@ -314,6 +317,8 @@ it('offers service staging only with group authority and sends one owner through
   await openRecent();
   await screen.findByText('nginx:1');
 
+  fireEvent.click(screen.getByText(/Review discovered inventory and select deployment roots/));
+
   fireEvent.change(screen.getByLabelText('Service'), {target: {value: 'new'}});
 
   fireEvent.change(screen.getByLabelText(/New service key/), {target: {value: 'new-service'}});
@@ -389,7 +394,7 @@ it('uploads supplemental files with resolution choices and opens the new immutab
 
   fireEvent.click(screen.getByRole('checkbox', {name: /These files contain no passwords/}));
 
-  fireEvent.submit(screen.getByRole('button', {name: 'Add files and resolve new version'}).closest('form')!);
+  fireEvent.submit(screen.getByRole('button', {name: 'Add files and render again'}).closest('form')!);
 
   await screen.findByText('redis:7');
 
@@ -427,7 +432,7 @@ it('uploads supplemental files with resolution choices and opens the new immutab
 
 it('shows missing chart keys and retries with selected values instead of a successful empty inventory', async () => {
 
-  const empty = {...inventory, images: [], candidate_values_files: ['examples/values.yaml'], diagnostics: [{code: 'native_render_failed', path: 'Chart.yaml', message: 'Select deployment configuration.', value_paths: ['global.psql.host']}]};
+  const empty = {...inventory, images: [], candidate_values_files: ['examples/values.yaml'], diagnostics: [{code: 'native_render_failed', root_id: 'root', path: 'Chart.yaml', message: 'Select deployment configuration.', value_paths: ['global.psql.host']}]};
 
   const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {job_id: 'job-2'} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: empty} : url.endsWith('/job-2') ? {job: {id: 'job-2', status: 'queued'}, inventory: null} : catalog), {headers: {'Content-Type': 'application/json'}}));
 
@@ -435,18 +440,20 @@ it('shows missing chart keys and retries with selected values instead of a succe
 
   await openRecent();
   await screen.findByText('Needs attention - Review unresolved configuration');
-  expect(screen.getByText('No images were rendered.')).toBeVisible();
-  const resolutionPanel = screen.getByText('Resolve configuration and rediscover').closest('details')!;
-  expect(resolutionPanel.open).toBe(true);
-  expect(resolutionPanel.compareDocumentPosition(screen.getByRole('checkbox', {name: 'deploy/chart helm'})) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const resolutionPanel = screen.getByRole('region', {name: 'Resource tuning'});
+  expect(within(resolutionPanel).getByText('1 unresolved resource')).toBeVisible();
+  expect(resolutionPanel.compareDocumentPosition(screen.getByText(/Review discovered inventory and select deployment roots/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(resolutionPanel).getByText('Select deployment configuration.')).toBeVisible();
+  fireEvent.click(within(resolutionPanel).getByRole('button', {name: 'Tune deploy/chart'}));
 
   expect(screen.getByText('global.psql.host')).toBeInTheDocument();
 
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText('Add values file'), {target: {value: 'examples/values.yaml'}});
+  fireEvent.click(screen.getByText('Shared values files'));
+  fireEvent.change(screen.getByLabelText('Add values for all resources'), {target: {value: 'examples/values.yaml'}});
 
-  fireEvent.click(screen.getByRole('button', {name: 'Render with selected values'}));
+  fireEvent.click(screen.getByRole('button', {name: 'Render updated configuration'}));
 
   await waitFor(() => expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
 
@@ -458,26 +465,30 @@ it('shows missing chart keys and retries with selected values instead of a succe
 
 it('shows worker isolation failure without recommending different chart values', async () => {
   const message = 'The worker cannot start its isolated rendering tools. Changing chart values will not fix this failure.';
-  const failed = {...inventory, images: [], diagnostics: [{code: 'worker_isolation_unavailable', path: 'Chart.yaml', message}]};
+  const failed = {...inventory, images: [], diagnostics: [{code: 'worker_isolation_unavailable', root_id: 'root', path: 'Chart.yaml', message}]};
   vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: failed} : catalog), {headers: {'Content-Type': 'application/json'}})));
   render(<Page data={{csrf_token: 'token'}}/>);
   await openRecent();
-  const panel = (await screen.findByText('Resolve configuration and rediscover')).closest('details')!;
+  const panel = await screen.findByRole('region', {name: 'Resource tuning'});
+  fireEvent.click(within(panel).getByRole('button', {name: 'Tune deploy/chart'}));
   expect(panel.textContent).toContain(message);
-  expect(panel.textContent).not.toContain('Choose values for your deployment.');
+  expect(within(panel).getByText('Ask an administrator to repair the discovery worker’s host isolation, then render again.')).toBeVisible();
+  expect(panel.textContent).not.toContain('Choose the values for this deployment');
 });
 
 it('restores isolated component values and submits explicit override order', async () => {
-  const configured = {...inventory, candidate_values_files: ['a.yaml', 'b.yaml'], selection: {values_files: ['parent.yaml'], component_values: {child: ['a.yaml', 'b.yaml']}}, configurable_components: [{id: 'child', label: 'Child release', path: 'Chart.yaml', technology: 'helm', values_origin: 'Generated ConfigMap'}], diagnostics: [{code: 'native_render_failed', renderer: 'kustomize', path: 'kustomization.yaml', message: 'Missing base'}]};
+  const configured = {...inventory, candidate_values_files: ['a.yaml', 'b.yaml'], selection: {values_files: ['parent.yaml'], component_values: {child: ['a.yaml', 'b.yaml']}}, configurable_components: [{id: 'child', root_id: 'root', label: 'Child release', path: 'Chart.yaml', technology: 'helm', values_origin: 'Generated ConfigMap'}], diagnostics: [{code: 'native_render_failed', root_id: 'root', renderer: 'kustomize', path: 'kustomization.yaml', message: 'Missing base'}]};
   const fetch = vi.fn(async (url: string, init?: RequestInit) => new Response(JSON.stringify(init?.method === 'POST' ? {} : url.endsWith('/job-1') ? {job: catalog.jobs[0], inventory: configured} : catalog), {headers: {'Content-Type': 'application/json'}}));
   vi.stubGlobal('fetch', fetch); render(<Page data={{csrf_token: 'token'}}/>);
   await openRecent();
-  await screen.findByText('Could not build this Kustomize configuration');
-  expect(screen.getByText(/if your service uses this overlay/i)).toBeInTheDocument();
-  expect(screen.queryByText(/choose values for your deployment/i)).not.toBeInTheDocument();
-  expect(screen.getByText('Base configuration: Generated ConfigMap')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', {name: 'Move b.yaml earlier for Child release', hidden: true}));
-  fireEvent.click(screen.getByRole('button', {name: 'Render with selected values'}));
+  fireEvent.click(await screen.findByRole('button', {name: 'Tune deploy/chart'}));
+  expect(screen.getByText('Check the overlay and include its referenced files, then render again.')).toBeVisible();
+  expect(screen.queryByText(/Choose the values for this deployment/i)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'All (2)'}));
+  fireEvent.click(screen.getByRole('button', {name: 'Tune Child release'}));
+  expect(screen.getByText(/Base configuration: Generated ConfigMap/)).toBeVisible();
+  fireEvent.click(screen.getByRole('button', {name: 'Move b.yaml earlier for Child release'}));
+  fireEvent.click(screen.getByRole('button', {name: 'Render updated configuration'}));
   await waitFor(() => expect(fetch.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true));
   const request = fetch.mock.calls.find(([, init]) => init?.method === 'POST');
   expect(JSON.parse(String(request?.[1]?.body)).options).toEqual({values_files: ['parent.yaml'], component_values: {child: ['b.yaml', 'a.yaml']}});

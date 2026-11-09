@@ -32,6 +32,8 @@ def cleanup_sources(session_factory, batch_size=100):
             path = folder / filename
             if folder.is_symlink() or path.is_symlink() or path.parent != folder or not path.resolve().is_relative_to(upload_root().resolve()):
                 continue
+            from .discovery_render_cache import remove_source_cache
+            remove_source_cache(source_id)
             if path.is_file():
                 path.unlink()
                 removed += 1

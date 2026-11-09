@@ -24,10 +24,35 @@ from pathlib import PurePosixPath
 
 
 class RendererError(RuntimeError):
-    def __init__(self, message, *, value_paths=(), infrastructure=False):
+    def __init__(self, message, *, value_paths=(), infrastructure=False, reason=None):
         super().__init__(message)
         self.value_paths = list(value_paths)
         self.infrastructure = infrastructure
+        self.reason = reason
+
+
+def renderer_failure_reason(stderr):
+    """Classify known native failures without retaining stderr or supplied values."""
+    text = stderr.lower()
+    if ('must specify --enable-helm' in text or 'is helm installed?' in text
+            or ('helm' in text and 'executable file not found' in text)):
+        return 'helm_unavailable'
+    if any(marker in text for marker in ('helm pull', 'failed to fetch', 'failed to download',
+                                         'looks like', 'no cached repo found', 'chart repository')):
+        return 'artifact_retrieval_failed'
+    if any(marker in text for marker in ('values don\'t meet the specifications', 'values do not meet the specifications',
+                                         'cannot unmarshal', 'error converting yaml to json', 'yaml: line')):
+        return 'invalid_values_or_yaml'
+    if any(marker in text for marker in ('no such file or directory', 'must resolve to a file',
+                                         'unable to find one of', 'missing in charts/ directory')):
+        return 'missing_resource'
+    if missing_value_paths(stderr) or 'nil pointer evaluating' in text:
+        return 'required_values'
+    if any(marker in text for marker in ('execution error at', 'template:', 'error calling', 'parse error at')):
+        return 'template_error'
+    if any(marker in text for marker in ('failed to find unique target for patch', 'no matches for id', 'unable to find target')):
+        return 'patch_target_missing'
+    return 'render_failed'
 
 
 def missing_value_paths(stderr):
@@ -88,12 +113,14 @@ def sandbox_command(tool: str, args: list[str], cwd: str | Path, *,
         raise RendererError("Invalid action source directory")
     # Only static native renderer binaries and this job's source are visible.
     # No worker /proc, environment, application files, database or upload volume.
+    # Keep the private PID namespace without mounting procfs: Docker's locked
+    # /proc masks can prevent a nested user namespace from creating that mount.
     command = ["/usr/bin/bwrap", "--die-with-parent", "--new-session",
                "--unshare-all", "--unshare-user", "--cap-drop", "ALL",
                "--clearenv", "--ro-bind", executable, "/tool",
                "--ro-bind", str(source), "/source", "--tmpfs", "/tmp",
                "--tmpfs", "/cache", "--dir", "/inputs",
-               "--proc", "/proc", "--dev", "/dev", "--chdir", "/source"]
+               "--dev", "/dev", "--chdir", "/source"]
     destinations = set()
     for flag, mounts in (("--ro-bind", read_only or {}), ("--bind", writable or {})):
         for host, destination in mounts.items():
@@ -243,7 +270,8 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
             raise RendererError("Worker isolation is unavailable; check the host AppArmor and seccomp profiles"
                                 if infrastructure else "Offline tool failed; review the supplied inputs",
                                 value_paths=() if infrastructure else missing_value_paths(diagnostic),
-                                infrastructure=infrastructure)
+                                infrastructure=infrastructure,
+                                reason=None if infrastructure else renderer_failure_reason(diagnostic))
         return {"stdout": outputs["stdout"].read().decode("utf-8", errors="strict"),
                 "version": tool_version(tool)}
     except subprocess.TimeoutExpired as exc:
