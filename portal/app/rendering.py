@@ -173,6 +173,19 @@ def isolated_runner(tool: str, args: list[str], cwd: str | Path, *,
                           check_cancelled=check_cancelled)
 
 
+def _copy_action_tree(source: Path, target: Path):
+    """Copy private inputs without following links or hiding filesystem errno."""
+    target.mkdir()
+    with os.scandir(source) as entries:
+        for entry in entries:
+            destination = target / entry.name
+            if entry.is_dir(follow_symlinks=False):
+                _copy_action_tree(Path(entry.path), destination)
+            else:
+                shutil.copy2(entry.path, destination, follow_symlinks=False)
+    shutil.copystat(source, target)
+
+
 @contextlib.contextmanager
 def _staged_identity(cwd, read_only, writable):
     """Root brokers drop identity; no chown of user inputs or shared databases.
@@ -189,18 +202,15 @@ def _staged_identity(cwd, read_only, writable):
             source, target = Path(source), staging / label
             if source.is_symlink():
                 raise RendererError("Action mount roots cannot be symlinks")
-            if source.is_dir():
-                def copy_file(source_file, destination, **options):
-                    try:
-                        return shutil.copy2(source_file, destination, **options)
-                    except OSError as error:
-                        # copytree aggregates OSError into strings, losing errno.
-                        # Preserve a safe category without retaining those paths.
-                        reason = scanner_os_error_reason(error)
-                        raise RendererError(scanner_failure_message(reason), reason=reason) from error
-                shutil.copytree(source, target, symlinks=True, copy_function=copy_file)
-            else:
-                shutil.copyfile(source, target)
+            try:
+                if source.is_dir():
+                    _copy_action_tree(source, target)
+                else:
+                    shutil.copyfile(source, target)
+            except OSError as error:
+                # Include directory traversal and creation failures, not only files.
+                reason = scanner_os_error_reason(error)
+                raise RendererError(scanner_failure_message(reason), reason=reason) from error
             return target
         with scanner_stage("input_staging"):
             source = copy(cwd, "source") if root else Path(cwd)

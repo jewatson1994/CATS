@@ -1,6 +1,7 @@
 """Scanner failures identify their stage without disclosing input or cache paths."""
 import errno
 import json
+from pathlib import Path
 
 import pytest
 
@@ -53,7 +54,7 @@ def test_database_copy_failure_preserves_cause_before_native_execution(
         copied.append(source)
         raise OSError(failure_errno, SECRET, str(source))
 
-    # Exercise real copytree: its normal OSError aggregation loses errno.
+    # Exercise real staging so filesystem errno survives until error reporting.
     monkeypatch.setattr(rendering.shutil, "copy2", fail_copy)
     report = tmp_path / "report.json"
     with pytest.raises(rendering.RendererError) as caught:
@@ -63,6 +64,44 @@ def test_database_copy_failure_preserves_cause_before_native_execution(
     assert not report.exists()
     assert not report.with_suffix(".binding").exists()
     assert_safe_failure(caught.value, reason, "database_staging", tmp_path)
+
+
+def test_database_directory_access_failure_preserves_cause(inputs, tmp_path, monkeypatch):
+    _, database = inputs
+    nested = database / "6"
+    nested.mkdir()
+    original_scandir = rendering.os.scandir
+    monkeypatch.setattr(rendering, "_effective_uid", lambda: 10003)
+
+    def denied_scandir(path):
+        if not isinstance(path, int) and Path(path) == nested:
+            raise PermissionError(errno.EACCES, SECRET, str(path))
+        return original_scandir(path)
+
+    monkeypatch.setattr(rendering.os, "scandir", denied_scandir)
+    with pytest.raises(rendering.RendererError) as caught:
+        with rendering._staged_identity(tmp_path, {}, {database: "/cache/grype"}):
+            pytest.fail("Unreadable database must not reach the scanner")
+
+    assert_safe_failure(caught.value, "file_access_denied", "database_staging", tmp_path)
+
+
+def test_database_directory_creation_failure_preserves_cause(inputs, tmp_path, monkeypatch):
+    _, database = inputs
+    original_mkdir = Path.mkdir
+    monkeypatch.setattr(rendering, "_effective_uid", lambda: 10003)
+
+    def full_disk(path, *args, **kwargs):
+        if path.name == "write-0":
+            raise OSError(errno.ENOSPC, SECRET, str(path))
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", full_disk)
+    with pytest.raises(rendering.RendererError) as caught:
+        with rendering._staged_identity(tmp_path, {}, {database: "/cache/grype"}):
+            pytest.fail("Failed database staging must not reach the scanner")
+
+    assert_safe_failure(caught.value, "disk_space_exhausted", "database_staging", tmp_path)
 
 
 def test_malformed_provenance_is_classified_before_native_execution(inputs, tmp_path, monkeypatch):

@@ -218,6 +218,8 @@ RUN set -eux; \
         GRYPE_DB_AUTO_UPDATE=true \
         grype db update; \
     fi; \
+    find /opt/catscan/grype-db -type d -exec chmod 0755 {} +; \
+    find /opt/catscan/grype-db -type f -exec chmod 0644 {} +; \
     chmod 0755 /usr/local/bin/catscan-validate-offline-release; \
     /usr/local/bin/catscan-validate-offline-release
 
