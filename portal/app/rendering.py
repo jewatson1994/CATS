@@ -23,7 +23,8 @@ import shutil
 from pathlib import PurePosixPath
 
 from .action_supervisor import supervised_command
-from .scanner_errors import ScannerDiagnostic, scanner_failure_message, scanner_failure_reason
+from .scanner_errors import (ScannerDiagnostic, scanner_failure_message, scanner_failure_reason,
+                             scanner_os_error_reason, scanner_stage)
 
 
 class RendererError(RuntimeError):
@@ -189,14 +190,24 @@ def _staged_identity(cwd, read_only, writable):
             if source.is_symlink():
                 raise RendererError("Action mount roots cannot be symlinks")
             if source.is_dir():
-                shutil.copytree(source, target, symlinks=True)
+                def copy_file(source_file, destination, **options):
+                    try:
+                        return shutil.copy2(source_file, destination, **options)
+                    except OSError as error:
+                        # copytree aggregates OSError into strings, losing errno.
+                        # Preserve a safe category without retaining those paths.
+                        reason = scanner_os_error_reason(error)
+                        raise RendererError(scanner_failure_message(reason), reason=reason) from error
+                shutil.copytree(source, target, symlinks=True, copy_function=copy_file)
             else:
                 shutil.copyfile(source, target)
             return target
-        source = copy(cwd, "source") if root else Path(cwd)
-        ro = {copy(path, "read-" + str(i)) if root else Path(path): value
-              for i, (path, value) in enumerate(read_only.items())}
-        rw = {copy(path, "write-" + str(i)): value for i, (path, value) in enumerate(writable.items())}
+        with scanner_stage("input_staging"):
+            source = copy(cwd, "source") if root else Path(cwd)
+            ro = {copy(path, "read-" + str(i)) if root else Path(path): value
+                  for i, (path, value) in enumerate(read_only.items())}
+        with scanner_stage("database_staging"):
+            rw = {copy(path, "write-" + str(i)): value for i, (path, value) in enumerate(writable.items())}
         try:
             if root:
                 staging.chmod(0o711)
@@ -287,8 +298,15 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
                                 value_paths=() if infrastructure else missing_value_paths(diagnostic),
                                 infrastructure=infrastructure,
                                 reason=None if infrastructure else renderer_failure_reason(diagnostic))
-        return {"stdout": outputs["stdout"].read().decode("utf-8", errors="strict"),
-                "version": tool_version(tool)}
+        try:
+            stdout = outputs["stdout"].read().decode("utf-8", errors="strict")
+        except UnicodeDecodeError as error:
+            if tool not in SCANNERS:
+                raise
+            failure = RendererError("Scanner output is not valid UTF-8", reason="invalid_scanner_evidence")
+            failure.scanner_stage = "evidence_validation"
+            raise failure from error
+        return {"stdout": stdout, "version": tool_version(tool)}
     except subprocess.TimeoutExpired as exc:
         raise RendererError("Offline action exceeded time limit",
                             reason="time_limit_exceeded" if tool in SCANNERS else None) from exc

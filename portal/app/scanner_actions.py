@@ -15,6 +15,7 @@ import re
 import tempfile
 
 from .rendering import RendererError, offline_runner
+from .scanner_errors import scanner_stage
 from .scanner_inputs import snapshot_digest
 
 
@@ -32,7 +33,7 @@ def _identity_module():
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             return module
-    raise RendererError("Shared scanner identity implementation is unavailable")
+    raise RendererError("Shared scanner identity implementation is unavailable", reason="file_unavailable")
 
 
 def _json_output(result: dict, required: str) -> tuple[bytes, dict]:
@@ -97,55 +98,66 @@ def scan_sbom(sbom_path: Path, result_path: Path, *, database: Path | None = Non
     """Scan a frozen native SBOM and bind both retained evidence files to bytes."""
     sbom_path, result_path = Path(sbom_path), Path(result_path)
     binding_path = result_path.with_suffix(".binding")
-    result_path.unlink(missing_ok=True)
-    binding_path.unlink(missing_ok=True)
-    raw = sbom_path.read_bytes()
-    try:
-        document = json.loads(raw)
-    except ValueError as exc:
-        raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input") from exc
-    if not isinstance(document, dict) or not isinstance(document.get("artifacts"), list):
-        raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input")
-    if image is None:
-        sidecar = sbom_path.with_suffix(".image")
-        image = sidecar.read_text(encoding="utf-8").strip() if sidecar.is_file() else ""
-    if provenance is None:
-        sidecar = sbom_path.with_suffix(".provenance")
-        provenance = json.loads(sidecar.read_bytes()) if sidecar.is_file() else None
-    binding = _identity_module().document_binding(raw, document, image, provenance)
+    with scanner_stage("evidence_publication"):
+        result_path.unlink(missing_ok=True)
+        binding_path.unlink(missing_ok=True)
+    with scanner_stage("input_validation"):
+        raw = sbom_path.read_bytes()
+        try:
+            document = json.loads(raw)
+        except ValueError as exc:
+            raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input") from exc
+        if not isinstance(document, dict) or not isinstance(document.get("artifacts"), list):
+            raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input")
+        if image is None:
+            sidecar = sbom_path.with_suffix(".image")
+            image = sidecar.read_text(encoding="utf-8").strip() if sidecar.is_file() else ""
+        if provenance is None:
+            sidecar = sbom_path.with_suffix(".provenance")
+            try:
+                provenance = json.loads(sidecar.read_bytes()) if sidecar.is_file() else None
+            except ValueError as exc:
+                raise RendererError("Invalid scanner input provenance", reason="invalid_scanner_input") from exc
+        binding = _identity_module().document_binding(raw, document, image, provenance)
     settings = environment if environment is not None else os.environ
     database = Path(database or settings.get("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
-    database_digest = _database_digest(database)
-    age = str(settings.get("GRYPE_DB_MAX_ALLOWED_BUILT_AGE", "120h"))
-    if not re.fullmatch(r"[1-9][0-9]{0,6}(?:h|m|s)", age):
-        raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
+    with scanner_stage("database_validation"):
+        database_digest = _database_digest(database)
+        age = str(settings.get("GRYPE_DB_MAX_ALLOWED_BUILT_AGE", "120h"))
+        if not re.fullmatch(r"[1-9][0-9]{0,6}(?:h|m|s)", age):
+            raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
     # Preserve the trusted release/operator policy: disconnected releases can
     # explicitly retain older databases, while Grype's normal default is strict.
     validate_age = str(settings.get("GRYPE_DB_VALIDATE_AGE", "true")).lower()
-    if validate_age not in {"true", "false"}:
-        raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
-    with tempfile.TemporaryDirectory(prefix="cats-grype-input-") as directory:
+    with scanner_stage("database_validation"):
+        if validate_age not in {"true", "false"}:
+            raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
+    with scanner_stage("input_staging"), tempfile.TemporaryDirectory(prefix="cats-grype-input-") as directory:
         folder = Path(directory)
         (folder / "inventory.json").write_bytes(raw)
         command = [*_configuration(folder), "sbom:/source/inventory.json", "--output", "json"]
         if only_fixed:
             command.append("--only-fixed")
-        result = offline_runner("grype", command, folder,
-            writable={database: "/cache/grype"}, environment={
-                "GRYPE_DB_CACHE_DIR": "/cache/grype", "GRYPE_DB_AUTO_UPDATE": "false",
-                "GRYPE_DB_REQUIRE_UPDATE_CHECK": "false", "GRYPE_CHECK_FOR_APP_UPDATE": "false",
-                "GRYPE_DB_VALIDATE_BY_HASH_ON_START": "true", "GRYPE_DB_MAX_ALLOWED_BUILT_AGE": age,
-                "GRYPE_DB_VALIDATE_AGE": validate_age,
-            }, timeout=timeout, max_output=128 * 1024 * 1024, check_cancelled=check_cancelled)
-        report_raw, report = _json_output(result, "matches")
-    if _database_digest(database) != database_digest:
-        raise RendererError("Bound scanner database changed during scanning", reason="scanner_database_changed")
-    binding.update(image=image, scanner_report_digest=digest(report_raw),
-                   scanner_database_digest=database_digest, scanner_version=result.get("version", ""),
-                   scanner_database_age_policy={"validate": validate_age == "true", "max_allowed_built_age": age},
-                   only_fixed=only_fixed)
-    _write(result_path, report_raw)
-    _write(binding_path, json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        with scanner_stage("scanner_execution"):
+            result = offline_runner("grype", command, folder,
+                writable={database: "/cache/grype"}, environment={
+                    "GRYPE_DB_CACHE_DIR": "/cache/grype", "GRYPE_DB_AUTO_UPDATE": "false",
+                    "GRYPE_DB_REQUIRE_UPDATE_CHECK": "false", "GRYPE_CHECK_FOR_APP_UPDATE": "false",
+                    "GRYPE_DB_VALIDATE_BY_HASH_ON_START": "true", "GRYPE_DB_MAX_ALLOWED_BUILT_AGE": age,
+                    "GRYPE_DB_VALIDATE_AGE": validate_age,
+                }, timeout=timeout, max_output=128 * 1024 * 1024, check_cancelled=check_cancelled)
+        with scanner_stage("evidence_validation"):
+            report_raw, report = _json_output(result, "matches")
+    with scanner_stage("evidence_validation"):
+        if _database_digest(database) != database_digest:
+            raise RendererError("Bound scanner database changed during scanning", reason="scanner_database_changed")
+        binding.update(image=image, scanner_report_digest=digest(report_raw),
+                       scanner_database_digest=database_digest, scanner_version=result.get("version", ""),
+                       scanner_database_age_policy={"validate": validate_age == "true", "max_allowed_built_age": age},
+                       only_fixed=only_fixed)
+    with scanner_stage("evidence_publication"):
+        _write(result_path, report_raw)
+        _write(binding_path, json.dumps(binding, sort_keys=True, separators=(",", ":")).encode("utf-8"))
     return report
 
 
@@ -153,11 +165,12 @@ def scan_sbom_evidence(sbom_path: Path, fixed_path: Path, full_path: Path, **opt
     """Retain fixed-only selection and full evidence from exactly one inventory."""
     sbom_path, fixed_path, full_path = Path(sbom_path), Path(fixed_path), Path(full_path)
     outputs = (fixed_path, full_path)
-    for path in outputs:
-        path.unlink(missing_ok=True)
-        path.with_suffix(".binding").unlink(missing_ok=True)
+    with scanner_stage("evidence_publication"):
+        for path in outputs:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".binding").unlink(missing_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix="cats-sbom-evidence-") as directory:
+        with scanner_stage("input_staging"), tempfile.TemporaryDirectory(prefix="cats-sbom-evidence-") as directory:
             frozen = Path(directory) / "inventory.json"
             frozen.write_bytes(sbom_path.read_bytes())
             for suffix in (".image", ".provenance"):
@@ -166,9 +179,14 @@ def scan_sbom_evidence(sbom_path: Path, fixed_path: Path, full_path: Path, **opt
                     frozen.with_suffix(suffix).write_bytes(sidecar.read_bytes())
             fixed = scan_sbom(frozen, fixed_path, only_fixed=True, **options)
             full = scan_sbom(frozen, full_path, only_fixed=False, **options)
-        bindings = [json.loads(path.with_suffix(".binding").read_bytes()) for path in outputs]
-        if any(bindings[0][key] != bindings[1][key] for key in ("sbom_digest", "scanner_database_digest")):
-            raise RendererError("Scanner inputs changed between selection and full evidence")
+        with scanner_stage("evidence_validation"):
+            bindings = [json.loads(path.with_suffix(".binding").read_bytes()) for path in outputs]
+            if bindings[0]["scanner_database_digest"] != bindings[1]["scanner_database_digest"]:
+                raise RendererError("Scanner database changed between selection and full evidence",
+                                    reason="scanner_database_changed")
+            if bindings[0]["sbom_digest"] != bindings[1]["sbom_digest"]:
+                raise RendererError("Scanner inputs changed between selection and full evidence",
+                                    reason="invalid_scanner_input")
         return {"fixed": fixed, "full": full}
     except Exception:
         for path in outputs:

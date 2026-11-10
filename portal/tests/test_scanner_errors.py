@@ -45,10 +45,11 @@ def native_failure(monkeypatch):
     monkeypatch.setattr(rendering, "child_seccomp", tempfile.TemporaryFile)
     monkeypatch.setattr(rendering, "supervised_command", lambda command, **kwargs: command)
     monkeypatch.setattr(rendering.selectors, "DefaultSelector", ReadySelector)
+    monkeypatch.setattr(rendering, "tool_version", lambda tool: "test")
 
-    def fail(tool, stderr, *, timeout=30, max_output=None, returncode=1):
+    def fail(tool, stderr, *, timeout=30, max_output=None, returncode=1, stdout=None, success=False):
         stdout_stream, stderr_stream = tempfile.TemporaryFile(), tempfile.TemporaryFile()
-        stdout_stream.write(("private native output: " + SECRET).encode())
+        stdout_stream.write(stdout if stdout is not None else ("private native output: " + SECRET).encode())
         stderr_stream.write(stderr.encode())
         stdout_stream.seek(0)
         stderr_stream.seek(0)
@@ -59,13 +60,30 @@ def native_failure(monkeypatch):
             wait=lambda timeout: cleanup.append("reaped"),
         )
         monkeypatch.setattr(rendering.subprocess, "Popen", lambda *args, **kwargs: process)
-        with pytest.raises(rendering.RendererError) as caught:
-            rendering._execute(tool, ["mock-tool"], {}, timeout, max_output, None)
+        if success:
+            result = rendering._execute(tool, ["mock-tool"], {}, timeout, max_output, None)
+        else:
+            with pytest.raises(rendering.RendererError) as caught:
+                rendering._execute(tool, ["mock-tool"], {}, timeout, max_output, None)
+            result = caught.value
         assert cleanup == ["terminated", "reaped"]
         assert stdout_stream.closed and stderr_stream.closed
-        return caught.value
+        return result
 
     return fail
+
+
+def test_successful_scanner_retains_stdout_and_cleans_up(native_failure):
+    result = native_failure("grype", "", returncode=0, stdout=b'{"matches":[]}', success=True)
+    assert result == {"stdout": '{"matches":[]}', "version": "test"}
+
+
+def test_invalid_utf8_scanner_output_has_safe_evidence_error(native_failure):
+    error = native_failure("grype", "", returncode=0, stdout=b"\xff" + SECRET.encode())
+    detail = scanner_failure_detail(error)
+    assert error.reason == "invalid_scanner_evidence"
+    assert "Scanner stage: validating scanner evidence." in detail
+    assert SECRET not in detail
 
 
 @pytest.mark.parametrize("diagnostic,expected", [

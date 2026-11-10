@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import errno
 import re
 
@@ -169,25 +170,55 @@ def scanner_failure_message(reason: str | None) -> str:
     return f"[{reason}] {_DETAILS[reason]}"
 
 
+_STAGES = {
+    "input_validation": "validating the SBOM input",
+    "database_validation": "validating the scanner database",
+    "input_staging": "preparing private scanner inputs",
+    "database_staging": "preparing the private scanner database",
+    "scanner_execution": "running the offline scanner",
+    "evidence_validation": "validating scanner evidence",
+    "evidence_publication": "retaining scanner evidence",
+}
+
+
+@contextmanager
+def scanner_stage(stage: str):
+    """Keep the deepest failing step without publishing arbitrary exceptions."""
+    try:
+        yield
+    except Exception as error:
+        if not getattr(error, "scanner_stage", None):
+            error.scanner_stage = stage
+        raise
+
+
+def scanner_os_error_reason(error: OSError) -> str | None:
+    """Classify filesystem/process errors before wrappers discard their errno."""
+    return {
+        errno.EAGAIN: "process_creation_failed",
+        errno.ENOMEM: "memory_exhausted",
+        errno.ENOSPC: "disk_space_exhausted",
+        errno.EDQUOT: "disk_space_exhausted",
+        errno.EMFILE: "file_descriptor_limit",
+        errno.ENFILE: "file_descriptor_limit",
+        errno.EACCES: "file_access_denied",
+        errno.EPERM: "file_access_denied",
+        errno.ENOENT: "file_unavailable",
+    }.get(error.errno)
+
+
 def scanner_failure_detail(error: Exception) -> str:
     """Publish native errors only through the sanitizing diagnostic boundary."""
     reason = getattr(error, "reason", None)
     if reason not in _DETAILS:
         if isinstance(error, OSError):
-            reason = {
-                errno.EAGAIN: "process_creation_failed",
-                errno.ENOMEM: "memory_exhausted",
-                errno.ENOSPC: "disk_space_exhausted",
-                errno.EDQUOT: "disk_space_exhausted",
-                errno.EMFILE: "file_descriptor_limit",
-                errno.ENFILE: "file_descriptor_limit",
-                errno.EACCES: "file_access_denied",
-                errno.EPERM: "file_access_denied",
-                errno.ENOENT: "file_unavailable",
-            }.get(error.errno)
+            reason = scanner_os_error_reason(error)
         elif getattr(error, "infrastructure", False):
             reason = "isolation_unavailable"
     message = scanner_failure_message(reason)
+    stage = _STAGES.get(getattr(error, "scanner_stage", None))
+    if stage:
+        message += "\nScanner stage: " + stage + "."
     diagnostic = getattr(error, "scanner_diagnostic", None)
     if isinstance(diagnostic, ScannerDiagnostic):
         message += "\n" + diagnostic.detail()
