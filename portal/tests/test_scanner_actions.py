@@ -63,8 +63,9 @@ def test_binding_uses_consumed_bytes_and_rejects_database_drift(inputs, tmp_path
         (database / "vulnerability.db").write_bytes(b"changed")
         return {"stdout": '{"matches":[]}', "version": "test"}
     monkeypatch.setattr(actions, "offline_runner", corrupt)
-    with pytest.raises(actions.RendererError, match="database changed"):
+    with pytest.raises(actions.RendererError, match="database changed") as failure:
         actions.scan_sbom(sbom, report)
+    assert failure.value.reason == "scanner_database_changed"
     assert not report.exists() and not report.with_suffix(".binding").exists()
 
 
@@ -89,9 +90,40 @@ def test_database_age_policy_preserves_explicit_offline_release_setting(inputs, 
 def test_invalid_database_age_policy_fails_before_scanner(inputs, tmp_path, monkeypatch):
     sbom, database = inputs
     monkeypatch.setattr(actions, "offline_runner", lambda *args, **kwargs: pytest.fail("Scanner must not run"))
-    with pytest.raises(actions.RendererError, match="age policy"):
+    with pytest.raises(actions.RendererError, match="age policy") as failure:
         actions.scan_sbom(sbom, tmp_path / "report.json", environment={
             "GRYPE_DB_CACHE_DIR": str(database), "GRYPE_DB_VALIDATE_AGE": "arbitrary-value"})
+    assert failure.value.reason == "scanner_database_policy_invalid"
+
+
+@pytest.mark.parametrize("payload", ["invalid-json", '{"not-a-native-sbom":[]}'])
+def test_invalid_sbom_has_actionable_reason_before_scanner(inputs, tmp_path, monkeypatch, payload):
+    sbom, _ = inputs
+    sbom.write_text(payload)
+    monkeypatch.setattr(actions, "offline_runner", lambda *args, **kwargs: pytest.fail("Scanner must not run"))
+    with pytest.raises(actions.RendererError) as failure:
+        actions.scan_sbom(sbom, tmp_path / "report.json")
+    assert failure.value.reason == "invalid_scanner_input"
+
+
+def test_unavailable_database_has_actionable_reason_before_scanner(inputs, tmp_path, monkeypatch):
+    sbom, database = inputs
+    (database / "vulnerability.db").unlink()
+    monkeypatch.setattr(actions, "offline_runner", lambda *args, **kwargs: pytest.fail("Scanner must not run"))
+    with pytest.raises(actions.RendererError) as failure:
+        actions.scan_sbom(sbom, tmp_path / "report.json")
+    assert failure.value.reason == "scanner_database_unavailable"
+
+
+@pytest.mark.parametrize("payload", ["invalid-json", '{"missing-matches":[]}'])
+def test_invalid_evidence_is_classified_and_not_retained(inputs, tmp_path, monkeypatch, payload):
+    sbom, _ = inputs
+    report = tmp_path / "report.json"
+    monkeypatch.setattr(actions, "offline_runner", lambda *args, **kwargs: {"stdout": payload, "version": "test"})
+    with pytest.raises(actions.RendererError) as failure:
+        actions.scan_sbom(sbom, report)
+    assert failure.value.reason == "invalid_scanner_evidence"
+    assert not report.exists() and not report.with_suffix(".binding").exists()
 
 
 def test_fixed_selection_and_full_evidence_use_same_native_sbom(inputs, tmp_path, monkeypatch):

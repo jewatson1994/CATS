@@ -10,6 +10,7 @@ for location in (Path(__file__).resolve().parents[2] / "portal", Path("/opt/port
         break
 
 from app.scanner_actions import inventory, scan_configuration, scan_image_configuration
+from app.scanner_errors import scanner_failure_detail
 
 
 def main():
@@ -32,8 +33,9 @@ def main():
             scan_image_configuration(options.source, options.output,
                 tool="trivy" if options.action == "image-configuration" else "dockle",
                 cache=options.cache, severity=options.severity)
-    except (RuntimeError, OSError, ValueError):
-        print("Offline scanner action failed; no completed evidence was retained", file=sys.stderr)
+    except (RuntimeError, OSError, ValueError) as exc:
+        print("Offline scanner action failed; no completed evidence was retained. "
+              + scanner_failure_detail(exc), file=sys.stderr)
         return 2
     return 0
 

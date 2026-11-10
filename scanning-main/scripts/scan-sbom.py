@@ -11,14 +11,16 @@ for location in (Path(__file__).resolve().parents[2] / "portal", Path("/opt/port
         break
 
 from app.scanner_actions import scan_sbom_evidence
+from app.scanner_errors import scanner_failure_detail
 
 
 def scan(sbom_path, result_path):
     try:
         result_path = Path(result_path)
         scan_sbom_evidence(Path(sbom_path), result_path, result_path.parent / "full" / result_path.name)
-    except (RuntimeError, OSError, ValueError):
-        print("Offline SBOM scan failed; no completed evidence was retained", file=sys.stderr)
+    except (RuntimeError, OSError, ValueError) as exc:
+        print("Offline SBOM scan failed; no completed evidence was retained. "
+              + scanner_failure_detail(exc), file=sys.stderr)
         return 2
     return 0
 

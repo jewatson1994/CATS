@@ -25,7 +25,7 @@ for SBOM in "${SBOM_FILES[@]}"; do
 
   echo ""
   echo "======================================"
-  echo "Scanning: $SAFE_NAME"
+  echo "Scanning SBOM: $SBOM"
   echo "======================================"
 
   if ! python3 "$(dirname "$0")/scan-sbom.py" "$SBOM" "results/${SAFE_NAME}-results.json"; then

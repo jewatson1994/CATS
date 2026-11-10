@@ -76,6 +76,7 @@ def test_standalone_scanner_builds_shared_actions_from_root_context():
     dockerfile = (ROOT / "cats-scanner/Dockerfile").read_text()
     assert "portal/app/rendering.py portal/app/scan_runtime.py" in dockerfile
     assert "portal/app/action_supervisor.py" in dockerfile
+    assert "COPY portal/app/scanner_errors.py /app/app/" in dockerfile
     assert "portal/app/scanner_actions.py portal/app/scanner_inputs.py /app/app/" in dockerfile
     assert "COPY scanning-main/scripts /opt/cats/scanning/scripts" in dockerfile
     assert "ENV PYTHONPATH=/app CATS_SCANNING_ROOT=/opt/cats/scanning" in dockerfile
@@ -86,3 +87,4 @@ def test_standalone_scanner_builds_shared_actions_from_root_context():
     assert "**" in ignore
     assert "!portal/app/rendering.py" in ignore
     assert "!portal/app/action_supervisor.py" in ignore
+    assert "!portal/app/scanner_errors.py" in ignore

@@ -8,6 +8,7 @@
 !portal/app/action_supervisor.py
 !portal/app/scan_runtime.py
 !portal/app/scanner_actions.py
+!portal/app/scanner_errors.py
 !portal/app/scanner_inputs.py
 !scanning-main/
 !scanning-main/scripts/

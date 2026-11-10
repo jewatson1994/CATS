@@ -40,9 +40,9 @@ def _json_output(result: dict, required: str) -> tuple[bytes, dict]:
     try:
         document = json.loads(raw)
     except (ValueError, TypeError) as exc:
-        raise RendererError("Scanner returned invalid JSON evidence") from exc
+        raise RendererError("Scanner returned invalid JSON evidence", reason="invalid_scanner_evidence") from exc
     if not isinstance(document, dict) or not isinstance(document.get(required), list):
-        raise RendererError("Scanner returned incomplete evidence")
+        raise RendererError("Scanner returned incomplete evidence", reason="invalid_scanner_evidence")
     return raw, document
 
 
@@ -56,6 +56,14 @@ def _write(path: Path, raw: bytes):
 def _configuration(folder: Path) -> list[str]:
     (folder / "scanner.yaml").write_text("{}\n", encoding="utf-8")
     return ["--config", "/source/scanner.yaml"]
+
+
+def _database_digest(database: Path) -> str:
+    try:
+        return snapshot_digest(database)
+    except ValueError as exc:
+        raise RendererError("Retained scanner database is unavailable",
+                            reason="scanner_database_unavailable") from exc
 
 
 def inventory(root: Path, destination: Path, *, image: str = "", provenance=None,
@@ -92,9 +100,12 @@ def scan_sbom(sbom_path: Path, result_path: Path, *, database: Path | None = Non
     result_path.unlink(missing_ok=True)
     binding_path.unlink(missing_ok=True)
     raw = sbom_path.read_bytes()
-    document = json.loads(raw)
+    try:
+        document = json.loads(raw)
+    except ValueError as exc:
+        raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input") from exc
     if not isinstance(document, dict) or not isinstance(document.get("artifacts"), list):
-        raise RendererError("A native Syft inventory is required")
+        raise RendererError("A native Syft inventory is required", reason="invalid_scanner_input")
     if image is None:
         sidecar = sbom_path.with_suffix(".image")
         image = sidecar.read_text(encoding="utf-8").strip() if sidecar.is_file() else ""
@@ -104,15 +115,15 @@ def scan_sbom(sbom_path: Path, result_path: Path, *, database: Path | None = Non
     binding = _identity_module().document_binding(raw, document, image, provenance)
     settings = environment if environment is not None else os.environ
     database = Path(database or settings.get("GRYPE_DB_CACHE_DIR", "/opt/catscan/grype-db"))
-    database_digest = snapshot_digest(database)
+    database_digest = _database_digest(database)
     age = str(settings.get("GRYPE_DB_MAX_ALLOWED_BUILT_AGE", "120h"))
     if not re.fullmatch(r"[1-9][0-9]{0,6}(?:h|m|s)", age):
-        raise RendererError("Invalid scanner database age policy")
+        raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
     # Preserve the trusted release/operator policy: disconnected releases can
     # explicitly retain older databases, while Grype's normal default is strict.
     validate_age = str(settings.get("GRYPE_DB_VALIDATE_AGE", "true")).lower()
     if validate_age not in {"true", "false"}:
-        raise RendererError("Invalid scanner database age policy")
+        raise RendererError("Invalid scanner database age policy", reason="scanner_database_policy_invalid")
     with tempfile.TemporaryDirectory(prefix="cats-grype-input-") as directory:
         folder = Path(directory)
         (folder / "inventory.json").write_bytes(raw)
@@ -127,8 +138,8 @@ def scan_sbom(sbom_path: Path, result_path: Path, *, database: Path | None = Non
                 "GRYPE_DB_VALIDATE_AGE": validate_age,
             }, timeout=timeout, max_output=128 * 1024 * 1024, check_cancelled=check_cancelled)
         report_raw, report = _json_output(result, "matches")
-    if snapshot_digest(database) != database_digest:
-        raise RendererError("Bound scanner database changed during scanning")
+    if _database_digest(database) != database_digest:
+        raise RendererError("Bound scanner database changed during scanning", reason="scanner_database_changed")
     binding.update(image=image, scanner_report_digest=digest(report_raw),
                    scanner_database_digest=database_digest, scanner_version=result.get("version", ""),
                    scanner_database_age_policy={"validate": validate_age == "true", "max_allowed_built_age": age},

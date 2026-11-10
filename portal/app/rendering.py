@@ -23,6 +23,7 @@ import shutil
 from pathlib import PurePosixPath
 
 from .action_supervisor import supervised_command
+from .scanner_errors import scanner_failure_message, scanner_failure_reason
 
 
 class RendererError(RuntimeError):
@@ -254,7 +255,8 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
                     next_check = now + 1
                 remaining = deadline - now
                 if remaining <= 0:
-                    raise RendererError("Offline action exceeded time limit")
+                    raise RendererError("Offline action exceeded time limit",
+                                        reason="time_limit_exceeded" if tool in SCANNERS else None)
                 for key, _ in selector.select(min(remaining, 0.2)):
                     chunk = os.read(key.fileobj.fileno(), 65536)
                     if not chunk:
@@ -263,13 +265,17 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
                     outputs[key.data].write(chunk)
                     output_size += len(chunk)
                     if max_output and output_size > max_output:
-                        raise RendererError("Offline action exceeded output limit")
+                        raise RendererError("Offline action exceeded output limit",
+                                            reason="output_limit_exceeded" if tool in SCANNERS else None)
         for output in outputs.values():
             output.seek(0)
         if process.returncode:
             # Native stderr can contain user secrets; keep it out of persisted errors.
             diagnostic = outputs["stderr"].read().decode("utf-8", errors="replace")
             infrastructure = any(line.startswith("bwrap:") for line in diagnostic.splitlines())
+            if tool in SCANNERS:
+                reason = scanner_failure_reason(diagnostic)
+                raise RendererError(scanner_failure_message(reason), infrastructure=infrastructure, reason=reason)
             raise RendererError("Worker isolation is unavailable; check the host AppArmor and seccomp profiles"
                                 if infrastructure else "Offline tool failed; review the supplied inputs",
                                 value_paths=() if infrastructure else missing_value_paths(diagnostic),
@@ -278,7 +284,8 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
         return {"stdout": outputs["stdout"].read().decode("utf-8", errors="strict"),
                 "version": tool_version(tool)}
     except subprocess.TimeoutExpired as exc:
-        raise RendererError("Offline action exceeded time limit") from exc
+        raise RendererError("Offline action exceeded time limit",
+                            reason="time_limit_exceeded" if tool in SCANNERS else None) from exc
     finally:
         # Let the dedicated supervisor kill and reap adopted descendants before
         # it exits. Killing it immediately would orphan bwrap's namespace init.
