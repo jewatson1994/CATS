@@ -171,6 +171,14 @@ def test_previously_and_later_skipped_images_keep_configuration_counts(pipeline)
     assert not status["complete"]
     assert len(json.loads((output / "portal-policy-findings.json").read_text())) == 2
     assert len(list((output / "trivy-results/raw").glob("*.json"))) == 2
+    # A vulnerability-stage failure retains the inventory. Its configuration
+    # diagnostic must not claim that acquisition or SBOM generation failed.
+    assert (output / "sboms/registry.test-image-1.json").is_file()
+    assert (output / "sboms/registry.test-image-1.digest").is_file()
+    reason = "Image assessment was incomplete in an earlier scan stage; see the scan logs."
+    skipped = sorted((output / "configuration-skipped.txt").read_text().splitlines())
+    assert skipped == [f"image\tregistry.test/image:{index}\t{reason}" for index in (0, 1)]
+    assert "Image was unavailable during SBOM generation" not in result.stdout + result.stderr
 
 
 WRAPPER = r'''#!/bin/bash

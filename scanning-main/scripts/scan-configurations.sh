@@ -272,7 +272,7 @@ run_trivy_image_config() {
   normalized="${NORMALIZED_ROOT}/image-${safe}.json"
 
   if grep -Fqx "$image" skipped_images.txt 2>/dev/null; then
-    record_failure image "$image" "Image was unavailable during SBOM generation"
+    record_failure image "$image" "Image assessment was incomplete in an earlier scan stage; see the scan logs."
     return 1
   fi
 
@@ -664,10 +664,10 @@ merge_image_configuration() {
     DOCKLE_REQUESTED=$((DOCKLE_REQUESTED + dockle_requested))
     image="$(cat "$fragment/image")" || return 1
     if grep -Fqx "$image" skipped_images.txt 2>/dev/null; then
-      # Vulnerability scanning can mark an image unavailable after inventory.
+      # Vulnerability scanning can mark an image skipped after inventory.
       # Preserve the separate-phase behavior and do not publish its findings.
       if [ "$requested" -gt 0 ]; then
-        record_failure image "$image" "Image was unavailable during SBOM generation"
+        record_failure image "$image" "Image assessment was incomplete in an earlier scan stage; see the scan logs."
       fi
       safe="$(safe_name "$image")"
       rm -f -- "$RAW_ROOT/image-${safe}.json" "$RAW_ROOT/image-${safe}-dockle.json" \
