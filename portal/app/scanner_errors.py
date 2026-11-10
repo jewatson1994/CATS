@@ -1,7 +1,119 @@
-"""Allowlisted scanner diagnostics; never publish native output or input values."""
+"""Scanner failure categories and bounded, redacted native error excerpts."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import errno
+import re
+
+
+_SCANNERS = frozenset({"grype", "syft", "trivy", "dockle"})
+_MAX_DIAGNOSTIC_CHARS = 4096
+_MAX_DIAGNOSTIC_LINES = 24
+_MAX_REDACTION_CHARS = 65536
+_CREDENTIAL_WORDS = ("password", "passwd", "token", "secret", "credential",
+                     "apikey", "accesskey", "auth")
+_ASSIGNMENT = re.compile(r'''["'`]?[ \t]*[:=]''')
+
+
+def _credential_may_continue(value: str) -> bool:
+    if not value or re.fullmatch(r"[|>][0-9+-]*(?:\s*#.*)?|[\[{]", value):
+        return True
+    quote = None
+    escaped = False
+    for char in value:
+        if escaped:
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'`":
+            quote = char
+    return quote is not None or escaped
+
+
+def _redact_credential_lines(text: str) -> str:
+    lines = []
+    credential_indent = None
+    for line in text.splitlines():
+        indent = len(line) - len(line.lstrip())
+        if credential_indent is not None and (not line.strip() or indent > credential_indent):
+            continue
+        credential_indent = None
+        # Scan each key once, including quoted JSON/YAML keys. Redact the whole
+        # remainder, since credential values can contain spaces or nested keys.
+        for token in re.finditer(r"[\w.-]+", line):
+            key = token.group().lower().replace("_", "").replace("-", "")
+            if (any(word in key for word in _CREDENTIAL_WORDS)
+                    and _ASSIGNMENT.match(line, token.end())):
+                value = line[_ASSIGNMENT.match(line, token.end()).end():].strip()
+                start = token.start()
+                if start and line[start - 1] in "\"'`":
+                    start -= 1
+                line = line[:start] + "[redacted credential]"
+                if _credential_may_continue(value):
+                    # The boundary of a multiline credential is ambiguous in
+                    # native diagnostics. Omit the rest rather than expose it.
+                    return "\n".join(lines + [line, "[remaining stderr omitted: multiline credential]"])
+                credential_indent = indent
+                break
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _redact_stderr(stderr: str) -> str:
+    # Bound redaction work before running patterns. Take only a prefix: a raw
+    # tail could start halfway through a credential or private key block.
+    clipped = len(stderr) > _MAX_REDACTION_CHARS
+    text = stderr[:_MAX_REDACTION_CHARS]
+    # Remove terminal controls before matching credentials (including OSC links).
+    text = re.sub(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\|\Z))", "", text)
+    text = re.sub(r"[\x00-\x08\x0b-\x1f\x7f\u202a-\u202e\u2066-\u2069]", "", text)
+    text = re.sub(r"-----BEGIN [^-\n]+-----.*?(?:-----END [^-\n]+-----|\Z)",
+                  "[redacted key material]", text, flags=re.DOTALL)
+    text = re.sub(r"(?im)\b(?:proxy-)?authorization\s*[:=]\s*[^\n]+", "authorization: [redacted]", text)
+    text = re.sub(r"(?i)\b(?:Bearer|Basic)\s+\S+", "[redacted authentication]", text)
+    text = re.sub(r"(?i)(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^\s<>]+", "[redacted URL]", text)
+    text = _redact_credential_lines(text)
+    # Quoted strings and paths can contain arbitrary supplied values. Preserve
+    # the surrounding native error, never the scanner's stdout (which is evidence).
+    text = re.sub(r'''"(?:\\.|[^"\\])*(?:"|\Z)|'(?:\\.|[^'\\])*(?:'|\Z)|`(?:\\.|[^`\\])*(?:`|\Z)''',
+                  "[redacted value]", text)
+    text = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+", "[redacted token]", text)
+    text = re.sub(r"\.Values\.[\w.-]+", ".Values.[redacted]", text)
+    text = re.sub(r'''(?<![\w/])(?:[A-Za-z]:[\\/]|\.{0,2}/)[^\s,;:'"`<>]+''', "[redacted path]", text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    # Runtime crashes can contain thousands of stack/register lines. Keep the
+    # opening error and final cause with a visible omission marker in between.
+    if len(lines) > _MAX_DIAGNOSTIC_LINES:
+        lines = lines[:16] + ["[stderr lines omitted]"] + lines[-7:]
+    text = "\n".join(lines)
+    if len(text) > _MAX_DIAGNOSTIC_CHARS:
+        text = text[:3000] + "\n[stderr truncated]\n" + text[-1000:]
+    if clipped:
+        text += "\n[remaining stderr omitted]"
+    return text
+
+
+@dataclass(frozen=True)
+class ScannerDiagnostic:
+    """Only sanitized stderr is retained on an exception or passed to job logs."""
+
+    tool: str
+    returncode: int
+    stderr: str
+
+    def __post_init__(self):
+        if self.tool not in _SCANNERS or type(self.returncode) is not int:
+            raise ValueError("Invalid scanner diagnostic metadata")
+        object.__setattr__(self, "stderr", _redact_stderr(self.stderr))
+
+    def detail(self) -> str:
+        status = (f"signal {-self.returncode}" if self.returncode < 0
+                  else f"exit code {self.returncode}")
+        stderr = self.stderr or "[scanner emitted no stderr]"
+        return f"Scanner: {self.tool}; {status}.\nScanner stderr (redacted):\n{stderr}"
 
 
 _DETAILS = {
@@ -58,7 +170,7 @@ def scanner_failure_message(reason: str | None) -> str:
 
 
 def scanner_failure_detail(error: Exception) -> str:
-    """Only codes we own may reach a job log, including for unexpected errors."""
+    """Publish native errors only through the sanitizing diagnostic boundary."""
     reason = getattr(error, "reason", None)
     if reason not in _DETAILS:
         if isinstance(error, OSError):
@@ -75,4 +187,8 @@ def scanner_failure_detail(error: Exception) -> str:
             }.get(error.errno)
         elif getattr(error, "infrastructure", False):
             reason = "isolation_unavailable"
-    return scanner_failure_message(reason)
+    message = scanner_failure_message(reason)
+    diagnostic = getattr(error, "scanner_diagnostic", None)
+    if isinstance(diagnostic, ScannerDiagnostic):
+        message += "\n" + diagnostic.detail()
+    return message

@@ -23,15 +23,16 @@ import shutil
 from pathlib import PurePosixPath
 
 from .action_supervisor import supervised_command
-from .scanner_errors import scanner_failure_message, scanner_failure_reason
+from .scanner_errors import ScannerDiagnostic, scanner_failure_message, scanner_failure_reason
 
 
 class RendererError(RuntimeError):
-    def __init__(self, message, *, value_paths=(), infrastructure=False, reason=None):
+    def __init__(self, message, *, value_paths=(), infrastructure=False, reason=None, scanner_diagnostic=None):
         super().__init__(message)
         self.value_paths = list(value_paths)
         self.infrastructure = infrastructure
         self.reason = reason
+        self.scanner_diagnostic = scanner_diagnostic
 
 
 def renderer_failure_reason(stderr):
@@ -275,7 +276,12 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
             infrastructure = any(line.startswith("bwrap:") for line in diagnostic.splitlines())
             if tool in SCANNERS:
                 reason = scanner_failure_reason(diagnostic)
-                raise RendererError(scanner_failure_message(reason), infrastructure=infrastructure, reason=reason)
+                if infrastructure:
+                    diagnostic = "\n".join(line for line in diagnostic.splitlines() if line.startswith("bwrap:"))
+                raise RendererError(
+                    scanner_failure_message(reason), infrastructure=infrastructure, reason=reason,
+                    scanner_diagnostic=ScannerDiagnostic(tool, process.returncode, diagnostic),
+                )
             raise RendererError("Worker isolation is unavailable; check the host AppArmor and seccomp profiles"
                                 if infrastructure else "Offline tool failed; review the supplied inputs",
                                 value_paths=() if infrastructure else missing_value_paths(diagnostic),

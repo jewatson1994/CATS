@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -50,17 +51,22 @@ def scan_fixture(tmp_path):
     return scripts, inputs, output
 
 
-def run_scan(bash, fixture):
+def scan_invocation(bash, fixture):
     scripts, inputs, output = fixture
     env = os.environ.copy()
     env.update(CATS_JOB_MODE="scan", HELM_SCAN_ENABLED="false",
                TRIVY_CONFIG_SCAN_ENABLED="false",
                TRIVY_IMAGE_CONFIG_SCAN_ENABLED="false",
                DOCKLE_IMAGE_CONFIG_SCAN_ENABLED="false")
-    result = subprocess.run([bash, "-c", 'export PATH="/usr/bin:/bin:$PATH"; exec bash "$@"', "scanner-test", "scripts/run-scan.sh",
-                             "../inputs", "output"], cwd=scripts.parent,
-                            capture_output=True, text=True, env=env, timeout=30)
-    return result, output
+    command = [bash, "-c", 'export PATH="/usr/bin:/bin:$PATH"; exec bash "$@"',
+               "scanner-test", "scripts/run-scan.sh", "../inputs", "output"]
+    return command, {"cwd": scripts.parent, "env": env}
+
+
+def run_scan(bash, fixture):
+    command, options = scan_invocation(bash, fixture)
+    result = subprocess.run(command, capture_output=True, text=True, timeout=30, **options)
+    return result, fixture[2]
 
 
 def assert_failed(output):
@@ -111,6 +117,49 @@ def test_required_phase_failure_preserves_exit_and_stops_downstream(bash, scan_f
         assert not (output / f"phase-{next_phase}.json").exists()
     if phase == "configuration_scan":
         assert (output / "prepare_inputs.log").exists()
+
+
+@pytest.mark.parametrize("exit_code", [0, 37])
+def test_phase_diagnostics_stream_live_and_survive_long_logs(bash, scan_fixture, exit_code):
+    scripts, _, output = scan_fixture
+    diagnostic = "early scanner diagnostic: vulnerability database could not be opened"
+    write_script(scripts / PHASES["scan_sboms"],
+                 f"echo '{diagnostic}' >&2\n"
+                 'for ((line=0; line<120; line++)); do echo "later scanner output $line"; done\n'
+                 'while [ ! -e release-phase ]; do sleep 0.05; done\n'
+                 f"exit {exit_code}")
+    command, options = scan_invocation(bash, scan_fixture)
+    worker_log = output / "worker.log"
+    with worker_log.open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, **options)
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and process.poll() is None:
+                if diagnostic in worker_log.read_text(encoding="utf-8"):
+                    break
+                time.sleep(0.05)
+            assert diagnostic in worker_log.read_text(encoding="utf-8"), "Diagnostic was buffered until phase exit"
+            assert process.poll() is None
+            state = json.loads((output / "phase-scan_sboms.json").read_text())
+            assert state["status"] == "running"
+        finally:
+            (output / "release-phase").touch()
+            try:
+                process.wait(timeout=30)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+    assert process.returncode == exit_code
+    for path in (worker_log, output / "scan_sboms.log"):
+        retained = path.read_text(encoding="utf-8")
+        assert retained.count(diagnostic) == 1
+        assert "later scanner output 119" in retained
+    state = json.loads((output / "phase-scan_sboms.json").read_text())
+    assert state["status"] == ("failed" if exit_code else "complete")
+    if exit_code:
+        assert assert_failed(output)["exit_code"] == exit_code
+        assert not (output / "ran-configuration_scan").exists()
 
 
 @pytest.mark.parametrize("filename,phase", [

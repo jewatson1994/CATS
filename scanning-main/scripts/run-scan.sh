@@ -153,23 +153,24 @@ fi
 export CATS_IMAGE_CONFIGURATION_DIR
 
 run_phase() {
-  local name="$1" script="$2"
+  local name="$1" script="$2" rc
+  local -a phase_status
   echo "[cats-scan] phase=$name start script=$script"
   printf '{"phase":"%s","status":"running"}\n' "$name" > "phase-${name}.json"
-  if bash "$SCRIPT_DIR/$script" >"${name}.log" 2>&1; then
+  # Stream diagnostics to the worker while retaining the complete phase log.
+  # Capture both statuses immediately: tee must not hide a scanner failure.
+  bash "$SCRIPT_DIR/$script" 2>&1 | tee "${name}.log"
+  phase_status=("${PIPESTATUS[@]}")
+  rc="${phase_status[0]}"
+  if [ "$rc" -eq 0 ]; then rc="${phase_status[1]}"; fi
+  if [ "$rc" -eq 0 ]; then
     echo "[cats-scan] phase=$name exit=0"
     echo "[cats-scan] phase=$name artifacts:"
     find . -maxdepth 2 -type f -print | sort || true
-    echo "[cats-scan] phase=$name log tail:"
-    tail -n 80 "${name}.log" || true
     printf '{"phase":"%s","status":"complete"}\n' "$name" > "phase-${name}.json"
     return 0
-  else
-    rc=$?
   fi
   echo "[cats-scan] phase=$name exit=$rc"
-  echo "[cats-scan] phase=$name log tail:"
-  tail -n 80 "${name}.log" || true
   fatal_phase "$name" "$rc"
 }
 
