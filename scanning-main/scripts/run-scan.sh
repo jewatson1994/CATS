@@ -63,8 +63,14 @@ echo "[cats-scan] image source: $CATS_IMAGE_SOURCE"
 
 # Split archives exist only for this job's phases; never keep a second copy
 # of uploaded images in the retained job output.
-cleanup_split_archives() { rm -rf -- image-archives/.split; }
-trap cleanup_split_archives EXIT
+CATS_IMAGE_CONFIGURATION_DIR=""
+cleanup_scan_scratch() {
+  rm -rf -- image-archives/.split
+  [ -z "$CATS_IMAGE_CONFIGURATION_DIR" ] || rm -rf -- "$CATS_IMAGE_CONFIGURATION_DIR"
+}
+trap cleanup_scan_scratch EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Load locally uploaded image archives before image preparation. Every tag an
 # archive contains becomes an image input and is scanned without registry
@@ -141,6 +147,10 @@ case "$JOB_MODE" in
   scan|sbom) ;;
   *) echo "[cats-scan] unsupported CATS_JOB_MODE: $JOB_MODE" >&2; exit 2 ;;
 esac
+if [ "$CATS_IMAGE_SOURCE" = daemonless ] && [ "$JOB_MODE" = scan ]; then
+  CATS_IMAGE_CONFIGURATION_DIR="$(mktemp -d "$(pwd)/.cats-image-configuration.XXXXXX")" || fatal_phase generate_sboms 1
+fi
+export CATS_IMAGE_CONFIGURATION_DIR
 
 run_phase() {
   local name="$1" script="$2"

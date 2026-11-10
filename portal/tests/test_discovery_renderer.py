@@ -11,7 +11,8 @@ def test_cancelling_native_render_reaps_process_group(linux, tmp_path, monkeypat
     from app.durable_jobs import JobCancelled
     actions = []
     process = SimpleNamespace(pid=1234, stdout=tempfile.TemporaryFile(), stderr=tempfile.TemporaryFile(),
-                              wait=lambda: actions.append('reaped'))
+                              terminate=lambda: actions.append('stopped'),
+                              wait=lambda timeout: actions.append(('reaped', timeout)))
     monkeypatch.setattr(renderer, 'child_seccomp', tempfile.TemporaryFile)
     monkeypatch.setattr(renderer.subprocess, 'Popen', lambda *a, **kw: process)
     # An actual renderer on Linux uses pollable pipes. A select-based selector
@@ -23,7 +24,7 @@ def test_cancelling_native_render_reaps_process_group(linux, tmp_path, monkeypat
         raise JobCancelled()
     with pytest.raises(JobCancelled):
         renderer.isolated_runner('helm', ['template'], tmp_path, max_output=1024, check_cancelled=cancel)
-    assert actions == [1234, 'reaped']
+    assert actions == ['stopped', ('reaped', 5)]
     assert process.stdout.closed and process.stderr.closed
 
 

@@ -14,6 +14,7 @@ def test_every_action_worker_has_setup_policy_and_runtime_probe(path):
     services = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]
     for name in WORKERS:
         service = services[name]
+        assert service["init"] is True
         seccomp = "../deploy/discovery-seccomp.json" if path == "templates/compose.main.yaml" else "./deploy/discovery-seccomp.json"
         assert service["security_opt"] == ["no-new-privileges:true", "seccomp=" + seccomp]
         assert not service.get("privileged", False)
@@ -74,6 +75,7 @@ def test_standalone_scanner_builds_shared_actions_from_root_context():
     assert "seccomp=../deploy/discovery-seccomp.json" in scanner["security_opt"]
     dockerfile = (ROOT / "cats-scanner/Dockerfile").read_text()
     assert "portal/app/rendering.py portal/app/scan_runtime.py" in dockerfile
+    assert "portal/app/action_supervisor.py" in dockerfile
     assert "portal/app/scanner_actions.py portal/app/scanner_inputs.py /app/app/" in dockerfile
     assert "COPY scanning-main/scripts /opt/cats/scanning/scripts" in dockerfile
     assert "ENV PYTHONPATH=/app CATS_SCANNING_ROOT=/opt/cats/scanning" in dockerfile
@@ -83,3 +85,4 @@ def test_standalone_scanner_builds_shared_actions_from_root_context():
     ignore = (ROOT / "cats-scanner/Dockerfile.dockerignore").read_text().splitlines()
     assert "**" in ignore
     assert "!portal/app/rendering.py" in ignore
+    assert "!portal/app/action_supervisor.py" in ignore

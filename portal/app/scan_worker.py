@@ -5,6 +5,7 @@ import os
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import tempfile
@@ -31,6 +32,20 @@ _UID_LOCK = threading.Lock()
 _ACTIVE_UIDS = set()
 
 ROOT = Path(os.getenv("CATS_SCAN_JOB_ROOT", "/var/lib/cats-scan"))
+
+
+def workspace_bytes(directory):
+    """Count regular files without following links or racing archive cleanup."""
+    total = 0
+    for path in directory.rglob("*"):
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            # The scanner releases each image's archives as it progresses.
+            continue
+        if stat.S_ISREG(metadata.st_mode):
+            total += metadata.st_size
+    return total
 
 
 class Worker:
@@ -294,9 +309,6 @@ class Worker:
                                            env=environment, start_new_session=os.name != "nt", **scan_runtime.privileges())
                 while process.poll() is None:
                     authorized()
-                    size = sum(p.stat().st_size for p in directory.rglob("*") if p.is_file() and not p.is_symlink())
-                    if size > int(os.getenv("CATS_SCAN_DISK_BYTES", str(8 * 1024**3))):
-                        raise RuntimeError("Worker disk budget exceeded")
                     for name in ("prepare_inputs", "generate_sboms", "scan_sboms", "configuration_scan", "report_results"):
                         marker = output / f"phase-{name}.json"
                         if marker.exists():
@@ -306,6 +318,14 @@ class Worker:
                                     phase[0] = name
                                     break
                             except (ValueError, OSError): pass
+                    size = workspace_bytes(directory)
+                    budget = int(os.getenv("CATS_SCAN_DISK_BYTES", str(8 * 1024**3)))
+                    if size > budget:
+                        raise RuntimeError(
+                            f"Worker disk budget exceeded during {phase[0]}: "
+                            f"{size} bytes ({size / 1024**3:.2f} GiB) used; "
+                            f"CATS_SCAN_DISK_BYTES={budget} ({budget / 1024**3:.2f} GiB)"
+                        )
                     progress.seek(max(0, progress.seek(0, 2) - 8192))
                     log_tail[0] = redact(progress.read().decode("utf-8", errors="replace"))
                     time.sleep(0.5)

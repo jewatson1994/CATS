@@ -20,6 +20,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify action process cleanup on Linux
+        timeout-minutes: 3
+        run: python3 portal/tests/test_action_supervisor.py
+
+      - name: Verify scan archive cleanup on Linux
+        timeout-minutes: 5
+        run: |
+          python3 -m venv "$RUNNER_TEMP/scan-lifecycle-tests"
+          "$RUNNER_TEMP/scan-lifecycle-tests/bin/python" -m pip install 'pytest>=8,<10'
+          "$RUNNER_TEMP/scan-lifecycle-tests/bin/python" -m pytest scanning-main/tests/test_image_archive_lifecycle.py -q
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR

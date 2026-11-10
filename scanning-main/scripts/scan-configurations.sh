@@ -2,6 +2,14 @@
 
 set -uo pipefail
 
+IMAGE_ONLY=""
+IMAGE_STATE_DIR=""
+if [ "$#" -gt 0 ]; then
+  [ "$#" -eq 3 ] && [ "$1" = --image ] || { echo "Usage: $0 [--image IMAGE EVIDENCE_DIRECTORY]" >&2; exit 2; }
+  IMAGE_ONLY="$2"
+  IMAGE_STATE_DIR="$3"
+fi
+
 SCRIPT_DIRECTORY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 source "${SCRIPT_DIRECTORY}/helm-render-helpers.sh" || { echo "Fatal: cannot source Helm render helpers" >&2; exit 1; }
 source "${SCRIPT_DIRECTORY}/helm-dependency-helpers.sh" || { echo "Fatal: cannot source Helm dependency helpers" >&2; exit 1; }
@@ -17,7 +25,7 @@ TRIVY_CONFIG_SEVERITIES="${TRIVY_CONFIG_SEVERITIES:-UNKNOWN,LOW,MEDIUM,HIGH,CRIT
 TRIVY_CACHE_DIR="${TRIVY_CACHE_DIR:-/opt/catscan/trivy-cache}"
 TRIVY_CHECKS_BUNDLE_REPOSITORY="${TRIVY_CHECKS_BUNDLE_REPOSITORY:-}"
 TRIVY_CONFIG_PATHS="${TRIVY_CONFIG_PATHS:-}"
-TRIVY_CONFIG_SKIP_DIRS="${TRIVY_CONFIG_SKIP_DIRS:-.git .cats-helm-graph .cats-images sboms results trivy-results helm-rendered}"
+TRIVY_CONFIG_SKIP_DIRS="${TRIVY_CONFIG_SKIP_DIRS:-.git .cats-helm-graph .cats-images .cats-image-configuration.* sboms results trivy-results helm-rendered}"
 HELM_CHART_ROOTS="${HELM_CHART_ROOTS:-charts}"
 HELM_DEPENDENCY_MODE="${HELM_DEPENDENCY_MODE:-auto}"
 HELM_ALLOW_NETWORK="${HELM_ALLOW_NETWORK:-false}"
@@ -34,6 +42,19 @@ STATUS_FILE="configuration-scan-status.json"
 HELM_DISCOVERY_FILE="helm-discovery.jsonl"
 GRAPH_OUTPUT="${HELM_GRAPH_OUTPUT:-.cats-helm-graph.json}"
 GRAPH_ENTRIES="${HELM_GRAPH_ENTRIES:-.cats-helm-entries.jsonl}"
+
+if [ -n "$IMAGE_ONLY" ]; then
+  # Inventory runs these checks before releasing each acquired image. Keep
+  # their counters/findings separate until the usual configuration phase.
+  mkdir -p "$IMAGE_STATE_DIR" || exit 1
+  SKIPPED_FILE="$IMAGE_STATE_DIR/skipped.txt"
+  SKIPPED_CHARTS_FILE="$IMAGE_STATE_DIR/skipped-charts.txt"
+  POLICY_FINDINGS_FILE="$IMAGE_STATE_DIR/findings.json"
+  STATUS_FILE="$IMAGE_STATE_DIR/status.json"
+  HELM_DISCOVERY_FILE="$IMAGE_STATE_DIR/helm-discovery.jsonl"
+  TRIVY_CONFIG_SCAN_ENABLED=false
+  HELM_SCAN_ENABLED=false
+fi
 
 mkdir -p "$RAW_ROOT" "$NORMALIZED_ROOT" "$RENDER_ROOT" || exit 1
 : > "$SKIPPED_FILE" || exit 1
@@ -623,6 +644,45 @@ process_values_file_apps() {
   done < <(yq -o=json '.services // {} | to_entries[] | {name:.key, enabled:(.value.enabled // null), source_type:(.value.sourceType // .value.source_type // ""), repo_name:(.value.helmRepo.repoName // .value.helm_repo.repo_name // ""), repo_url:(.value.helmRepo.repoUrl // .value.helm_repo.repo_url // ""), version:(.value.helmRepo.version // .value.helm_repo.version // ""), chart_ref:(.value.helmRepo.chart // .value.helm_repo.chart // .value.chart // ""), values:(.value.valuesFiles // .value.values_files // [])} ' "$values_file" 2>/dev/null | jq -r '. | @base64' 2>/dev/null)
 }
 
+merge_image_configuration() {
+  local fragment image rc fields requested succeeded dockle_requested dockle_succeeded failures safe
+  local failed_rc=0
+  for fragment in "${CATS_IMAGE_CONFIGURATION_DIR}"/image.*; do
+    [ -d "$fragment" ] || continue
+    cat "$fragment/scan.log" || return 1
+    rc="$(cat "$fragment/exit-code")" || return 1
+    [[ "$rc" =~ ^[0-9]+$ ]] || return 1
+    [ "$rc" -eq 0 ] || failed_rc="$rc"
+    # Normalization/tool failures can terminate before a status is written.
+    if [ ! -s "$fragment/status.json" ]; then
+      [ "$rc" -ne 0 ] || failed_rc=1
+      continue
+    fi
+    fields="$(jq -er '[.source.requested, .source.succeeded, .dockle.requested, .dockle.succeeded, .failures] | @tsv' "$fragment/status.json")" || return 1
+    read -r requested succeeded dockle_requested dockle_succeeded failures <<< "$fields"
+    SOURCE_REQUESTED=$((SOURCE_REQUESTED + requested))
+    DOCKLE_REQUESTED=$((DOCKLE_REQUESTED + dockle_requested))
+    image="$(cat "$fragment/image")" || return 1
+    if grep -Fqx "$image" skipped_images.txt 2>/dev/null; then
+      # Vulnerability scanning can mark an image unavailable after inventory.
+      # Preserve the separate-phase behavior and do not publish its findings.
+      if [ "$requested" -gt 0 ]; then
+        record_failure image "$image" "Image was unavailable during SBOM generation"
+      fi
+      safe="$(safe_name "$image")"
+      rm -f -- "$RAW_ROOT/image-${safe}.json" "$RAW_ROOT/image-${safe}-dockle.json" \
+        "$NORMALIZED_ROOT/image-${safe}.json" "$NORMALIZED_ROOT/image-${safe}-dockle.json"
+      continue
+    fi
+    SOURCE_SUCCEEDED=$((SOURCE_SUCCEEDED + succeeded))
+    DOCKLE_SUCCEEDED=$((DOCKLE_SUCCEEDED + dockle_succeeded))
+    FAILURES=$((FAILURES + failures))
+    cat "$fragment/skipped.txt" >> "$SKIPPED_FILE" || return 1
+    merge_policy_findings "$fragment/findings.json"
+  done
+  return "$failed_rc"
+}
+
 if ! is_true "$TRIVY_CONFIG_SCAN_ENABLED" && ! is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED" && ! is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED" && ! is_true "$HELM_SCAN_ENABLED"; then
   echo "Trivy configuration and Helm scanning are disabled."
   finish
@@ -657,7 +717,30 @@ if [ "$FAILURES" -gt 0 ]; then
   exit 1
 fi
 
-if is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED" || is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED"; then
+if [ -z "$IMAGE_ONLY" ] && [ -n "${CATS_IMAGE_CONFIGURATION_DIR:-}" ]; then
+  # Merge only after tooling validation: incomplete targets are not tooling
+  # failures. Fatal/strict checks still fail the configuration_scan phase.
+  merge_rc=0
+  merge_image_configuration || merge_rc=$?
+  if [ "$merge_rc" -ne 0 ]; then
+    finish || true
+    exit "$merge_rc"
+  fi
+fi
+
+if [ -n "$IMAGE_ONLY" ]; then
+  if is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED"; then
+    run_trivy_image_config "$IMAGE_ONLY" || true
+  fi
+  if is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED"; then
+    run_dockle_image_config "$IMAGE_ONLY" || true
+  fi
+  finish
+  exit $?
+fi
+
+if [ -z "${CATS_IMAGE_CONFIGURATION_DIR:-}" ] && \
+   { is_true "$TRIVY_IMAGE_CONFIG_SCAN_ENABLED" || is_true "$DOCKLE_IMAGE_CONFIG_SCAN_ENABLED"; }; then
   if [ -f final_images.txt ]; then
     while IFS= read -r image; do
       [ -n "$image" ] || continue

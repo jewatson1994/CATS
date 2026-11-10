@@ -235,9 +235,11 @@ source "$1"
     assert arguments[4] == "--src-authfile"
     assert arguments[-2] == "docker://nginx:1.27.0-alpine"
     assert arguments[-1].startswith("oci-archive:")
-    staging = tmp_path / ("job temporary files" if worker_tmp else ".cats-images/tmp")
-    assert (staging / "acquired-layer").read_text().strip() == "acquired layer"
-    if failed_stage == "acquire":
+    staging = arguments[1].replace("\\", "/")
+    assert ("/job temporary files/cats-acquire." if worker_tmp else "/.cats-images/image.") in staging
+    assert not list(tmp_path.rglob("acquired-layer"))
+    assert not list(tmp_path.rglob("cats-acquire.*"))
+    if failed_stage in {"acquire", "identity"}:
         assert len(calls) == 1
     else:
         assert len(calls) == 2

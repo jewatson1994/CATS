@@ -22,6 +22,8 @@ import secrets
 import shutil
 from pathlib import PurePosixPath
 
+from .action_supervisor import supervised_command
+
 
 class RendererError(RuntimeError):
     def __init__(self, message, *, value_paths=(), infrastructure=False, reason=None):
@@ -233,7 +235,8 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
         max_output = 64 * 1024 * 1024
     with child_seccomp() as policy:
         command[1:1] = ["--seccomp", str(policy.fileno())]
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        process = subprocess.Popen(supervised_command(command, pass_fds=(policy.fileno(),)),
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    env={"PATH": "/usr/bin:/bin"}, start_new_session=True,
                                    pass_fds=(policy.fileno(),), **privileges)
     outputs = {name: tempfile.TemporaryFile() for name in ("stdout", "stderr")}
@@ -277,12 +280,17 @@ def _execute(tool, command, privileges, timeout, max_output, check_cancelled):
     except subprocess.TimeoutExpired as exc:
         raise RendererError("Offline action exceeded time limit") from exc
     finally:
-        # Also remove descendants if a renderer closes its pipes early.
+        # Let the dedicated supervisor kill and reap adopted descendants before
+        # it exits. Killing it immediately would orphan bwrap's namespace init.
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait()
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
         process.stdout.close()
         process.stderr.close()
         for output in outputs.values():

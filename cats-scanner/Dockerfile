@@ -261,6 +261,7 @@ RUN chmod 0755 \
 # Shared stdlib-only offline actions are also available to standalone scans.
 COPY --from=worker-compose /docker-compose /usr/local/bin/docker-compose
 COPY portal/app/rendering.py portal/app/scan_runtime.py portal/app/scanner_actions.py portal/app/scanner_inputs.py /app/app/
+COPY portal/app/action_supervisor.py /app/app/
 RUN touch /app/app/__init__.py
 COPY scanning-main/scripts /opt/cats/scanning/scripts
 COPY deploy/verify-worker-tools.py /tmp/verify-worker-tools.py

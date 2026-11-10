@@ -47,7 +47,7 @@ record_daemonless_digest() {
 }
 
 generate_daemonless_sbom() {
-  local image="$1" safe="$2" source identity_source configuration_source mapping archive configuration_archive acquire_tmp
+  local image="$1" safe="$2" source identity_source configuration_source mapping archive configuration_archive
   local -a acquire
   source="registry:${image}"
   if [ -s image-archive-map.tsv ]; then
@@ -57,10 +57,12 @@ generate_daemonless_sbom() {
   identity_source="$source"
   configuration_source="$source"
   if [[ "$source" == registry:* ]]; then
-    acquire_tmp="${TMPDIR:-$(pwd)/.cats-images/tmp}"
-    mkdir -p .cats-images "$acquire_tmp"
-    configuration_archive="$(pwd)/.cats-images/$(printf '%s' "$image" | sha256sum | cut -c1-24).tar"
-    archive="${configuration_archive%.tar}.oci.tar"
+    mkdir -p .cats-images || return 1
+    ACTIVE_IMAGE_DIRECTORY="$(mktemp -d "$(pwd)/.cats-images/image.XXXXXX")" || return 1
+    mkdir -p "${TMPDIR:-$ACTIVE_IMAGE_DIRECTORY}" || return 1
+    ACTIVE_ACQUIRE_TMP="$(mktemp -d "${TMPDIR:-$ACTIVE_IMAGE_DIRECTORY}/cats-acquire.XXXXXX")" || return 1
+    configuration_archive="${ACTIVE_IMAGE_DIRECTORY}/image.tar"
+    archive="${ACTIVE_IMAGE_DIRECTORY}/image.oci.tar"
     # Registry credentials belong only to acquisition. Offline scanner actions
     # receive an acquired archive, never this auth file or registry environment.
     # Skopeo defaults to /var/tmp even when TMPDIR is set. Keep layer
@@ -69,7 +71,7 @@ generate_daemonless_sbom() {
     # digest for them. Preserve the selected platform's original manifest for
     # inventory and approval rather than approving a reconstructed manifest or
     # the multi-platform index (whose other images were never scanned).
-    acquire=(skopeo --tmpdir "$acquire_tmp" copy --preserve-digests)
+    acquire=(skopeo --tmpdir "$ACTIVE_ACQUIRE_TMP" copy --preserve-digests)
     if [ -f "${DOCKER_CONFIG:-${HOME}/.docker}/config.json" ]; then
       acquire+=(--src-authfile "${DOCKER_CONFIG:-${HOME}/.docker}/config.json")
     fi
@@ -80,16 +82,6 @@ generate_daemonless_sbom() {
       return 1
     fi
     source="oci-archive:${archive}"
-    # Trivy and Dockle need a Docker archive. Derive it only from the acquired
-    # bytes, without registry access or credentials; never scan a mutable tag
-    # a second time. The derivative's manifest is not used as image identity.
-    if ! skopeo --tmpdir "$acquire_tmp" copy "$source" "docker-archive:${configuration_archive}"; then
-      echo "WARNING: Failed to materialize acquired image configuration for $image"
-      echo "$image" >> skipped_images.txt
-      rm -f "$archive" "$configuration_archive"
-      return 1
-    fi
-    configuration_source="docker-archive:${configuration_archive}"
   fi
   echo "Reading acquired image without a Docker daemon: ${image}"
   if ! python3 "${SCRIPT_DIRECTORY}/scanner-action.py" inventory "${source#*:}" \
@@ -105,7 +97,35 @@ generate_daemonless_sbom() {
     rm -f "sboms/${safe}.json" "sboms/${safe}.digest"
     return 1
   fi
+  if [[ "$identity_source" == registry:* ]]; then
+    configuration_source="$source"
+    if [ "${CATS_JOB_MODE:-scan}" != sbom ]; then
+      # Derive configuration input from the verified bytes, never by resolving
+      # the mutable tag again. SBOM-only jobs have no Docker-archive consumer.
+      if ! skopeo --tmpdir "$ACTIVE_ACQUIRE_TMP" copy "$source" "docker-archive:${configuration_archive}"; then
+        echo "WARNING: Failed to materialize acquired image configuration for $image"
+        echo "$image" >> skipped_images.txt
+        rm -f "sboms/${safe}.json" "sboms/${safe}.digest"
+        return 1
+      fi
+      configuration_source="docker-archive:${configuration_archive}"
+    fi
+    # Inventory contains the verified manifest/config evidence. Nothing needs
+    # the OCI archive or Skopeo staging after this point.
+    rm -f -- "$archive"
+    rm -rf -- "$ACTIVE_ACQUIRE_TMP"
+    ACTIVE_ACQUIRE_TMP=""
+  fi
   printf '%s\t%s\n' "$image" "$configuration_source" >> image-sources.tsv
+}
+
+scan_daemonless_image_configuration() {
+  local image="$1" fragment configuration_rc=0
+  fragment="$(mktemp -d "${CATS_IMAGE_CONFIGURATION_DIR}/image.XXXXXX")" || return 1
+  printf '%s\n' "$image" > "$fragment/image" || return 1
+  bash "${SCRIPT_DIRECTORY}/scan-configurations.sh" --image "$image" "$fragment" \
+    > "$fragment/scan.log" 2>&1 || configuration_rc=$?
+  printf '%s\n' "$configuration_rc" > "$fragment/exit-code"
 }
 
 serialize_sbom_formats() {
@@ -129,6 +149,8 @@ serialize_sbom_formats() {
 
 ACTIVE_CONTAINER=""
 ACTIVE_ROOTFS=""
+ACTIVE_IMAGE_DIRECTORY=""
+ACTIVE_ACQUIRE_TMP=""
 cleanup_materialized_image() {
   if [ -n "$ACTIVE_CONTAINER" ]; then
     docker rm --force --volumes "$ACTIVE_CONTAINER" >/dev/null 2>&1 || true
@@ -136,8 +158,14 @@ cleanup_materialized_image() {
   if [ -n "$ACTIVE_ROOTFS" ]; then
     rm -rf -- "$ACTIVE_ROOTFS"
   fi
+  # These are unique directories created by this invocation, never uploaded
+  # archives, an input mapping, or the shared TMPDIR itself.
+  [ -z "$ACTIVE_IMAGE_DIRECTORY" ] || rm -rf -- "$ACTIVE_IMAGE_DIRECTORY"
+  [ -z "$ACTIVE_ACQUIRE_TMP" ] || rm -rf -- "$ACTIVE_ACQUIRE_TMP"
   ACTIVE_CONTAINER=""
   ACTIVE_ROOTFS=""
+  ACTIVE_IMAGE_DIRECTORY=""
+  ACTIVE_ACQUIRE_TMP=""
 }
 trap cleanup_materialized_image EXIT
 trap 'exit 130' INT
@@ -176,6 +204,9 @@ while read IMAGE; do
 
   if grep -Fqx "$IMAGE" skipped_images.txt; then
     echo "SKIPPED (already marked by patching): $IMAGE"
+    if [ "$CATS_IMAGE_SOURCE" = daemonless ] && [ -n "${CATS_IMAGE_CONFIGURATION_DIR:-}" ]; then
+      scan_daemonless_image_configuration "$IMAGE" || exit 1
+    fi
     continue
   fi
 
@@ -183,9 +214,23 @@ while read IMAGE; do
   echo "$IMAGE" > "sboms/${SAFE_NAME}.image"
 
   if [ "$CATS_IMAGE_SOURCE" = daemonless ]; then
+    generated=false
     if generate_daemonless_sbom "$IMAGE" "$SAFE_NAME"; then
+      generated=true
       serialize_sbom_formats "$IMAGE" "$SAFE_NAME"
+    elif ! grep -Fqx "$IMAGE" skipped_images.txt; then
+      echo "$IMAGE" >> skipped_images.txt
     fi
+    if [ -n "${CATS_IMAGE_CONFIGURATION_DIR:-}" ]; then
+      # Keep only small evidence fragments between phases. Both image checks
+      # finish while this image's acquired bytes are still available.
+      scan_daemonless_image_configuration "$IMAGE" || exit 1
+    elif [ "$generated" = true ] && [ "${CATS_JOB_MODE:-scan}" != sbom ]; then
+      # A standalone invocation still hands its Docker archive to a separate
+      # scan-configurations.sh invocation, as before.
+      ACTIVE_IMAGE_DIRECTORY=""
+    fi
+    cleanup_materialized_image
     continue
   fi
 
@@ -291,6 +336,4 @@ echo ""
 echo "SKIPPED IMAGES:"
 cat skipped_images.txt || true
 
-# Keep pulled images available for the subsequent image-configuration pass.
-# Cleanup is left to the worker/container lifecycle instead of removing the
-# images before scan-configurations.sh can inspect them.
+# Docker-daemon images remain available for the separate configuration pass.

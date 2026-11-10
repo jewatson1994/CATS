@@ -27,6 +27,15 @@ tool; its Alpine package version is recorded alongside the scanners.
 
 ## Docker configuration
 
+Each action, including a health probe, runs under its own Linux child-process
+supervisor. It adopts and reaps orphaned descendants, stops remaining children
+when the tool exits, and cleans up on cancellation, timeout or broker death.
+It does not share child ownership with other concurrent actions. Both shipped
+Compose topologies also enable `init: true` for the four action workers so
+container-level orphans are reaped if an action supervisor is forcibly killed.
+The image includes the per-action fix; recreate workers with the updated Compose
+files to enable the additional container init. No extra capabilities are required.
+
 Both shipped Compose topologies apply `deploy/discovery-seccomp.json` to all four
 action workers. The filename is retained for compatibility. This default-deny policy
 permits namespace/mount setup before the stricter child filter is applied. The

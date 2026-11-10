@@ -5,6 +5,7 @@
 !portal/
 !portal/app/
 !portal/app/rendering.py
+!portal/app/action_supervisor.py
 !portal/app/scan_runtime.py
 !portal/app/scanner_actions.py
 !portal/app/scanner_inputs.py

@@ -620,6 +620,7 @@ services:
   # =========================================================
 
   discovery-worker:
+    init: true
     image: ${CATS_IMAGE:-cats:local}
     entrypoint: []
     command: ["/opt/cats-venv/bin/python", "-m", "app.discovery_worker"]
@@ -673,6 +674,7 @@ services:
 
   # Dedicated daemonless scanner: no database credentials or Docker socket.
   scan-worker:
+    init: true
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     command: ["/opt/cats-venv/bin/python", "-m", "app.scan_worker"]
@@ -754,6 +756,7 @@ services:
     restart: unless-stopped
 
   patch-worker:
+    init: true
     image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
     entrypoint: []
     security_opt:
@@ -805,6 +808,7 @@ services:
     restart: unless-stopped
 
   remediation-worker:
+    init: true
     <<: &background_worker
       image: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
       entrypoint: []

@@ -58,6 +58,21 @@ Large artifact temporary files use the persistent `/var/lib/cats-scan` disk work
 
 The application disk budget is a periodic/transfer check, not a filesystem quota. Provision a host volume quota for a hard bound. Account for source envelopes, extracted artifacts, evidence, per-attempt database snapshots, concurrent attempts, and retained Portal jobs. Candidate verification has a separate bounded patch-worker queue (default 2), timeout, and retained-attempt cap; failed/restarted attempts do not fall back to Portal scanning. Its default cleanup retention is one hour, capped at 128 retained attempts.
 
+The scan pipeline completes inventory and image configuration checks for each
+image before releasing its downloaded OCI and converted Docker archives. Later
+phases consume the retained SBOMs and configuration evidence, without downloading
+the image again. SBOM-only jobs skip the Docker conversion. Archive space therefore
+tracks the image currently being processed rather than the sum of every registry
+image in the inventory. Uploaded inputs, reports, tool scratch space and pinned
+databases still count toward the attempt budget; a single large image can still
+exceed it. Concurrent attempts each need their own working space.
+
+Disk-budget failures report the active phase, measured workspace bytes and
+`CATS_SCAN_DISK_BYTES` limit. Docker's cumulative block I/O counters are not current
+disk occupancy. Increasing the budget alone does not fix retained archives or
+unreaped processes. The shared action supervisor and worker container init handle
+process cleanup; see [worker isolation](../deploy/worker-isolation.md).
+
 ## Offline intelligence and trust
 
 Policy and Grype/Trivy source volumes are mounted read-only in the scan worker. Security-data refresh/import stages and validates complete databases, publishes a hashed immutable generation, and atomically switches the current pointer. An attempt copies and verifies its selected generation into private writable caches; scanner database/policy auto-updates are disabled. Refresh does not mutate a running attempt. Later attempts select the new generation. Published generations are retained by import; plan their disk lifecycle separately from job cleanup.
