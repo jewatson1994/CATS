@@ -21,6 +21,7 @@ from .replica_import import reconcile
 from .release_documentation import registry_environment
 from .release_validity import utc
 from .secrets import decrypt_secret
+from .trusted_ca import configured_certificates
 
 KIND = 'replica_sync'
 FAILURE_MESSAGES = {
@@ -74,6 +75,7 @@ def sync(ctx, payload):
             namespace=source.repository.removesuffix('/*'), ca_pem=upstream.ca_pem,
             username=decrypt_secret(upstream.username), password=upstream.password)
         realms, origins = upstream.token_realms, upstream.redirect_origins
+        certificates = configured_certificates(db)
         repository, trusted = source.repository, list(source.trusted_publishers)
         host = upstream.endpoint.removeprefix('https://').rstrip('/')
         # A known registry digest does not prove our retained local evidence is
@@ -87,7 +89,7 @@ def sync(ctx, payload):
     result = {'discovered': 0, 'activated': 0, 'revoked': 0, 'unchanged': 0, 'failed': 0}
     try:
         ctx.stage('Discovering signed releases in the local registry', 5)
-        with registry_environment(destination) as env:
+        with registry_environment(destination, certificates) as env:
             env.update(CATS_OCI_TOKEN_REALMS=','.join(realms), CATS_OCI_BLOB_REDIRECT_ORIGINS=','.join(origins))
             for reference in portable_release.discover_release_references(host, repository, env):
                 ctx.check()

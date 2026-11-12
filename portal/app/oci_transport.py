@@ -134,6 +134,10 @@ class RegistryClient:
         if urlsplit(self.base).path or urlsplit(self.base).query:
             raise RegistryError('Registry endpoint must be an HTTPS origin', 400)
         context = ssl.create_default_context()
+        from .trusted_ca import additional_pem
+        configured_pem = additional_pem(config.get('trusted_ca_certificates'))
+        if configured_pem:
+            context.load_verify_locations(cadata=configured_pem)
         if config.get('ca_pem'):
             context.load_verify_locations(cadata=config['ca_pem'])
         self.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=context), _NoRedirect())

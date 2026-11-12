@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import object_session
 from starlette.background import BackgroundTask
 
 from . import main as _portal  # Existing additive schema/bootstrap and policy engine.
@@ -25,6 +26,7 @@ from .release_validity import utc
 from .release_revisions import (resolve_distribution_tag as _full_distribution_tag,
                                 resolve_distribution_location as _full_distribution_location)
 from .secrets import decrypt_secret
+from .trusted_ca import configured_certificates
 from .oci_signatures import legacy_subject, discover_legacy_signature, verify_legacy_signature
 from .oci_signatures import verify_legacy_attestation
 from .oci_attestations import ATTESTATION_TYPE, legacy_attestation_subject
@@ -174,6 +176,7 @@ def client(mapping):
     upstream = mapping.upstream
     return RegistryClient(dict(endpoint=upstream.endpoint, username=decrypt_secret(upstream.username),
         password=decrypt_secret(upstream.password), ca_pem=upstream.ca_pem,
+        trusted_ca_certificates=configured_certificates(object_session(upstream)),
         token_realms=upstream.token_realms, redirect_origins=upstream.redirect_origins))
 
 

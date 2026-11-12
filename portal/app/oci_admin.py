@@ -17,6 +17,7 @@ from .oci_models import OCIPrincipal, OCIRepository, OCIUpstream, is_project_pat
 from .release_validity import utc
 from .secrets import encrypt_secret
 from .service_oci import _csrf, validate_destination
+from .trusted_ca import configured_certificates
 
 router = APIRouter(prefix='/api/oci', tags=['OCI administration'])
 admin = require_permission('release.destination.manage')
@@ -195,6 +196,7 @@ async def test_repository(identity: int, request: Request, db: Session = Depends
     try:
         client = RegistryClient(dict(endpoint=upstream.endpoint, username=decrypt_secret(upstream.username),
             password=decrypt_secret(upstream.password), ca_pem=upstream.ca_pem,
+            trusted_ca_certificates=configured_certificates(db),
             token_realms=upstream.token_realms, redirect_origins=upstream.redirect_origins))
         _, _, digest = await run_in_threadpool(client.fetch_manifest, repository, body.get('reference', 'latest'))
     except (RegistryError, ValueError, OSError):

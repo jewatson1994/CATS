@@ -2,11 +2,32 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import os
 from pathlib import Path
 import ssl
 import tempfile
 from typing import Iterator, Mapping, Sequence
+
+
+def configured_certificates(db) -> list[dict]:
+    """Read current global CA trust without migrations, caching or group fallback."""
+    from sqlalchemy import select
+    from .models import PortalSetting
+
+    if db is None:
+        raise ValueError("Configured trusted CA certificates require an active session")
+    value = db.scalar(select(PortalSetting.value).where(
+        PortalSetting.group_id.is_(None), PortalSetting.key == "trusted_ca_certificates"))
+    try:
+        certificates = json.loads(value if value is not None else "[]")
+        if (not isinstance(certificates, list) or any(
+                not isinstance(item, dict) or not isinstance(item.get("pem"), str)
+                or "BEGIN CERTIFICATE" not in item["pem"] for item in certificates)):
+            raise ValueError()
+    except (TypeError, ValueError):
+        raise ValueError("Configured trusted CA certificates could not be read") from None
+    return certificates
 
 
 def additional_pem(certificates: Sequence[Mapping[str, object]] | None) -> str:

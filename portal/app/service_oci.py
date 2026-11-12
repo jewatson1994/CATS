@@ -18,7 +18,7 @@ from .auth import AuthContext, record_audit, require_permission
 from .database import Base, get_db
 from .models import Service
 from .secrets import decrypt_secret, encrypt_secret, secret_configured
-from .trusted_ca import ephemeral_trust
+from .trusted_ca import additional_pem, configured_certificates, ephemeral_trust
 
 
 class ServiceOCIDestination(Base):
@@ -103,12 +103,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def test_connection(destination):
+def test_connection(destination, certificates=()):
     result = {"tls": "NOT TESTED", "authentication": "NOT TESTED", "registry_api": "NOT TESTED",
               "push": "NOT TESTED", "helm_oci": "NOT TESTED", "image_publish": "NOT TESTED",
               "detail": "Push, image publishing and Helm OCI support require an actual artifact operation."}
     try:
         context = ssl.create_default_context()
+        configured_pem = additional_pem(certificates)
+        if configured_pem:
+            context.load_verify_locations(cadata=configured_pem)
         if destination.get("ca_pem"):
             context.load_verify_locations(cadata=destination["ca_pem"])
         request = urllib.request.Request(destination["endpoint"] + "/v2/")
@@ -217,7 +220,7 @@ def delete(request: Request, service_key: str, destination_id: int, db: Session 
 def connection(request: Request, service_key: str, destination_id: int, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
     _csrf(request, auth)
     service = _service(db, service_key)
-    result = test_connection(resolve_destination(db, service.id, destination_id))
+    result = test_connection(resolve_destination(db, service.id, destination_id), configured_certificates(db))
     record_audit(db, auth, "service.oci.tested", "service", service.id, destination_id=destination_id, result=result)
     db.commit()
     return result
