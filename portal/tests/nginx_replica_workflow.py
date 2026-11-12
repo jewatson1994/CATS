@@ -176,7 +176,8 @@ def configure_principal(api, root, state, report):
                                json={'repository_ids': grants}, headers={'X-CSRF-Token': api.csrf})
         machine.update(response.json())
         response.close()
-    state['unapproved_repository'] = unrelated_name
+    _require(unrelated.get('pull_repository'), 'Unapproved-document route must expose a service-scoped pull path')
+    state['unapproved_repository'] = unrelated['pull_repository']
     report['machine'] = {key: machine[key] for key in ('id', 'name', 'repository_ids', 'expires_at')}
     persist(root, state, report)
 

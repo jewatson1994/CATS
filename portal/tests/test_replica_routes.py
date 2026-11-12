@@ -11,7 +11,7 @@ from app.auth import require_user
 from app.database import get_db
 from app.durable_jobs import DurableJob
 from app.models import AuditEvent
-from app.oci_models import OCIUpstream
+from app.oci_models import OCIRepository, OCIUpstream
 from app.operating_mode import ReplicaModeMiddleware
 from app.replica_integrity import digest, seal_record
 from app.replica_models import ReplicaRelease, ReplicaSource, ReplicaServiceState
@@ -77,6 +77,28 @@ def test_replica_admin_and_sync_routes_require_distinct_permissions_and_csrf(api
         assert len(list(db.scalars(select(DurableJob)))) == 1
     # A future evidence-write route must still be blocked before routing.
     assert client.post(f'/api/replica/releases/{fixture.old_id}/context', json={}, headers=headers).json()['code'] == 'replica_read_only'
+
+
+def test_release_inventory_advertises_service_scoped_pull_paths_without_rewriting_mappings(replica):
+    fixture = replica
+    expected = f'replica/{fixture.service_id}/nginx'
+    with fixture.sessions() as db:
+        for identity in (fixture.old_id, fixture.new_id):
+            release = replica_routes.release_row(db, db.get(ReplicaRelease, identity))
+            assert all(item['proxy_repositories'] == [expected] for item in release['artifacts'])
+        assert db.get(OCIRepository, fixture.mapping_id).public_repository == 'replica/nginx'
+
+
+def test_release_inventory_does_not_advertise_conflicting_service_id_path(replica):
+    fixture = replica
+    with fixture.sessions() as db:
+        mapping = db.get(OCIRepository, fixture.mapping_id)
+        mapping.public_repository = f'replica/{fixture.service_id + 1}/nginx'
+        db.commit()
+    with fixture.sessions() as db:
+        for identity in (fixture.old_id, fixture.new_id):
+            release = replica_routes.release_row(db, db.get(ReplicaRelease, identity))
+            assert all(item['proxy_repositories'] == [] for item in release['artifacts'])
 
 
 @pytest.mark.parametrize('code,status,actionable', [

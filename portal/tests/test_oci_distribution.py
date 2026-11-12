@@ -139,9 +139,10 @@ def published_distribution(distribution_case, publication_environment, monkeypat
     monkeypatch.setenv('CATS_OCI_CACHE_DIR', str(tmp_path / 'cache'))
     client = TestClient(oci_proxy.app)
     client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'selected:secret').decode()
+    project_name, _, image_path = repository.partition('/')
     return SimpleNamespace(case=case, registry=registry, client=client, approval_id=approval_id,
         service_id=service_id, mapping_id=mapping_id, digest=pin, repository=repository,
-        path=f'/v2/{repository}/', blob=registry.layer['digest'])
+        path=f'/v2/{project_name}/{service_id}/{image_path}/', blob=registry.layer['digest'])
 
 
 @pytest.mark.parametrize('published_distribution', ['exact', 'project'], indirect=True)
@@ -155,7 +156,8 @@ def test_selected_distribution_pull_and_cached_revocation(published_distribution
     # The excluded image exists upstream but has no selected-distribution authority.
     excluded = s.repository.rsplit('/', 1)[0] + '/optional'
     s.registry.stores['approved.example', excluded] = s.registry.stores['approved.example', s.repository]
-    assert s.client.get(f'/v2/{excluded}/manifests/{s.digest}').status_code in (403, 404)
+    project_name, _, excluded_path = excluded.partition('/')
+    assert s.client.get(f'/v2/{project_name}/{s.service_id}/{excluded_path}/manifests/{s.digest}').status_code in (403, 404)
     with SessionLocal() as db:
         db.get(cyber_approvals.CyberApproval, s.approval_id).revoked_at = datetime.now(timezone.utc)
         db.commit()

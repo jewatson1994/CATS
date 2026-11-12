@@ -8,7 +8,7 @@ def main(root,session,endpoint):
  from app import oci_proxy as proxy
  from app.database import SessionLocal
  from app.models import Service,Execution
- from app.oci_models import OCIUpstream,OCIRepository,OCIPrincipal
+ from app.oci_models import OCIUpstream,OCIRepository,OCIPrincipal,service_repository
  from app.cyber_approvals import CyberApproval,digest
  from app.execution_summaries import payload_digest
  from app.release_validity import new_validity
@@ -26,13 +26,14 @@ def main(root,session,endpoint):
  raw=json.dumps(dict(schemaVersion=2,mediaType='application/vnd.oci.image.manifest.v1+json',config=chart_config,layers=[chart_layer])).encode()
  chart_digest='sha256:'+hashlib.sha256(raw).hexdigest()
  r=session.put(endpoint+'/v2/'+repo+'/manifests/0.1.0',data=raw,headers={'Content-Type':'application/vnd.oci.image.manifest.v1+json'},timeout=15);r.raise_for_status()
- now=datetime.now(timezone.utc);approval_ids=[];mapping_ids=[]
+ now=datetime.now(timezone.utc);approval_ids=[];mapping_ids=[];pull_repositories={}
  with SessionLocal() as db:
   upstream=OCIUpstream(name='client-registry',endpoint=endpoint,ca_pem=(root/'server.crt').read_text());db.add(upstream);db.flush()
   for name,upstream_repo,artifact_digest in [('image',evidence['repository'],evidence['digest']),('fixture',repo,chart_digest)]:
    service=Service(service_key='client-'+name,name=name);db.add(service);db.flush()
    execution=Execution(service_id=service.id,execution_key='client-'+name,scanned_at=now,complete=True,scan_scope='service',raw_payload={});db.add(execution)
    mapping=OCIRepository(service_id=service.id,public_repository='clients/'+name,upstream_id=upstream.id,upstream_repository=upstream_repo);db.add(mapping);db.flush();mapping_ids.append(mapping.id)
+   pull_repositories[name]=service_repository(mapping.public_repository,service.id)
    snapshot=dict(service_id=service.id,source_execution_id=execution.id,source_version_id=None,source_payload_digest=payload_digest({}),approval_validity=new_validity(now),artifacts=[dict(kind='image' if name=='image' else 'chart',reference='registry:5000/'+upstream_repo+'@'+artifact_digest,digest=artifact_digest)])
    approval=CyberApproval(service_id=service.id,source_execution_id=execution.id,variant='current',status='approved',snapshot=snapshot,snapshot_digest=digest(snapshot),decided_at=now);db.add(approval);db.flush();approval_ids.append(approval.id)
   db.add(OCIPrincipal(name='client-robot',secret_hash=hashlib.sha256(b'fixture-token').hexdigest(),repository_ids=mapping_ids,expires_at=now+timedelta(hours=1)));db.commit()
@@ -42,8 +43,8 @@ def main(root,session,endpoint):
   time.sleep(.1)
  client=requests.Session();client.trust_env=False;client.auth=('client-robot','fixture-token');timings=[]
  for _ in range(10):
-  start=time.perf_counter();r=client.get('http://127.0.0.1:18083/v2/clients/image/manifests/stable',timeout=30);assert r.status_code==200,r.text;timings.append(round((time.perf_counter()-start)*1000,2))
- (root/'clients-ready.json').write_text(json.dumps({'digest':evidence['digest'],'lookup_ms':timings}))
+  start=time.perf_counter();r=client.get('http://127.0.0.1:18083/v2/'+pull_repositories['image']+'/manifests/stable',timeout=30);assert r.status_code==200,r.text;timings.append(round((time.perf_counter()-start)*1000,2))
+ (root/'clients-ready.json').write_text(json.dumps({'digest':evidence['digest'],'lookup_ms':timings,'pull_repositories':pull_repositories}))
  def wait(name):
   for _ in range(600):
    if (root/name).exists():return

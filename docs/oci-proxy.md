@@ -27,13 +27,32 @@ Cyber release publication runs in `remediation-worker` and has a separate redire
 
 Issue separate scoped machine credentials for consumers. Use those credentials with `docker login`, Helm registry login, or an equivalent OCI client against the CATS hostname. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials.
 
+## Service ID selects the approval
+
+Every consumer pull uses `<project>/<service-id>/<image-path>`. The service ID is the positive numeric `Service.id` on the CATS installation receiving the request, as shown in **Approved artifact distribution**. For example:
+
+```sh
+docker pull cats.io/cyber-approved/42/nginx:1.27
+docker pull cats.io/cyber-approved/42/nginx@sha256:<approved-digest>
+```
+
+CATS selects service 42 from the path before resolving the image. The service must exist and be active; its current approval and exact artifact digest determine whether delivery is allowed. An approval for another service never authorizes this request, even when the upstream repository and image bytes are identical. Archived or staged services are denied in both full and replica modes. Existing Local Cyber overrides remain scoped to their service, release and digest and cannot bypass an inactive service.
+
+The service ID is mandatory for manifest, blob, signature, attestation and referrer requests. Missing, malformed or unknown IDs are rejected. The authenticated `/v2/` registry handshake is unchanged. A pull path identifies the CATS approval to evaluate; it does not identify the workload that will use the downloaded bytes.
+
+### Existing mappings and client migration
+
+The configuration API now supplies `pull_repository`, and the distribution screen displays it. A stored exact mapping `cyber-approved/nginx` for service 42 is requested as `cyber-approved/42/nginx`; a stored mapping already named `cyber-approved/42/nginx` is used unchanged. Existing replica routes `services/<local-service-id>/<upstream-repository>` already satisfy the format. A numeric second path segment is reserved for the service ID and must agree with the mapping's service. Nested image paths are preserved.
+
+Update consumer image references to the displayed pull path when deploying this version. Unscoped legacy pull URLs are denied. Stored mapping IDs, machine grants and signed distribution bindings are retained; do not rename mappings or rewrite signed releases merely to add the service ID. CATS interprets the scoped client URL while validating the original mapping identity. Use the receiving installation's displayed ID, since numeric database IDs can differ between System A and System B.
+
 ## Map a Harbor project
 
-On the **Approved Release Destinations** page, open **Approved artifact distribution** and choose **Add mapping**. Select the Harbor upstream and enter `cyber-approved/*` for both **Public repository** and **Upstream repository**. This exposes `cyber-approved/team/api` under the same name in CATS. To use a different public name, enter `approved/*` on the public side. CATS keeps the entire path below the project name. Both patterns must consist of one project name followed by `/*`.
+On the **Approved Release Destinations** page, open **Approved artifact distribution** and choose **Add mapping**. Select the Harbor upstream and enter `cyber-approved/*` for both **Public repository** and **Upstream repository**. For service 42 this exposes the upstream `cyber-approved/team/api` as `cyber-approved/42/team/api`. To use a different public project name, enter `approved/*` on the public side. Both stored patterns must consist of one project name followed by `/*`; the service ID is inserted in consumer requests, not in the upstream repository.
 
-Grant the new mapping to a CATS machine account. The grant covers current and future repositories in the project. CATS uses scan or verified publication evidence to identify the service for each repository and digest, then checks current approval and compliance. If two services claim the same repository and digest, use an exact mapping to select the intended service. Exact mappings take precedence and require their own grant. A suspended exact mapping blocks the pull. For services using signed release revisions, pulls by tag also require the tag and digest to match the active signed release.
+Grant the new mapping to a CATS machine account. The grant covers current and future repositories in the project, but never supplies approval: the service ID in each request is authoritative. CATS checks only that service's retained approval evidence and current compliance; it never chooses a service by searching for another approval of the digest. Exact scoped mappings take precedence, followed by the corresponding legacy exact mapping, then the project mapping. An exact mapping for another service, a suspended mapping or a missing exact-mapping grant blocks the request without falling back to the project. For services using signed release revisions, pulls by tag also require the tag and digest to match the active signed release.
 
-To test registry access, choose **Test connection**, enter an existing tag or digest, then enter a concrete public repository such as `cyber-approved/team/api`. To verify the full pull, log in to the CATS proxy with the CATS machine credentials and run `docker pull cats.example/cyber-approved/team/api:v1` with an approved image and tag from your project.
+To test registry access, choose **Test connection**, enter an existing tag or digest, then enter a concrete service pull repository such as `cyber-approved/42/team/api`. The connection test checks transport only; it does not grant release approval. To verify the full decision, log in to the CATS proxy with the CATS machine credentials and run `docker pull cats.example/cyber-approved/42/team/api:v1` with an approved image and tag for service 42.
 
 ## Content and policy behavior
 
@@ -74,7 +93,7 @@ Run these checks against a staging Harbor instance and a staging CATS database b
 6. Change policy or introduce overdue findings for the approved digest. Verify subsequent GET and HEAD requests fail closed despite a populated cache.
 7. Verify subject-bound referrers and pagination; no unrelated or disallowed artifact may appear. Attempt write/delete operations and verify rejection.
 8. Interrupt a large download and restart the proxy. Verify no partial blob is served, subsequent download succeeds, and cache use stays within the configured content quota.
-9. With one `cyber-approved/*` mapping and one machine grant, pull approved images from two services, including a nested repository. Confirm an unapproved digest and a revoked approval fail with cached layers present. Add an exact repository mapping and confirm the project grant cannot access it until the machine receives the exact mapping's separate grant; suspending the exact mapping must block that repository.
+9. With one `cyber-approved/*` mapping and one machine grant, pull through two explicit service IDs, including a nested repository. Approve identical upstream bytes for both services, revoke only one, and confirm its manifest, blob and referrer requests fail while the other's remain allowed. Also test missing IDs and archived services with warm caches. Add an exact repository mapping and confirm the project grant cannot access it until the machine receives the exact mapping's separate grant; suspending the exact mapping must block that repository.
 
 ## Startup database locks
 

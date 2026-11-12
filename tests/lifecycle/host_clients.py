@@ -8,6 +8,7 @@ def wait(name):
   time.sleep(.5)
  raise RuntimeError('Timed out waiting for '+name)
 wait('clients-ready.json')
+pull_repositories=json.loads((root/'clients-ready.json').read_text())['pull_repositories']
 config=root/'docker-config';config.mkdir(exist_ok=True)
 (config/'config.json').write_text(json.dumps({'auths':{'127.0.0.1:18083':{'auth':base64.b64encode(b'client-robot:fixture-token').decode()}}}))
 env=dict(os.environ,DOCKER_CONFIG=str(config));results={}
@@ -16,11 +17,11 @@ def run(name,command,success):
  results[name]={'exit_code':completed.returncode,'elapsed_ms':round((time.perf_counter()-start)*1000,2),'output':(completed.stdout+completed.stderr)[-3000:]}
  (root/'client-results.json').write_text(json.dumps(results,indent=2))
  if (completed.returncode==0)!=success:raise RuntimeError(name+': '+results[name]['output'])
-image='127.0.0.1:18083/clients/image:stable'
+image='127.0.0.1:18083/'+pull_repositories['image']+':stable'
 run('docker_pull',['docker','pull',image],True)
 registry_config=str(root/'helm-registry.json')
 Path(registry_config).write_text((config/'config.json').read_text())
-helm=['helm','pull','oci://127.0.0.1:18083/clients/fixture','--version','0.1.0','--plain-http','--registry-config',registry_config,'--destination',str(root)]
+helm=['helm','pull','oci://127.0.0.1:18083/'+pull_repositories['fixture'],'--version','0.1.0','--plain-http','--registry-config',registry_config,'--destination',str(root)]
 run('helm_pull',helm,True)
 (root/'clients-pulled').touch();wait('clients-revoked')
 run('docker_revoked',['docker','pull',image],False)

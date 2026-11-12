@@ -18,10 +18,11 @@ from starlette.background import BackgroundTask
 from . import main as _portal  # Existing additive schema/bootstrap and policy engine.
 from .auth import record_audit
 from .database import SessionLocal
+from .models import Service
 from .oci_models import (OCIManifest, OCIObjectLink, OCIPrincipal, OCIProjectObjectLink,
-                         OCIRepository, project_repository)
-from .oci_authorization import authorize, candidate_service_ids, project_tag_allowed
-from .oci_transport import ContentCache, DIGEST, REPOSITORY, RegistryClient, RegistryError
+                         OCIRepository, parse_service_repository, project_repository, service_repository)
+from .oci_authorization import authorize, project_tag_allowed
+from .oci_transport import ContentCache, DIGEST, RegistryClient, RegistryError
 from .release_validity import utc
 from .release_revisions import (resolve_distribution_tag as _full_distribution_tag,
                                 resolve_distribution_location as _full_distribution_location)
@@ -48,10 +49,16 @@ class Denied(Exception):
 
 @app.exception_handler(Denied)
 async def denied(request, exc):
+    repository = request.path_params.get('repository')
+    try:
+        service_id, _ = parse_service_repository(repository)
+    except ValueError:
+        service_id = None
     try:
         with SessionLocal() as db:
             record_audit(db, None, 'oci.denied', 'oci_repository', getattr(request.state, 'repository_id', None),
                          principal_id=getattr(request.state, 'principal_id', None), reason=exc.reason,
+                         request_repository=repository[:255] if repository else None, service_id=service_id,
                          decision=exc.decision)
             db.commit()
     except SQLAlchemyError:
@@ -96,48 +103,60 @@ def principal(db, request, repository_id=None):
 
 
 def mapping_for(db, repository):
-    if len(repository) > 255 or not REPOSITORY.fullmatch(repository):
-        raise Denied('Invalid repository', 400, 'NAME_INVALID')
-    names = [repository]
-    if '/' in repository:
-        names.append(repository.partition('/')[0] + '/*')
+    try:
+        service_id, logical_repository = parse_service_repository(repository)
+    except ValueError as exc:
+        raise Denied(str(exc), 400, 'NAME_INVALID') from None
+    service = db.get(Service, service_id, populate_existing=True)
+    if service is None:
+        raise Denied('Unknown service', 404, 'NAME_UNKNOWN')
+    db.expire(service, ['archive_events'])
+    if _portal.service_lifecycle(service) != 'active':
+        raise Denied('Service is not active')
+    project = repository.partition('/')[0] + '/*'
+    names = [repository, logical_repository, project]
     name = OCIRepository.public_repository
     mapping = db.scalar(select(OCIRepository).where(name.in_(names))
-                        .order_by((name == repository).desc()).limit(1).execution_options(populate_existing=True))
+                        .order_by((name == repository).desc(), (name == logical_repository).desc())
+                        .limit(1).execution_options(populate_existing=True))
     if mapping is None:
         raise Denied('Unknown repository', 404, 'NAME_UNKNOWN')
     db.refresh(mapping.upstream)
-    if mapping.public_repository == repository:
+    if mapping.public_repository != project:
+        if mapping.service_id != service_id:
+            raise Denied('Repository belongs to a different service')
+        try:
+            if service_repository(mapping.public_repository, service_id) != repository:
+                raise ValueError('Repository does not match the requested service route')
+        except ValueError as exc:
+            raise Denied(str(exc)) from None
         return mapping
     if mapping.service_id is not None or not mapping.enabled or mapping.suspended or not mapping.upstream.enabled:
         raise Denied('Project mapping unavailable')
     try:
-        upstream_repository = project_repository(mapping.upstream_repository, mapping.public_repository, repository)
+        upstream_repository = project_repository(mapping.upstream_repository, mapping.public_repository, logical_repository)
     except ValueError as exc:
         raise Denied(str(exc)) from None
-    return ProjectMapping(mapping, repository, upstream_repository)
+    return ProjectMapping(mapping, logical_repository, upstream_repository, service_id, repository)
 
 
 class ProjectMapping:
-    def __init__(self, project, public_repository, upstream_repository, service_id=None):
+    def __init__(self, project, public_repository, upstream_repository, service_id=None, request_repository=None):
         self.project = project
         self.public_repository = public_repository
         self.upstream_repository = upstream_repository
         self.service_id = service_id
+        self.request_repository = request_repository
 
     def __getattr__(self, name):
         return getattr(self.project, name)
 
 
 def service_mapping(db, mapping, digest):
-    """Bind a project pull to unambiguous evidence before checking live policy."""
-    if not isinstance(mapping, ProjectMapping) or mapping.service_id is not None:
-        return mapping
-    candidates = candidate_service_ids(db, mapping, digest)
-    if len(candidates) != 1:
-        raise Denied('No unique service approval for this repository and digest')
-    return ProjectMapping(mapping.project, mapping.public_repository, mapping.upstream_repository,
-                          next(iter(candidates)))
+    """The request's service identity is authoritative; image reuse cannot select it."""
+    if mapping.service_id is None:
+        raise Denied('Service ID is required for distribution')
+    return mapping
 
 
 class EffectiveMapping:
@@ -290,7 +309,9 @@ def descriptor(value):
 
 def link_scope(mapping):
     if isinstance(mapping, ProjectMapping):
-        return OCIProjectObjectLink, dict(repository_id=mapping.id, repository_path=mapping.public_repository)
+        if not mapping.request_repository or mapping.service_id is None:
+            raise Denied('Service-scoped repository is required')
+        return OCIProjectObjectLink, dict(repository_id=mapping.id, repository_path=mapping.request_repository)
     return OCIObjectLink, dict(repository_id=mapping.id)
 
 
@@ -369,8 +390,21 @@ def authorize_object(db, mapping, digest, kind):
     raise Denied('Object has no currently authorized image association', decision=last_denial)
 
 
-def audit(db, machine, mapping, digest, outcome):
+def audit(db, machine, mapping, digest, outcome, request_repository=None):
     effective = []
+    if request_repository is None:
+        try:
+            request_repository = (mapping.request_repository if isinstance(mapping, ProjectMapping)
+                                  else service_repository(mapping.public_repository, mapping.service_id))
+        except ValueError:
+            # A concurrently changed mapping must not prevent recording its denial.
+            request_repository = None
+    requested_service_id = mapping.service_id
+    if request_repository is not None:
+        try:
+            requested_service_id, _ = parse_service_repository(request_repository)
+        except ValueError:
+            pass
     remembered = db.info.pop('oci_pull_decisions', {})
     if outcome in {'allowed', 'referrers'}:
         from .local_cyber_overrides import lock_for_use
@@ -398,9 +432,12 @@ def audit(db, machine, mapping, digest, outcome):
                 except ValueError as exc:
                     raise Denied(str(exc)) from None
                 record_audit(db, None, 'local_override.used', 'local_cyber_override', current.override_id,
-                    principal_id=machine.id, repository=mapping.public_repository, **detail)
+                    principal_id=machine.id, repository=mapping.public_repository,
+                    request_repository=request_repository, **detail)
     record_audit(db, None, 'oci.pull', 'oci_repository', mapping.id,
                  principal_id=machine.id, repository=mapping.public_repository, digest=digest,
+                 request_repository=request_repository, service_id=requested_service_id,
+                 mapped_service_id=mapping.service_id,
                  outcome=outcome, decisions=effective)
     db.commit()
 
@@ -484,10 +521,10 @@ def get_manifest(repository: str, reference: str, request: Request):
                     if current_binding != binding:
                         raise Denied('Active release changed during retrieval; retry')
             authorize_object(db, mapping, digest, 'attestation' if attestation_root else 'signature' if signature_root else 'manifest')
-            audit(db, machine, mapping, digest, 'allowed')
+            audit(db, machine, mapping, digest, 'allowed', repository)
         except Denied as exc:
             db.rollback()
-            audit(db, machine, mapping, reference, exc.reason)
+            audit(db, machine, mapping, reference, exc.reason, repository)
             raise
     return Response(raw if request.method == 'GET' else b'', media_type=media,
         headers={**V2, 'Docker-Content-Digest': digest, 'ETag': '"' + digest + '"', 'Content-Length': str(len(raw))})
@@ -545,7 +582,7 @@ def referrers(repository: str, digest: str, request: Request):
         for item in retained:
             if item.get('artifactType') == ATTESTATION_TYPE:
                 authorize_object(db, mapping, item['digest'], 'attestation')
-        audit(db, machine, mapping, digest, 'referrers')
+        audit(db, machine, mapping, digest, 'referrers', repository)
     return JSONResponse({'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': retained},
                         media_type='application/vnd.oci.image.index.v1+json', headers=V2)
 
@@ -598,7 +635,7 @@ def get_blob(repository: str, digest: str, request: Request):
             mapping = mapping_for(db, repository)
             principal(db, request, mapping.id)
             authorize_object(db, mapping, digest, 'blob')
-            audit(db, machine, mapping, digest, 'allowed')
+            audit(db, machine, mapping, digest, 'allowed', repository)
         header = request.headers.get('range') if request.method == 'GET' else None
         if request.headers.get('if-range') not in (None, '"' + digest + '"'):
             header = None

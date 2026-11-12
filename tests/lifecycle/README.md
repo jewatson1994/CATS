@@ -56,7 +56,8 @@ python tests/lifecycle/host_clients.py .test-temp/lifecycle-clients-fresh
 
 docker compose -f .test-temp/lifecycle-clients-fresh/compose.json down --volumes
 
-docker image rm 127.0.0.1:18083/clients/image:stable
+$taskImageRepository = (Get-Content -Raw -LiteralPath .test-temp/lifecycle-clients-fresh/clients-ready.json | ConvertFrom-Json).pull_repositories.image
+docker image rm ("127.0.0.1:18083/" + $taskImageRepository + ":stable")
 
 ```
 

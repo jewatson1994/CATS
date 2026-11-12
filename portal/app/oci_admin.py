@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 from .auth import AuthContext, record_audit, require_permission
 from .database import get_db
 from .models import Service
-from .oci_models import OCIPrincipal, OCIRepository, OCIUpstream, is_project_pattern, project_repository
+from .oci_models import (OCIPrincipal, OCIRepository, OCIUpstream, is_project_pattern,
+                         parse_service_repository, project_repository, service_repository)
 from .release_validity import utc
 from .secrets import encrypt_secret
 from .service_oci import _csrf, validate_destination
@@ -30,8 +31,14 @@ def public(row):
         return {key: getattr(row, key) for key in ('id', 'name', 'endpoint', 'enabled', 'token_realms', 'redirect_origins')} | {
             'credentials_configured': bool(row.password), 'ca_configured': bool(row.ca_pem)}
     if isinstance(row, OCIRepository):
-        return {key: getattr(row, key) for key in ('id', 'public_repository', 'service_id', 'upstream_id',
+        result = {key: getattr(row, key) for key in ('id', 'public_repository', 'service_id', 'upstream_id',
             'upstream_repository', 'policy', 'enabled', 'suspended')}
+        try:
+            result['pull_repository'] = service_repository(row.public_repository, row.service_id)
+        except ValueError:
+            # A legacy invalid mapping must remain administrable, but is not a pull route.
+            result['pull_repository'] = None
+        return result
     return {key: getattr(row, key) for key in ('id', 'name', 'repository_ids', 'enabled', 'expires_at', 'created_at')}
 
 
@@ -113,9 +120,13 @@ def _save_repository(db, row, data):
     service_id = data.get('service_id', row.service_id)
     if project:
         if service_id is not None:
-            raise HTTPException(422, 'Project mappings determine the service from approval evidence')
+            raise HTTPException(422, 'Project mappings use the service ID in each pull request')
     elif type(service_id) is not int or db.get(Service, service_id) is None:
         raise HTTPException(422, 'Invalid service_id')
+    try:
+        service_repository(public_name, service_id)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
     policy = data.get('policy', row.policy or {})
     if not isinstance(policy, dict) or set(policy) - {'max_scan_age_days', 'max_approval_age_days'}:
         raise HTTPException(422, 'Unsupported distribution policy')
@@ -167,7 +178,7 @@ def overview(db: Session = Depends(get_db), auth: AuthContext = Depends(admin)):
             'available_repositories': sum(row.enabled and not row.suspended and row.upstream.enabled for row in repositories),
             'active_principals': sum(row.enabled and utc(row.expires_at) > now for row in principals),
             'services': [{'id': row.id, 'name': row.name} for row in db.scalars(select(Service).order_by(Service.name))],
-            'authorization': 'Live Cyber approval and current service compliance checked on every pull',
+            'authorization': 'The service ID in each pull selects the active service; its Cyber approval and compliance are checked on every pull',
             'proxy_health': 'Use the separately deployed distribution endpoint to verify runtime availability'}
 
 
@@ -187,10 +198,18 @@ async def test_repository(identity: int, request: Request, db: Session = Depends
     repository = row.upstream_repository
     if is_project_pattern(row.public_repository):
         try:
-            repository = project_repository(row.upstream_repository, row.public_repository, body.get('repository'))
-        except ValueError:
-            raise HTTPException(422, f'Enter a concrete public repository within {row.public_repository}') from None
-    elif 'repository' in body and body['repository'] != row.public_repository:
+            service_id, logical_repository = parse_service_repository(body.get('repository'))
+            from .main import service_lifecycle
+            service = db.get(Service, service_id, populate_existing=True)
+            if service is None:
+                raise ValueError('Unknown service')
+            db.expire(service, ['archive_events'])
+            if service_lifecycle(service) != 'active':
+                raise ValueError('Service is not active')
+            repository = project_repository(row.upstream_repository, row.public_repository, logical_repository)
+        except ValueError as exc:
+            raise HTTPException(422, f'Enter an active service repository within {service_repository(row.public_repository)}: {exc}') from None
+    elif 'repository' in body and body['repository'] not in (row.public_repository, public(row)['pull_repository']):
         raise HTTPException(422, 'Repository must match the selected mapping')
     upstream = row.upstream
     try:

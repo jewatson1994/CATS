@@ -12,12 +12,13 @@ function RepositoryFields({row, upstreams, services}: {row: Row; upstreams: Row[
   const project = isProjectMapping(publicName);
   const fixedProject = row.id && isProjectMapping(row.public_repository);
   return <>
-    <p>For a whole Harbor project, enter a project name followed by /* in both repository fields. A pull uses the service identified by approval evidence for the requested artifact.</p>
-    <label>Public repository<input name="public_repository" required placeholder="project/image or project/*" value={publicName} readOnly={fixedProject} onChange={event => setPublicName(event.target.value)}/></label>
+    <p>Every pull must include a CATS service ID: project/service-id/image. CATS checks only that active service's approved release. For a whole Harbor project, enter project/* in both repository fields; the request still selects the service.</p>
+    <label>Public repository<input name="public_repository" required placeholder="cyber-approved/image or cyber-approved/*" value={publicName} readOnly={fixedProject} onChange={event => setPublicName(event.target.value)}/></label>
     <label>Upstream repository<input name="upstream_repository" required placeholder={project ? 'harbor-project/*' : 'harbor-project/image'} readOnly={fixedProject} defaultValue={row.upstream_repository}/></label>
     <label>Upstream<select name="upstream_id" required disabled={fixedProject} defaultValue={row.upstream_id || ''}><option value="">Select upstream</option>{upstreams.map(upstream => <option key={upstream.id} value={upstream.id}>{upstream.name}</option>)}</select></label>
     {fixedProject && <p>To change either project or the upstream registry, create a mapping with a new public name and grant access to it.</p>}
-    {!project && <label>Service<select name="service_id" required defaultValue={row.service_id || ''}><option value="">Select service</option>{services.map(service => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label>}
+    {!project && <label>Service<select name="service_id" required defaultValue={row.service_id || ''}><option value="">Select service</option>{services.map(service => <option key={service.id} value={service.id}>{service.name} (ID {service.id})</option>)}</select></label>}
+    {row.pull_repository && <p>Pull repository: <code>{row.pull_repository}</code></p>}
     {(replica ? ['max_approval_age_days'] : ['max_scan_age_days', 'max_approval_age_days']).map(key => <label key={key}>{key === 'max_scan_age_days' ? 'Maximum scan age (days)' : replica ? 'Local maximum release age (days)' : 'Maximum approval age (days)'}<input type="number" min="1" max="3650" name={key} defaultValue={row.policy?.[key]}/></label>)}
     <p>{replica ? 'This local limit can shorten release validity. The signed approval expiry always applies; synchronization failures never extend it.' : 'Optional age limits only shorten existing compliance and approval validity.'}</p>
     <label><input type="checkbox" name="suspended" defaultChecked={row.suspended}/>Suspend distribution</label>
@@ -39,7 +40,7 @@ export function OCIDistribution({data}: {data: PageData}) {
   async function action(path: string, method: string, body: Row = {}) {
     const testMapping = body.reference && rows.repositories.find(row => path === `repositories/${row.id}/test`);
     if (testMapping && isProjectMapping(testMapping.public_repository)) {
-      const repository = window.prompt(`Concrete public repository within ${testMapping.public_repository}`);
+      const repository = window.prompt(`Service pull repository, for example ${testMapping.public_repository.split('/')[0]}/42/image`);
       if (!repository) return false;
       body = {...body, repository};
     }
@@ -69,13 +70,13 @@ export function OCIDistribution({data}: {data: PageData}) {
     if (await action(kind + (row.id ? '/' + row.id : ''), row.id ? 'PUT' : 'POST', body)) setEditing(null);
   }
   return <section className="panel padded"><h2>Approved artifact distribution</h2>
-    <p>{replica ? 'Map local OCI repositories to imported services. Pulls require trusted exact digest evidence and a valid imported approval or a specifically scoped local Cyber override.' : 'Map individual repositories or whole Harbor projects. Pulls require exact digest evidence, a current Cyber approval and current service compliance.'}</p>
+    <p>{replica ? 'The service ID in each pull selects an active imported service. Its verified approved release or specifically scoped local Cyber override determines which exact image digests can be delivered.' : 'The service ID in each pull selects an active CATS service. Its current approved release and compliance determine which exact image digests can be delivered.'}</p>
     <p>{status.available_repositories ?? '—'} available mappings · {status.active_principals ?? '—'} active machine accounts. {status.proxy_health}</p>
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {secret && <div role="status"><p>Save this machine password now. It is shown once; use the machine account name as the registry login username.</p><code>{secret}</code><button type="button" onClick={() => setSecret('')}>Dismiss password</button></div>}
     {(['upstreams', 'repositories', 'principals'] as Kind[]).map(kind => <section key={kind}><h3>{kind === 'upstreams' ? 'Upstream registries' : kind === 'repositories' ? 'Repository mappings' : 'Machine accounts'}</h3>
       <div className="table-wrap"><table><thead><tr><th>Name</th><th>Configuration</th><th>Status</th><th>Actions</th></tr></thead><tbody>{rows[kind].map(row => <tr key={row.id}>
-        <td>{row.name || row.public_repository}</td><td>{kind === 'upstreams' ? row.endpoint : kind === 'repositories' ? `${row.upstream_repository} · ${isProjectMapping(row.public_repository) ? 'Service from approval evidence' : 'Service ' + row.service_id}` : `${row.repository_ids.length} mapping grants · expires ${row.expires_at}`}</td>
+        <td>{row.name || row.pull_repository || row.public_repository}</td><td>{kind === 'upstreams' ? row.endpoint : kind === 'repositories' ? `${row.upstream_repository} · ${isProjectMapping(row.public_repository) ? 'Service ID required in pull path' : 'Service ' + row.service_id}` : `${row.repository_ids.length} mapping grants · expires ${row.expires_at}`}</td>
         <td>{row.suspended ? 'Suspended' : row.enabled ? 'Enabled' : 'Disabled'}</td><td><button disabled={busy} type="button" onClick={() => setEditing({kind, row})}>Edit</button>
         {kind === 'principals' && <button disabled={busy} type="button" onClick={() => {if (window.confirm('Replace this machine password? The current password will stop working immediately.')) void action(`principals/${row.id}/rotate`, 'POST');}}>Rotate password</button>}
         <button disabled={busy} type="button" onClick={() => {if (window.confirm(kind === 'repositories' ? 'Disable this mapping and remove machine grants?' : 'Delete this configuration?')) void action(`${kind}/${row.id}`, 'DELETE');}}>{kind === 'repositories' ? 'Disable and revoke grants' : 'Delete'}</button>
@@ -84,7 +85,7 @@ export function OCIDistribution({data}: {data: PageData}) {
     {editing && <form className="approval-form" key={editing.kind + (editing.row.id || 'new')} onSubmit={submit}><h3>{editing.row.id ? 'Edit' : 'Add'} {editing.kind}</h3>
       {editing.kind === 'upstreams' && <><label>Name<input name="name" required defaultValue={editing.row.name}/></label><label>HTTPS registry endpoint<input name="endpoint" type="url" required defaultValue={editing.row.endpoint}/></label><label>Username<input name="username" autoComplete="off"/></label><label>Password<input name="password" type="password" autoComplete="new-password"/></label><label>Additional CA certificates (PEM, optional)<textarea name="ca_pem"/></label><p>Connections use system roots and the trusted CA certificates configured in CATS. Additional certificates apply only to this registry. Leave credentials and additional CA blank to retain existing settings.</p>{['token_realms', 'redirect_origins'].map(key => <label key={key}>{key === 'token_realms' ? 'Allowed HTTPS token realms (one per line)' : 'Allowed HTTPS redirect origins (one per line)'}<textarea name={key} defaultValue={(editing.row[key] || []).join('\n')}/></label>)}</>}
       {editing.kind === 'repositories' && <RepositoryFields row={editing.row} upstreams={rows.upstreams} services={status.services || []}/>}
-      {editing.kind === 'principals' && <><label>Machine account name<input name="name" required defaultValue={editing.row.name}/></label><label>Expiry<input name="expires_at" type="datetime-local" required defaultValue={localDate(editing.row.expires_at || Date.now() + 90 * 86400000)}/></label><fieldset><legend>Repository grants</legend>{rows.repositories.map(row => <label key={row.id}><input name="repository_ids" type="checkbox" value={row.id} defaultChecked={(editing.row.repository_ids || []).includes(row.id)}/>{row.public_repository}{isProjectMapping(row.public_repository) && ' (whole project)'}</label>)}</fieldset></>}
+      {editing.kind === 'principals' && <><label>Machine account name<input name="name" required defaultValue={editing.row.name}/></label><label>Expiry<input name="expires_at" type="datetime-local" required defaultValue={localDate(editing.row.expires_at || Date.now() + 90 * 86400000)}/></label><fieldset><legend>Repository grants</legend>{rows.repositories.map(row => <label key={row.id}><input name="repository_ids" type="checkbox" value={row.id} defaultChecked={(editing.row.repository_ids || []).includes(row.id)}/>{row.pull_repository || row.public_repository}{isProjectMapping(row.public_repository) && ' (whole project; service approval required)'}</label>)}</fieldset></>}
       <label><input type="checkbox" name="enabled" defaultChecked={editing.row.enabled !== false}/>Enabled</label><div className="dialog-actions"><button type="button" disabled={busy} onClick={() => setEditing(null)}>Cancel</button><button disabled={busy}>Save</button></div></form>}
   </section>;
 }

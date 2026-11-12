@@ -137,6 +137,10 @@ def authorize(db, mapping, digest, now=None):
     service = db.get(Service, mapping.service_id, populate_existing=True)
     if state is None or state.upstream_id != mapping.upstream_id or service is None:
         return decision(False, 'replica_service_unavailable')
+    from .main import service_lifecycle
+    db.expire(service, ['archive_events'])
+    if service_lifecycle(service) != 'active':
+        return decision(False, 'service_inactive')
     policy = mapping.policy or {}
     policy_error = repository_policy_error(policy)
     if policy_error:

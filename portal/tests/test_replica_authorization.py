@@ -18,7 +18,7 @@ from app import main, oci_proxy as proxy
 from app.database import Base
 from app.local_cyber_overrides import (LocalCyberOverride, LocalCyberOverrideRevocation,
     applicable_override, authentic, create_override, public, revoke_override)
-from app.models import AuditEvent, Service, User
+from app.models import AuditEvent, Service, ServiceArchiveEvent, User
 from app.oci_authorization import authorize
 from app.oci_models import OCIManifest, OCIPrincipal, OCIRepository, OCIUpstream
 from app.replica_integrity import digest as manifest_digest, seal_record
@@ -254,13 +254,13 @@ def test_proxy_digest_tag_tampering_authentication_audit_and_revocation(replica,
     monkeypatch.setattr(proxy, 'SessionLocal', replica.sessions)
     monkeypatch.setattr(proxy, 'client', lambda mapping: Transport())
     client = TestClient(proxy.app)
-    path = '/v2/replica/nginx/manifests/'
+    path = '/v2/replica/1/nginx/manifests/'
     assert client.get(path + replica.old).status_code == 401
     client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
     assert client.get(path + replica.old).status_code == 200
     assert client.get(path + 'latest').status_code == 200
     assert client.get(path + 'substituted').status_code == 403
-    assert client.get('/v2/replica/nginx/blobs/' + replica.blob_digest).status_code == 200
+    assert client.get('/v2/replica/1/nginx/blobs/' + replica.blob_digest).status_code == 200
     with replica.sessions() as db:
         events = db.scalars(select(AuditEvent).where(AuditEvent.action == 'local_override.used')).all()
         assert len(events) == 3
@@ -268,7 +268,7 @@ def test_proxy_digest_tag_tampering_authentication_audit_and_revocation(replica,
         revoke_override(db, replica.auth, replica.service_id, identity, 'Mission restored')
         db.commit()
     assert client.get(path + replica.old).status_code == 403
-    assert client.get('/v2/replica/nginx/blobs/' + replica.blob_digest).status_code == 403
+    assert client.get('/v2/replica/1/nginx/blobs/' + replica.blob_digest).status_code == 403
 
 
 def test_tampered_cached_manifest_cannot_be_served_with_override(replica, monkeypatch):
@@ -280,7 +280,7 @@ def test_tampered_cached_manifest_cannot_be_served_with_override(replica, monkey
     monkeypatch.setattr(proxy, 'SessionLocal', replica.sessions)
     client = TestClient(proxy.app)
     client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
-    assert client.get('/v2/replica/nginx/manifests/' + replica.old).status_code == 502
+    assert client.get('/v2/replica/1/nginx/manifests/' + replica.old).status_code == 502
 
 
 def test_local_override_api_requires_csrf_and_scoped_cyber_permissions(replica):
@@ -343,7 +343,7 @@ def test_override_cannot_serve_content_when_mandatory_usage_audit_fails(replica,
     monkeypatch.setattr(proxy, 'record_audit', unavailable)
     client = TestClient(proxy.app)
     client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
-    response = client.get('/v2/replica/nginx/manifests/' + replica.old)
+    response = client.get('/v2/replica/1/nginx/manifests/' + replica.old)
     assert response.status_code == 503
     assert replica.raw not in response.content
     with replica.sessions() as db:
@@ -387,8 +387,8 @@ def test_revocation_during_blob_retrieval_rechecks_cached_authority(replica, mon
     monkeypatch.setattr(proxy, 'client', lambda mapping: Transport())
     with TestClient(proxy.app) as client:
         client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
-        assert client.get('/v2/replica/nginx/manifests/' + replica.old).status_code == 200
-        response = client.get('/v2/replica/nginx/blobs/' + replica.blob_digest)
+        assert client.get('/v2/replica/1/nginx/manifests/' + replica.old).status_code == 200
+        response = client.get('/v2/replica/1/nginx/blobs/' + replica.blob_digest)
         assert response.status_code == (401 if revoked == 'principal' else 403)
         assert replica.blob not in response.content
     with replica.sessions() as db:
@@ -419,6 +419,39 @@ def test_same_digest_in_another_service_cannot_reuse_override(replica):
         db.commit()
         result = authorize(db, mapping, replica.old)
         assert not result.allowed and result.reason == 'release_superseded'
+
+
+@pytest.mark.parametrize('state', ['staged', 'archived'])
+def test_inactive_replica_service_denies_active_release_and_cached_override(replica, monkeypatch, state):
+    grant(replica)
+    class Transport:
+        def fetch_manifest(self, repository, reference):
+            return replica.raw, 'application/vnd.oci.image.manifest.v1+json', replica.old
+        def fetch_blob(self, repository, reference, cache):
+            return cache.get(reference) or cache.store(reference, io.BytesIO(replica.blob))
+        def referrers(self, repository, reference):
+            return {'manifests': []}
+    monkeypatch.setattr(proxy, 'SessionLocal', replica.sessions)
+    monkeypatch.setattr(proxy, 'client', lambda mapping: Transport())
+    client = TestClient(proxy.app)
+    client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
+    path = f'/v2/replica/{replica.service_id}/nginx/'
+    assert decision(replica, replica.new).allowed
+    assert decision(replica).allowed
+    assert client.get(path + 'manifests/' + replica.old).status_code == 200
+    assert client.get(path + 'blobs/' + replica.blob_digest).status_code == 200
+    with replica.sessions() as db:
+        service = db.get(Service, replica.service_id)
+        if state == 'archived':
+            db.add(ServiceArchiveEvent(service_id=service.id, action='archive',
+                reason='Service retired', performed_by='Cyber'))
+        else:
+            service.lifecycle_status = state
+        db.commit()
+    assert decision(replica, replica.new).reason == 'service_inactive'
+    assert decision(replica).reason == 'service_inactive'
+    for route in ('manifests/' + replica.old, 'blobs/' + replica.blob_digest, 'referrers/' + replica.old):
+        assert client.get(path + route).status_code == 403
 
 
 @pytest.mark.parametrize('role_name,scope,allowed', [

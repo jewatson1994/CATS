@@ -37,7 +37,7 @@ from sqlalchemy import func, select, text
 import uvicorn
 
 from app import models as m, oci_proxy as proxy
-from app.oci_models import OCIPrincipal, OCIRepository, OCIUpstream
+from app.oci_models import OCIPrincipal, OCIRepository, OCIUpstream, service_repository
 from app.replica_import import reconcile
 from app.replica_integrity import seal_record, verify_record
 from app.replica_models import ReplicaEvent, ReplicaRelease, ReplicaServiceState
@@ -231,6 +231,7 @@ def pull(session, address, repository, digest, kind='manifests', method='GET'):
 
 def test_live_http_expiry_denies_cached_bytes_offline_after_restart(live_registry, monkeypatch):
     f, upstream_requests, stop_registry = live_registry
+    repository = service_repository('replica/nginx', f.service_id)
     deadline = datetime.now(timezone.utc) + timedelta(seconds=5)
     with f.sessions() as db:
         release = db.get(ReplicaRelease, f.old_id)
@@ -239,20 +240,20 @@ def test_live_http_expiry_denies_cached_bytes_offline_after_restart(live_registr
         db.get(ReplicaServiceState, f.service_id).active_release_id = f.old_id
         db.commit()
     with live_proxy(f, monkeypatch) as (http, address):
-        assert pull(http, address, 'replica/nginx', f.old).content == f.raw
-        assert pull(http, address, 'replica/nginx', f.blob_digest, 'blobs').content == f.blob
+        assert pull(http, address, repository, f.old).content == f.raw
+        assert pull(http, address, repository, f.blob_digest, 'blobs').content == f.blob
         allowed_at = datetime.now(timezone.utc)
         assert allowed_at < deadline
         stop_registry()
         while datetime.now(timezone.utc) <= deadline:
             time.sleep(.05)
-        denied = pull(http, address, 'replica/nginx', f.old)
+        denied = pull(http, address, repository, f.old)
         assert denied.status_code == 403 and 'release_expired' in denied.text
     results = []
     with live_proxy(f, monkeypatch) as (http, address):
         for method in ('GET', 'HEAD'):
             for kind, digest, raw in (('manifests', f.old, f.raw), ('blobs', f.blob_digest, f.blob)):
-                response = pull(http, address, 'replica/nginx', digest, kind, method)
+                response = pull(http, address, repository, digest, kind, method)
                 assert response.status_code == 403 and raw not in response.content
                 results.append({'method': method, 'kind': kind, 'status': response.status_code})
     assert len(upstream_requests) == 2
@@ -290,9 +291,11 @@ def test_live_http_shared_artifact_cannot_reuse_other_service_override(live_regi
         db.commit()
         other_service_id = other.id
     override_id = grant(f)
+    first_repository = service_repository('replica/nginx', f.service_id)
+    other_repository = service_repository('another/nginx', other_service_id)
     with live_proxy(f, monkeypatch) as (http, address):
         # Prime both mapping-specific manifest/link caches and shared disk blobs.
-        for repository in ('replica/nginx', 'another/nginx'):
+        for repository in (first_repository, other_repository):
             assert pull(http, address, repository, f.old).content == f.raw
             assert pull(http, address, repository, f.blob_digest, 'blobs').content == f.blob
         with f.sessions() as db:
@@ -302,8 +305,8 @@ def test_live_http_shared_artifact_cannot_reuse_other_service_override(live_regi
         results = []
         for method in ('GET', 'HEAD'):
             for kind, digest, raw in (('manifests', f.old, f.raw), ('blobs', f.blob_digest, f.blob)):
-                allowed = pull(http, address, 'replica/nginx', digest, kind, method)
-                denied = pull(http, address, 'another/nginx', digest, kind, method)
+                allowed = pull(http, address, first_repository, digest, kind, method)
+                denied = pull(http, address, other_repository, digest, kind, method)
                 assert allowed.status_code == 200
                 assert denied.status_code == 403 and raw not in denied.content
                 if method == 'GET' and kind == 'manifests':

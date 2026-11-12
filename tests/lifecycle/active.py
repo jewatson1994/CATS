@@ -11,7 +11,7 @@ def main(root, material, session, endpoint, repo, old_raw, config, layer):
  from app.database import SessionLocal
  from app.models import Service,Execution,PatchExecution,DeploymentValidationRun,User
  from app.artifact_catalog import register_artifact,assign_artifact,record_patch_lineage
- from app.oci_models import OCIUpstream,OCIRepository,OCIPrincipal
+ from app.oci_models import OCIUpstream,OCIRepository,OCIPrincipal,service_repository
  from app.cyber_approvals import CyberApproval,digest
  from app.execution_summaries import payload_digest
  from app.release_validity import new_validity
@@ -21,7 +21,7 @@ def main(root, material, session, endpoint, repo, old_raw, config, layer):
  response=session.put(endpoint+'/v2/'+repo+'/manifests/patched',data=raw,headers={'Content-Type':media},timeout=15);response.raise_for_status()
  # The upstream stable tag deliberately still resolves to the original bytes.
  assert session.get(endpoint+'/v2/'+repo+'/manifests/stable',headers={'Accept':media},timeout=15).content==old_raw
- auth=SimpleNamespace(has=lambda *a:True); revision_ids=[]; approval_ids=[]
+ auth=SimpleNamespace(has=lambda *a:True); revision_ids=[]; approval_ids=[]; pull_repositories={}
  with SessionLocal() as db:
   user=db.scalar(select(User)); assert user
   source=register_artifact(db,digest=old,media_type=media,platform='linux/amd64')
@@ -32,6 +32,7 @@ def main(root, material, session, endpoint, repo, old_raw, config, layer):
    service=Service(service_key=key,name=key);db.add(service);db.flush()
    execution=Execution(service_id=service.id,execution_key=key,scanned_at=now,complete=True,scan_scope='service',raw_payload={});db.add(execution)
    mapping=OCIRepository(public_repository=key+'/image',service_id=service.id,upstream_id=upstream.id,upstream_repository=repo);db.add(mapping);db.flush();mappings.append(mapping.id)
+   pull_repositories[key]=service_repository(mapping.public_repository,service.id)
    for artifact in [source,target]:assign_artifact(db,service_id=service.id,artifact_id=artifact.id)
    src='registry:5000/'+repo+'@'+old;dst='registry:5000/'+repo+'@'+patched
    receipt=dict(status='complete',patch_status='PATCHED',delivery_status='delivered',source_image=src,immutable_destination=dst,signature_status='verified',signature=dict(image=dst,generator='cosign',key_fingerprint=material[0]['signing_fingerprint'],verified_at=now.isoformat()),artifact_validation='docker-load',validated_source='flattened-rootfs',vulnerabilities_before=4,vulnerabilities_after=0)
@@ -48,7 +49,7 @@ def main(root, material, session, endpoint, repo, old_raw, config, layer):
   if server.started:break
   time.sleep(.1)
  client=requests.Session();client.trust_env=False;client.auth=('active-robot','fixture-token')
- def get(service,reference):return client.get('http://127.0.0.1:18082/v2/'+service+'/image/manifests/'+reference,timeout=30)
+ def get(service,reference):return client.get('http://127.0.0.1:18082/v2/'+pull_repositories[service]+'/manifests/'+reference,timeout=30)
  for service in ['active-one','active-two']:
   response=get(service,'stable');assert response.status_code==200,response.text
   assert response.content==raw and response.headers['Docker-Content-Digest']==patched

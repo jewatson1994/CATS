@@ -13,6 +13,42 @@ def is_project_pattern(value):
             and len(value) <= 255 and bool(REPOSITORY.fullmatch(value[:-2])))
 
 
+def parse_service_repository(repository):
+    """Separate the authoritative local service ID from a consumer pull path."""
+    if (not isinstance(repository, str) or len(repository) > 255
+            or not REPOSITORY.fullmatch(repository)):
+        raise ValueError('Invalid repository')
+    parts = repository.split('/', 2)
+    if (len(parts) != 3 or not parts[1].isascii() or not parts[1].isdigit()
+            or parts[1].startswith('0')):
+        raise ValueError('Repository must use project/service-id/image with a positive numeric service ID')
+    identity = int(parts[1])
+    if identity > 2147483647:
+        raise ValueError('Invalid service ID')
+    return identity, parts[0] + '/' + parts[2]
+
+
+def service_repository(repository, service_id=None):
+    """Expose scoped pull names without rewriting retained signed mapping names."""
+    if is_project_pattern(repository):
+        return repository[:-1] + '<service-id>/*'
+    if (type(service_id) is not int or not 0 < service_id <= 2147483647
+            or not isinstance(repository, str) or len(repository) > 255
+            or not REPOSITORY.fullmatch(repository) or '/' not in repository):
+        raise ValueError('A valid service and project repository are required')
+    project, relative = repository.split('/', 1)
+    first = relative.split('/', 1)[0]
+    if '/' in relative and first.isascii() and first.isdigit():
+        scoped_id, _ = parse_service_repository(repository)
+        if scoped_id != service_id:
+            raise ValueError('Repository service ID does not match its configured service')
+        return repository
+    result = f'{project}/{service_id}/{relative}'
+    if len(result) > 255:
+        raise ValueError('Service-scoped repository name is too long')
+    return result
+
+
 def project_repository(target_pattern, source_pattern, repository):
     """Translate only a concrete descendant of the configured Harbor project."""
     if (not is_project_pattern(target_pattern) or not is_project_pattern(source_pattern)

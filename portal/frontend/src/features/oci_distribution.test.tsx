@@ -8,15 +8,15 @@ afterEach(() => {cleanup(); vi.resetAllMocks(); vi.restoreAllMocks();});
 it('creates scoped expiring machine access with CSRF and dismisses the one-time password', async () => {
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {secret:'one-time-password'} as any;
-    if (url === '/api/oci/repositories') return [{id:3,public_repository:'project/api',upstream_repository:'team/api',service_id:1,enabled:true}] as any;
+    if (url === '/api/oci/repositories') return [{id:3,public_repository:'project/api',pull_repository:'project/1/api',upstream_repository:'team/api',service_id:1,enabled:true}] as any;
     if (url === '/api/oci/status/overview') return {available_repositories:1,active_principals:0,services:[]} as any;
     return [] as any;
   });
   render(<OCIDistribution data={{csrf_token:'csrf'}}/>);
-  await screen.findByText('project/api');
+  await screen.findByText('project/1/api');
   fireEvent.click(screen.getByRole('button',{name:'Add machine account'}));
   fireEvent.change(screen.getByLabelText('Machine account name'),{target:{value:'ci-reader'}});
-  fireEvent.click(screen.getByLabelText('project/api'));
+  fireEvent.click(screen.getByLabelText('project/1/api'));
   fireEvent.click(screen.getByRole('button',{name:'Save'}));
   await screen.findByText('one-time-password');
   const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
@@ -55,21 +55,21 @@ it('tests a concrete project repository and identifies project-wide machine gran
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {message: 'Connected'} as any;
     if (url === '/api/oci/repositories') return [{
-      id: 7, public_repository: 'approved/*', upstream_repository: 'platform/*', service_id: null, enabled: true,
+      id: 7, public_repository: 'approved/*', pull_repository: 'approved/<service-id>/*', upstream_repository: 'platform/*', service_id: null, enabled: true,
     }] as any;
     return [] as any;
   });
   render(<OCIDistribution data={{csrf_token: 'csrf'}}/>);
-  await screen.findByText('approved/*');
+  await screen.findByText('approved/<service-id>/*');
   fireEvent.click(screen.getByRole('button', {name: 'Add machine account'}));
-  expect(screen.getByLabelText('approved/* (whole project)')).toBeInTheDocument();
-  const prompt = vi.spyOn(window, 'prompt').mockReturnValueOnce('v2').mockReturnValueOnce('approved/team/api');
+  expect(screen.getByLabelText('approved/<service-id>/* (whole project; service approval required)')).toBeInTheDocument();
+  const prompt = vi.spyOn(window, 'prompt').mockReturnValueOnce('v2').mockReturnValueOnce('approved/42/team/api');
   fireEvent.click(screen.getByRole('button', {name: 'Test connection'}));
   await screen.findByText('Connected');
-  expect(prompt).toHaveBeenCalledWith('Concrete public repository within approved/*');
+  expect(prompt).toHaveBeenCalledWith('Service pull repository, for example approved/42/image');
   const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
   expect(call?.[0]).toBe('/api/oci/repositories/7/test');
-  expect(JSON.parse(String(call?.[1]?.body))).toEqual({repository: 'approved/team/api', reference: 'v2'});
+  expect(JSON.parse(String(call?.[1]?.body))).toEqual({repository: 'approved/42/team/api', reference: 'v2'});
 });
 
 

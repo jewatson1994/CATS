@@ -25,7 +25,7 @@ def main(root):
     from app import oci_proxy as proxy
     from app.database import Base, engine, intelligence_engine, intelligence_tables, portal_tables, SessionLocal
     from app.models import Service, Execution
-    from app.oci_models import OCIUpstream, OCIRepository, OCIPrincipal
+    from app.oci_models import OCIUpstream, OCIRepository, OCIPrincipal, service_repository
     from app.cyber_approvals import CyberApproval, digest as snapshot_digest
     from app.execution_summaries import payload_digest
     from app.release_validity import new_validity
@@ -59,6 +59,7 @@ def main(root):
         machine = OCIPrincipal(name='fixture', secret_hash=hashlib.sha256(b'fixture-token').hexdigest(),
             repository_ids=[mapping.id], expires_at=now+timedelta(hours=1))
         db.add_all([approval, machine]); db.commit(); approval_id = approval.id
+        pull_repository = service_repository(mapping.public_repository, service.id)
     import requests, threading, time, uvicorn
     server = uvicorn.Server(uvicorn.Config(proxy.app, host='127.0.0.1', port=18081, log_level='error'))
     threading.Thread(target=server.run, daemon=True).start()
@@ -70,7 +71,7 @@ def main(root):
             return super().request(method, 'http://127.0.0.1:18081' + url, timeout=30, **kwargs)
     client = HTTPClient()
     client.headers['Authorization'] = 'Basic '+base64.b64encode(b'fixture:fixture-token').decode()
-    path = '/v2/fixture/image/'
+    path = '/v2/' + pull_repository + '/'
     assert client.get('/v2/').status_code == 200
     response = client.get(path+'manifests/'+evidence['tag'])
     assert response.status_code == 200, response.text

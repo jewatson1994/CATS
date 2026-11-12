@@ -53,6 +53,8 @@ def test_admin_auth_csrf_secret_lifecycle(context):
     repository = post(client, 'repositories', dict(public_repository='project/image', service_id=1,
         upstream_id=row.id, upstream_repository='team/image', policy={'max_approval_age_days': 1}))
     assert repository.status_code == 200, repository.text
+    assert repository.json()['pull_repository'] == 'project/1/image'
+    assert repository.json()['public_repository'] == 'project/image'
     identity = repository.json()['id']
     principal = post(client, 'principals', dict(name='ci', repository_ids=[identity]))
     assert principal.status_code == 200, principal.text
@@ -102,6 +104,7 @@ def test_project_mapping_grants_and_connection(context, monkeypatch):
     assert result.status_code == 200, result.text
     mapping = result.json()
     assert mapping['service_id'] is None
+    assert mapping['pull_repository'] == 'approved/<service-id>/*'
     assert client.get('/api/oci/repositories').json() == [mapping]
     assert post(client, 'principals', dict(name='project-reader', repository_ids=[mapping['id']])).status_code == 200
 
@@ -112,10 +115,11 @@ def test_project_mapping_grants_and_connection(context, monkeypatch):
         return b'{}', 'application/json', 'sha256:' + 'a' * 64
     monkeypatch.setattr(RegistryClient, 'fetch_manifest', fetch_manifest)
     path = f"repositories/{mapping['id']}/test"
-    for repository in (None, 'approved/*', 'approved', 'approved-2/api', 'approved/../elsewhere', 'platform/api'):
+    for repository in (None, 'approved/*', 'approved', 'approved-2/api', 'approved/../elsewhere',
+                       'platform/api', 'approved/team/api', 'approved/999/team/api', 'approved/01/team/api'):
         assert post(client, path, {'repository': repository}).status_code == 422
     assert calls == []
-    assert post(client, path, dict(repository='approved/team/api', reference='v1')).json()['ok']
+    assert post(client, path, dict(repository='approved/1/team/api', reference='v1')).json()['ok']
     assert calls == [('platform/team/api', 'v1')]
 
 
@@ -123,6 +127,7 @@ def test_project_mapping_grants_and_connection(context, monkeypatch):
     ('*', '*', None), ('team/*', 'team/image', None), ('team/image', 'team/*', 1),
     ('team/*/api', 'team/*', None), ('team/sub/*', 'other/*', None), ('team/*', 'other/sub/*', None),
     ('team/*', 'other/*', 1), ('team/image', 'other/image', None),
+    ('team/2/image', 'other/image', 1), ('team/01/image', 'other/image', 1),
 ])
 def test_invalid_repository_scopes(context, public_name, upstream_name, service_id):
     client, _, _ = context
@@ -151,3 +156,58 @@ def test_project_scope_changes_require_new_grants(context):
     assert client.get('/api/oci/repositories').json() == [exact, project]
     assert client.get('/api/oci/principals').json()[0]['repository_ids'] == [exact['id']]
     assert update(project, policy={'max_scan_age_days': 7}, suspended=True).json()['suspended']
+
+
+def test_exact_service_route_configuration_and_connection(context, monkeypatch):
+    client, db, _ = context
+    upstream = post(client, 'upstreams', dict(name='Registry', endpoint='https://registry.example')).json()
+    response = post(client, 'repositories', dict(public_repository='cyber-approved/1/team/image',
+        service_id=1, upstream_id=upstream['id'], upstream_repository='harbor/team/image'))
+    assert response.status_code == 200, response.text
+    mapping = response.json()
+    assert mapping['pull_repository'] == mapping['public_repository'] == 'cyber-approved/1/team/image'
+    from app.oci_transport import RegistryClient
+    calls = []
+    def fetch(self, repository, reference):
+        calls.append((repository, reference))
+        return b'{}', 'application/json', 'sha256:' + 'a' * 64
+    monkeypatch.setattr(RegistryClient, 'fetch_manifest', fetch)
+    path = f"repositories/{mapping['id']}/test"
+    assert post(client, path, dict(repository=mapping['pull_repository'], reference='v1')).json()['ok']
+    assert calls == [('harbor/team/image', 'v1')]
+    assert post(client, path, dict(repository='cyber-approved/2/team/image')).status_code == 422
+    assert len(calls) == 1
+
+
+def test_connection_rejects_inactive_requested_service(context, monkeypatch):
+    client, db, _ = context
+    upstream = post(client, 'upstreams', dict(name='Registry', endpoint='https://registry.example')).json()
+    mapping = post(client, 'repositories', dict(public_repository='approved/*',
+        upstream_repository='team/*', upstream_id=upstream['id'])).json()
+    db.get(Service, 1).lifecycle_status = 'staged'
+    db.commit()
+    from app.oci_transport import RegistryClient
+    def forbidden(*args):
+        raise AssertionError('Inactive services cannot trigger registry connection checks')
+    monkeypatch.setattr(RegistryClient, 'fetch_manifest', forbidden)
+    assert post(client, f"repositories/{mapping['id']}/test", dict(repository='approved/1/image')).status_code == 422
+
+
+@pytest.mark.parametrize('repository', ['approved/api', 'approved/0/api', 'approved/01/api',
+    'approved/+1/api', 'approved/-1/api', 'approved/1', 'approved/1/',
+    'approved/1/../api', 'approved/1/api?service=2', 'approved/999999999999999999999999/api'])
+def test_service_route_parser_rejects_ambiguous_or_unbounded_identity(repository):
+    from app.oci_models import parse_service_repository
+    with pytest.raises(ValueError):
+        parse_service_repository(repository)
+
+
+def test_service_route_helpers_keep_nested_paths_and_signed_mapping_names():
+    from app.oci_models import parse_service_repository, service_repository
+    assert parse_service_repository('cyber-approved/42/team/nginx') == (42, 'cyber-approved/team/nginx')
+    assert service_repository('cyber-approved/team/nginx', 42) == 'cyber-approved/42/team/nginx'
+    assert service_repository('cyber-approved/42/team/nginx', 42) == 'cyber-approved/42/team/nginx'
+    assert service_repository('services/42/team/nginx', 42) == 'services/42/team/nginx'
+    assert service_repository('approved/123', 42) == 'approved/42/123'
+    with pytest.raises(ValueError):
+        service_repository('cyber-approved/17/team/nginx', 42)

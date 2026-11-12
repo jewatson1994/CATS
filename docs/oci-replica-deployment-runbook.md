@@ -160,6 +160,8 @@ Check the original actors, timestamps, findings/observations, risk/approval cont
 
 Activation creates exact service-specific proxy routes. **Approved Releases → Signed artifact inventory** shows the local pull paths. The usual route is `services/<local-service-id>/<upstream-repository>`; very long names have a deterministic shorter form. Use the displayed path instead of guessing it.
 
+Every pull must include the receiving CATS installation's numeric service ID. CATS checks that active service's verified approved release, even if another service approves identical bytes. Custom stored mappings such as `cyber-approved/nginx` now display `cyber-approved/<local-service-id>/nginx` as their consumer path. Update old unscoped consumer references; existing mapping IDs, grants and signed evidence are retained.
+
 Under **Registry access and proxy**, create a scoped machine principal and grant only the required repository mappings. Browser sessions are not OCI login credentials. Use the real proxy origin, machine identity and displayed path:
 
 ```text

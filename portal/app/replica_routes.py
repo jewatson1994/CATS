@@ -147,6 +147,7 @@ async def synchronize(request: Request, auth: AuthContext = Depends(require_user
 
 def release_row(db, release):
     from .replica_authorization import trusted_release
+    from .oci_models import service_repository
     service = db.get(Service, release.service_id)
     state = db.get(ReplicaServiceState, release.service_id, populate_existing=True)
     timestamp = datetime.now(timezone.utc)
@@ -155,11 +156,18 @@ def release_row(db, release):
               'expired' if release.expires_at and utc(release.expires_at) <= timestamp else
               'active' if state and state.active_release_id == release.id else 'superseded')
     routes = list(db.scalars(select(OCIRepository).where(OCIRepository.service_id == release.service_id)))
+    pull_routes = []
+    for route in routes:
+        try:
+            pull_routes.append((route, service_repository(route.public_repository, route.service_id)))
+        except ValueError:
+            # Invalid legacy configuration must not advertise a usable pull path.
+            continue
     result = fields(release, ('id','service_id','source_release_id','sequence','manifest_digest','approved_at',
         'expires_at','revoked_at','revocation_reason','imported_at','publisher','key_fingerprint','source_reference'))
     result.update(service_key=service.service_key, service_name=service.name, status=status,
         key_generation=len(release.manifest.get('signing_key_chain', [])),
-        artifacts=[{**artifact, 'proxy_repositories': [route.public_repository for route in routes
+        artifacts=[{**artifact, 'proxy_repositories': [repository for route, repository in pull_routes
             if route.upstream_repository == artifact.get('repository')]} for artifact in release.artifacts],
         evidence_url=f'/api/replica/releases/{release.id}/evidence',
         context_url=f'/api/replica/releases/{release.id}/context')
