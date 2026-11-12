@@ -4042,7 +4042,12 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
-def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None) -> str:
+def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None, compose_variables: dict[str, str] | None = None) -> str:
+    from .compose_ingestion import ComposeInputError, validate_variables
+    try:
+        compose_variables = validate_variables({} if compose_variables is None else compose_variables)
+    except ComposeInputError as exc:
+        raise HTTPException(422, str(exc)) from None
     lines = [line.strip() for line in image_list.splitlines() if line.strip()]
     chart_archives = chart_archives or []
     compose_uploads = compose_uploads or []
@@ -4063,11 +4068,11 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         raise HTTPException(status_code=400, detail="Select at least one SBOM format")
     if cyclonedx_spec_version not in CYCLONEDX_SPEC_VERSIONS:
         raise HTTPException(status_code=400, detail="Unsupported CycloneDX specification version")
-    if job_kind == "sbom" and (chart_archives or chart_urls or compose_uploads or compose_files or compose_profiles or compose_preview):
+    if job_kind == "sbom" and (chart_archives or chart_urls or compose_uploads or compose_files or compose_profiles or compose_preview or compose_variables):
         raise HTTPException(status_code=400, detail="SBOM generation accepts container images or image archives")
     if compose_preview and not compose_uploads:
         raise HTTPException(status_code=400, detail="Upload Compose files or a bundle to preview")
-    if (compose_files or compose_profiles) and not compose_uploads:
+    if (compose_files or compose_profiles or compose_variables) and not compose_uploads:
         raise HTTPException(status_code=400, detail="Upload Compose files or a bundle to use Compose options")
     if not lines and not chart_archives and not chart_urls and not image_archive and not definition_sources and not definition_component and not definition_components and not compose_uploads:
         detail = "Provide an image reference or image archive" if job_kind == "sbom" else "Provide an image reference, image archive, Helm chart, or Compose files"
@@ -4133,11 +4138,15 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
                         raise HTTPException(507, "Insufficient scan staging capacity")
                     target.write(chunk)
         if compose_uploads:
-            from .compose_ingestion import ComposeInputError, stage_uploads
+            from .compose_ingestion import stage_uploads
             try:
                 stage_uploads(job_input, compose_uploads)
             except ComposeInputError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from None
+            if compose_variables:
+                from .compose_scan import COMPOSE_VARIABLES_FILE
+                # Keep values in the private input envelope, never public job metadata.
+                (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
         from .scan_artifacts import pack, digest
         (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
         envelope = job_input.parent / "input.tar.gz"
@@ -4152,6 +4161,8 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
             if not compose_root.resolve().is_relative_to(job_input.resolve()):
                 raise HTTPException(422, "Invalid Compose staging directory")
             shutil.rmtree(compose_root)
+        if compose_variables:
+            (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
         _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=digest(envelope))
     except BaseException:
         if job_input.parent.exists(): shutil.rmtree(job_input.parent)
@@ -4194,6 +4205,50 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
     return self_service_context(request, "scan", image_list=image_list, chart_url=chart_url, archive_names=archive_names, job_id=job_id, auth=auth, services=services, ingest_service_id=ingest_service_id, ingest_service_version=ingest_service_version, ingest_scope=ingest_scope)
 
 
+def _parse_compose_variables(raw: Any) -> dict[str, str]:
+    from .compose_ingestion import ComposeInputError, MAX_VARIABLE_BYTES, validate_variables
+    try:
+        if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_VARIABLE_BYTES:
+            raise ComposeInputError("Compose variable values exceed the allowed input size.")
+        return validate_variables(json.loads(raw))
+    except ComposeInputError as exc:
+        raise HTTPException(422, str(exc)) from None
+    except (ValueError, UnicodeError, RecursionError):
+        raise HTTPException(422, "Compose variable values must be a valid JSON object of names and text values.") from None
+
+
+async def _compose_inspection_files(request: Request) -> str | None:
+    # Form defaults collapse an explicit empty selection into an omitted field.
+    # Keep that distinction so skipping all documents does not select them again.
+    value = (await request.form()).get("compose_files")
+    if value is not None and not isinstance(value, str):
+        raise HTTPException(422, "Compose file order must contain text paths.")
+    return value
+
+
+@app.post("/api/public/compose/files")
+def inspect_compose_uploads(compose_uploads: list[UploadFile] = File(...), compose_files: str | None = Depends(_compose_inspection_files),
+                            compose_profiles: str = Form(""), compose_variables: str = Form("{}")):
+    """Inspect temporary uploads; no job, images, or source contents are retained."""
+    from .compose_ingestion import ComposeInputError, compose_candidates, default_compose_order, discover, stage_uploads
+    variables = _parse_compose_variables(compose_variables)
+    try:
+        with tempfile.TemporaryDirectory(prefix="cats-compose-inspect-") as temporary:
+            staged = stage_uploads(Path(temporary), [(upload.file, upload.filename or "")
+                                                     for upload in compose_uploads])
+            candidates = compose_candidates(staged["root"])
+            defaults = default_compose_order(candidates)
+            selected = defaults if compose_files is None else [name.strip() for name in compose_files.splitlines() if name.strip()]
+            if len(selected) != len(set(selected)) or any(name not in candidates for name in selected):
+                raise ComposeInputError("Select each detected Compose document at most once.")
+            profiles = [name.strip() for name in re.split(r"[,\r\n]+", compose_profiles) if name.strip()]
+            missing = discover(staged["root"], selected, profiles, variables=variables)["missing_variables"] if selected else []
+            return JSONResponse({"files": candidates, "default_files": defaults, "missing_variables": missing},
+                                headers={"Cache-Control": "no-store"})
+    except ComposeInputError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
 @app.post("/scan", response_class=HTMLResponse)
 async def public_scan_submit(request: Request, image_list: str = Form(""), chart_url: str = Form(""), chart_archive: UploadFile | None = File(None), ingest_service_id: str = Form(""), ingest_service_version: str = Form(""), ingest_scope: str = Form("auto"), db: Session = Depends(get_db), auth: AuthContext | None = Depends(optional_user)):
     import secrets
@@ -4216,6 +4271,7 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                            if hasattr(upload, "file") and getattr(upload, "filename", None)]
         compose_files = [line.strip() for line in str(form.get("compose_files") or "").splitlines() if line.strip()]
         compose_profiles = [name.strip() for name in re.split(r"[,\r\n]+", str(form.get("compose_profiles") or "")) if name.strip()]
+        compose_variables = _parse_compose_variables(form.get("compose_variables") or "{}")
         compose_preview = str(form.get("compose_preview") or "").lower() in {"true", "1", "on"}
         if compose_preview:
             ingest_service_id = ""
@@ -4284,7 +4340,8 @@ async def public_scan_submit(request: Request, image_list: str = Form(""), chart
                                     owner_user_id=auth.user.id if auth else None,
                                     definition_skipped=definition_skipped, definition_summary=definition_summary,
                                     ingest_service_version=ingest_service_version, capability_token=capability_token, ingest_scope=ingest_scope,
-                                    compose_uploads=compose_uploads, compose_files=compose_files, compose_profiles=compose_profiles, compose_preview=compose_preview)
+                                    compose_uploads=compose_uploads, compose_files=compose_files, compose_profiles=compose_profiles, compose_preview=compose_preview,
+                                    compose_variables=compose_variables)
     except HTTPException as exc:
         scoped = auth.accessible_service_ids("scan.ingest") if auth else set()
         services = list(db.scalars(select(Service).order_by(Service.name))) if scoped != set() else []
@@ -4763,11 +4820,13 @@ def ingest_public_scan(
     scan_scope: str | None = None,
     db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_user),
+    service_version: str | None = None,
 ):
     """Attach an ephemeral scan to an existing service after login.
 
-    A service selection on the authenticated scan form invokes this endpoint
-    automatically after the temporary scan completes. It still requires an
+    A service selection before scanning invokes this endpoint automatically.
+    Completed temporary results can also be attached with an explicit version
+    and scope selected afterward. Both paths require an
     authenticated service administrator and an existing in-scope service, so
     a public request cannot create or overwrite portal scope by itself.
     """
@@ -4809,6 +4868,15 @@ def ingest_public_scan(
             raise HTTPException(409, "Distribution scan does not match its saved selection")
     if selected_scope not in {"auto", "service"} and not distribution_job:
         raise HTTPException(422, "Choose automatic scope or a full service assessment")
+    if service_version is not None:
+        service_version = service_version.strip()
+        if not service_version or len(service_version) > 120 or any(ord(char) < 32 or ord(char) == 127 for char in service_version):
+            raise HTTPException(422, "Choose or enter a valid service version before ingesting")
+        if (distribution_job or job.get("schedule_context") or job.get("definition_context")) and service_version != job.get("ingest_service_version"):
+            raise HTTPException(409, "This scan belongs to its saved service version")
+        existing = db.scalar(select(Execution).where(Execution.execution_key == f"public:{job_id}"))
+        if existing and existing.service_version and existing.service_version.version != service_version:
+            raise HTTPException(409, "This scan is already ingested into another version; start a new scan for a different version")
     ingest_started = time.perf_counter()
     stage_started = ingest_started
     ingest_stage = "read_result"
@@ -4856,7 +4924,7 @@ def ingest_public_scan(
         stage_timings[ingest_stage] = round((time.perf_counter() - stage_started) * 1000, 2)
         ingest_stage = "bind_service"; stage_started = time.perf_counter()
         job_input_images = [line.strip() for line in str(job.get("image_list") or "").splitlines() if line.strip()]
-        selected_service_version = str(job.get("ingest_service_version") or "").strip()
+        selected_service_version = service_version if service_version is not None else str(job.get("ingest_service_version") or "").strip()
         # Only an explicitly image-only job can infer image scope. A chart
         # scan remains service evidence even when only one image has findings.
         if not distribution_job and data.get("scan_scope") not in {"service", "image", "evidence"}:

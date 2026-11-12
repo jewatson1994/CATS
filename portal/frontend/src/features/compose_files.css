@@ -1,0 +1,12 @@
+.compose-file-picker { min-width: 0; padding: var(--space-3); }
+.compose-file-picker > div { display: grid; grid-template-columns: minmax(0, 1fr) 8rem; gap: var(--space-3); align-items: center; margin: var(--space-2) 0; }
+.compose-file-picker label { overflow-wrap: anywhere; }
+.compose-variables { min-width: 0; padding: var(--space-3); }
+.compose-variable { display: grid; gap: var(--space-1); margin: var(--space-3) 0; }
+.compose-variable > label, .compose-variable > small { overflow-wrap: anywhere; }
+.compose-variable-empty { display: flex; align-items: center; gap: var(--space-2); }
+.compose-variable-empty input { width: auto; }
+.compose-variables > small { display: block; margin-top: var(--space-2); }
+@media (max-width: 480px) {
+  .compose-file-picker > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
+}

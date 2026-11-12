@@ -6,7 +6,9 @@ import zipfile
 
 import pytest
 
-from app.compose_ingestion import ComposeInputError, discover, stage_uploads
+from app.compose_ingestion import (
+    ComposeInputError, MAX_VARIABLE_BYTES, discover, stage_uploads, validate_variables,
+)
 
 
 def put(root, name, text):
@@ -343,6 +345,62 @@ def test_default_pair_discovery(tmp_path):
     assert result['sources'] == ['app/compose.yaml', 'app/compose.override.yaml']
 
 
+@pytest.mark.parametrize('name', ['Compose.txt', 'compose.main.yaml(2)', 'deployment'])
+@pytest.mark.parametrize('explicit', [False, True])
+def test_uploaded_compose_detected_regardless_of_filename(tmp_path, name, explicit):
+    from app.compose_scan import prepare_compose
+    stage_uploads(tmp_path, [(b'services: {web: {image: "nginx:1"}}', name),
+                             (b'TAG=1', '.env'), (b'\x00\xff', 'companion.bin')])
+    payload = {'compose_enabled': True, 'compose_files': [name] if explicit else []}
+    result = prepare_compose(tmp_path, payload)
+    assert result['complete'], result['issues']
+    assert result['sources'] == [name]
+    assert payload['image_list'] == 'nginx:1'
+    assert (tmp_path / 'images.txt').read_text().strip() == 'nginx:1'
+    assert not (tmp_path / '.cats-compose').exists()
+
+
+def test_actual_local_deployment_is_detected_without_file_order(tmp_path):
+    source = Path(__file__).resolve().parents[2] / 'templates' / 'compose.local.yaml'
+    staged = stage_uploads(tmp_path, [(source.read_bytes(), source.name)])
+    result = discover(staged['root'], [])
+    assert result['complete'], result['issues']
+    assert {'portal', 'scan-worker'} <= {service['name'] for service in result['services']}
+
+
+@pytest.mark.parametrize('base_name', ['Compose.txt', 'compose.yaml'])
+def test_multiple_content_detected_documents_require_order(tmp_path, base_name):
+    put(tmp_path, base_name, 'services: {web: {image: "nginx:1"}}')
+    put(tmp_path, 'compose.main.yaml(2)', 'services: {web: {image: "nginx:2"}}')
+    ambiguous = discover(tmp_path, [])
+    assert codes(ambiguous) == {'compose_selection'}
+    assert ambiguous['images'] == []
+    assert not ambiguous['complete']
+    ordered = discover(tmp_path, [base_name, 'compose.main.yaml(2)'])
+    assert ordered['complete'], ordered['issues']
+    assert ordered['images'] == ['nginx:2']
+    reversed_order = discover(tmp_path, ['compose.main.yaml(2)', base_name])
+    assert reversed_order['images'] == ['nginx:1']
+
+
+def test_companion_yaml_is_not_selected_as_compose(tmp_path):
+    put(tmp_path, 'Compose.txt', 'services: {web: {image: "nginx:1"}}')
+    put(tmp_path, 'settings.yaml', 'logging: {level: debug}')
+    result = discover(tmp_path, [])
+    assert result['complete'], result['issues']
+    assert result['sources'] == ['Compose.txt']
+
+
+@pytest.mark.parametrize('limits', [{'max_files': 1}, {'max_total': 45}, {'max_file': 35}])
+def test_content_detection_enforces_limits_including_binary_companions(tmp_path, limits):
+    put(tmp_path, 'Compose.txt', 'services: {web: {image: "nginx:1"}}')
+    (tmp_path / 'companion.bin').write_bytes(b'\xff' * 40)
+    result = discover(tmp_path, [], **limits)
+    assert not result['complete']
+    assert codes(result) == {'invalid_input'}
+    assert result['images'] == []
+
+
 def archive(entries):
     stream = BytesIO()
     with zipfile.ZipFile(stream, 'w') as output:
@@ -524,3 +582,255 @@ def test_windows_drive_bind_is_an_explicit_review_note(tmp_path):
     assert all(not issue['blocking'] for issue in result['issues'])
     assert result['services'][0]['status'] == 'resolved'
     assert result['services'][0]['configuration']['volumes'][0]['source'] == '[unresolved]'
+
+
+def test_missing_variables_merge_actual_references_without_values(tmp_path):
+    put(tmp_path, 'compose.yaml', '''services:
+  web:
+    image: nginx:1
+    environment:
+      FIRST: ${SHARED}
+      SECOND: ${SHARED}
+      DEFAULT: ${DEFAULTED:-stable}
+      ESCAPED: $${LITERAL}
+  worker:
+    image: redis:7
+    environment: {VALUE: '${SHARED:?private-message-sentinel}'}
+''')
+    put(tmp_path, 'override.yaml', '''services:
+  web:
+    environment: {THIRD: '${SHARED}'}
+''')
+    result = discover(tmp_path, ['compose.yaml', 'override.yaml'])
+    assert result['missing_variables'] == [{
+        'name': 'SHARED', 'required': True,
+        'sources': ['compose.yaml', 'override.yaml'], 'services': ['web', 'worker'],
+    }]
+    assert 'private-message-sentinel' not in json.dumps(result)
+    assert result['complete']
+    assert all(not issue['blocking'] for issue in result['issues'])
+
+
+@pytest.mark.parametrize(('expression', 'expected'), [
+    ('${MISSING}', [('MISSING', False)]),
+    ('$MISSING', [('MISSING', False)]),
+    ('${MISSING?private ${IGNORED}}', [('MISSING', True)]),
+    ('${MISSING:?private ${IGNORED}}', [('MISSING', True)]),
+    ('${EMPTY?message}', []),
+    ('${EMPTY:?message}', [('EMPTY', True)]),
+    ('${MISSING:-${NESTED}}', [('NESTED', False)]),
+    ('${MISSING-${NESTED:?message}}', [('NESTED', True)]),
+    ('${SET:-${IGNORED}}', []),
+    ('${EMPTY-${IGNORED}}', []),
+    ('${EMPTY:-${NESTED}}', [('NESTED', False)]),
+    ('${EMPTY+${NESTED}}', [('NESTED', False)]),
+    ('${EMPTY:+${IGNORED}}', []),
+    ('${MISSING+${IGNORED}}', []),
+    ('${SET:+${NESTED:?message}}', [('NESTED', True)]),
+    ('$${ESCAPED} $$ESCAPED ${MISSING:-$${ALSO_ESCAPED}}', []),
+])
+def test_missing_variables_follow_only_evaluated_expression_branches(tmp_path, expression, expected):
+    result = parse(tmp_path, f'''services:
+  web:
+    image: nginx:1
+    environment:
+      VALUE: '{expression}'
+''', variables={'SET': 'present', 'EMPTY': ''})
+    assert [(row['name'], row['required']) for row in result['missing_variables']] == expected
+    assert result['complete'], result['issues']
+
+
+def test_explicit_variables_win_dotenv_and_expand_dependencies(tmp_path, monkeypatch):
+    monkeypatch.setenv('TAG', 'host-value')
+    put(tmp_path, '.env', '''FIRST=${REGISTRY}/first:${TAG}
+REGISTRY=bundled.example
+TAG=${UNUSED:?private-message}
+SECOND=${REGISTRY}/second:${TAG}
+''')
+    result = parse(tmp_path, '''services:
+  web: {image: '${FIRST}'}
+  worker: {image: '${SECOND}'}
+''', variables={'REGISTRY': 'supplied.example', 'TAG': '2'})
+    assert result['images'] == ['supplied.example/first:2', 'supplied.example/second:2']
+    assert result['missing_variables'] == []
+    assert result['complete'], result['issues']
+    assert 'host-value' not in json.dumps(result)
+    assert 'private-message' not in json.dumps(result)
+
+
+def test_explicit_empty_variable_overrides_dotenv(tmp_path):
+    put(tmp_path, '.env', 'TAG=bundled\n')
+    result = parse(tmp_path, '''services:
+  empty: {image: 'repo${TAG-default}'}
+  fallback: {image: 'repo${TAG:-fallback}'}
+''', variables={'TAG': ''})
+    assert result['images'] == ['repo', 'repofallback']
+    assert result['missing_variables'] == []
+
+
+def test_explicit_values_are_literal_even_when_dotenv_references_them():
+    from app.compose_ingestion import _dotenv, _expand
+    literal = r'${SHOULD_NOT_EXPAND}$$literal\value'
+    issues, missing = [], []
+    issue = lambda *args: issues.append(args)
+    record_missing = lambda *args: missing.append(args)
+    variables = validate_variables({'VALUE': literal})
+    assert _expand('${VALUE}', variables, issue, missing=record_missing) == literal
+    assert _dotenv('VALUE=old\nOTHER=${VALUE}\n', variables, issue,
+                   overrides=variables, missing=record_missing) == {'VALUE': literal, 'OTHER': literal}
+    assert issues == missing == []
+
+
+def test_missing_variables_attribute_dotenv_and_env_file_references(tmp_path):
+    put(tmp_path, '.env', 'TAG=${RELEASE}\n')
+    put(tmp_path, 'runtime.env', 'PASSWORD=${RUNTIME_PASSWORD:?private-message}\n')
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:${TAG}
+    env_file: runtime.env
+''')
+    assert result['missing_variables'] == [
+        {'name': 'RELEASE', 'required': False, 'sources': ['.env'], 'services': []},
+        {'name': 'RUNTIME_PASSWORD', 'required': True, 'sources': ['runtime.env'], 'services': ['web']},
+    ]
+    resolved = discover(tmp_path, ['compose.yaml'], variables={'RELEASE': 'stable', 'RUNTIME_PASSWORD': 'private-value'})
+    assert resolved['images'] == ['nginx:stable']
+    assert resolved['missing_variables'] == []
+    assert resolved['complete']
+    assert 'private-value' not in json.dumps(resolved)
+
+
+def test_missing_inherited_environment_excludes_unset_env_file_keys(tmp_path):
+    put(tmp_path, 'runtime.env', 'UNSET\nRAW=${NOT_INTERPOLATED}\n')
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    env_file: {path: runtime.env, format: raw}
+    environment: [NEEDED, SUPPLIED, EMPTY]
+''', variables={'SUPPLIED': 'private-value', 'EMPTY': ''})
+    assert result['missing_variables'] == [
+        {'name': 'NEEDED', 'required': False, 'sources': ['compose.yaml'], 'services': ['web']},
+    ]
+    assert set(result['services'][0]['configuration']['environment']) == {'RAW', 'NEEDED', 'SUPPLIED', 'EMPTY'}
+    assert result['complete']
+    assert 'private-value' not in json.dumps(result)
+
+
+def test_inactive_profile_missing_values_are_omitted(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    environment: {OPTION: '${SHARED}'}
+  debug:
+    image: '${DEBUG_IMAGE}'
+    profiles: [debug]
+    environment: {REQUIRED: '${SHARED:?message}'}
+''')
+    assert result['missing_variables'] == [
+        {'name': 'SHARED', 'required': False, 'sources': ['compose.yaml'], 'services': ['web']},
+    ]
+    enabled = discover(tmp_path, ['compose.yaml'], ['debug'])
+    assert {row['name'] for row in enabled['missing_variables']} == {'SHARED', 'DEBUG_IMAGE'}
+    assert next(row for row in enabled['missing_variables'] if row['name'] == 'SHARED')['required']
+
+
+def test_missing_profile_variable_remains_actionable(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    profiles: ['${PROFILE}']
+''')
+    assert result['missing_variables'] == [
+        {'name': 'PROFILE', 'required': False, 'sources': ['compose.yaml'], 'services': ['web']},
+    ]
+    assert not result['complete']
+
+
+def test_explicit_secrets_remain_redacted_when_runtime_environment_overrides_them(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    hostname: ${API_TOKEN}
+    environment: {API_TOKEN: other-private-value, PASSWORD: '${PASSWORD}'}
+    command: ['${PASSWORD}']
+''', variables={'API_TOKEN': 'token-private-value', 'PASSWORD': 'password-private-value'})
+    serialized = json.dumps(result)
+    assert 'token-private-value' not in serialized
+    assert 'password-private-value' not in serialized
+    assert 'other-private-value' not in serialized
+    assert result['services'][0]['configuration']['hostname'] == '[unresolved]'
+    assert result['missing_variables'] == []
+    assert result['images'] == ['nginx:1']
+
+
+def test_interpolated_secret_environment_keys_are_not_retained_as_missing_names(tmp_path):
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    environment:
+      - ${TOKEN}
+      - PREFIX_${TOKEN}=other-private-value
+''', variables={'TOKEN': 'private_value_sentinel'})
+    assert result['complete']
+    assert result['missing_variables'] == []
+    assert 'private_value_sentinel' not in json.dumps(result)
+    assert 'other-private-value' not in json.dumps(result)
+    assert result['services'][0]['configuration']['environment'] == {'[redacted]': '[redacted]'}
+
+
+def test_interpolated_secret_env_file_path_is_redacted_in_metadata(tmp_path):
+    put(tmp_path, 'private-value-sentinel.env', 'PASSWORD=${REQUIRED:?private-message}\n')
+    result = parse(tmp_path, '''services:
+  web:
+    image: nginx:1
+    env_file: ${TOKEN}.env
+''', variables={'TOKEN': 'private-value-sentinel'})
+    assert result['complete']
+    assert 'private-value-sentinel' not in json.dumps(result)
+    assert result['missing_variables'] == [
+        {'name': 'REQUIRED', 'required': True, 'sources': ['[redacted]'], 'services': ['web']},
+    ]
+    assert next(issue for issue in result['issues'] if issue['code'] == 'required_variable')['source'] == '[redacted]'
+
+
+@pytest.mark.parametrize('variables', [
+    None, [], 'private-value', 1, True,
+    {'BAD-NAME': 'private-value'}, {'9BAD': 'private-value'}, {'': 'private-value'},
+    {'A' * 129: 'private-value'}, {3: 'private-value'}, {'NUL\x00NAME': 'private-value'},
+    {'UNICODE_é': 'private-value'}, {'VALUE': False}, {'VALUE': None},
+    {'VALUE': ['private-value']}, {'VALUE': {'nested': 'private-value'}},
+    {'VALUE': 'x' * 8193}, {'VALUE': 'private-value\x00'}, {'VALUE': '\ud800'},
+    {f'VALUE_{i}': 'private-value' for i in range(201)},
+    {f'VALUE_{i}': 'é' * 8192 for i in range(4)},
+])
+def test_validate_variables_rejects_invalid_inputs_without_values(variables):
+    with pytest.raises(ComposeInputError) as error:
+        validate_variables(variables)
+    assert 'private-value' not in str(error.value)
+    assert 'BAD-NAME' not in str(error.value)
+
+
+def test_validate_variables_allows_boundaries_and_returns_copy():
+    variables = {'A' * 128: 'x' * 8192, **{f'VALUE_{i}': '' for i in range(199)}}
+    assert validate_variables(variables) == variables
+    assert validate_variables(variables) is not variables
+    assert validate_variables({}) == {}
+
+
+def test_validate_variables_limits_encoded_json_bytes():
+    variables = {f'VALUE_{i}': 'x' * 8192 for i in range(7)}
+    variables['LAST'] = ''
+    overhead = len(json.dumps(variables, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+    variables['LAST'] = 'x' * (MAX_VARIABLE_BYTES - overhead)
+    assert validate_variables(variables) == variables
+    variables['LAST'] += 'x'
+    with pytest.raises(ComposeInputError, match='total size'):
+        validate_variables(variables)
+
+
+def test_discover_rejects_invalid_explicit_values_safely(tmp_path):
+    result = parse(tmp_path, 'services: {web: {image: nginx:1}}', variables={'TOKEN': ['private-value']})
+    assert not result['complete']
+    assert codes(result) == {'invalid_input'}
+    assert result['missing_variables'] == []
+    assert 'private-value' not in json.dumps(result)

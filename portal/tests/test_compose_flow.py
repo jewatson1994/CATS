@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
@@ -94,6 +95,7 @@ def compose_http(database, monkeypatch, tmp_path):
     main.app.dependency_overrides[main.optional_user] = lambda: SimpleNamespace(
         user=SimpleNamespace(id=17), has=lambda permission, service: False)
     calls = []
+    submissions = []
 
     class ScannerStandIn:
         returncode = 0
@@ -103,12 +105,14 @@ def compose_http(database, monkeypatch, tmp_path):
             auth_path = Path(kwargs["env"]["DOCKER_CONFIG"]) / "config.json"
             calls.append({"command": command, "inputs": artifacts,
                           "auth": json.loads(auth_path.read_text()) if auth_path.exists() else {}})
+            images = artifacts["images.txt"].decode().splitlines()
+            app_image = next((reference for reference in images if '/team/app:' in reference), APP_IMAGE)
             (output / "scan-summary.json").write_text(json.dumps({"status": "complete", "images": 2, "findings": 1}), encoding="utf-8")
             result = {"schema_version": "1.0", "execution_id": "scanner-placeholder",
                 "scanned_at": datetime.now(timezone.utc).isoformat(), "complete": True,
-                "sbom_images": [APP_IMAGE, "postgres:16"],
+                "sbom_images": images,
                 "service": {"id": "service", "name": "Coordination test service", "version": "v1"},
-                "findings": [{"cve": "CVE-2026-1212", "severity": "High", "image": APP_IMAGE,
+                "findings": [{"cve": "CVE-2026-1212", "severity": "High", "image": app_image,
                               "package": "openssl", "fixed_version": "9.9",
                               "evidence": {"description": "Scanner stand-in evidence"}}]}
             (output / "portal-result.json").write_text(json.dumps(result), encoding="utf-8")
@@ -138,13 +142,19 @@ def compose_http(database, monkeypatch, tmp_path):
         return ResponseAdapter(response)
     worker.request = request
 
-    def run(*, preview=False, profiles=None):
+    def run(*, preview=False, profiles=None, variables=None):
+        options = {} if variables is None else {"compose_variables": variables}
         job_id = main._start_public_scan("", owner_user_id=17,
             ingest_service_id=None if preview else "service", ingest_service_version="v1",
             compose_uploads=[compose_bundle()], compose_files=["compose.yaml", "override.yaml"],
-            compose_profiles=["data", "local"] if profiles is None else profiles, compose_preview=preview)
+            compose_profiles=["data", "local"] if profiles is None else profiles, compose_preview=preview, **options)
         claim = worker.claim()
         assert claim["job_id"] == job_id
+        with tarfile.open(main.PUBLIC_JOB_ROOT / job_id / "input.tar.gz", "r:*") as archive:
+            staged = {member.name: archive.extractfile(member).read()
+                      for member in archive.getmembers() if member.isfile()}
+        submissions.append({"claim": json.loads(json.dumps(claim)), "staged": staged,
+                            "payload": dict(main.PUBLIC_JOBS[job_id])})
         worker._execute(claim, None)
         scan_protocol.ingest_one()
         output = main.PUBLIC_JOB_ROOT / job_id / "output"
@@ -153,7 +163,8 @@ def compose_http(database, monkeypatch, tmp_path):
         return job_id, output, result, summary
 
     try:
-        yield SimpleNamespace(run=run, calls=calls, browser=browser, database=database)
+        yield SimpleNamespace(run=run, calls=calls, submissions=submissions,
+                              browser=browser, database=database)
     finally:
         main.app.dependency_overrides.clear()
         browser.close()
@@ -246,6 +257,83 @@ def test_compose_runtime_notes_allow_completed_worker_ingestion(compose_http):
     assert manifest['metadata']['service-overview.json']['compose']['issues'] == model['issues']
 
 
+@pytest.mark.parametrize('preview', [False, True])
+def test_inline_variables_travel_privately_to_worker_and_runtime_values_are_redacted(compose_http, preview):
+    variables = {'TAG': 'inline-release-319', 'RUNTIME_TOKEN': 'inline-runtime-secret-319',
+                 'UNUSED_INPUT': 'inline-unused-secret-319'}
+    job_id, output, result, summary = compose_http.run(
+        preview=preview, profiles=['data'], variables=variables)
+    submitted = compose_http.submissions[-1]
+    assert json.loads(submitted['staged']['.cats-compose-variables.json']) == variables
+    for metadata in (submitted['claim'], submitted['payload']):
+        encoded = json.dumps(metadata)
+        assert 'compose_variables' not in metadata
+        assert all(value not in encoded for value in variables.values())
+    portal_input = main.PUBLIC_JOB_ROOT / job_id / 'input'
+    assert not (portal_input / '.cats-compose-variables.json').exists()
+    model = result['service_overview']['compose']
+    services = {service['name']: service for service in model['services']}
+    expected_image = 'harbor.example.test/team/app:inline-release-319'
+    assert services['web']['image'] == services['worker']['image'] == expected_image
+    assert services['web']['configuration']['environment']['RUNTIME_TOKEN'] == '[redacted]'
+    assert not any(issue['code'] == 'required_variable' for issue in model['issues'])
+    status = compose_http.browser.get('/api/public/jobs/' + job_id)
+    assert status.status_code == 200
+    finished_payload = dict(main.PUBLIC_JOBS[job_id])
+    assert 'compose_variables' not in finished_payload
+    returned = [status.content, json.dumps(finished_payload).encode(),
+                *[path.read_bytes() for path in output.rglob('*') if path.is_file()]]
+    if preview:
+        assert compose_http.calls == []
+    else:
+        call = compose_http.calls[-1]
+        assert expected_image in call['inputs']['images.txt'].decode().splitlines()
+        assert not any('.cats-compose' in name for name in call['inputs'])
+        returned.extend(call['inputs'].values())
+        with tarfile.open(output / 'results-export.tar.gz', 'r:gz') as archive:
+            returned.extend(archive.extractfile(member).read() for member in archive.getmembers() if member.isfile())
+    for private_value in ('inline-runtime-secret-319', 'inline-unused-secret-319'):
+        assert all(private_value.encode() not in content for content in returned)
+    assert not list(scan_worker.ROOT.rglob('.cats-compose-variables.json'))
+    assert not list(scan_worker.ROOT.rglob('.cats-compose'))
+    assert_sanitized(output, result, summary)
+
+
+@pytest.mark.parametrize('variables', [
+    [], {'TOKEN': 5}, {'BAD-NAME': 'invalid-inline-secret'},
+    {'TOKEN': 'invalid-inline-secret' + 'x' * 8192},
+])
+def test_scan_start_validates_inline_variables_before_creating_jobs(compose_http, variables):
+    before = list(main.PUBLIC_JOBS)
+    with pytest.raises(HTTPException) as caught:
+        main._start_public_scan('', owner_user_id=17, compose_uploads=[compose_bundle()],
+                                compose_variables=variables)
+    assert caught.value.status_code == 422
+    assert 'invalid-inline-secret' not in str(caught.value.detail)
+    assert list(main.PUBLIC_JOBS) == before
+    assert list(main.PUBLIC_JOB_ROOT.iterdir()) == []
+
+
+@pytest.mark.parametrize('failure', ['invalid_variables', 'discovery'])
+def test_worker_removes_private_variable_file_and_source_on_preparation_failure(tmp_path, monkeypatch, failure):
+    from app import compose_scan
+    root = tmp_path / '.cats-compose'
+    root.mkdir()
+    (root / 'compose.yaml').write_text('services: {}', encoding='utf-8')
+    private = tmp_path / '.cats-compose-variables.json'
+    private.write_text('{invalid-json' if failure == 'invalid_variables' else '{"TOKEN":"private-value"}',
+                       encoding='utf-8')
+    if failure == 'discovery':
+        def fail(*args, **kwargs):
+            assert kwargs['variables'] == {'TOKEN': 'private-value'}
+            raise RuntimeError('forced discovery failure')
+        monkeypatch.setattr(compose_scan, 'discover', fail)
+    with pytest.raises((ValueError, RuntimeError)):
+        compose_scan.prepare_compose(tmp_path, {'compose_enabled': True, 'compose_files': ['compose.yaml']})
+    assert not root.exists()
+    assert not private.exists()
+
+
 def test_compose_preview_returns_discovery_without_scanning_or_ingesting(compose_http):
     job_id, output, result, summary = compose_http.run(preview=True)
     assert compose_http.calls == []
@@ -284,6 +372,7 @@ def test_compose_form_preserves_upload_order_and_preview_scope(monkeypatch, prev
             response = browser.post("/scan", data={
                 "compose_files": "base.yaml\noverride.yaml",
                 "compose_profiles": "data,local\nmetrics",
+                "compose_variables": json.dumps({"TAG": "entered-tag", "TOKEN": "entered-runtime-secret"}),
                 "compose_preview": "true" if preview else "false",
                 "ingest_service_id": "must-not-ingest-preview" if preview else "",
                 "ingest_service_version": "v1" if preview else "",
@@ -299,6 +388,7 @@ def test_compose_form_preserves_upload_order_and_preview_scope(monkeypatch, prev
         assert kwargs["owner_user_id"] == 17
         assert kwargs["compose_files"] == ["base.yaml", "override.yaml"]
         assert kwargs["compose_profiles"] == ["data", "local", "metrics"]
+        assert kwargs["compose_variables"] == {"TAG": "entered-tag", "TOKEN": "entered-runtime-secret"}
         assert kwargs["compose_preview"] is preview
         assert kwargs["ingest_service_version"] == ""
         assert uploads == [(b"services: {}", "base.yaml"), (b"services: {}", "override.yaml"), (b"TAG=2", ".env")]

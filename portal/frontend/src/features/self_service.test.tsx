@@ -19,9 +19,16 @@ describe('self service workspace', () => {
     render(<Page data={data} />);
     const uploads = screen.getByLabelText(/Docker Compose files and companions/) as HTMLInputElement;
     const files = [new File(['services: {}'], 'compose.yaml', {type: 'application/yaml'}), new File(['TAG=1'], '.env'), new File(['bundle'], 'project.zip')];
+    mocks.request.mockImplementation(async (url: string) => url === '/api/public/compose/files'
+      ? {files: ['compose.yaml', 'compose.prod.yaml'], default_files: [], missing_variables: []}
+      : {page: 'self_service', data});
     fireEvent.change(uploads, {target: {files}});
+    await screen.findByText('Detected Compose documents (2)');
     fireEvent.change(screen.getByLabelText(/Compose file order/), {target: {value: 'compose.yaml\ncompose.prod.yaml'}});
     fireEvent.change(screen.getByLabelText(/Compose profiles/), {target: {value: 'production,monitoring'}});
+    await waitFor(() => expect(screen.queryByText('Inspecting Compose documents and variables…')).not.toBeInTheDocument());
+    expect((mocks.request.mock.calls[1][1].body as FormData).get('compose_profiles')).toBe('production,monitoring');
+    mocks.request.mockClear(); formData.mockClear();
     const button = screen.getByRole('button', {name: 'Preview Compose'});
     fireEvent.click(button);
     await waitFor(() => expect(button).toBeEnabled());
@@ -38,6 +45,46 @@ describe('self service workspace', () => {
     fireEvent.click(screen.getByRole('button', {name: 'Start scan'}));
     await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
     expect((mocks.request.mock.calls[1][1].body as FormData).get('compose_preview')).toBe('false');
+  });
+  it('requires an archive selection and forwards the dropdown order to preview', async () => {
+    mocks.request.mockImplementation(async (url: string) => url === '/api/public/compose/files'
+      ? {files: ['app/base.txt', 'app/override.txt'], default_files: [], missing_variables: []}
+      : {page: 'self_service', data});
+    render(<Page data={data} />);
+    fireEvent.change(screen.getByLabelText(/Docker Compose files and companions/), {target: {files: [new File(['bundle'], 'project.zip')]}});
+    await screen.findByText('Detected Compose documents (2)');
+    const preview = screen.getByRole('button', {name: 'Preview Compose'});
+    fireEvent.click(preview);
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('Choose at least one Compose document');
+    fireEvent.change(screen.getByLabelText('app/base.txt'), {target: {value: '1'}});
+    fireEvent.change(screen.getByLabelText('app/override.txt'), {target: {value: '2'}});
+    fireEvent.click(preview);
+    expect(mocks.request).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('Wait for Compose file inspection to finish.');
+    await waitFor(() => expect(screen.queryByText('Inspecting Compose documents and variables…')).not.toBeInTheDocument());
+    fireEvent.click(preview);
+    await waitFor(() => expect(preview).toBeEnabled());
+    expect(mocks.request).toHaveBeenCalledTimes(3);
+    const body = mocks.request.mock.calls[2][1].body as FormData;
+    expect(body.get('compose_files')).toBe('app/base.txt\napp/override.txt');
+    expect(body.get('compose_preview')).toBe('true');
+  });
+  it('submits typed variables directly and permits unresolved runtime values', async () => {
+    mocks.request.mockResolvedValueOnce({files: ['compose.yaml'], default_files: ['compose.yaml'], missing_variables: [
+      {name: 'IMAGE_TAG', required: true, sources: ['compose.yaml'], services: ['web']},
+      {name: 'RUNTIME_TOKEN', required: true, sources: ['compose.yaml'], services: ['web']},
+    ]});
+    render(<Page data={data} />);
+    fireEvent.change(screen.getByLabelText(/Docker Compose files and companions/), {target: {files: [new File(['services: {}'], 'compose.yaml')]}});
+    fireEvent.change(await screen.findByLabelText('IMAGE_TAG'), {target: {value: 'release-2'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Start scan'}));
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(2));
+    expect(mocks.request.mock.calls[1][0]).toBe('/scan');
+    const body = mocks.request.mock.calls[1][1].body as FormData;
+    expect(body.get('compose_variables')).toBe('{"IMAGE_TAG":"release-2"}');
+    expect(body.get('compose_preview')).toBe('false');
+    expect(screen.getByLabelText('IMAGE_TAG')).toHaveValue('release-2');
   });
   it.each(['complete', 'incomplete'])('shows %s preview inventory without ingesting or presenting scan exports', async status => {
     mocks.job = {status, phase: 'compose_discovery', compose_preview: true, summary: {compose: {
@@ -157,6 +204,45 @@ describe('self service workspace', () => {
     await waitFor(() => expect(mocks.request).toHaveBeenCalled());
     expect((mocks.request.mock.calls[0][1].body as FormData).get('ingest_scope')).toBe('service');
     expect(screen.getByText(/only when these inputs cover the whole service/)).toBeInTheDocument();
+  });
+  it('attaches a completed temporary scan using the newly selected service, version, and scope without rescanning', async () => {
+    mocks.job = {status: 'complete', phase: 'done'};
+    render(<Page data={{...data, job_id: 'attach-after-completion', ingest_service_id: '', ingest_service_version: ''}} />);
+    const attach = screen.getByRole('button', {name: 'Ingest completed scan'});
+    expect(attach).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Ingest completed scan into/), {target: {value: 'b'}});
+    expect(attach).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/Service Version/), {target: {value: '2.1'}});
+    fireEvent.change(screen.getByLabelText('Assessment scope'), {target: {value: 'service'}});
+    expect(mocks.request.mock.calls.some(([url]) => url.includes('/ingest?'))).toBe(false);
+    fireEvent.click(attach);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Ingested into selected service.'));
+    const mutations = mocks.request.mock.calls.filter(([, options]) => options?.method === 'POST');
+    expect(mutations).toHaveLength(1);
+    const url = new URL(mutations[0][0], 'https://portal.test');
+    expect(url.pathname).toBe('/api/public/jobs/attach-after-completion/ingest');
+    expect(Object.fromEntries(url.searchParams)).toEqual({service_id: 'b', service_version: '2.1', scan_scope: 'service'});
+    expect(screen.getByRole('link', {name: /Open service B/})).toHaveAttribute('href', '/services/b');
+    expect(screen.queryByRole('button', {name: 'Ingest completed scan'})).not.toBeInTheDocument();
+  });
+  it('shows a post-scan ingestion failure and retries the same destination even if the next-scan form changes', async () => {
+    mocks.job = {status: 'incomplete', phase: 'done'};
+    mocks.request.mockImplementation((url: string) => url === '/scan'
+      ? Promise.resolve({page: 'self_service', data})
+      : mocks.request.mock.calls.filter(([path]) => path.includes('/ingest?')).length === 1
+        ? Promise.reject(new Error('Service unavailable')) : Promise.resolve({accepted: true}));
+    render(<Page data={{...data, job_id: 'manual-ingest-retry', ingest_service_id: ''}} />);
+    fireEvent.change(screen.getByLabelText(/Ingest completed scan into/), {target: {value: 'b'}});
+    fireEvent.change(screen.getByLabelText(/Service Version/), {target: {value: '2'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Ingest completed scan'}));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Service unavailable');
+    fireEvent.change(screen.getByLabelText(/Ingest completed scan into/), {target: {value: 'a'}});
+    fireEvent.click(screen.getByRole('button', {name: 'Retry ingestion'}));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Ingested into selected service.'));
+    const requests = mocks.request.mock.calls.filter(([path]) => path.includes('/ingest?'));
+    expect(requests).toHaveLength(2);
+    expect(requests[0][0]).toBe(requests[1][0]);
+    expect(screen.getByRole('link', {name: 'Open service B'})).toBeInTheDocument();
   });
 
 });

@@ -10,20 +10,37 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .compose_ingestion import discover
+from .compose_ingestion import ComposeInputError, MAX_VARIABLE_BYTES, discover, validate_variables
+
+
+COMPOSE_VARIABLES_FILE = ".cats-compose-variables.json"
 
 
 def prepare_compose(inputs: Path, payload: dict) -> dict | None:
     if not payload.get("compose_enabled"):
         return None
     root = inputs / ".cats-compose"
+    variables_file = inputs / COMPOSE_VARIABLES_FILE
     try:
-        model = discover(root, payload.get("compose_files") or [], payload.get("compose_profiles") or [])
+        variables = {}
+        if variables_file.exists():
+            try:
+                with variables_file.open("rb") as source:
+                    raw = source.read(MAX_VARIABLE_BYTES + 1)
+                if len(raw) > MAX_VARIABLE_BYTES:
+                    raise ComposeInputError("Compose variable values exceed the allowed input size.")
+                variables = validate_variables(json.loads(raw))
+            except (ValueError, UnicodeError, RecursionError):
+                raise ComposeInputError("Invalid Compose variable values in scan inputs.") from None
+        model = discover(root, payload.get("compose_files") or [], payload.get("compose_profiles") or [], variables=variables)
     finally:
         # The scanner copies inputs to its reports. Private source bytes must
         # never cross this boundary, even when discovery fails or is partial.
-        if root.exists():
-            shutil.rmtree(root)
+        try:
+            if root.exists():
+                shutil.rmtree(root)
+        finally:
+            variables_file.unlink(missing_ok=True)
     references = list(dict.fromkeys([*str(payload.get("image_list") or "").splitlines(), *model["images"]]))
     if len(references) > int(os.getenv("CATS_PUBLIC_MAX_IMAGES", "50")):
         raise ValueError("Compose resolves too many images; split the deployment or increase CATS_PUBLIC_MAX_IMAGES")

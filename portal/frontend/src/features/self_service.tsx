@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PAGE_MEDIA_TYPE, requestJson, type PageData, type PageEnvelope } from '../api';
 import { useJob, type JobState } from '../hooks/useJob';
 import { ComposeInventory, type ComposeModel } from './compose_inventory';
+import { ComposeFiles } from './compose_files';
 
 interface ScanJob extends JobState {
   status: string; started_at?: string | null; finished_at?: string | null; phase?: string;
@@ -42,10 +43,13 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const [submitting, setSubmitting] = useState(false);
   const [submittingPreview, setSubmittingPreview] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [composeInputError, setComposeInputError] = useState('');
+  const [composeProfiles, setComposeProfiles] = useState(data.compose_profiles || '');
   const submission = useRef<AbortController | null>(null);
   useEffect(() => () => submission.current?.abort(), []);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!sbom && composeInputError) { setSubmitError(composeInputError); return; }
     submission.current?.abort();
     const controller = new AbortController();
     submission.current = controller;
@@ -71,6 +75,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const [ingestState, setIngestState] = useState<'idle' | 'pending' | 'complete' | 'error'>('idle');
   const [ingestError, setIngestError] = useState('');
   const [ingestRetry, setIngestRetry] = useState(0);
+  const [manualIngest, setManualIngest] = useState<{scope: string; service: string; version: string; assessmentScope: string} | null>(null);
   useEffect(() => { setIngestState('idle'); setIngestError(''); setCancelError(''); }, [scope]);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -83,7 +88,23 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const phase = job?.phase || 'queued';
   const terminal = ['complete', 'incomplete', 'error', 'cancelled'].includes(status);
   const resultsReady = ['complete', 'incomplete'].includes(status);
-  const ingestTarget = data.ingest_service_id;
+  const selectedIngest = manualIngest?.scope === scope ? manualIngest : null;
+  const ingestTarget = selectedIngest?.service || data.ingest_service_id;
+  const ingestVersion = selectedIngest?.version || data.ingest_service_version;
+  const ingestKey = selectedIngest ? JSON.stringify([scope, selectedIngest.service, selectedIngest.version, selectedIngest.assessmentScope]) : scope;
+  const ingestQuery = new URLSearchParams({service_id: ingestTarget || ''});
+  if (selectedIngest) {
+    ingestQuery.set('service_version', selectedIngest.version);
+    ingestQuery.set('scan_scope', selectedIngest.assessmentScope);
+  }
+  const ingestUrl = `${base}/ingest?${ingestQuery}`;
+  function ingestCompleted() {
+    if (!service || !version.trim() || ingestState === 'pending') return;
+    const selection = {scope, service, version: version.trim(), assessmentScope: ingestScope};
+    ingestRequests.delete(JSON.stringify([scope, selection.service, selection.version, selection.assessmentScope]));
+    setManualIngest(selection);
+    setIngestRetry(value => value + 1);
+  }
   useEffect(() => {
     if (sbom || !base || !terminal || submitting) return;
     const controller = new AbortController();
@@ -102,16 +123,16 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
     if (sbom || preview || !base || !resultsReady || !ingestTarget) return;
     let active = true;
     setIngestState('pending'); setIngestError('');
-    let request = ingestRequests.get(scope);
+    let request = ingestRequests.get(ingestKey);
     if (!request) {
-      request = requestJson(`${base}/ingest?service_id=${encodeURIComponent(ingestTarget)}`, { method: 'POST' });
-      ingestRequests.set(scope, request);
+      request = requestJson(ingestUrl, { method: 'POST' });
+      ingestRequests.set(ingestKey, request);
     }
     request.then(() => { if (active) setIngestState('complete'); }, reason => {
       if (active) { setIngestState('error'); setIngestError(errorMessage(reason)); }
     });
     return () => { active = false; };
-  }, [sbom, preview, base, resultsReady, ingestTarget, scope, ingestRetry]);
+  }, [sbom, preview, base, resultsReady, ingestTarget, ingestKey, ingestUrl, ingestRetry]);
   async function cancel() {
     if (!base) return;
     setCancelling(true); setCancelError('');
@@ -133,7 +154,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
     <div className="workspace-split">
     <section className="self-service-panel panel">
       <h2>{sbom ? 'SBOM generator' : 'Public scan inputs'}</h2>
-      <p className="muted">{sbom ? 'Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.' : 'Provide public images, Helm charts, or Docker Compose files. Results are temporary and are not attached to a portal service.'}</p>
+      <p className="muted">{sbom ? 'Provide public images or upload a Docker image archive. Generated documents are temporary and are not attached to a portal service.' : 'Provide public images, Helm charts, or Docker Compose files. Select a service before scanning for automatic ingestion, or ingest the completed scan afterward.'}</p>
       <form className="self-service-form" method="post" action={`/${data.mode}`} encType="multipart/form-data" onSubmit={submit}>
         {data.csrf_token && <input type="hidden" name="csrf_token" value={data.csrf_token} />}
         <h3 className="form-group-title">Container images</h3><label htmlFor="image-list">Images</label><textarea id="image-list" name="image_list" rows={10} defaultValue={data.image_list || ''} placeholder={'docker.io/library/nginx:1.27\nghcr.io/example/app:latest'} />
@@ -144,11 +165,8 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           <label htmlFor="chart-archive">Helm chart archives <span className="muted">(select one or more .tgz, .tar.gz, .tar, or .zip files)</span></label><input id="chart-archive" name="chart_archives" type="file" accept=".tgz,.tar.gz,.tar,.zip" multiple />
           {!!data.archive_names?.length && <p className="muted upload-summary">Submitted archives: {data.archive_names.join(', ')}. Select files again only if starting a new scan.</p>}
           <h3 className="form-group-title">Docker Compose</h3>
-          <label htmlFor="compose-uploads">Docker Compose files and companions <span className="muted">(optional; select YAML/YML, .env files, or .zip/.tar/.tar.gz/.tgz bundles)</span></label><input id="compose-uploads" name="compose_uploads" type="file" multiple aria-describedby="compose-help" />
-          <small id="compose-help" className="muted">Preview discovers services and images without scanning. CATS never builds images or starts containers. Services declaring both image and build scan the declared image. Use a bundle to preserve folders and companion files.</small>
-          <label htmlFor="compose-files">Compose file order <span className="muted">(optional; relative paths, one per line, base first then overrides)</span></label><textarea id="compose-files" name="compose_files" rows={3} defaultValue={data.compose_files || ''} placeholder={'compose.yaml\ncompose.production.yaml'} aria-describedby="compose-order-help" />
-          <small id="compose-order-help" className="muted">Leave blank to select a single standard compose.yaml, compose.yml, docker-compose.yaml, or docker-compose.yml file. If more than one is present, specify the order explicitly.</small>
-          <label htmlFor="compose-profiles">Compose profiles <span className="muted">(optional; comma or newline separated)</span></label><textarea id="compose-profiles" name="compose_profiles" rows={2} defaultValue={data.compose_profiles || ''} placeholder="production, monitoring" />
+          <ComposeFiles initialOrder={data.compose_files} profiles={composeProfiles} onStateChange={setComposeInputError} />
+          <label htmlFor="compose-profiles">Compose profiles <span className="muted">(optional; comma or newline separated)</span></label><textarea id="compose-profiles" name="compose_profiles" rows={2} value={composeProfiles} onChange={event => setComposeProfiles(event.target.value)} placeholder="production, monitoring" />
           <h3 className="form-group-title">Service definition</h3>
           <label htmlFor="service-definition">Service definition <span className="muted">(optional)</span></label><input id="service-definition" name="service_definition" type="file" accept=".yaml,.yml" aria-describedby="service-definition-help" /><small id="service-definition-help" className="muted">Upload a service-definition YAML/YML file. CATS will discover and assess every declared component.</small>
           {data.authenticated_ingest && <>
@@ -172,6 +190,11 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           return <div key={step} className={`scan-pipeline-step${complete ? ' is-complete' : ''}${active ? ' is-active' : ''}${failed ? ' is-error' : ''}`}><span className="scan-pipeline-dot" /><strong>{label}</strong><small>{complete ? 'Complete' : active ? 'Running' : failed ? labels[status] : 'Waiting'}</small></div>;
         })}</div>
         <p className="muted self-service-status" role="status">{statusText}{elapsedSeconds != null && <span> · {Math.floor(elapsedSeconds / 60)}m {Math.floor(elapsedSeconds % 60)}s</span>}{ingestState === 'pending' && ' Ingesting into selected service…'}{ingestState === 'complete' && ' Ingested into selected service.'}</p>
+        {!sbom && !preview && resultsReady && !data.ingest_service_id && data.authenticated_ingest && ingestState !== 'complete' && <div className="scan-result-actions">
+          <p>Select a service and version above, then ingest these completed results. This does not start another scan.</p>
+          <button type="button" onClick={ingestCompleted} disabled={!service || !version.trim() || submitting || ingestState === 'pending'}>Ingest completed scan</button>
+        </div>}
+        {ingestState === 'complete' && ingestTarget && <p><a href={`/services/${encodeURIComponent(ingestTarget)}`}>Open service {data.authenticated_services?.find(item => item.service_key === ingestTarget)?.name || ingestTarget}</a>{ingestVersion && ` · Version ${ingestVersion}`}</p>}
         {summary.compose && <ComposeInventory model={summary.compose} preview={preview} />}
         {job?.intelligence && !preview && <details open={job.intelligence.status !== 'current'}>
           <summary>Scan intelligence · {job.intelligence.status === 'current' ? 'Current' : 'Review database freshness'}</summary>
@@ -179,7 +202,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           <ul>{Object.entries(job.intelligence.databases).map(([scanner, database]) => <li key={scanner}>{scanner === 'grype' ? 'Grype' : 'Trivy'}: {database.status || 'unavailable'}{database.version && ` · version ${database.version}`}{database.built && ` · built ${database.built}`}</li>)}</ul>
         </details>}
         {error && <p role="alert">Unable to read scan status. {errorMessage(error)} <button type="button" onClick={retry}>Retry status</button></p>}
-        {ingestState === 'error' && <p role="alert">Ingest failed. {ingestError} <button type="button" onClick={() => { ingestRequests.delete(scope); setIngestRetry(value => value + 1); }}>Retry ingestion</button></p>}
+        {ingestState === 'error' && <p role="alert">Ingest failed. {ingestError} <button type="button" onClick={() => { ingestRequests.delete(ingestKey); setIngestRetry(value => value + 1); }}>Retry ingestion</button></p>}
         {!sbom && !!job?.skipped_charts?.length && <details><summary>Charts not acquired</summary><ul>{job.skipped_charts.map((entry, index) => <li key={index}>{entry}</li>)}</ul></details>}
         {terminal && status !== 'cancelled' && <div className="scan-result-actions">{!sbom && !preview && <>{download('overview.html', 'Open HTML overview', resultsReady)}{download('results/view', 'Detailed results', resultsReady)}{download('export.xlsx', 'Download Excel', resultsReady)}</>}{download(sbom ? 'sboms' : 'artifacts', sbom ? 'Download SBOMs' : 'Download artifacts')}{download('logs', 'View debug log')}</div>}
         {['preparing', 'queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : preview ? 'Cancel preview' : 'Cancel scan'}</button></div>}

@@ -2,7 +2,8 @@
 
 Supports YAML anchors, ordered file overrides, !reset/!override, common Compose
 unique-resource merges, profiles, supplied .env/env_file and shell-style variable
-operators. Only bundle files supply variables (never the process environment).
+operators. Only bundle files and explicit values supply variables (never the
+process environment).
 Relative paths resolve against the first selected Compose file. Includes, extends,
 remote inputs, multiline dotenv, label files, lifecycle hooks, model/provider
 services and platform-specific scans require prior explicit
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import io
 import errno
+import json
 import math
 import re
 import stat
@@ -31,12 +33,36 @@ MAX_FILE = 4 * 1024 * 1024
 MAX_TOTAL = 32 * 1024 * 1024
 MAX_FILES = 500
 MAX_NODES = 30000
+MAX_VARIABLE_BYTES = 65536
 REDACTED = "[redacted]"
 UNKNOWN = "[unresolved]"
 
 
 class ComposeInputError(ValueError):
     """Safe fixed-text error suitable for display; never contains input values."""
+
+
+def validate_variables(value: Any) -> dict[str, str]:
+    """Validate explicit, literal interpolation values without disclosing them."""
+    if not isinstance(value, dict):
+        raise ComposeInputError("Compose variables must be an object of string values.")
+    if len(value) > 200:
+        raise ComposeInputError("Compose variables exceed the entry limit.")
+    for name, content in value.items():
+        if (not isinstance(name, str) or len(name) > 128
+                or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)):
+            raise ComposeInputError("Compose variable names must be valid identifiers of at most 128 characters.")
+        if not isinstance(content, str):
+            raise ComposeInputError("Compose variable values must be strings.")
+        if len(content) > 8192 or "\x00" in content:
+            raise ComposeInputError("Compose variable values exceed the length limit or contain unsupported characters.")
+    try:
+        size = len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    except (UnicodeError, TypeError, ValueError):
+        raise ComposeInputError("Compose variables must contain valid UTF-8 text.") from None
+    if size > MAX_VARIABLE_BYTES:
+        raise ComposeInputError("Compose variables exceed the total size limit.")
+    return dict(value)
 
 
 def _relative(name: str) -> str:
@@ -154,7 +180,7 @@ def stage_uploads(root: Path, uploads: list[tuple[Any, str]], *,
                 filename = _relative(filename)
                 source = io.BytesIO(stream) if isinstance(stream, bytes) else stream
                 suffix = filename.lower()
-                if suffix.endswith((".zip", ".tar", ".tgz", ".tar.gz")):
+                if suffix.endswith((".zip", ".tar", ".tgz", ".tar.gz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz")):
                     # ZIP needs a seekable central directory; spool also supports
                     # non-seekable uploaded streams without retaining their data.
                     with tempfile.TemporaryFile(dir=staging) as spool:
@@ -329,7 +355,7 @@ def _yaml(text: str):
         raise ComposeInputError("Invalid or unsupported Compose YAML; verify syntax and supported tags.") from None
 
 
-def _expand(text: str, env: dict, issue, depth=0) -> str:
+def _expand(text: str, env: dict, issue, depth=0, *, missing=None) -> str:
     if depth > 20:
         issue("interpolation", "Variable expansion exceeds safe limits.")
         return UNKNOWN
@@ -363,31 +389,36 @@ def _expand(text: str, env: dict, issue, depth=0) -> str:
                 result.append("$"); i += 1; continue
             name, operator, argument = match[1], None, None
             i += len(match[0])
-        present = name in env and (not operator or not operator.startswith(":") or env[name] != "")
+        supplied = name in env and env[name] is not None
+        present = supplied and (not operator or not operator.startswith(":") or env[name] != "")
         if operator and operator.endswith("-"):
-            value = env[name] if present else _expand(argument, env, issue, depth + 1)
+            value = env[name] if present else _expand(argument, env, issue, depth + 1, missing=missing)
         elif operator and operator.endswith("+"):
-            value = _expand(argument, env, issue, depth + 1) if present else ""
+            value = _expand(argument, env, issue, depth + 1, missing=missing) if present else ""
         elif operator and operator.endswith("?"):
             value = env[name] if present else UNKNOWN
             if not present:
+                if missing is not None:
+                    missing(name, True)
                 issue("required_variable", f"Deployment requires variable {name}, but it was not supplied. Runtime values may remain unresolved for image scanning.")
         else:
-            value = env.get(name, UNKNOWN)
-            if name not in env:
+            value = env[name] if supplied else UNKNOWN
+            if not supplied:
+                if missing is not None:
+                    missing(name, False)
                 issue("unresolved_variable", f"Variable {name} is unresolved in the uploaded inputs. Runtime values may remain unresolved for image scanning.")
         result.append(str(value))
     return "".join(result)
 
 
-def _interpolate(value, env, issue):
+def _interpolate(value, env, issue, *, missing=None):
     if isinstance(value, _Tag):
-        return _Tag(value.kind, _interpolate(value.value, env, issue))
+        return _Tag(value.kind, _interpolate(value.value, env, issue, missing=missing))
     if isinstance(value, dict):
-        return {key: _interpolate(child, env, issue) for key, child in value.items()}
+        return {key: _interpolate(child, env, issue, missing=missing) for key, child in value.items()}
     if isinstance(value, list):
-        return [_interpolate(child, env, issue) for child in value]
-    return _expand(value, env, issue) if isinstance(value, str) else value
+        return [_interpolate(child, env, issue, missing=missing) for child in value]
+    return _expand(value, env, issue, missing=missing) if isinstance(value, str) else value
 
 
 def _quoted_dotenv(value, issue):
@@ -432,7 +463,8 @@ def _quoted_dotenv(value, issue):
     return None
 
 
-def _dotenv(text, env, issue, raw=False):
+def _dotenv(text, env, issue, raw=False, *, overrides=None, missing=None):
+    overrides = overrides or {}
     result = {}
     for line in text.splitlines():
         line = line.strip()
@@ -442,6 +474,8 @@ def _dotenv(text, env, issue, raw=False):
         if not match:
             issue("unsupported_dotenv", "Invalid or multiline dotenv input; supply one assignment per line."); continue
         key, value = match.groups()
+        if key in overrides:
+            result[key] = overrides[key]; continue
         if value is None:
             result[key] = None; continue
         if raw:
@@ -453,7 +487,7 @@ def _dotenv(text, env, issue, raw=False):
                 continue
         else:
             value = re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
-        result[key] = value if quote == "'" else _expand(value, {**env, **result}, issue)
+        result[key] = value if quote == "'" else _expand(value, {**env, **result, **overrides}, issue, missing=missing)
     return result
 
 
@@ -543,7 +577,8 @@ _PRIVATE = {"environment", "labels", "annotations", "command", "entrypoint", "te
 def _hide_sensitive(value, secrets, issue, private=False, key=""):
     private = private or key in _PRIVATE
     if isinstance(value, dict):
-        return {name: _hide_sensitive(child, secrets, issue, private, name) for name, child in value.items()}
+        return {REDACTED if private and any(secret in name for secret in secrets) else name:
+                _hide_sensitive(child, secrets, issue, private, name) for name, child in value.items()}
     if isinstance(value, list):
         return [_hide_sensitive(child, secrets, issue, private, key) for child in value]
     if not private and isinstance(value, str) and any(secret in value for secret in secrets):
@@ -566,10 +601,57 @@ def _sanitize(value, key=""):
     return _safe_text(value) if isinstance(value, str) else value
 
 
+PRIMARY_NAMES = {"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml"}
+OVERRIDE_NAMES = {"compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml"}
+
+
+def compose_candidates(bundle_root: Path, *, max_file=MAX_FILE, max_files=MAX_FILES,
+                       max_total=MAX_TOTAL, include_named=False) -> list[str]:
+    """List Compose documents by content without merging or resolving variables."""
+    root = Path(bundle_root).resolve()
+    candidates = []
+    inspected_bytes = inspected_files = 0
+    for path in sorted(root.rglob("*"), key=lambda item: item.as_posix()):
+        if not path.is_file():
+            continue
+        name = path.relative_to(root).as_posix()
+        size = _inside(root, name).stat().st_size
+        inspected_files += 1
+        inspected_bytes += size
+        if max_file and size > max_file:
+            raise ComposeInputError("Bundle input exceeds the per-file size limit.")
+        if (max_files and inspected_files > max_files) or (max_total and inspected_bytes > max_total):
+            raise ComposeInputError("Compose inputs exceed aggregate read limits.")
+        try:
+            document = _yaml(_read(root, name, max_file))
+        except ComposeInputError:
+            document = None
+        if (isinstance(document, dict) and any(key in document for key in
+                                               ("services", "include", "networks", "volumes", "configs", "secrets"))
+                or include_named and path.name in PRIMARY_NAMES | OVERRIDE_NAMES):
+            candidates.append(name)
+    return candidates
+
+
+def default_compose_order(candidates: list[str]) -> list[str]:
+    """Select only a single document or the conventional base/override pair."""
+    if len(candidates) <= 1:
+        return list(candidates)
+    primaries = [name for name in candidates if PurePosixPath(name).name in PRIMARY_NAMES]
+    if len(candidates) == 2 and len(primaries) == 1:
+        primary = primaries[0]
+        override = next(name for name in candidates if name != primary)
+        if (PurePosixPath(override).name in OVERRIDE_NAMES
+                and PurePosixPath(override).parent == PurePosixPath(primary).parent):
+            return [primary, override]
+    return []
+
+
 def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = None, *,
+             variables: dict[str, str] | None = None,
              max_file: int | None = MAX_FILE, max_files: int | None = MAX_FILES,
              max_total: int | None = MAX_TOTAL, max_selected_files: int | None = 50) -> dict:
-    """Normalize selected files in explicit order; [] discovers the default pair.
+    """Normalize selected files in explicit order; [] detects Compose content.
 
     Issues never contain source values. ``complete`` means image discovery has
     no blockers, not that deployment inputs were resolved or proven safe.
@@ -579,6 +661,20 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
     issues, findings, services, images, sources = [], [], [], [], []
     current_source, current_service = None, None
     read_sizes = {}
+    missing_references, excluded_services = {}, set()
+    supplied_sensitive_values = set()
+
+    def metadata_source():
+        if current_source and any(secret in current_source for secret in supplied_sensitive_values):
+            return REDACTED
+        return current_source
+
+    def missing(name, required=False):
+        # Track references while evaluating expressions, rather than scanning
+        # text: unselected default/alternative branches and $$ stay literal.
+        references = missing_references.setdefault(name, {})
+        reference = (metadata_source(), current_service)
+        references[reference] = references.get(reference, False) or required
 
     def read_input(name):
         text = _read(root, name, max_file)
@@ -601,26 +697,34 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                 "missing_networks", "missing_volumes", "external_networks", "external_volumes",
                 "missing_build_input", "unsupported_build_context", "missing_dependency",
             }
-        record = {"code": code, "message": message, "service": current_service, "source": current_source, "blocking": blocking}
+        record = {"code": code, "message": message, "service": current_service, "source": metadata_source(), "blocking": blocking}
         if record not in issues:
             issues.append(record)
 
     def finish():
-        return {"services": services, "images": images, "issues": issues, "findings": findings, "complete": not any(i["blocking"] for i in issues), "sources": sources}
+        missing_variables = []
+        for name, references in sorted(missing_references.items()):
+            active = [(source, service, required) for (source, service), required in references.items()
+                      if service not in excluded_services]
+            if active:
+                missing_variables.append({"name": name, "required": any(required for _, _, required in active),
+                                          "sources": sorted({source for source, _, _ in active if source is not None}),
+                                          "services": sorted({service for _, service, _ in active if service is not None})})
+        return {"services": services, "images": images, "issues": issues, "findings": findings, "complete": not any(i["blocking"] for i in issues), "sources": sources, "missing_variables": missing_variables}
 
     try:
+        explicit_variables = validate_variables({} if variables is None else variables)
         files = [_relative(name) for name in files]
         if not files:
-            candidates = [p for p in root.rglob("*") if p.is_file() and p.name in ("compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml")]
-            if len(candidates) != 1:
-                issue("compose_selection", "Select the Compose files explicitly in override order; no unique primary file was found.")
+            candidates = compose_candidates(root, max_file=max_file, max_files=max_files,
+                                            max_total=max_total, include_named=True)
+            if not candidates:
+                issue("compose_selection", "No Compose document was detected. Supply a file containing a services mapping, or enter its path in Compose file order.")
                 return finish()
-            primary = candidates[0]
-            files = [primary.relative_to(root).as_posix()]
-            overrides = [primary.with_name(name) for name in ("compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml") if primary.with_name(name).is_file()]
-            if len(overrides) > 1:
-                issue("compose_selection", "Multiple default overrides exist; select files explicitly in order."); return finish()
-            files += [p.relative_to(root).as_posix() for p in overrides]
+            files = default_compose_order(candidates)
+            if not files:
+                issue("compose_selection", "Multiple Compose documents were found. Select their merge order, base first and overrides after it.")
+                return finish()
         if max_selected_files and len(files) > max_selected_files:
             issue("compose_selection", f"Select at most {max_selected_files} distinct Compose files in order."); return finish()
         if len(set(files)) != len(files):
@@ -628,14 +732,17 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
         base = PurePosixPath(files[0]).parent
         def local(name):
             return _relative((base / str(name)).as_posix())
-        env = {}
+        env = dict(explicit_variables)
         dotenv = local(".env")
         if _inside(root, dotenv).exists():
             current_source = dotenv
-            env = _dotenv(read_input(dotenv), {}, issue)
+            env = _dotenv(read_input(dotenv), explicit_variables, issue, overrides=explicit_variables, missing=missing)
             env = {key: value for key, value in env.items() if value is not None}
+            env.update(explicit_variables)
             if "COMPOSE_FILE" in env:
                 issue("unsupported_compose_file", "Bundle .env COMPOSE_FILE is not applied; select Compose files explicitly in order.")
+        supplied_sensitive_values = {str(value) for key, value in env.items()
+                                     if _SECRET_NAME.search(key) and value not in (None, "", UNKNOWN)}
         model, provenance = {}, {}
         for filename in files:
             current_source, current_service = filename, None
@@ -648,11 +755,11 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             # Attribute interpolation notes to the consuming service, including
             # expanded YAML anchors, without retaining any source values.
             service_documents = document.get("services", {})
-            document = _interpolate({key: value for key, value in document.items() if key != "services"}, env, issue)
+            document = _interpolate({key: value for key, value in document.items() if key != "services"}, env, issue, missing=missing)
             document["services"] = {}
             for service_name, service_document in service_documents.items():
                 current_service = service_name
-                document["services"][service_name] = _interpolate(service_document, env, issue)
+                document["services"][service_name] = _interpolate(service_document, env, issue, missing=missing)
             current_service = None
             for service_config in document.get("services", {}).values():
                 if not isinstance(service_config, dict):
@@ -677,6 +784,7 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
             if UNKNOWN in str(active_profiles):
                 issue("unresolved_profiles", "Resolve service profiles before scanning so CATS can determine which images are included."); continue
             if active_profiles and "*" not in (profiles or []) and not set(active_profiles).intersection(profiles or []):
+                excluded_services.add(name)
                 continue
             for key in ("extends", "provider", "develop", "label_file", "models", "post_start", "pre_stop"):
                 if key in config:
@@ -714,14 +822,31 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                     fmt = entry.get("format") if isinstance(entry, dict) else None
                     if fmt not in (None, "raw"):
                         issue("unsupported_env_file", "env_file format must be default or raw."); continue
-                    runtime_env.update(_dotenv(read_input(env_path), env, issue, raw=fmt == "raw"))
+                    current_source = env_path
+                    try:
+                        file_env = _dotenv(read_input(env_path), env, issue, raw=fmt == "raw", missing=missing)
+                    finally:
+                        current_source = provenance[name][-1]
+                    for key, value in file_env.items():
+                        if value is None:
+                            # A bare env_file key unsets it; only a bare service
+                            # environment key requests supplied-value inheritance.
+                            runtime_env.pop(key, None)
+                        else:
+                            runtime_env[key] = value
                 except ComposeInputError:
                     issue("missing_env_file", "Service env_file must be supplied inside the bundle.")
             runtime_env.update(_mapping(config.get("environment")))
+            sensitive_values = supplied_sensitive_values | {
+                str(value) for key, value in runtime_env.items()
+                if _SECRET_NAME.search(key) and value not in (None, "", UNKNOWN)}
             for key, value in runtime_env.items():
                 if value is None:
                     runtime_env[key] = env.get(key, UNKNOWN)
                     if key not in env:
+                        if (isinstance(key, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key)
+                                and not any(secret in key for secret in sensitive_values)):
+                            missing(key)
                         issue("unresolved_environment", "A pass-through environment variable has no supplied bundle value.")
             config["environment"] = runtime_env
             for kind in ("configs", "secrets"):
@@ -739,13 +864,11 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                             issue("missing_" + kind, "Referenced configuration or secret file must be supplied inside the bundle.")
                     if "environment" in definition:
                         issue("external_" + kind, "Host environment sourced configuration or secret requires an explicit bundle input.")
-            sensitive_values = {str(value) for key, value in {**env, **runtime_env}.items()
-                                if _SECRET_NAME.search(key) and value not in (None, "", UNKNOWN)}
             config = _hide_sensitive(config, sensitive_values, issue)
             image = config.get("image")
             if not isinstance(image, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:@+\-]{0,999}", image) or "://" in image or "@" in image and not re.search(r"@sha256:[a-fA-F0-9]{64}$", image):
                 image = None
-                issue("unresolved_image", "Service requires a valid, explicitly resolved image reference to scan. Supply image variables in the bundle .env file or declare the image directly.")
+                issue("unresolved_image", "Service requires a valid, explicitly resolved image reference to scan. Enter image variable values in the form, supply them in the bundle .env file, or declare the image directly.")
             if "build" in config:
                 issue("image_and_build" if image else "build_only", "Only the explicit image is scanned; local build output is not assessed." if image else "Build-only service cannot be scanned; supply a prebuilt image reference.", blocking=not bool(image))
                 build = config["build"]
@@ -774,7 +897,7 @@ def discover(bundle_root: Path, files: list[str], profiles: list[str] | None = N
                     sanitized[resource + "_definitions"] = {key: _sanitize(_hide_sensitive(value or {}, sensitive_values, issue), resource) for key, value in definitions.items()}
             sanitized["ports"] = [_sanitize(_port(p), "ports") for p in config.get("ports", []) or []]
             sanitized["volumes"] = [_sanitize(_mount(v), "volumes") for v in config.get("volumes", []) or []]
-            sanitized["environment"] = {key: REDACTED for key in runtime_env}
+            sanitized["environment"] = {key: REDACTED for key in config["environment"]}
             service_issues = [i for i in issues if i["blocking"] and (i["service"] == name or i["service"] is None)]
             services.append({"name": name, "image": image, "configuration": sanitized, "source_files": provenance[name], "status": "incomplete" if service_issues else "resolved"})
             checks = [(config.get("privileged") is True, "COMPOSE-PRIVILEGED", "High", "Privileged container", "Disable privileged mode and grant only required capabilities."), (config.get("network_mode") == "host", "COMPOSE-HOST-NETWORK", "Medium", "Host network namespace", "Use an isolated Compose network."), (config.get("pid") == "host", "COMPOSE-HOST-PID", "High", "Host process namespace", "Use the container's own process namespace.")]
