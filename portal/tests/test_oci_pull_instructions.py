@@ -14,7 +14,7 @@ from app.cyber_approvals import CyberApproval, digest as snapshot_digest
 from app.database import Base
 from app.execution_summaries import payload_digest
 from app.models import Execution, Role, Service, ServiceImage, User, UserRoleAssignment
-from app.oci_models import OCIRepository, OCIUpstream, parse_service_repository
+from app.oci_models import OCIRepository, OCIServicePullAccess, OCIUpstream, parse_service_repository
 from app.release_validity import new_validity
 from test_replica_authorization import replica
 
@@ -75,9 +75,27 @@ def test_exact_command_uses_service_identity_digest_and_scoped_view_permission(l
     route = result['routes'][0]
     assert route['command'] == f'docker pull cats.example/cyber-approved/{local.service.id}/nginx@{DIGEST}'
     assert route['login_command'] == 'docker login cats.example'
+    assert route['login_required'] is True and route['anonymous_pull'] is False
     assert parse_service_repository(route['repository'])[0] == local.service.id
     assert not local.auth.has('release.destination.manage')
     assert instructions.pull_instructions('nginx', local.image.id, local.db, local.auth) == result
+
+
+def test_service_visibility_changes_login_instructions_but_not_approval(local):
+    access = OCIServicePullAccess(service_id=local.service.id, public=True)
+    local.db.add(access)
+    local.db.commit()
+    route = pull(local)['routes'][0]
+    assert route['anonymous_pull'] is True and route['login_required'] is False
+    assert route['login_command'] is None
+    assert route['command'] == f'docker pull cats.example/cyber-approved/{local.service.id}/nginx@{DIGEST}'
+    access.public = False
+    local.db.commit()
+    assert pull(local)['routes'][0]['login_command'] == 'docker login cats.example'
+    access.public = True
+    local.approval.revoked_at = datetime.now(timezone.utc)
+    local.db.commit()
+    assert pull(local)['status'] == 'unavailable'
 
 
 def test_project_mapping_uses_full_repository_path_and_mapping_precedence(local):

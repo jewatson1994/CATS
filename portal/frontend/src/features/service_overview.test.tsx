@@ -6,6 +6,7 @@ import type {PageData} from '../api';
 afterEach(() => {cleanup(); vi.useRealTimers(); vi.unstubAllGlobals();});
 const fixture = (extra: Partial<PageData> = {}): PageData => ({
   view: {service: {id: 1, service_key: 'sample', name: 'Sample', groups: []}, version: '1.0'},
+  service_pull_access: {service_id: 1, public: false},
   overview_data: {}, deployment_validation: {status: 'QUEUED', static_scan_complete: true},
   architecture_verification: {state: 'VERIFIED', label: 'Verified'},
   can: {'service.export': {'1': true}}, ...extra,

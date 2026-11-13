@@ -9,6 +9,7 @@ import {requestJson, type PageData} from '../api';
 vi.mock('../api', async original => ({...await original<object>(), requestJson: vi.fn()}));
 const image = {id: 9, image_reference: 'registry/api:1', image_digest: `sha256:${'a'.repeat(64)}`, lifecycle_status: 'active'};
 const data: PageData = {cats_mode: 'full', imported_service: true, read_only: true,
+  service_pull_access: {service_id: 7, public: false},
   current_user: {display_name: 'Operator', theme: 'cats'}, view: {service: {id: 7, service_key: 'imported', name: 'Imported', groups: []}, version: '1'},
   can: {'service.edit': {'7': true}, 'service.export': {'7': true}, 'approval.request': {'7': true}, 'replica.sync': {'*': true}},
   can_edit: true, can_image_workflow: true, can_patch_images: true,
@@ -39,6 +40,15 @@ it('provides overview pull instructions to viewers while hiding imported mutatio
   mockReads();
   render(<Shell data={data}><Overview data={data}/></Shell>);
   expect(screen.getByRole('button', {name: 'Pull registry/api:1 from CATS'})).toBeInTheDocument();
+  expect(screen.queryByRole('link', {name: 'Patch registry/api:1'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
+});
+
+it('keeps local pull access editable for imported services when distribution management is allowed', () => {
+  mockReads();
+  const managerData = {...data, can: {...data.can, 'release.destination.manage': {'*': true}}};
+  render(<Shell data={managerData}><Overview data={managerData}/></Shell>);
+  expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
   expect(screen.queryByRole('link', {name: 'Patch registry/api:1'})).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
 });

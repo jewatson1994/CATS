@@ -73,3 +73,31 @@ it('retains multiple configured routes rather than choosing another service or i
   expect(await screen.findByRole('region', {name: 'Pull route 2'})).toHaveTextContent(other.command);
   expect(screen.getByRole('region', {name: 'Pull route 1'})).toHaveTextContent(route.command);
 });
+
+it('copies a public service pull command without requiring a registry login', async () => {
+  request.mockResolvedValue({...available, routes: [{...route, anonymous_pull: true, login_required: false, login_command: null}]});
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal('navigator', {...window.navigator, clipboard: {writeText}});
+  render(<ImagePullInstructions image={image} serviceKey="mission"/>); open();
+  expect(await screen.findByText('No sign-in required. This service allows anonymous pulls.')).toBeInTheDocument();
+  expect(screen.queryByText('Sign in to CATS')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', {name: /Copy login command/})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Copy pull command'}));
+  expect(writeText).toHaveBeenCalledWith(route.command);
+});
+
+it.each([true, false])('keeps login instructions attached to the private route when public comes first: %s', async publicFirst => {
+  const publicRoute = {...route, repository: 'public/42/api', command: `docker pull cats.example:5443/public/42/api@${digest}`,
+    anonymous_pull: true, login_required: false, login_command: null};
+  const privateRoute = {...route, anonymous_pull: false, login_required: true};
+  request.mockResolvedValue({...available, routes: publicFirst ? [publicRoute, privateRoute] : [privateRoute, publicRoute]});
+  render(<ImagePullInstructions image={image} serviceKey="mission"/>); open();
+  const publicRegion = await screen.findByRole('region', {name: `Pull route ${publicFirst ? 1 : 2}`});
+  const privateRegion = screen.getByRole('region', {name: `Pull route ${publicFirst ? 2 : 1}`});
+  expect(publicRegion).toHaveTextContent(publicRoute.command);
+  expect(publicRegion).toHaveTextContent('No sign-in required');
+  expect(within(publicRegion).queryByText(route.login_command)).not.toBeInTheDocument();
+  expect(privateRegion).toHaveTextContent('Sign in to CATS');
+  expect(privateRegion).toHaveTextContent(route.login_command);
+  expect(within(privateRegion).getByRole('button', {name: /Copy login command/})).toBeInTheDocument();
+});

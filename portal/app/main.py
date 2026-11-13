@@ -485,6 +485,8 @@ app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
 app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
+from .oci_service_access import router as oci_service_access_router, service_pull_is_public
+app.include_router(oci_service_access_router)
 from .oci_pull_instructions import router as oci_pull_router
 app.include_router(oci_pull_router)
 app.include_router(replica_routes.router)
@@ -8383,6 +8385,7 @@ def service_detail(
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
             finding_counts=finding_counts,
+            service_pull_access={'service_id': service.id, 'public': service_pull_is_public(db, service.id)},
             scan_schedule=service_scan_schedule.schedule_view(db, service, configuration["display_timezone"]),
             architecture_polling=bool(latest_validation and not latest_validation.get("terminal")),
             artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
@@ -8801,6 +8804,7 @@ def service_detail(
         return templates.TemplateResponse(request, "service_overview.html", page_context(auth,
             view=view, history_versions=history_version_choices(db, service), overview_data=overview_data, latest_execution=latest_execution,
             artifact_provenance=provenance_for_execution(db, latest_execution.id) if latest_execution else [],
+            service_pull_access={'service_id': service.id, 'public': service_pull_is_public(db, service.id)},
             deployment_validation=deployment_validation_view(architecture_verification_state.get("run")) or latest_validation,
             architecture_verification=architecture_verification_state, architecture_graph=architecture_graph,
             service_images=service.images,
@@ -10574,7 +10578,7 @@ def delete_service(
     db.execute(delete(BundlePreview).where(BundlePreview.target_key == service.service_key))
     if remediation_ids:
         db.execute(delete(DeliveryAttempt).where(DeliveryAttempt.remediation_id.in_(remediation_ids)))
-    for model in (DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture, service_scan_schedule.ServiceScanSchedule):
+    for model in (DependencyWatchlistMatch, OidcClaimMapping, ServiceMetadata, InventoryRecord, ExchangePreview, ServiceTransferProvenance, FindingClassification, FindingClassificationState, FindingClassificationChange, ServicePosture, service_scan_schedule.ServiceScanSchedule, oci_models.OCIServicePullAccess):
         db.execute(delete(model).where(model.service_id == service.id))
     finding_ids = list(db.scalars(select(Finding.id).where(Finding.service_id == service.id)))
     policy_finding_ids = list(db.scalars(select(PolicyFinding.id).where(PolicyFinding.service_id == service.id)))

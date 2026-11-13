@@ -13,6 +13,7 @@ from .cyber_approval_evidence import _identity, _registry_path, _repository_iden
 from .database import get_db
 from .models import Service, ServiceImage
 from .oci_models import OCIRepository, is_project_pattern, project_repository, service_repository
+from .oci_service_access import service_pull_is_public
 from .oci_transport import DIGEST, REPOSITORY
 
 router = APIRouter(tags=['OCI pull instructions'])
@@ -174,6 +175,7 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
     mappings = list(db.scalars(select(OCIRepository).where(or_(OCIRepository.service_id == service.id,
                                                                OCIRepository.service_id.is_(None)))
                               .execution_options(populate_existing=True)))
+    public_pull = service_pull_is_public(db, service.id)
     routes, matched = {}, False
     for mapping in mappings:
         if not mapping.enabled or mapping.suspended or not mapping.upstream.enabled:
@@ -203,7 +205,8 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
             reference = f"{result['registry']}/{route}@{digest}"
             routes[reference] = dict(repository=route, digest=digest, reference=reference,
                 command='docker pull ' + shlex.quote(reference),
-                login_command='docker login ' + shlex.quote(result['registry']))
+                anonymous_pull=public_pull, login_required=not public_pull,
+                login_command=None if public_pull else 'docker login ' + shlex.quote(result['registry']))
     if not routes:
         return unavailable('The approved release for this service does not currently authorize this image.' if matched
                            else 'No enabled CATS repository mapping serves this image for this service.')

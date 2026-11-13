@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import object_session
 from starlette.background import BackgroundTask
@@ -20,7 +20,7 @@ from .auth import record_audit
 from .database import SessionLocal
 from .models import Service
 from .oci_models import (OCIManifest, OCIObjectLink, OCIPrincipal, OCIProjectObjectLink,
-                         OCIRepository, parse_service_repository, project_repository, service_repository)
+                         OCIRepository, OCIUpstream, parse_service_repository, project_repository, service_repository)
 from .oci_authorization import authorize, project_tag_allowed
 from .oci_transport import ContentCache, DIGEST, RegistryClient, RegistryError
 from .release_validity import utc
@@ -58,6 +58,8 @@ async def denied(request, exc):
         with SessionLocal() as db:
             record_audit(db, None, 'oci.denied', 'oci_repository', getattr(request.state, 'repository_id', None),
                          principal_id=getattr(request.state, 'principal_id', None), reason=exc.reason,
+                         authentication=getattr(request.state, 'authentication', 'machine' if 'authorization' in request.headers else 'anonymous'),
+                         client_address=request.client.host if request.client else None,
                          request_repository=repository[:255] if repository else None, service_id=service_id,
                          decision=exc.decision)
             db.commit()
@@ -83,7 +85,40 @@ async def unavailable(request, exc):
     return JSONResponse({'errors': [{'code': 'UNAVAILABLE', 'message': 'Authorization storage unavailable'}]}, status_code=503, headers=V2)
 
 
-def principal(db, request, repository_id=None):
+def principal(db, request, repository_id=None, *, allow_anonymous=False, service_id=None):
+    """Authenticate a machine, or an explicitly public registry read.
+
+    Non-registry consumers such as offline evidence downloads retain mandatory
+    machine authentication. A supplied credential is always validated, even for
+    a public service, so disabled credentials never silently become anonymous.
+    """
+    request.state.repository_id = repository_id
+    request.state.authentication = 'machine' if 'authorization' in request.headers else 'anonymous'
+    if (allow_anonymous and request.method in {'GET', 'HEAD'}
+            and 'authorization' not in request.headers):
+        public = False
+        if repository_id is None:
+            # Docker's version probe cannot identify a repository. It may
+            # proceed when a public service has an enabled exact or project
+            # mapping. Each later object request still checks its own service.
+            from .oci_models import OCIServicePullAccess
+            public = db.scalar(select(OCIRepository.id)
+                .join(OCIServicePullAccess, or_(OCIRepository.service_id == OCIServicePullAccess.service_id,
+                                               OCIRepository.service_id.is_(None)))
+                .join(OCIUpstream, OCIUpstream.id == OCIRepository.upstream_id)
+                .where(OCIServicePullAccess.public.is_(True), OCIRepository.enabled.is_(True),
+                       OCIRepository.suspended.is_(False), OCIUpstream.enabled.is_(True)).limit(1)) is not None
+        else:
+            mapping = db.get(OCIRepository, repository_id, populate_existing=True)
+            if mapping is not None:
+                db.refresh(mapping.upstream)
+                from .oci_service_access import service_pull_is_public
+                public = (type(service_id) is int and mapping.service_id in (None, service_id)
+                          and mapping.enabled is True and mapping.suspended is False
+                          and mapping.upstream.enabled is True and service_pull_is_public(db, service_id))
+        if public:
+            request.state.principal_id = None
+            return None
     try:
         scheme, value = request.headers.get('authorization', '').split(' ', 1)
         if scheme.lower() != 'basic' or len(value) > 2048:
@@ -390,7 +425,10 @@ def authorize_object(db, mapping, digest, kind):
     raise Denied('Object has no currently authorized image association', decision=last_denial)
 
 
-def audit(db, machine, mapping, digest, outcome, request_repository=None):
+def audit(db, machine, mapping, digest, outcome, request_repository=None, request=None):
+    actor = dict(principal_id=machine.id if machine is not None else None,
+                 authentication='machine' if machine is not None else 'anonymous',
+                 client_address=request.client.host if request is not None and request.client else None)
     effective = []
     if request_repository is None:
         try:
@@ -432,10 +470,10 @@ def audit(db, machine, mapping, digest, outcome, request_repository=None):
                 except ValueError as exc:
                     raise Denied(str(exc)) from None
                 record_audit(db, None, 'local_override.used', 'local_cyber_override', current.override_id,
-                    principal_id=machine.id, repository=mapping.public_repository,
+                    **actor, repository=mapping.public_repository,
                     request_repository=request_repository, **detail)
     record_audit(db, None, 'oci.pull', 'oci_repository', mapping.id,
-                 principal_id=machine.id, repository=mapping.public_repository, digest=digest,
+                 **actor, repository=mapping.public_repository, digest=digest,
                  request_repository=request_repository, service_id=requested_service_id,
                  mapped_service_id=mapping.service_id,
                  outcome=outcome, decisions=effective)
@@ -445,7 +483,7 @@ def audit(db, machine, mapping, digest, outcome, request_repository=None):
 @app.api_route('/v2/', methods=['GET', 'HEAD'])
 def ping(request: Request):
     with SessionLocal() as db:
-        principal(db, request)
+        principal(db, request, allow_anonymous=True)
     return Response(headers=V2)
 
 
@@ -460,7 +498,7 @@ def health():
 def get_manifest(repository: str, reference: str, request: Request):
     with SessionLocal() as db:
         mapping = mapping_for(db, repository)
-        machine = principal(db, request, mapping.id)
+        machine = principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
         try:
             signature_root = legacy_subject(reference)
             attestation_root = legacy_attestation_subject(reference)
@@ -509,7 +547,7 @@ def get_manifest(repository: str, reference: str, request: Request):
             db.commit()
             db.expire_all()
             mapping = mapping_for(db, repository)
-            principal(db, request, mapping.id)
+            principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
             if not signature_root and not attestation_root and not DIGEST.fullmatch(reference):
                 if isinstance(mapping, ProjectMapping):
                     check_project_tag(db, service_mapping(db, mapping, digest), reference, digest)
@@ -521,10 +559,10 @@ def get_manifest(repository: str, reference: str, request: Request):
                     if current_binding != binding:
                         raise Denied('Active release changed during retrieval; retry')
             authorize_object(db, mapping, digest, 'attestation' if attestation_root else 'signature' if signature_root else 'manifest')
-            audit(db, machine, mapping, digest, 'allowed', repository)
+            audit(db, machine, mapping, digest, 'allowed', repository, request)
         except Denied as exc:
             db.rollback()
-            audit(db, machine, mapping, reference, exc.reason, repository)
+            audit(db, machine, mapping, reference, exc.reason, repository, request)
             raise
     return Response(raw if request.method == 'GET' else b'', media_type=media,
         headers={**V2, 'Docker-Content-Digest': digest, 'ETag': '"' + digest + '"', 'Content-Length': str(len(raw))})
@@ -534,7 +572,7 @@ def get_manifest(repository: str, reference: str, request: Request):
 def referrers(repository: str, digest: str, request: Request):
     with SessionLocal() as db:
         mapping = mapping_for(db, repository)
-        machine = principal(db, request, mapping.id)
+        machine = principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
         require(db, mapping, digest)
         mapping = effective_mapping(db, mapping, digest)
         transport = client(mapping)
@@ -577,12 +615,12 @@ def referrers(repository: str, digest: str, request: Request):
         db.commit()
         db.expire_all()
         mapping = mapping_for(db, repository)
-        principal(db, request, mapping.id)
+        principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
         require(db, mapping, digest)
         for item in retained:
             if item.get('artifactType') == ATTESTATION_TYPE:
                 authorize_object(db, mapping, item['digest'], 'attestation')
-        audit(db, machine, mapping, digest, 'referrers', repository)
+        audit(db, machine, mapping, digest, 'referrers', repository, request)
     return JSONResponse({'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': retained},
                         media_type='application/vnd.oci.image.index.v1+json', headers=V2)
 
@@ -620,7 +658,7 @@ def get_blob(repository: str, digest: str, request: Request):
     try:
         with SessionLocal() as db:
             mapping = mapping_for(db, repository)
-            machine = principal(db, request, mapping.id)
+            machine = principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
             root = authorize_object(db, mapping, digest, 'blob')
             mapping = effective_mapping(db, mapping, root)
             cache = content_cache()
@@ -633,9 +671,9 @@ def get_blob(repository: str, digest: str, request: Request):
             db.commit()
             db.expire_all()
             mapping = mapping_for(db, repository)
-            principal(db, request, mapping.id)
+            principal(db, request, mapping.id, allow_anonymous=True, service_id=mapping.service_id)
             authorize_object(db, mapping, digest, 'blob')
-            audit(db, machine, mapping, digest, 'allowed', repository)
+            audit(db, machine, mapping, digest, 'allowed', repository, request)
         header = request.headers.get('range') if request.method == 'GET' else None
         if request.headers.get('if-range') not in (None, '"' + digest + '"'):
             header = None

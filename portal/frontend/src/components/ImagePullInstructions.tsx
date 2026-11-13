@@ -7,7 +7,9 @@ interface PullRoute {
   digest: string;
   reference: string;
   command: string;
-  login_command: string;
+  login_command: string | null;
+  login_required?: boolean;
+  anonymous_pull?: boolean;
 }
 interface PullInstructions {
   service_id: number;
@@ -48,7 +50,6 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
     catch {setCopyNotice('Could not copy automatically. Select and copy the command below.');}
   }
   const routes = result?.status === 'available' ? result.routes : [];
-  const login = routes[0]?.login_command;
   return <><button ref={trigger} type="button" className="secondary-button" aria-label={`Pull ${image.image_reference} from CATS`} onClick={() => setOpen(true)}>Pull from CATS</button>
     {open && <dialog ref={dialog} className="review-dialog modal" aria-labelledby={titleId} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
       <h3 id={titleId}>Pull image from CATS</h3><p><code className="image-ref">{image.image_reference}</code></p>
@@ -56,8 +57,17 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
       {error && <div role="alert"><p>{error}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>}
       {result && <><p>Service ID: <strong>{result.service_id}</strong>{result.registry && <> · Registry: <code>{result.registry}</code></>}</p>
         {!routes.length ? <p role="status">{result.reason || 'No approved pull route is currently available for this image.'}</p> : <>
-          {login && <section aria-label="Registry login"><h4>Sign in to CATS</h4><p>Use a CATS machine account granted access to this route.</p><pre><code>{login}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(login, 'Login command')}>Copy login command</button></section>}
-          {routes.map((route, index) => <section key={`${route.repository}-${route.digest}`} aria-label={`Pull route ${index + 1}`}><h4>{routes.length > 1 ? `Pull route ${index + 1}` : 'Pull the approved image'}</h4><pre><code>{route.command}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(route.command, 'Pull command')}>{routes.length > 1 ? `Copy pull command ${index + 1}` : 'Copy pull command'}</button></section>)}
+          {routes.map((route, index) => {
+            const loginRequired = route.login_required ?? Boolean(route.login_command);
+            const login = route.login_command;
+            return <section key={`${route.repository}-${route.digest}`} aria-label={`Pull route ${index + 1}`}>
+              <h4>{routes.length > 1 ? `Pull route ${index + 1}` : 'Pull the approved image'}</h4>
+              {loginRequired ? <div><h5>Sign in to CATS</h5><p>Use a CATS machine account granted access to this route.</p>
+                {login && <><pre><code>{login}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(login, 'Login command')}>{routes.length > 1 ? `Copy login command ${index + 1}` : 'Copy login command'}</button></>}
+              </div> : <p>No sign-in required. This service allows anonymous pulls.</p>}
+              <pre><code>{route.command}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(route.command, 'Pull command')}>{routes.length > 1 ? `Copy pull command ${index + 1}` : 'Copy pull command'}</button>
+            </section>;
+          })}
           <p>CATS checks this service's approval again when the image is pulled.</p>
         </>}</>}
       {copyNotice && <p role="status">{copyNotice}</p>}

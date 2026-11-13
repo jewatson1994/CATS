@@ -1,7 +1,7 @@
 """Additive OCI metadata and small manifests; blob bytes remain on disk."""
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -91,6 +91,13 @@ class OCIRepository(Base):
     policy: Mapped[dict] = mapped_column(JSON, default=dict)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     suspended: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class OCIServicePullAccess(Base):
+    """Local distribution visibility; signed imports never own this setting."""
+    __tablename__ = 'oci_service_pull_access'
+    service_id: Mapped[int] = mapped_column(ForeignKey('services.id', ondelete='CASCADE'), primary_key=True)
+    public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
 
 
 class OCIPrincipal(Base):

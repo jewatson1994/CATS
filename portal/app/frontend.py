@@ -222,6 +222,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         if name != "service_history.html":
             _service_data(data, context, can, formatters or {})
         project_secondary(data, name, context, can, formatters or {})
+        if name == "service_overview.html" and context.get("service_pull_access") is not None:
+            data["service_pull_access"] = _fields(context["service_pull_access"], ("service_id", "public"))
     elif name in {"finding.html", "watchlist_match.html", "poam.html", "poam_service.html", "poam_entry.html"}:
         project_governance(data, name, context, can, formatters or {})
     elif name == "public_results.html":

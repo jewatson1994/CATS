@@ -25,7 +25,13 @@ Configure an upstream HTTPS registry origin and its read-only upstream credentia
 
 Cyber release publication runs in `remediation-worker` and has a separate redirect policy. If its source registry or destination redirects blob GET/HEAD requests to object storage, configure `CATS_OCI_BLOB_REDIRECT_ORIGINS` in the deployment environment and recreate the worker. Same-origin redirects need no setting; registry credentials are never forwarded cross-origin, and cross-origin writes and manifest redirects remain blocked. The upstream allowlists above and `CATS_OCI_TOKEN_REALMS` do not grant this permission. See [publication configuration](signed-release-documentation.md#configuration-and-boundaries).
 
-Issue separate scoped machine credentials for consumers. Use those credentials with `docker login`, Helm registry login, or an equivalent OCI client against the CATS hostname. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials.
+Each service has a local **Public / Private** setting for OCI pulls on its **Overview** page. Existing and newly imported services default to **Private**. Administrators with release-destination management permission can change this setting independently of the publisher's signed evidence. The choice applies to every image/chart pull route for that service, including project mappings; another service using the same image or project retains its own setting.
+
+**Public** services allow anonymous `docker pull` and Helm pulls for currently authorized artifacts. Clients do not need a machine account or `docker login`. CATS still checks the service identity, active lifecycle, approval, validity, revocation, signatures and digest on each request, including cache hits. Making a service public does not make an unapproved artifact available. The setting permits reads only and does not enable registry pushes or portal access. The separate offline evidence-bundle download remains authenticated.
+
+**Private** services return `401 Unauthorized` with a registry authentication challenge when credentials are missing. The existing machine-account mechanism remains available: use scoped CATS credentials with `docker login`, Helm registry login, or an equivalent OCI client. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials. Supplied invalid, expired or revoked credentials are rejected even for a public service; use `docker logout <cats-registry-host>` to remove stale credentials before pulling anonymously.
+
+Public/private changes and anonymous pulls are audited. Anonymous events have no machine principal and cannot identify an individual user. Changing a service back to private applies to subsequent requests; already downloaded artifacts cannot be recalled.
 
 ## Monitor OCI releases in the full suite
 
@@ -39,7 +45,7 @@ The OCI proxy chooses local or imported approval from the requested service's pr
 
 ## Container pull instructions
 
-In a service's **Overview** or **Artifacts** container inventory, select **Pull from CATS**. The popup uses the configured CATS registry authority, the service's local numeric ID, a matching repository mapping and its currently approved immutable image digest. Copy the `docker login` and `docker pull` commands, using CATS machine-account credentials with access to the mapping.
+In a service's **Overview** or **Artifacts** container inventory, select **Pull from CATS**. The popup uses the configured CATS registry authority, the service's local numeric ID, a matching repository mapping and its currently approved immutable image digest. Public services show that no login is needed; copy the `docker pull` command directly. Private services also show `docker login`, using CATS machine-account credentials with access to the mapping.
 
 For example, an approved nginx image mapped to service 42 may show:
 

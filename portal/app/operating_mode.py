@@ -44,6 +44,7 @@ _LOCAL_WRITES = (
     ("POST", r"/api/accounts/access-requests/\d+/claim"),
     ("POST", r"/api/oci/(?:upstreams|repositories|principals)"),
     ("PUT", r"/api/oci/(?:upstreams|repositories|principals)/\d+"),
+    ("PUT", r"/api/oci/services/\d+/pull-access"),
     ("DELETE", r"/api/oci/(?:upstreams|repositories|principals)/\d+"),
     ("POST", r"/api/oci/(?:principals/\d+/rotate|repositories/\d+/test)"),
     ("POST", r"/api/replica/(?:sources|sync)"),
