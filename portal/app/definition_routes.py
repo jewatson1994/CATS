@@ -159,6 +159,9 @@ def _status(artifact_id, run_id, index, status, reason=None, **detail):
         artifact = db.get(ServiceArtifact, artifact_id)
         if artifact is None:
             return
+        from .imported_services import is_imported_service
+        if is_imported_service(db, artifact.service_id):
+            return
         meta = dict(artifact.source_metadata or {})
         if meta.get("run_id") != run_id:
             return
@@ -219,6 +222,8 @@ def process_definition(artifact_id, user_id):
         artifact = db.get(ServiceArtifact, artifact_id)
         if artifact is None:
             return
+        from .imported_services import require_local_service
+        require_local_service(db, artifact.service_id)
         meta = dict(artifact.source_metadata or {})
         run_id = meta.get("run_id")
         components = list(meta.get("components") or [])
@@ -254,6 +259,8 @@ def finalize_definition_result(job_id, job, files, resolution):
         definition = db.get(ServiceArtifact, context["artifact_id"])
         if definition is None or (definition.source_metadata or {}).get("run_id") != context["run_id"]:
             raise ValueError("Definition run no longer matches this scan")
+        from .imported_services import require_local_service
+        require_local_service(db, definition.service_id)
         meta = dict(definition.source_metadata or {})
         components = [dict(item) for item in meta.get("components", [])]
         component = components[context["index"]]

@@ -77,7 +77,7 @@ function OriginalEvidence({url, label}: {url: string, label: string}) {
   return <div><button type="button" disabled={busy} onClick={() => value ? setValue(null) : void load()}>{value ? `Close ${label}` : busy ? 'Loading original evidence…' : `Inspect ${label}`}</button>
     {error && <p role="alert">{error}</p>}{value && <Json value={value}/>}</div>;
 }
-function VexStatement({statement, assessmentId, rejected}: {statement: Row, assessmentId: number, rejected: boolean}) {
+function VexStatement({statement, assessmentId, rejected, imported}: {statement: Row, assessmentId: number, rejected: boolean, imported: boolean}) {
   const accepted = !statement.sample_only && !rejected && (statement.accepted === true || (statement.accepted == null && statement.reason === null));
   return <article className="risk-evidence"><h5>{statement.sample_only ? 'CVE presence sample' : accepted ? 'Accepted for applicability' : 'Not accepted for applicability'} · {statement.source || 'Source not recorded'}</h5>
     <p>Statement #{statement.id} · document #{statement.document_id}{statement.source_id != null ? ` · source #${statement.source_id}` : ''}. Publisher status: {humanize(statement.status || 'unknown')}.</p>
@@ -90,7 +90,7 @@ function VexStatement({statement, assessmentId, rejected}: {statement: Row, asse
     {statement.impact_statement && <p>Impact: {statement.impact_statement}</p>}
     {statement.action_statement && <p>Publisher action: {statement.action_statement}</p>}
     {statement.sha256 && <p className="risk-evidence-hash">Evidence SHA-256: <code>{statement.sha256}</code></p>}
-    {statement.document_id != null && <OriginalEvidence url={`/api/risk/assessments/${assessmentId}/documents/${statement.document_id}`} label={`original VEX document #${statement.document_id}`}/>}
+    {statement.document_id != null && <OriginalEvidence url={`/api/risk/assessments/${assessmentId}/documents/${statement.document_id}${imported ? "?imported=true" : ""}`} label={`original VEX document #${statement.document_id}`}/>}
   </article>;
 }
 export function VexLookupSummary({vex}: {vex: Row}) {
@@ -153,7 +153,7 @@ export function IdentityResolution({identity}: {identity: Row}) {
     {resolution?.relationships?.length > 0 && <details><summary>Retained package relationships ({resolution.relationships.length})</summary><p>A recorded relationship alone does not establish an eligible vendor product identity.</p><Json value={resolution.relationships}/></details>}
   </section>;
 }
-export function ObservationIntelligence({observation, assessmentId}: {observation: Row, assessmentId: number}) {
+export function ObservationIntelligence({observation, assessmentId, imported = false}: {observation: Row, assessmentId: number, imported?: boolean}) {
   const vex = observation.vex || {}, advisory = observation.advisory || {};
   const statements: Row[] = vex.statements || [], rejected: Row[] = vex.rejected_candidates || [];
   return <div className="risk-observation-evidence">
@@ -166,8 +166,8 @@ export function ObservationIntelligence({observation, assessmentId}: {observatio
     <details><summary>VEX acceptance and rejection evidence ({statements.length + rejected.length} retained)</summary>
       {vex.rejected_candidates_truncated && <p>Only a limited set of rejected candidates is retained. This list is incomplete.</p>}
       {!statements.length && !rejected.length && <p>No retained candidate statements for this observation. Review the evaluation reasons for missing identity or bounded lookup limits.</p>}
-      {statements.map((statement, index) => <VexStatement key={`s:${statement.id}:${index}`} statement={statement} assessmentId={assessmentId} rejected={false}/>)}
-      {rejected.map((statement, index) => <VexStatement key={`r:${statement.id}:${index}`} statement={statement} assessmentId={assessmentId} rejected={true}/>)}
+      {statements.map((statement, index) => <VexStatement key={`s:${statement.id}:${index}`} statement={statement} assessmentId={assessmentId} rejected={false} imported={imported}/>)}
+      {rejected.map((statement, index) => <VexStatement key={`r:${statement.id}:${index}`} statement={statement} assessmentId={assessmentId} rejected={true} imported={imported}/>)}
     </details>
     <details><summary>Supplemental advisory evidence ({advisory.records?.length || 0})</summary>
       <p>Advisories enrich the existing scanner finding. They do not establish authoritative VEX applicability, a Not Affected exemption, or a resolved finding.</p>
@@ -179,7 +179,7 @@ export function ObservationIntelligence({observation, assessmentId}: {observatio
         <p>Correlation: {advisoryMatchLabels[record.match_reason] || humanize(record.match_reason || 'See retained evidence')}</p>
         {record.current != null && <p>{record.current ? 'Current source evidence' : 'Source evidence does not pass current trust and freshness checks'}{record.reason ? `: ${humanize(record.reason)}` : ''}.</p>}
         <details><summary>Advisory identifiers and provenance</summary><Json value={record}/></details>
-        {record.id != null && <OriginalEvidence url={`/api/risk/records/${record.id}`} label={`original advisory record #${record.id}`}/>}
+        {!imported && record.id != null && <OriginalEvidence url={`/api/risk/records/${record.id}`} label={`original advisory record #${record.id}`}/>}
       </article>)}
       {!advisory.records?.length && <p>No supplemental advisory records retained for this observation.</p>}
     </details>

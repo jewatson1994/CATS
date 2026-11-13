@@ -297,6 +297,8 @@ services:
 
     x-shared-environment: &portal_environment
       CATS_MODE: ${CATS_MODE:-full}
+      CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:-}
+      CATS_REPLICA_SYNC_ENABLED: ${CATS_REPLICA_SYNC_ENABLED:-true}
       <<: *intelligence_environment
 
       # -------------------------------------------------------

@@ -24,9 +24,7 @@ def actor_labels(rows, relationships=('created_by', 'approved_by'), *, service_i
     Nonnullable imported user references use the importer for database integrity.
     They are not attribution. Batch the source mappings for each rendered page.
     """
-    from .operating_mode import is_replica
-    if not is_replica():
-        return {}
+    from .imported_services import uses_imported_evidence
     grouped, result = {}, {}
     for row in rows:
         mapper = inspect(row, raiseerr=False)
@@ -37,6 +35,8 @@ def actor_labels(rows, relationships=('created_by', 'approved_by'), *, service_i
         if db is not None and identity is not None:
             grouped.setdefault((db, identity), []).append(row)
     for (db, identity), items in grouped.items():
+        if not uses_imported_evidence(db, identity):
+            continue
         # Missing mappings or a retained row absent from the active snapshot do
         # not turn the local database placeholder into the original author.
         for item in items:

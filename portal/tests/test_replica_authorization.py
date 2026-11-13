@@ -215,7 +215,9 @@ def test_expiry_and_revocation_require_explicit_risk_acceptance(replica):
     assert decision(replica).allowed
 
 
-def test_normal_user_cannot_create_or_revoke_and_full_mode_cannot_create(replica, monkeypatch):
+@pytest.mark.parametrize('mode', ['full', 'replica'])
+def test_normal_user_cannot_create_or_revoke_in_either_mode(replica, monkeypatch, mode):
+    monkeypatch.setenv('CATS_MODE', mode)
     identity = grant(replica)
     reader = SimpleNamespace(user=replica.auth.user, has=lambda permission, service_id=None: permission == 'service.view')
     with replica.sessions() as db:
@@ -223,9 +225,6 @@ def test_normal_user_cannot_create_or_revoke_and_full_mode_cannot_create(replica
             create_override(db, reader, replica.service_id, replica.data)
         with pytest.raises(PermissionError):
             revoke_override(db, reader, replica.service_id, identity, 'reason')
-    monkeypatch.setenv('CATS_MODE', 'full')
-    with pytest.raises(ValueError, match='replica mode'):
-        grant(replica)
 
 
 def test_grants_cannot_be_mutated_or_deleted(replica):

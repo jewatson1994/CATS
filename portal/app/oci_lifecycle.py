@@ -130,7 +130,11 @@ def events(identity: int, db: Session = Depends(get_db), auth: AuthContext = Dep
 
 def enqueue_due(db, clock=None):
     clock = clock or now()
+    from .imported_services import imported_service_predicate
+    imported_approvals = select(approvals.CyberApproval.id).where(
+        imported_service_predicate(approvals.CyberApproval.service_id))
     schedules = db.scalars(select(OCIReassessmentSchedule).where(OCIReassessmentSchedule.enabled.is_(True),
+        OCIReassessmentSchedule.approval_id.not_in(imported_approvals),
         OCIReassessmentSchedule.next_run <= clock).with_for_update(skip_locked=True).limit(100)).all()
     for item in schedules:
         row = db.get(approvals.CyberApproval, item.approval_id)
@@ -160,6 +164,9 @@ def handle(ctx, payload):
     with main.SessionLocal() as db:
         event = db.get(OCIReassessmentEvent, ctx.job.id)
         row = db.get(approvals.CyberApproval, payload['approval_id'])
+        from .imported_services import is_imported_service
+        if row and is_imported_service(db, row.service_id):
+            raise JobError('Imported service evidence is managed by its OCI publisher')
         if (not event or not row or event.approval_id != row.id or row.service_id != ctx.job.service_id
                 or row.revoked_at or row.status != 'approved'):
             raise JobError('Release is no longer eligible for reassessment')
@@ -186,7 +193,11 @@ def _request(data, auth):
 
 def reconcile(db):
     from . import main
-    for event in db.scalars(select(OCIReassessmentEvent).where(OCIReassessmentEvent.state.in_(('queued', 'scanning')))
+    from .imported_services import imported_service_predicate
+    imported_approvals = select(approvals.CyberApproval.id).where(
+        imported_service_predicate(approvals.CyberApproval.service_id))
+    for event in db.scalars(select(OCIReassessmentEvent).where(OCIReassessmentEvent.state.in_(('queued', 'scanning')),
+                            OCIReassessmentEvent.approval_id.not_in(imported_approvals))
                            .with_for_update(skip_locked=True).limit(100)):
         original = db.get(approvals.CyberApproval, event.approval_id)
         if original and _distribution_snapshot(original.snapshot):

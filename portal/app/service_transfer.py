@@ -584,6 +584,8 @@ def plan_history(db, state, service):
 
 
 def add_history(db, state, service):
+    from .imported_services import require_local_service
+    require_local_service(db, service.id)
     planned, _ = plan_history(db, state, service)
     if planned:
         db.add(m.ServiceTransferProvenance(service_id=service.id, detail={"historical_executions": scrub(json.loads(encode(planned))), "assessment_role": "informational_only"}))

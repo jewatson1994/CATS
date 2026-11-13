@@ -30,7 +30,7 @@ MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.h
                             "admin.html", "staging.html", "configuration.html", "validators.html", "audit.html", "general_policy.html", "evidence_policy.html", "workflow_policy.html", "compliance.html", "compliance_frameworks.html", "dependency_watchlist.html"})
 
 
-MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html"}
+MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html", "imported_releases.html"}
 
 
 def _field(value, name, default=None):
@@ -166,6 +166,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
     path = request.url.path
     data = {
         "cats_mode": mode(),
+        "imported_service": bool(context.get("imported_service")),
+        "read_only": bool(context.get("read_only")),
         "may_claim_accounts": bool(context.get("may_claim_accounts")),
         "may_manage_accounts": bool(context.get("may_manage_accounts")),
         "current_user": _fields(user, ("display_name", "theme")) if user is not None else None,

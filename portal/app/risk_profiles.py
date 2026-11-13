@@ -160,6 +160,8 @@ def serialize(row, exclude=()):
     return {column.name: (getattr(row, column.name).isoformat() if isinstance(getattr(row, column.name), datetime) else getattr(row, column.name)) for column in row.__table__.columns if column.name not in exclude}
 
 def record_decision(db, service_id, payload, actor):
+    from .imported_services import require_local_service
+    require_local_service(db, service_id)
     payload = deepcopy(payload)
     kind, decision = payload.get('kind'), payload.get('decision')
     if kind not in DEFAULT_POLICY['authority_labels'] or decision not in ('accept', 'mitigate', 'reject', 'reassess'):

@@ -1,7 +1,9 @@
 """Select retained evidence for the current service version."""
-from sqlalchemy import case, select
+from sqlalchemy import and_, case, or_, select
 
 from .models import Execution
+from .imported_services import imported_service_predicate
+from .replica_models import ReplicaServiceState
 
 
 def _current_execution_query(service):
@@ -11,19 +13,17 @@ def _current_execution_query(service):
     An image rescan must not silently replace a whole-service inventory.
     """
     from .operating_mode import is_replica
-    if is_replica():
-        from .replica_models import ReplicaServiceState
-        return (select(Execution).where(Execution.service_id == service.id,
-            Execution.id == select(ReplicaServiceState.active_execution_id).where(
-                ReplicaServiceState.service_id == service.id).scalar_subquery()).limit(1)
-                .execution_options(populate_existing=True))
-    # Legacy exports may have no version; only their unversioned scans match.
-    return (select(Execution).where(
-        Execution.service_id == service.id,
+    imported = imported_service_predicate(service.id)
+    signed = Execution.id == select(ReplicaServiceState.active_execution_id).where(
+        ReplicaServiceState.service_id == service.id).correlate_except(ReplicaServiceState).scalar_subquery()
+    # Retained imported provenance with missing state must not fall back to a
+    # newer local scan. This expression also supports correlated portfolio SQL.
+    source = signed if is_replica() else or_(and_(imported, signed), and_(~imported,
         Execution.service_version_id.is_not_distinct_from(service.current_version_id),
-        Execution.scan_scope.in_(("service", "image")),
-    ).order_by(case((Execution.scan_scope == "service", 0), else_=1),
-               Execution.scanned_at.desc(), Execution.id.desc()).limit(1)
+        Execution.scan_scope.in_(("service", "image"))))
+    return (select(Execution).where(Execution.service_id == service.id, source)
+        .order_by(case((Execution.scan_scope == "service", 0), else_=1),
+                  Execution.scanned_at.desc(), Execution.id.desc()).limit(1)
         .execution_options(populate_existing=True))
 
 
@@ -42,7 +42,7 @@ def view_executions(executions, configuration):
     must not silently substitute another scan, even if it is newer or complete.
     """
     from .operating_mode import is_replica
-    if is_replica():
+    if is_replica() or '_replica_execution_id' in configuration:
         identity = configuration.get('_replica_execution_id')
         return [execution for execution in executions if execution.id == identity]
     return executions

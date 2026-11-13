@@ -12,6 +12,7 @@ from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, select, u
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base, SessionLocal
 from .schema_migrations import create_index_if_missing
+from .imported_services import imported_service_predicate
 
 
 def now():
@@ -54,6 +55,21 @@ class ScanAttempt(Base):
 TERMINAL = {"complete", "incomplete", "error", "cancelled"}
 
 
+def imported_scan_target(db, service_key):
+    """Worker credentials never authorize replacing publisher-managed evidence."""
+    if not service_key:
+        return False
+    from .models import Service
+    return db.scalar(select(Service.id).where(Service.service_key == service_key,
+        imported_service_predicate(Service.id))) is not None
+
+
+def local_image_update(job_id):
+    from .models import ServiceImage
+    return update(ServiceImage).where(ServiceImage.scan_job_id == job_id,
+        ~imported_service_predicate(ServiceImage.service_id))
+
+
 class DistributionScanInProgress(Exception):
     def __init__(self, job_id):
         self.job_id = job_id
@@ -89,6 +105,8 @@ class DurableJobs(MutableMapping):
 
     def __setitem__(self, key, payload):
         with SessionLocal() as db:
+            if imported_scan_target(db, payload.get("ingest_service_id")):
+                raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
             if db.get_bind().dialect.name == "postgresql":
                 db.execute(text("SELECT pg_advisory_xact_lock(73488292)"))
             elif payload.get("ingest_scope") == "distribution" and db.get_bind().dialect.name == "sqlite":
@@ -143,8 +161,7 @@ class DurableJobs(MutableMapping):
                     if attempt and attempt.state not in {"received", "failed", "expired"}:
                         attempt.state = row.status
                 if row.status in {"cancelled", "error"}:
-                    from .models import ServiceImage
-                    db.execute(update(ServiceImage).where(ServiceImage.scan_job_id == key)
+                    db.execute(local_image_update(key)
                                .values(scan_status="failed", scan_error=row.payload.get("error") or "Scan cancelled"))
                 db.commit()
 
@@ -158,8 +175,7 @@ def recover(db):
         job.status = "error"
         job.finished_at = now()
         job.payload = {**job.payload, "status": "error", "phase": "error", "error": "Scan input preparation expired before submission"}
-        from .models import ServiceImage
-        db.execute(update(ServiceImage).where(ServiceImage.scan_job_id == job.id)
+        db.execute(local_image_update(job.id)
                    .values(scan_status="failed", scan_error=job.payload["error"]))
     expired = list(db.scalars(select(ScanJob).where(
         ScanJob.status.in_(["running", "claimed"]), ScanJob.lease_until < now()).with_for_update(skip_locked=True)))
@@ -176,8 +192,7 @@ def recover(db):
         job.payload = {**job.payload, "status": job.status, "phase": "error" if exhausted else "recovering",
                        "error": "Worker lease expired; retry limit reached" if exhausted else "Worker lease expired; queued for recovery"}
         if exhausted:
-            from .models import ServiceImage
-            db.execute(update(ServiceImage).where(ServiceImage.scan_job_id == job.id)
+            db.execute(local_image_update(job.id)
                        .values(scan_status="failed", scan_error=job.payload["error"]))
 
 
@@ -187,6 +202,12 @@ def claim(worker_id):
         row = db.scalar(select(ScanJob).where(ScanJob.status == "queued", ScanJob.available_at <= now())
                         .order_by(ScanJob.anonymous, ScanJob.created_at).with_for_update(skip_locked=True).limit(1))
         if row is None:
+            db.commit()
+            return None
+        if imported_scan_target(db, row.service_key):
+            row.status, row.finished_at, row.definition_pending = "cancelled", now(), False
+            row.payload = {**row.payload, "status": "cancelled", "phase": "cancelled",
+                "error": "Imported service evidence is managed by its OCI publisher"}
             db.commit()
             return None
         if row.payload.get("schedule_context"):
@@ -226,6 +247,8 @@ def fenced(db, job_id, attempt_id, token, *, completed=False, worker_id=None):
         raise HTTPException(403, "Attempt belongs to another worker")
     if not token or not secrets.compare_digest(attempt.token_hash, hashlib.sha256(token.encode()).hexdigest()):
         raise HTTPException(403, "Invalid attempt credential")
+    if imported_scan_target(db, job.service_key):
+        raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
     if completed and attempt.state == "received":
         return job, attempt
     lease = job.lease_until
@@ -296,8 +319,7 @@ def report_failure(job_id, attempt_id, token, category, reason="", log_tail="", 
                        "log_tail": sanitize_diagnostic(log_tail, 8192)}
         if not retry:
             job.payload = {**job.payload, "finished_at": job.finished_at.isoformat()}
-            from .models import ServiceImage
-            db.execute(update(ServiceImage).where(ServiceImage.scan_job_id == job_id)
+            db.execute(local_image_update(job_id)
                        .values(scan_status="failed", scan_error=job.payload["error"]))
         db.commit()
     return {"accepted": True, "retry": retry, "status": "queued" if retry else "error"}

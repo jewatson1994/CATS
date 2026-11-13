@@ -34,6 +34,8 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
                          PolicyFinding, PolicyExceptionRecord, Group, ServiceGroup,
                          ServiceArchiveEvent, ServiceVersion)
 
+    from .replica_findings import evidence_time
+    now = evidence_time(configuration, now)
     proxy = SimpleNamespace(**{column.key: getattr(service, column.key)
                                for column in service.__table__.columns})
     proxy.findings, proxy.policy_findings, proxy.poam_entries = [], [], []
@@ -53,8 +55,8 @@ def _prepare_header(db, service, now, configuration, service_view_callback, *, i
         .order_by(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc()).limit(1)).mappings()]
     proxy.current_version = next(iter(_rows(db, ServiceVersion,
         ServiceVersion.id == service.current_version_id)), None) if service.current_version_id else None
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service.id):
         from .service_evidence import current_execution
         current = latest = current_execution(db, service, defer_payload=True)
     else:

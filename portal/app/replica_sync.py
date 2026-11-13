@@ -1,4 +1,4 @@
-"""Small restart-safe OCI consumer; no scanner, intelligence feed or source CATS."""
+"""Restart-safe signed OCI consumer, available alongside full CATS or on a replica."""
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 import asyncio

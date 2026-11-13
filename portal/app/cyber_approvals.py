@@ -19,6 +19,7 @@ from .durable_jobs import DurableJob, submit, JobError
 from .service_oci import validate_destination, _csrf
 from .secrets import encrypt_secret, decrypt_secret
 from . import signing, release_validity
+from .imported_services import imported_service_predicate, is_imported_service
 
 router = APIRouter()
 
@@ -537,6 +538,8 @@ def publish_job(ctx, payload):
             row = db.get(CyberApproval, payload['approval_id'])
             if not row or row.status != 'approved' or row.revoked_at or row.job_id != ctx.job.id:
                 raise JobError('Approved request is unavailable or has been revoked')
+            if is_imported_service(db, row.service_id):
+                raise JobError('Imported service evidence is managed by its OCI publisher')
             try:
                 ctx.check()
                 if row.snapshot_digest != digest(row.snapshot):
@@ -608,6 +611,8 @@ def _publish_revocation_job(ctx, payload):
         if (not row or row.status != 'approved' or not row.revoked_at or row.job_id != ctx.job.id
                 or (row.publication or {}).get('revocation', {}).get('portable') != payload['revocation']):
             raise JobError('Recorded revocation publication is unavailable')
+        if is_imported_service(db, row.service_id):
+            raise JobError('Imported service evidence is managed by its OCI publisher')
         try:
             ctx.check()
             destination = db.get(ApprovedReleaseDestination, row.destination_id)
@@ -649,7 +654,8 @@ def _publish_revocation_job(ctx, payload):
 
 
 def reconcile_jobs(db):
-    for row in db.scalars(select(CyberApproval).where(CyberApproval.publish_status.in_(('queued', 'publishing')))):
+    for row in db.scalars(select(CyberApproval).where(CyberApproval.publish_status.in_(('queued', 'publishing')),
+            ~imported_service_predicate(CyberApproval.service_id))):
         job = db.get(DurableJob, row.job_id) if row.job_id else None
         if not job or job.status in ('failed', 'cancelled', 'completed'):
             row.publish_status = 'failed'

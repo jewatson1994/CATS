@@ -42,7 +42,7 @@ def predicate(finding_id, field):
         Decision.finding_id == finding_id).correlate_except(Decision, ReplicaServiceState).scalar_subquery()
 
 
-def configuration(db, service_id, defaults):
+def configuration(db, service_id, defaults, *, include_findings=True):
     from .replica_views import active
     release = active(db, service_id)
     display = release.evidence_state.get('extension', {}).get('display', {}) if release else {}
@@ -53,7 +53,7 @@ def configuration(db, service_id, defaults):
     result['_replica_captured_at'] = display.get('captured_at') or (release.approved_at.isoformat() if release else None)
     result['_replica_findings'] = {row.finding_id: {
         key: getattr(row, key) for key in ('eligible', 'noncompliant', 'excepted', 'vex_excluded', 'kev', 'epss')}
-        for row in db.scalars(select(Decision).where(Decision.service_id == service_id))}
+        for row in db.scalars(select(Decision).where(Decision.service_id == service_id))} if include_findings else {}
     return result
 
 

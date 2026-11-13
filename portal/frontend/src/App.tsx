@@ -123,7 +123,7 @@ export function preloadPages() {
 }
 
 const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
-  '/cyber-approvals', '/approved-releases', '/admin/approved-release-destinations',
+  '/cyber-approvals', '/approved-releases', '/imported-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
@@ -137,7 +137,7 @@ export const isPageRoute = (path: string) => routes.has(path) || [
   /^\/admin\/(configuration|general-policy)\/export-templates\/(poam|ppsm|assets)$/,
 ].some(pattern => pattern.test(path));
 const pages: Record<string, ComponentType<{data: PageData}>> = {
-  replica: ReplicaAdmin, cyber_overrides: CyberOverrides,
+  replica: ReplicaAdmin, cyber_overrides: CyberOverrides, imported_releases: ReplicaReleases,
   cyber_approvals: CyberApprovals, approved_releases: ({data}) => data.cats_mode === 'replica' ? <ReplicaReleases data={data}/> : <ApprovedReleases data={data}/>, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
   patch_campaigns: PatchCampaigns, artifact_catalog: ArtifactCatalog, artifact_recommendations: ArtifactRecommendations,
@@ -162,7 +162,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
 
 /** Readable browser tab titles: page name, then the service it concerns, then CATS. */
 const pageNames: Record<string, string> = {
-  replica: 'Replica administration', cyber_overrides: 'Cyber overrides',
+  replica: 'OCI monitoring', cyber_overrides: 'Cyber overrides', imported_releases: 'Imported approved releases',
   dashboard: 'Services', home: 'Overview', login: 'Sign in', password: 'Change password', appearance: 'Appearance',
   cybersecurity: 'Cybersecurity dashboard', cyber_approvals: 'Approvals', approved_releases: 'Approved Releases',
   approved_release_destinations: 'Release Destinations', patch_campaigns: 'Patch campaigns', artifact_catalog: 'Artifact catalog',

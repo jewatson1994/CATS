@@ -23,8 +23,8 @@ def global_activity_page(db, *, cutoff=None, action='', page=1, page_size=50):
 
 
 def service_activity_page(db, service_id, page=1, page_size=50):
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service_id):
         from .replica_views import service_activity
         return service_activity(db, service_id, page=page, page_size=page_size)
     page_size = max(1, min(int(page_size), 200))
@@ -52,6 +52,11 @@ def latest_evidence_execution(db, service_id, *, architecture=False):
     from sqlalchemy import or_
     from .models import Execution
     query = select(Execution).where(Execution.service_id == service_id)
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service_id):
+        from .replica_models import ReplicaServiceState
+        query = query.where(Execution.id == select(ReplicaServiceState.active_execution_id).where(
+            ReplicaServiceState.service_id == service_id).scalar_subquery())
     if architecture:
         fields = [Execution.raw_payload['service_overview']['rendered_resources'],
                   Execution.raw_payload['rendered_resources'], Execution.raw_payload['helm_source_files']]

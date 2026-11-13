@@ -86,10 +86,10 @@ def _permission(auth, service_id, action):
         raise PermissionError('Local Cyber permission denied')
 
 
-def _replica_only():
-    from .operating_mode import is_replica
-    if not is_replica():
-        raise ValueError('Local Cyber overrides are available only in replica mode')
+def _imported_only(db, service_id):
+    from .imported_services import uses_imported_evidence
+    if not uses_imported_evidence(db, service_id):
+        raise ValueError('Local Cyber overrides are available only for imported services')
 
 
 def _text(data, key):
@@ -112,7 +112,7 @@ def _date(value, name, timestamp):
 
 
 def create_override(db, auth, service_id, data, timestamp=None):
-    _replica_only()
+    _imported_only(db, service_id)
     _permission(auth, service_id, 'local_override.create')
     from .replica_authorization import trusted_release, override_release_denial
     timestamp = utc(timestamp or now())
@@ -158,7 +158,7 @@ def create_override(db, auth, service_id, data, timestamp=None):
 
 
 def revoke_override(db, auth, service_id, identity, reason, timestamp=None):
-    _replica_only()
+    _imported_only(db, service_id)
     _permission(auth, service_id, 'local_override.revoke')
     # Serialize revocation with final pull auditing. Once this commits, every
     # subsequent authorization reads the revocation; no decision cache exists.

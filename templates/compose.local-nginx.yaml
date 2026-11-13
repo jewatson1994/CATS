@@ -24,6 +24,7 @@ services:
     environment:
       SESSION_COOKIE_SECURE: "true"
       CATS_PUBLIC_URL: https://${CATS_PORTAL_HOSTNAME:?Set CATS_PORTAL_HOSTNAME to your portal DNS name}
+      CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}
     volumes:
       - type: bind
         source: ${CATS_PORTAL_CERT_DIR:-/opt/cats/certs/portal}

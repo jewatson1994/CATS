@@ -416,8 +416,15 @@ def resolve_configurations(db, service_ids, configuration):
     for chunk in _chunks(group_ids):
         for setting in db.scalars(select(PortalSetting).where(member_of(PortalSetting.group_id, chunk, numeric=True))):
             settings.setdefault(setting.group_id, []).append(setting)
+    from .operating_mode import is_replica
+    from .imported_services import imported_service_ids
+    from .replica_findings import configuration as imported_configuration
+    imported = set(service_ids) if is_replica() else imported_service_ids(db, service_ids)
     resolved = {}
     for service_id in service_ids:
+        if service_id in imported:
+            resolved[service_id] = imported_configuration(db, service_id, m.CONFIG_DEFAULTS, include_findings=False)
+            continue
         values = dict(configuration)
         for group_id in (groups.get(service_id, []) if len(groups.get(service_id, [])) == 1 else []):
             for setting in settings.get(group_id, []):
@@ -471,6 +478,11 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
         return 0
     started = perf_counter()
     with Session(bind=bind) as db:
+        from .operating_mode import is_replica
+        from .imported_services import imported_service_ids
+        ids = [] if is_replica() else sorted(set(ids) - imported_service_ids(db, ids))
+        if not ids:
+            return 0
         def generations():
             return dict(db.execute(select(ServicePosture.service_id, ServicePosture.data_generation)
                                    .where(member_of(ServicePosture.service_id, ids, numeric=True))).all())
@@ -547,6 +559,9 @@ def schedule(bind, service_ids, kinds=KINDS):
         return None
     from .database import background_bind
     bind = background_bind(getattr(bind, "engine", bind))
+    from .imported_services import imported_service_ids
+    with Session(bind=bind) as db:
+        service_ids = set(service_ids) - imported_service_ids(db, service_ids)
     with _queue_lock:
         fresh = {(bind, kind, sid) for kind in kinds for sid in service_ids} - _queued
         if not fresh:
@@ -669,29 +684,47 @@ def _load_available(db, kind, service_ids, configurations, now):
     return {sid: rows[sid].row for sid in service_ids if sid in rows and rows[sid].row is not None}, meta
 
 
+def _mixed_rows(db, kind, service_ids, configurations, now):
+    """Retained publisher rows and local projections coexist in one portfolio."""
+    from .operating_mode import is_replica
+    from .imported_services import imported_service_ids
+    from .replica_views import posture_rows
+    imported = set(service_ids) if is_replica() else imported_service_ids(db, service_ids)
+    local = [identity for identity in service_ids if identity not in imported]
+    stored, meta = (_load(db, kind, local, configurations, now) if local else
+        ({}, {"services": 0, "stale": 0, "missing": 0, "recomputed": 0,
+              "refreshing": False, "preparing": 0}))
+    if imported:
+        captured, _ = posture_rows(db, kind, sorted(imported))
+        stored.update(captured)
+        missing = len(imported - captured.keys())
+        meta = {**meta, 'services': len(service_ids), 'imported': len(imported),
+                'missing': meta.get('missing', 0) + missing,
+                'preparing': meta.get('preparing', 0) + missing,
+                'refreshing': bool(meta.get('refreshing')) or bool(missing)}
+    return stored, meta, set(local)
+
+
 def services_rows(db, services, configurations, configuration, now):
     """Projection-backed equivalent of service_overview_rows_aggregated."""
     from .execution_summaries import CountOnly
     from . import main as m
     ids = [service.id for service in services]
-    from .operating_mode import is_replica
-    if is_replica():
-        from .replica_views import posture_rows
-        stored, meta = posture_rows(db, 'services', ids)
-    else:
-        stored, meta = _load(db, "services", ids, configurations, now)
+    stored, meta, local = _mixed_rows(db, 'services', ids, configurations, now)
     rows, poam_counts = [], {}
     for service in services:
         value = stored.get(service.id)
         if value is None:
-            continue  # still being prepared: reported in meta["preparing"], never shown with invented values
+            continue  # Missing captured evidence cannot become invented local posture.
         row = {key: CountOnly(int(value[key])) for key in _SERVICES_ROW_COUNTS}
         row.update({key: value[key] for key in ("compliant", "version", "evidence_state", "oldest_age", "archive")})
         row.update(service=service, policy_findings=[], poam=dict(value["poam"]))
         rows.append(row)
         poam_counts[service.id] = dict(value["poam"])
-    if shadow_enabled() and not is_replica():
-        direct, _ = m.service_overview_rows_aggregated(db, None, now, configuration, services, configurations)
+    if shadow_enabled() and local:
+        direct, _ = m.service_overview_rows_aggregated(db, None, now, configuration,
+            [service for service in services if service.id in local],
+            {identity: configurations[identity] for identity in local})
         _compare("services", {row["service"].id: _services_row(row) for row in direct}, stored)
     return rows, poam_counts, meta
 
@@ -699,17 +732,13 @@ def services_rows(db, services, configurations, configuration, now):
 def cyber_rows(db, services, configurations, configuration, now):
     """Projection-backed Cybersecurity rows keyed by service id."""
     ids = [service.id for service in services]
-    from .operating_mode import is_replica
-    if is_replica():
-        from .replica_views import posture_rows
-        stored, meta = posture_rows(db, 'cyber', ids)
-    else:
-        stored, meta = _load(db, "cyber", ids, configurations, now)
-    if shadow_enabled() and not is_replica():
+    stored, meta, local = _mixed_rows(db, 'cyber', ids, configurations, now)
+    if shadow_enabled() and local:
         from .dashboard_portfolio import compute_rows
-        _compare("cyber", {sid: _cyber_row(row) for sid, row in compute_rows(db, services, configurations, configuration, now).items()}, stored)
+        _compare("cyber", {sid: _cyber_row(row) for sid, row in compute_rows(db,
+            [service for service in services if service.id in local],
+            {identity: configurations[identity] for identity in local}, configuration, now).items()}, stored)
     return {sid: _restore_cyber(row) for sid, row in stored.items()}, meta
-
 
 def _compare(kind, direct, stored):
     mismatched = sorted(sid for sid in direct if json.loads(json.dumps(direct[sid], default=str)) != json.loads(json.dumps(stored.get(sid), default=str)))
@@ -734,6 +763,10 @@ def warm(bind, chunk_size=200, max_chunks=1000) -> int:
     intelligence token, epoch); configuration and time freshness are verified
     on read. Each chunk commits independently, so a restart resumes.
     """
+    from .operating_mode import is_replica
+    from .imported_services import imported_service_predicate
+    if is_replica():
+        return 0
     total = 0
     for kind in KINDS:
         for _ in range(max_chunks):
@@ -746,7 +779,7 @@ def warm(bind, chunk_size=200, max_chunks=1000) -> int:
                     | (_column(kind, "algorithm") != ALGORITHM_VERSION)
                     | _column(kind, "token").is_distinct_from(token)
                     | _column(kind, "epoch").is_distinct_from(epoch)
-                    | _column(kind, "row").is_(None)).order_by(ServicePosture.service_id).limit(chunk_size)))
+                    | _column(kind, "row").is_(None)).where(~imported_service_predicate(Service.id)).order_by(ServicePosture.service_id).limit(chunk_size)))
             if not ids:
                 break
             total += rebuild(bind, kind, ids)

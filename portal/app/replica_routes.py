@@ -1,4 +1,4 @@
-"""Local replica administration and immutable approved evidence browsing."""
+"""Signed OCI source administration and immutable imported evidence browsing."""
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
@@ -13,7 +13,7 @@ from .database import get_db
 from .models import Service
 from .oci_models import OCIUpstream, OCIRepository, is_project_pattern
 from .oci_transport import REPOSITORY
-from .operating_mode import is_replica
+from .operating_mode import mode
 from .replica_models import ReplicaSource, ReplicaRelease, ReplicaServiceState
 from .replica_integrity import verify_record, digest
 from .replica_sync import enqueue, KIND, FAILURE_MESSAGES
@@ -27,8 +27,6 @@ SOURCE_FIELDS = ('id','name','upstream_id','repository','trusted_publishers','po
 
 
 def require(auth, permission, service_id=None):
-    if not is_replica():
-        raise HTTPException(404, 'Replica mode is not enabled')
     if not auth.has(permission, service_id):
         raise HTTPException(403, 'Permission required for this scope')
 
@@ -177,8 +175,6 @@ def release_row(db, release):
 @router.get('/releases')
 def releases(service_id: int | None = None, service_key: str | None = None,
              auth: AuthContext = Depends(require_user), db=Depends(get_db)):
-    if not is_replica():
-        raise HTTPException(404, 'Replica mode is not enabled')
     query = select(ReplicaRelease).join(Service, Service.id == ReplicaRelease.service_id)
     if service_id is not None:
         query = query.where(ReplicaRelease.service_id == service_id)
@@ -235,9 +231,7 @@ def sync_job_view(job):
 def status(auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     if not (auth.has('replica.admin') or auth.has('replica.sync')):
         raise HTTPException(403, 'Replica administration permission required')
-    if not is_replica():
-        raise HTTPException(404, 'Replica mode is not enabled')
-    return {'mode': 'replica', 'sources': [fields(row, SOURCE_FIELDS) for row in db.scalars(select(ReplicaSource))],
+    return {'mode': mode(), 'sources': [fields(row, SOURCE_FIELDS) for row in db.scalars(select(ReplicaSource))],
         'services': [dict(service_id=state.service_id, service_key=service.service_key, service_name=service.name,
             active_release_id=state.active_release_id, high_sequence=state.high_sequence, last_sync_at=state.last_sync_at)
             for state, service in db.execute(select(ReplicaServiceState, Service).join(Service, ReplicaServiceState.service_id == Service.id))],

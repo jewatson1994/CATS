@@ -456,7 +456,8 @@ async def app_lifespan(_app: FastAPI):
     scan_monitor = asyncio.create_task(scan_protocol.maintenance())
     _start_read_model_maintenance()
     try:
-        async with preview_cleanup_lifespan(SessionLocal):
+        from .replica_sync import replica_lifespan
+        async with preview_cleanup_lifespan(SessionLocal), replica_lifespan():
             yield
     finally:
         scan_monitor.cancel()
@@ -484,6 +485,8 @@ app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
 app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
+from .oci_pull_instructions import router as oci_pull_router
+app.include_router(oci_pull_router)
 app.include_router(replica_routes.router)
 app.include_router(local_cyber_overrides.router)
 app.include_router(oci_lifecycle.router)
@@ -889,6 +892,8 @@ def _new_validation_run(
     artifact_type: str = "ORIGINAL", artifact_reference: str | None = None,
     artifact_revision_id: int | None = None, source_files_override: dict[str, str] | None = None,
 ) -> tuple[DeploymentValidationRun, bool]:
+    from .imported_services import require_local_service
+    require_local_service(db, service.id)
     source_files = source_files_override if source_files_override is not None else (
         execution.raw_payload.get("helm_source_files") if execution and isinstance(execution.raw_payload, dict) else {}
     )
@@ -927,7 +932,8 @@ def _validation_progress(run_id: int, phase: str) -> None:
     }
     with SessionLocal() as db:
         run = db.get(DeploymentValidationRun, run_id)
-        if not run:
+        from .imported_services import is_imported_service
+        if not run or is_imported_service(db, run.service_id):
             return
         run.phase = phase
         if phase != "COMPLETE":
@@ -947,7 +953,8 @@ def _run_deployment_validation(run_id: int) -> None:
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation setup failed", extra={"run_id": run_id})
         with SessionLocal() as db:
             run = db.get(DeploymentValidationRun, run_id)
-            if not run or run.phase == "COMPLETE":
+            from .imported_services import is_imported_service
+            if not run or run.phase == "COMPLETE" or is_imported_service(db, run.service_id):
                 return
             run.status = ValidationStatus.COULD_NOT_VALIDATE.value if run.started_at else "NOT_ATTEMPTED"
             run.phase = "COMPLETE"
@@ -965,7 +972,8 @@ def _execute_deployment_validation(run_id: int) -> None:
     config = ValidationConfig.from_env()
     with SessionLocal() as db:
         run = db.get(DeploymentValidationRun, run_id)
-        if not run:
+        from .imported_services import is_imported_service
+        if not run or is_imported_service(db, run.service_id):
             return
         execution = db.get(Execution, run.execution_id) if run.execution_id else None
         if (not execution or not isinstance(execution.raw_payload, dict)) and not run.artifact_revision_id:
@@ -1078,7 +1086,8 @@ def _execute_deployment_validation(run_id: int) -> None:
         }
     with SessionLocal() as db:
         run = db.get(DeploymentValidationRun, run_id)
-        if not run:
+        from .imported_services import is_imported_service
+        if not run or is_imported_service(db, run.service_id):
             return
         for field, key, default in (
             ("status", "status", ValidationStatus.COULD_NOT_VALIDATE.value), ("phase", "phase", "COMPLETE"),
@@ -1119,7 +1128,8 @@ def _submit_validation_run(run_id: int) -> None:
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation could not be scheduled", extra={"run_id": run_id})
         with SessionLocal() as db:
             run = db.get(DeploymentValidationRun, run_id)
-            if run:
+            from .imported_services import is_imported_service
+            if run and not is_imported_service(db, run.service_id):
                 run.status = ValidationStatus.NOT_ATTEMPTED.value; run.phase = "COMPLETE"
                 run.reason = "Deployment Validation could not be scheduled. Static scan results are unaffected."
                 run.completed_at = utcnow(); run.updated_at = utcnow()
@@ -1131,9 +1141,11 @@ def recover_stale_validation_runs() -> None:
     """Reconcile expired attempts and retry exact-name failed cleanup."""
     config = ValidationConfig.from_env(); cutoff = utcnow() - timedelta(seconds=config.total_timeout_seconds * 2)
     terminal_statuses = tuple(VALIDATION_TERMINAL_STATUSES)
+    from .imported_services import imported_service_predicate
     with SessionLocal() as db:
         runs = db.scalars(select(DeploymentValidationRun).where(
             DeploymentValidationRun.created_at < cutoff,
+            ~imported_service_predicate(DeploymentValidationRun.service_id),
             or_(DeploymentValidationRun.status.not_in(terminal_statuses), DeploymentValidationRun.cleanup_status.in_(("FAILED", "UNKNOWN"))),
         )).all()
         run_ids = [run.id for run in runs]
@@ -1142,7 +1154,8 @@ def recover_stale_validation_runs() -> None:
         return
     cleanup = cleanup_stale_clusters(names, config=config) if names else {"deleted": [], "failed": []}
     with SessionLocal() as db:
-        for run in db.scalars(select(DeploymentValidationRun).where(DeploymentValidationRun.id.in_(run_ids))).all():
+        for run in db.scalars(select(DeploymentValidationRun).where(DeploymentValidationRun.id.in_(run_ids),
+                ~imported_service_predicate(DeploymentValidationRun.service_id))).all():
             cleanup_retry = run.status in terminal_statuses and run.cleanup_status in {"FAILED", "UNKNOWN"}
             if cleanup_retry:
                 run.cleanup_status = "FAILED" if run.cluster_name in cleanup["failed"] else "COMPLETE"
@@ -1253,7 +1266,9 @@ def backfill_policy_findings(*, force: bool = False) -> None:
         # materialized; only the others need their payload element read.
         synced = select(PolicyFinding.id).where(PolicyFinding.service_id == Service.id,
                                                 PolicyFinding.last_seen >= newest(Execution.scanned_at)).correlate(Service).exists()
-        services = db.execute(select(Service.id, newest(Execution.id).label("execution_id")).where(~synced)).all()
+        from .imported_services import imported_service_predicate
+        services = db.execute(select(Service.id, newest(Execution.id).label("execution_id")).where(
+            ~synced, ~imported_service_predicate(Service.id))).all()
         for offset in range(0, len(services), 32):
             ids = [row.execution_id for row in services[offset:offset + 32] if row.execution_id]
             for latest in db.execute(select(Execution.service_id, Execution.scanned_at,
@@ -1282,8 +1297,10 @@ def reconcile_generated_active_names() -> int:
     """One-way startup repair for active services affected by the old promotion bug."""
     restored = 0
     with SessionLocal() as db:
+        from .imported_services import imported_service_predicate
         services = db.scalars(select(Service).where(
             Service.lifecycle_status == "active", Service.staging_name_generated.is_(True),
+            ~imported_service_predicate(Service.id),
         )).all()
         for service in services:
             previous_name = service.name
@@ -1312,9 +1329,10 @@ def promote_staged_services_with_evidence() -> int:
     """
     promoted = 0
     with SessionLocal() as db:
+        from .imported_services import imported_service_predicate
         services = db.scalars(
             select(Service)
-            .where(Service.lifecycle_status == "staged")
+            .where(Service.lifecycle_status == "staged", ~imported_service_predicate(Service.id))
             .options(
                 selectinload(Service.executions),
                 selectinload(Service.findings),
@@ -1356,6 +1374,23 @@ def excel_datetime(value):
 
 
 def page_context(auth: AuthContext, **values):
+    from .imported_services import is_imported_service
+    from sqlalchemy.orm import object_session
+    view = values.get("view") or {}
+    service = values.get("service") or (view.get("service") if isinstance(view, dict) else getattr(view, "service", None))
+    imported = False
+    service_id = service.get("id") if isinstance(service, dict) else getattr(service, "id", None)
+    if service_id is not None:
+        service_db = next((object_session(item) for item in (service, auth.user)
+                           if getattr(item, "_sa_instance_state", None) is not None
+                           and object_session(item) is not None), None)
+        if service_db is None:
+            with SessionLocal() as service_db:
+                imported = is_imported_service(service_db, service_id)
+        else:
+            imported = is_imported_service(service_db, service_id)
+    values["imported_service"] = imported
+    values["read_only"] = is_replica() or imported
     # Keep the global navigation useful without making each individual page
     # route calculate workflow state.  The count is limited to pending
     # requests for services visible to the signed-in account.
@@ -1538,8 +1573,8 @@ def remediation_enabled(db: Session) -> bool:
 
 def configuration_for_service(db: Session, service: Service) -> dict[str, str]:
     """Apply the sole owning group's policies; legacy conflicts remain readable."""
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service.id):
         from .replica_findings import configuration
         return configuration(db, service.id, CONFIG_DEFAULTS)
     configuration = get_configuration(db, None)
@@ -1577,7 +1612,14 @@ def configurations_for_services(
             settings_by_group.setdefault(setting.group_id, []).append(setting)
 
     resolved: dict[int, dict[str, str]] = {}
+    from .imported_services import imported_service_ids
+    imported_ids = ({service.id for service in services} if is_replica()
+                    else imported_service_ids(db, [service.id for service in services]))
     for service in services:
+        if service.id in imported_ids:
+            from .replica_findings import configuration as imported_configuration
+            resolved[service.id] = imported_configuration(db, service.id, CONFIG_DEFAULTS)
+            continue
         configuration = dict(base)
         for group_id in ([service.groups[0].id] if len(service.groups) == 1 else []):
             for setting in settings_by_group.get(group_id, []):
@@ -2477,6 +2519,11 @@ def _risk_finding_expressions(
         applicable = or_(finding_exception, ~finding_excluded(Finding.id, now))
         eligible_result = and_(eligible_result, applicable)
         noncompliant_result = and_(noncompliant_result, applicable)
+    from .imported_services import imported_service_predicate
+    from .replica_findings import predicate
+    imported = imported_service_predicate(Finding.service_id)
+    eligible_result = case((imported, predicate(Finding.id, 'eligible')), else_=eligible_result)
+    noncompliant_result = case((imported, predicate(Finding.id, 'noncompliant')), else_=noncompliant_result)
     return eligible_result, noncompliant_result, needs_observations
 
 
@@ -2665,23 +2712,27 @@ def readiness():
 
 @app.get("/admin/replica", response_class=HTMLResponse)
 def replica_admin_page(request: Request, auth: AuthContext = Depends(require_user)):
-    from .operating_mode import is_replica
-    if not is_replica():
-        raise HTTPException(404, "Replica mode is not enabled")
     if not (auth.has("replica.admin") or auth.has("replica.sync")):
         raise HTTPException(403, "Permission denied")
     return templates.TemplateResponse(request, "replica.html", page_context(auth))
 
 
+@app.get("/imported-releases", response_class=HTMLResponse)
+def imported_releases_page(request: Request, auth: AuthContext = Depends(require_user)):
+    if auth.accessible_service_ids("service.view") == set():
+        raise HTTPException(403, "Service viewing permission required")
+    return templates.TemplateResponse(request, "imported_releases.html", page_context(auth))
+
+
 @app.get("/services/{service_key}/cyber-overrides", response_class=HTMLResponse)
 def cyber_override_page(service_key: str, request: Request, db: Session = Depends(get_db),
                         auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
-    from .operating_mode import is_replica
-    if not is_replica():
-        raise HTTPException(404, "Replica mode is not enabled")
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if service is None:
         raise HTTPException(404, "Service not found")
+    from .imported_services import uses_imported_evidence
+    if not uses_imported_evidence(db, service.id):
+        raise HTTPException(404, "Local Cyber overrides apply to imported services")
     return templates.TemplateResponse(request, "cyber_overrides.html", page_context(auth, service=service))
 
 
@@ -3098,7 +3149,8 @@ def backfill_incomplete_scan_findings() -> None:
     """
     with SessionLocal() as db:
         changed = False
-        for service in db.scalars(select(Service).order_by(Service.id)).all():
+        from .imported_services import imported_service_predicate
+        for service in db.scalars(select(Service).where(~imported_service_predicate(Service.id)).order_by(Service.id)).all():
             current_latest = db.scalar(select(Execution.scanned_at).where(
                 Execution.service_id == service.id,
                 Execution.service_version_id == service.current_version_id,
@@ -3211,6 +3263,10 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
 
 
 def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True):
+    from .imported_services import require_local_service
+    target_id = db.scalar(select(Service.id).where(Service.service_key == payload.service.id))
+    if target_id is not None:
+        require_local_service(db, target_id)
     if not payload.fixable_only:
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
@@ -4198,7 +4254,8 @@ def public_scan(request: Request, job_id: str | None = None, db: Session = Depen
     services = []
     if auth and auth.accessible_service_ids("scan.ingest") != set():
         scoped = auth.accessible_service_ids("scan.ingest")
-        query = select(Service).order_by(Service.name)
+        from .imported_services import imported_service_predicate
+        query = select(Service).where(~imported_service_predicate(Service.id)).order_by(Service.name)
         services = list(db.scalars(query))
         if scoped is not None:
             services = [service for service in services if service.id in scoped]
@@ -5316,7 +5373,8 @@ def _patch_page_context(
     configuration = get_global_configuration(db)
     if auth and auth.accessible_service_ids("scan.ingest") != set():
         scoped = auth.accessible_service_ids("scan.ingest")
-        services = list(db.scalars(select(Service).order_by(Service.name)))
+        from .imported_services import imported_service_predicate
+        services = list(db.scalars(select(Service).where(~imported_service_predicate(Service.id)).order_by(Service.name)))
         if scoped is not None:
             services = [service for service in services if service.id in scoped]
     return templates.TemplateResponse(request, "patch.html", {
@@ -9228,11 +9286,11 @@ def scan_all_artifact_images(
 
 @app.get("/api/services/{service_key}/artifacts/images/status")
 def artifact_image_status(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("service.view", scoped=True))):
-    from .operating_mode import is_replica
-    replica = is_replica()
+    from .imported_services import uses_imported_evidence
     service = db.scalar(select(Service).where(Service.service_key == service_key).options(selectinload(Service.images)))
     if not service:
         raise HTTPException(404)
+    replica = uses_imported_evidence(db, service.id)
     rows = []
     for image in service.images:
         status_value = image.scan_status or "never_scanned"
@@ -10695,6 +10753,7 @@ def review_request(
                            action=f"{change.change_type}_{decision}", note=workflow.review_reason,
                            detail=change.proposed))
     if decision == "approved" and workflow.request_type == "exception":
+        from .imported_services import imported_service_predicate
         bulk_service_ids = None
         if workflow.bulk_group_id and apply_bulk == "yes":
             bulk_service_ids = db.scalars(select(ServiceGroup.service_id).where(
@@ -10705,13 +10764,14 @@ def review_request(
             query = select(PolicyFinding).options(selectinload(PolicyFinding.exceptions)).where(
                 PolicyFinding.identity_key == source.identity_key,
                 PolicyFinding.active.is_(True),
+                ~imported_service_predicate(PolicyFinding.service_id),
             )
             if bulk_service_ids is not None:
                 query = query.where(PolicyFinding.service_id.in_(bulk_service_ids))
             elif workflow.import_batch_id:
                 query = query.where(PolicyFinding.id == workflow.policy_finding_id, PolicyFinding.service_id == workflow.service_id)
             for target in db.scalars(query).all():
-                if not active_exception(target, utcnow()):
+                if auth.has('exception.review', target.service_id) and not active_exception(target, utcnow()):
                     db.add(PolicyExceptionRecord(
                         policy_finding_id=target.id,
                         justification=workflow.justification, approved_by=auth.user.username,
@@ -10721,13 +10781,14 @@ def review_request(
             source = db.get(Finding, workflow.finding_id)
             query = select(Finding).options(selectinload(Finding.exceptions)).where(
                 Finding.cve == source.cve, Finding.active.is_(True),
+                ~imported_service_predicate(Finding.service_id),
             )
             if bulk_service_ids is not None:
                 query = query.where(Finding.service_id.in_(bulk_service_ids))
             elif workflow.import_batch_id:
                 query = query.where(Finding.id == workflow.finding_id, Finding.service_id == workflow.service_id)
             for target in db.scalars(query).all():
-                if not active_exception(target, utcnow()):
+                if auth.has('exception.review', target.service_id) and not active_exception(target, utcnow()):
                     db.add(ExceptionRecord(
                         finding_id=target.id, justification=workflow.justification,
                         approved_by=auth.user.username, expires_at=workflow.requested_expires_at,

@@ -141,8 +141,8 @@ def services(q: str = Query('', max_length=120), after: int = 0, group_id: int |
 @router.get('/services/{key}')
 def service_risk(key: str, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     item = service(db, auth, key)
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, item.id):
         from .replica_views import risk_service
         return risk_service(db, item)
     latest = checked(risk.latest_assessment, db, item.id)
@@ -353,9 +353,9 @@ def document(identity:int,auth:AuthContext=Depends(require_user),db=Depends(get_
     return row(item,('id','source_id','sha256','format','document_key','version','issued_at','retrieved_at','source_url','verification','withdrawn','raw_text'))
 
 @router.get('/assessments/{identity}')
-def assessment(identity:int,auth:AuthContext=Depends(require_user),db=Depends(get_db)):
+def assessment(identity:int,auth:AuthContext=Depends(require_user),db=Depends(get_db), imported: bool = False):
     from .operating_mode import is_replica
-    if is_replica():
+    if is_replica() or imported:
         from .replica_models import ReplicaEvidenceRecord, ReplicaRelease
         from .replica_views import captured_assessment
         item = db.get(ReplicaEvidenceRecord, identity)
@@ -368,9 +368,9 @@ def assessment(identity:int,auth:AuthContext=Depends(require_user),db=Depends(ge
     return risk.serialize(item)
 
 @router.get('/assessments/{identity}/documents/{document_id}')
-def assessment_document(identity: int, document_id: int, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
+def assessment_document(identity: int, document_id: int, auth: AuthContext = Depends(require_user), db=Depends(get_db), imported: bool = False):
     from .operating_mode import is_replica
-    if is_replica():
+    if is_replica() or imported:
         from .replica_models import ReplicaEvidenceRecord, ReplicaRelease
         from .replica_views import captured_assessment
         item = db.get(ReplicaEvidenceRecord, identity)
@@ -499,8 +499,8 @@ def native_vex_preview(after: int = 0, auth: AuthContext = Depends(require_user)
 @router.get('/services/{key}/native-vex')
 def native_vex_evidence(key: str, after: int = 0, finding_id: int | None = None, auth: AuthContext = Depends(require_user), db=Depends(get_db)):
     item = service(db, auth, key)
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, item.id):
         from .replica_views import native_vex
         return native_vex(db, item.id, after, finding_id)
     from .native_vex_models import VexDispositionService, VexDispositionEvaluation, VexDispositionPolicy, VexObservationDisposition

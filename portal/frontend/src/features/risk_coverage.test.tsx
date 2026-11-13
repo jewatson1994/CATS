@@ -10,6 +10,19 @@ const coverage = {denominator: 'unique_findings', total_findings: 4, counts, ima
   {image: 'python:3.12', image_digest: 'sha256:python', total_findings: 2, counts: {...counts, authoritative_vex: 1, epss: 2}},
 ]};
 const assessment = {id: 7, source_execution_id: 9, as_of: '2026-10-20T00:00:00Z', summary: {coverage}};
+it('uses captured document identity and avoids live advisory IDs for imported assessments', async () => {
+  vi.mocked(requestJson).mockResolvedValue({id: 3, imported: true});
+  render(<ObservationIntelligence assessmentId={7} imported observation={{
+    vex: {statements: [{id: 1, document_id: 3, source: 'Vendor', accepted: true}]},
+    advisory: {records: [{id: 5, source: 'OSV'}]},
+  }}/>);
+  fireEvent.click(screen.getByText('VEX acceptance and rejection evidence (1 retained)'));
+  fireEvent.click(screen.getByRole('button', {name: 'Inspect original VEX document #3'}));
+  expect(requestJson).toHaveBeenCalledWith('/api/risk/assessments/7/documents/3?imported=true');
+  fireEvent.click(screen.getByText('Supplemental advisory evidence (1)'));
+  expect(screen.queryByRole('button', {name: 'Inspect original advisory record #5'})).not.toBeInTheDocument();
+  expect(await screen.findByRole('button', {name: 'Close original VEX document #3'})).toBeInTheDocument();
+});
 it('uses the saved unique-finding denominator separately for service and image coverage', () => {
   render(<IntelligenceCoverage assessment={assessment}/>);
   const service = screen.getByRole('table', {name: 'Service coverage — 4 unique findings'});

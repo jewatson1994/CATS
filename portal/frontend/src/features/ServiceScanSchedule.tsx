@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import type {PageData} from '../api';
 import {Csrf} from '../components/Form';
-import {useReplica} from '../operatingMode';
+import {useServiceReadOnly} from '../operatingMode';
 
 const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const timezones = ['UTC', ...(Intl.supportedValuesOf?.('timeZone') || [])];
@@ -19,7 +19,7 @@ function localTime(value: string, timezone: string) {
 }
 
 export function ServiceScanSchedule({data, root}: {data: PageData; root: string}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly(Boolean(data.imported_service || data.read_only));
   const schedule = data.scan_schedule;
   const [cadence, setCadence] = useState(schedule?.cadence || 'off');
   if (replica || !schedule || (!data.can_schedule_scans && schedule.cadence === 'off')) return null;

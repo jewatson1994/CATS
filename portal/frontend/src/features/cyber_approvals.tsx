@@ -283,7 +283,7 @@ function ReleaseList() {
   ];
   const filtered = Boolean(query || variant);
   return <><PageHeader eyebrow="Trusted delivery" title="Approved Releases" description="Cyber-approved snapshots, their publication progress, and immutable deployment artifacts."
-    actions={<a className="secondary-button" href="/cyber-approvals">Approvals</a>}/>
+    actions={<><a className="secondary-button" href="/imported-releases">Imported approved releases</a><a className="secondary-button" href="/cyber-approvals">Approvals</a></>}/>
     {serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}
     <section className="panel"><DataGrid<Row> id="approved-releases" label="Approved releases" title="Approved releases"
       description={resource.value ? `${rows.length} of ${all.length} releases` : undefined}

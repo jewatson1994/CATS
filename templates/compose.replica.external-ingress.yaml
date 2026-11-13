@@ -16,6 +16,7 @@ services:
     environment: &replica_environment
       # Fixed replica runtime settings.
       CATS_MODE: replica
+      CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:-}
       CATS_ENV: production
       CATS_DEV_AUTH_BYPASS: "false"
       CATS_DEPLOYMENT_VALIDATION_ENABLED: "false"

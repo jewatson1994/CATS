@@ -15,12 +15,12 @@ try:
     import jwt
 except ImportError:  # Optional until OIDC mode is enabled.
     jwt = None
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, Form, HTTPException, Request, Response
 from sqlalchemy import func, select, text
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, joinedload, selectinload, object_session
 
 from .database import SessionLocal, get_db
 from .oidc_diagnostics import correlation_id
@@ -468,6 +468,16 @@ SYSTEM_ROLES = {
 APPLICATION_PERMISSIONS = {"replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
     permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
+# Imported signed evidence belongs to its publisher even in a full deployment.
+# Reading/exporting and separately audited local Cyber exceptions remain allowed.
+SERVICE_EVIDENCE_WRITES = frozenset({
+    "approval.request", "approval.decide", "risk.recommend", "risk.decide", "risk.authorize",
+    "artifact.publish", "artifact.sign", "service.edit", "service.delete", "service.restore",
+    "exception.request", "exception.review", "exception.revoke", "poam.request", "poam.review",
+    "archive.request", "archive.review", "scan.ingest", "evidence.remove", "remediation.execute",
+    "metadata.edit", "ppsm.import", "poam.import", "assets.import", "bundle.import",
+})
+
 PBKDF2_ITERATIONS = 600_000
 SESSION_COOKIE = "cats_session"
 
@@ -540,6 +550,8 @@ def seed_auth():
 class AuthContext:
     user: User
     session: UserSession
+    _service_origins: dict[int, bool] = field(default_factory=dict, init=False, repr=False)
+    _origin_transaction: object = field(default=None, init=False, repr=False)
 
     @property
     def csrf_token(self):
@@ -570,6 +582,20 @@ class AuthContext:
         from .operating_mode import permission_available
         if not permission_available(permission):
             return False
+        if service_id is not None and permission in SERVICE_EVIDENCE_WRITES:
+            from .imported_services import is_imported_service
+            db = object_session(self.user) if hasattr(self.user, "_sa_instance_state") else None
+            if db is not None:
+                # A page checks many permissions for one service. Reuse its
+                # origin within this request transaction; worker admission and
+                # execution still query current provenance independently.
+                if self._origin_transaction is not db.get_transaction():
+                    self._service_origins.clear()
+                if service_id not in self._service_origins:
+                    self._service_origins[service_id] = is_imported_service(db, service_id)
+                self._origin_transaction = db.get_transaction()
+                if self._service_origins[service_id]:
+                    return False
         for assignment in self.effective_assignments:
             if permission == "scan.ingest" and assignment.role.name == "Administrator":
                 continue
@@ -592,6 +618,8 @@ class AuthContext:
             return set()
         matching = [a for a in self.effective_assignments if not (permission == "scan.ingest" and a.role.name == "Administrator") and permission in (a.role.permissions or [])]
         if any(a.service_id is None and a.group_id is None for a in matching):
+            # None also grants creation of future local services. Keep that
+            # global capability; every existing target is checked by has().
             return None
         if permission in APPLICATION_PERMISSIONS:
             return set()
@@ -599,6 +627,11 @@ class AuthContext:
         for assignment in matching:
             if assignment.group and assignment.service_id is None:
                 service_ids.update(service.id for service in assignment.group.services)
+        if permission in SERVICE_EVIDENCE_WRITES:
+            db = object_session(self.user) if hasattr(self.user, "_sa_instance_state") else None
+            if db is not None:
+                from .imported_services import imported_service_ids
+                service_ids -= imported_service_ids(db, service_ids)
         return service_ids
 
     def can_manage_group(self, group_id: int | None) -> bool:

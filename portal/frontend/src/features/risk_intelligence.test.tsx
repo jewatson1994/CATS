@@ -1,11 +1,21 @@
 import {afterEach, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
-import {Page, Sources} from './risk_intelligence';
+import {Page, Sources, ServiceView} from './risk_intelligence';
 import {requestJson} from '../api';
 vi.mock('../api', async () => ({...await vi.importActual('../api'), requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.resetAllMocks();});
 const service = {id: 1, name: 'Payments', service_key: 'payments'};
 const assessment = {id: 7, as_of: '2026-10-19T12:00:00Z', summary: {assessment_state: 'no_scan', findings: 0, uncertain: 0, counts: {}}, details: [], provenance: {preview: true}, stale: true, stale_reasons: ['Policy changed']};
+it('selects imported assessment history explicitly when publisher IDs overlap local IDs', async () => {
+  vi.mocked(requestJson).mockImplementation(async url => String(url).startsWith('/api/risk/assessments/') ? {...assessment, imported: true} : {
+    imported: true, service, compliance: 'RED', policy: null, assessment: {...assessment, imported: true},
+    decision_kinds: [], history: [{id: 7, as_of: assessment.as_of}], decisions: [], can_assess: false,
+  });
+  render(<ServiceView data={{}} serviceKey="payments" configuration={null}/>);
+  fireEvent.click(await screen.findByText('Assessment history (1 most recent)'));
+  fireEvent.click(screen.getByRole('button', {name: /#7/}));
+  await waitFor(() => expect(requestJson).toHaveBeenCalledWith('/api/risk/assessments/7?imported=true'));
+});
 function setup({manage = false, kinds = [] as string[], canAssess = false, hasAssessment = true, sources = false} = {}) {
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {id: 9};

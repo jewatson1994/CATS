@@ -169,13 +169,13 @@ class EffectiveMapping:
 
 
 def resolve_distribution_tag(db, mapping, tag):
-    from .operating_mode import is_replica
-    return None if is_replica() else _full_distribution_tag(db, mapping, tag)
+    from .imported_services import uses_imported_evidence
+    return None if uses_imported_evidence(db, mapping.service_id) else _full_distribution_tag(db, mapping, tag)
 
 
 def resolve_distribution_location(db, mapping, digest):
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         from .replica_authorization import distribution_location
         return distribution_location(db, mapping, digest)
     return _full_distribution_location(db, mapping, digest)

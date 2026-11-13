@@ -27,6 +27,29 @@ Cyber release publication runs in `remediation-worker` and has a separate redire
 
 Issue separate scoped machine credentials for consumers. Use those credentials with `docker login`, Helm registry login, or an equivalent OCI client against the CATS hostname. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials.
 
+## Monitor OCI releases in the full suite
+
+The full CATS suite can monitor configured OCI registries and import signed CATS services and their approved-release evidence. Keep `CATS_MODE=full`; a separate replica deployment is optional. Open **OCI monitoring** at `/admin/replica`, configure a registry, then add a release source with an exact `project/service/releases` repository or `project/*` scope and independently trusted publisher fingerprints. Use **Synchronize** for an immediate run; enabled sources are polled at their configured interval. `CATS_REPLICA_SYNC_ENABLED=false` disables the background consumer in either deployment mode.
+
+This uses the existing verified CATS release bundles, including their signed inventory and evidence. Arbitrary images in a registry do not automatically become approved services. Registry connections inherit the configured CATS trusted CAs, with optional additional registry certificates. Existing permissions still control source administration and synchronization.
+
+Locally managed services retain the normal scanning, patching and approval workflows. Imported services retain publisher-owned evidence and their signed approved release; local edits and scan ingestion cannot replace it. Their next verified source release updates them automatically. The full interface provides both local Approved Releases and **Imported releases** at `/imported-releases`. Existing scoped Local Cyber overrides remain available for imported services and remain independently revocable.
+
+The OCI proxy chooses local or imported approval from the requested service's provenance. Expiration, revocation, trust changes and service lifecycle checks continue to apply to every pull, including cached content.
+
+## Container pull instructions
+
+In a service's **Overview** or **Artifacts** container inventory, select **Pull from CATS**. The popup uses the configured CATS registry authority, the service's local numeric ID, a matching repository mapping and its currently approved immutable image digest. Copy the `docker login` and `docker pull` commands, using CATS machine-account credentials with access to the mapping.
+
+For example, an approved nginx image mapped to service 42 may show:
+
+```sh
+docker login cats.io
+docker pull cats.io/cyber-approved/42/nginx@sha256:<approved-digest>
+```
+
+The portal must receive `CATS_OCI_HOSTNAME` (hostname and optional port, without a URL scheme or path). The main deployment template and HTTPS overlay pass the existing ingress hostname through automatically. For the local HTTP stack, configure the client-visible authority explicitly, such as `localhost:5000`; external ingress deployments must pass their registry authority. The popup explains missing configuration, mapping, digest or approval instead of guessing a command. Displayed availability is a current check; the proxy rechecks authorization when the command is executed and also verifies the caller's machine-account grants.
+
 ## Service ID selects the approval
 
 Every consumer pull uses `<project>/<service-id>/<image-path>`. The service ID is the positive numeric `Service.id` on the CATS installation receiving the request, as shown in **Approved artifact distribution**. For example:

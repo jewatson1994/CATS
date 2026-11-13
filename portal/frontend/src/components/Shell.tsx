@@ -1,7 +1,7 @@
 import {useEffect, useRef, type KeyboardEvent, type ReactNode} from 'react';
 import {can, type PageData} from '../api';
 import {Icon, type IconName} from './ui';
-import {OperatingMode} from '../operatingMode';
+import {OperatingMode, ServiceReadOnly} from '../operatingMode';
 
 export const PRODUCT_NAME = 'Continuous Assessment & Tracking System';
 
@@ -106,6 +106,8 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     node?.addEventListener('toggle', exclusive, true);
     return () => {document.removeEventListener('click', close); document.removeEventListener('keydown', close); node?.removeEventListener('toggle', exclusive, true);};
   }, []);
+  const operationNav = moreNav.map(section => section.label === 'Operations' && (can(data, 'replica.admin') || can(data, 'replica.sync'))
+    ? {...section, items: [...section.items, ['/admin/replica', 'OCI monitoring', (path: string) => path === '/admin/replica', 'package', 'Signed release sources, imports and synchronization'] as NavItem]} : section);
   const path = window.location.pathname;
   const icon = ['blue', 'red', 'gray', 'light'].includes(theme) ? `/static/cats-icon-${theme}.png` : '/static/cats-icon.png';
   const version = data.cats_deployed_version;
@@ -120,7 +122,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     {user ? <nav className="account-nav" aria-label="Primary navigation">
       {primaryNav.filter(([href]) => !replica || href === '/').map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
       <NavigationGroup label="Cybersecurity" sections={replica ? cyberNav.map(section => ({...section, items: section.items.filter(([href]) => href !== '/cyber-approvals')})) : cyberNav} path={path}/>
-      <NavigationGroup label="More" sections={replica ? moreNav.map(section => ({...section, items: section.items.filter(([href]) => !['/sbom', '/requests'].includes(href)).map(item => item[0] === '/remediations' ? [item[0], 'POA&Ms and mitigations', item[2], item[3], 'Imported governance evidence'] as NavItem : item)})).filter(section => section.items.length) : moreNav} path={path}/>
+      <NavigationGroup label="More" sections={replica ? operationNav.map(section => ({...section, items: section.items.filter(([href]) => !['/sbom', '/requests'].includes(href)).map(item => item[0] === '/remediations' ? [item[0], 'POA&Ms and mitigations', item[2], item[3], 'Imported governance evidence'] as NavItem : item)})).filter(section => section.items.length) : operationNav} path={path}/>
       <span className="header-utilities">
         <details className="notification-menu"><summary aria-label={pending ? `Notifications (${pending} pending)` : 'Notifications'} title="Notifications"><Icon name="bell"/>
           {!!pending && <span className="notification-badge" aria-hidden="true">{pending > 99 ? '99+' : pending}</span>}
@@ -154,5 +156,5 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     <dl className="kv-grid kv-cols-1"><div><dt>Deployed version</dt><dd>{version || <span className="muted">Not reported</span>}</dd></div></dl>
     <div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => about.current?.close?.()}>Close</button></div>
   </dialog>
-  <main id="main-content" tabIndex={-1}>{replica && <aside className="panel padded" aria-label="Replica mode"><strong>Read-only replica</strong> · Imported evidence and approvals are authoritative. Local Cyber exceptions do not change compliance or approval.</aside>}{children}</main></OperatingMode.Provider>;
+  <main id="main-content" tabIndex={-1}>{replica && <aside className="panel padded" aria-label="Replica mode"><strong>Read-only replica</strong> · Imported evidence and approvals are authoritative. Local Cyber exceptions do not change compliance or approval.</aside>}<ServiceReadOnly.Provider value={Boolean(data.imported_service || data.read_only)}>{!replica && data.imported_service && <aside className="panel padded" aria-label="Imported service"><strong>Imported service evidence</strong> · Captured approval and service records are read-only. Synchronization updates them from signed releases.</aside>}{children}</ServiceReadOnly.Provider></main></OperatingMode.Provider>;
 }

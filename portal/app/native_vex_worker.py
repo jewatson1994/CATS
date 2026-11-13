@@ -15,9 +15,10 @@ def maintenance(session_factory=SessionLocal):
     Existing installations are discovered in bounded batches without startup work.
     """
     from .models import Service
+    from .imported_services import imported_service_predicate
     from fastapi import HTTPException
     with session_factory() as db:
-        missing = list(db.scalars(select(Service.id).where(~select(State.service_id).where(
+        missing = list(db.scalars(select(Service.id).where(~imported_service_predicate(Service.id), ~select(State.service_id).where(
             State.service_id == Service.id).exists()).order_by(Service.id).limit(100)))
         for service_id in missing:
             dialect = db.get_bind().dialect.name
@@ -44,7 +45,7 @@ def maintenance(session_factory=SessionLocal):
             or_(DurableJob.status.in_(('queued', 'running')), and_(DurableJob.status.in_(('failed', 'cancelled')),
                 DurableJob.completed_at > now - timedelta(hours=1)))).exists()
         pending = list(db.scalars(select(State.service_id).outerjoin(Evaluation, Evaluation.id == State.evaluation_id).where(
-            ~busy, or_(Evaluation.id.is_(None), Evaluation.service_generation != State.generation,
+            ~imported_service_predicate(State.service_id), ~busy, or_(Evaluation.id.is_(None), Evaluation.service_generation != State.generation,
                 Evaluation.intelligence_generation != policy.generation, Evaluation.policy_version != policy.policy_version,
                 Evaluation.algorithm != nv.ALGORITHM, Evaluation.valid_until <= now, *token_mismatch))
             .order_by(State.service_id).limit(50)))

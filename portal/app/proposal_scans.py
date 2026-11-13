@@ -140,11 +140,12 @@ def maintenance(db):
     from .release_revisions import ReleaseAmendmentProposal, ServiceActiveRelease
     from .models import Service
     from .scan_coordination import ScanJob
+    from .imported_services import imported_service_predicate
     rows = db.scalars(select(ReleaseAmendmentProposal).join(ServiceActiveRelease,
         (ServiceActiveRelease.service_id == ReleaseAmendmentProposal.service_id)
         & (ServiceActiveRelease.revision_id == ReleaseAmendmentProposal.base_revision_id))
         .join(Service, Service.id == ReleaseAmendmentProposal.service_id)
-        .where(Service.lifecycle_status == 'active')).all()
+        .where(Service.lifecycle_status == 'active', ~imported_service_predicate(Service.id))).all()
     for row in rows:
         try:
             assessments.proposal(db, row.id, row.service_id)

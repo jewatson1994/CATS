@@ -84,8 +84,8 @@ def _published_artifact_matches(approval, repository, digest):
 
 def candidate_service_ids(db, mapping, digest):
     """Locate potential owners of concrete upstream bytes; authorize each pull separately."""
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         from .replica_authorization import candidate_service_ids as replica_candidates
         return replica_candidates(db, mapping, digest)
     if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
@@ -222,8 +222,8 @@ def _distribution_service(db, service, execution):
 
 def project_tag_allowed(db, mapping, tag, digest, now=None):
     """A revision-managed tag must sign this exact route and its current upstream bytes."""
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         # Tag resolution is never an authorization source on a replica. The
         # resolved manifest digest still must belong to its exact local release.
         return authorize(db, mapping, digest, now).allowed
@@ -317,8 +317,8 @@ def authorize(db, mapping, digest, now=None):
     Vulnerability thresholds, deadlines and exceptions always come from the
     existing service policy; mapping policy cannot weaken those rules.
     """
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         from .replica_authorization import authorize as replica_authorize
         return replica_authorize(db, mapping, digest, now)
     now = utc(now or datetime.now(timezone.utc))

@@ -299,6 +299,9 @@ def refresh(bind, service_id, now=None, *, configuration=None, epoch=None, lates
     """
     started = perf_counter()
     with Session(bind=bind) as db:
+        from .imported_services import uses_imported_evidence
+        if uses_imported_evidence(db, service_id):
+            return None
         if not _lock(db, service_id):
             return None
         if configuration is None:
@@ -451,8 +454,8 @@ def status(db, service_id, configuration, now, latest_id=...):
 def is_current(db, service_id, configuration, now, latest_id=...) -> bool:
     """Read-only variant of ``ensure_current``: never writes; schedules a
     background refresh when the rows are not current."""
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service_id):
         from .replica_findings import available
         return available(db, service_id)
     if not enabled():
@@ -472,8 +475,8 @@ def ensure_current(db, service_id, configuration, now, latest_id=...) -> bool:
     commits during the inline refresh leaves its change-log row, so the next
     read refreshes again; this read is served as of the refresh.
     """
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, service_id):
         return is_current(db, service_id, configuration, now, latest_id)
     if not enabled():
         return False
@@ -515,10 +518,12 @@ def severity_choices(db, service_id):
 def current_services(db, service_ids, configurations, now) -> set[int]:
     """Services whose rows are current, checked without refreshing anything."""
     from .operating_mode import is_replica
-    if is_replica():
-        return {sid for sid in service_ids if is_current(db, sid, configurations[sid], now)}
+    from .imported_services import imported_service_ids
+    imported = set(service_ids) if is_replica() else imported_service_ids(db, service_ids)
+    retained = {sid for sid in imported if is_current(db, sid, configurations[sid], now)}
+    service_ids = set(service_ids) - imported
     if not enabled() or not service_ids:
-        return set()
+        return retained
     cache = db.info.setdefault(_CACHE, {})
     result = {sid for sid in service_ids if any(key[0] == sid and key[1] == _aware(now) and verdict[0] == "current"
                                                 and key[2] == config_digest(configurations[sid])
@@ -529,7 +534,7 @@ def current_services(db, service_ids, configurations, now) -> set[int]:
         for row in db.execute(_status_statement(chunk, limit)):
             if _judge(row, configurations[row.service_id], now, limit)[0] == "current":
                 result.add(row.service_id)
-    return result
+    return result | retained
 
 
 def predicates(configurations, now):
@@ -541,14 +546,20 @@ def predicates(configurations, now):
     does not include the exception test, exactly like the live expression.
     """
     from .operating_mode import is_replica
+    from .replica_findings import predicate
+    imported_values = (predicate(FC.finding_id, 'eligible'), predicate(FC.finding_id, 'excepted'),
+                       predicate(FC.finding_id, 'noncompliant'))
     if is_replica():
-        from .replica_findings import predicate
-        return (predicate(FC.finding_id, 'eligible'), predicate(FC.finding_id, 'excepted'),
-                predicate(FC.finding_id, 'noncompliant'))
+        return imported_values
+    from .imported_services import imported_service_predicate
     from .main import _raw_overdue_expression
     from .native_vex import finding_excluded
+    imported = imported_service_predicate(FC.service_id)
     applicable = or_(FC.excepted.is_(True), ~finding_excluded(FC.finding_id, now))
-    return and_(FC.eligible, applicable), FC.excepted.is_(True), and_(FC.noncompliant_rule, applicable, _raw_overdue_expression(FC, configurations, now))
+    local_values = (and_(FC.eligible, applicable), FC.excepted.is_(True),
+                    and_(FC.noncompliant_rule, applicable, _raw_overdue_expression(FC, configurations, now)))
+    return tuple(case((imported, captured), else_=local)
+                 for captured, local in zip(imported_values, local_values))
 
 
 # ---------------------------------------------------------------- background
@@ -568,6 +579,9 @@ def schedule(bind, service_ids):
     if not enabled() or not background_enabled(bind):
         return None
     bind = background_bind(bind)
+    from .imported_services import imported_service_ids
+    with Session(bind=bind) as db:
+        service_ids = set(service_ids) - imported_service_ids(db, service_ids)
     with _queue_lock:
         fresh = set(service_ids) - _queued
         if not fresh:
@@ -594,7 +608,9 @@ def warm(bind, chunk_size=100, max_chunks=10000) -> int:
     time windows are verified on read. Also removes rows whose service no
     longer exists.
     """
-    if not enabled():
+    from .operating_mode import is_replica
+    from .imported_services import imported_service_predicate
+    if not enabled() or is_replica():
         return 0
     with Session(bind=bind) as db:
         for table in (FC.__table__, FindingClassificationState.__table__, FindingClassificationChange.__table__):
@@ -604,7 +620,7 @@ def warm(bind, chunk_size=100, max_chunks=10000) -> int:
     for _ in range(max_chunks):
         with Session(bind=bind) as db:
             epoch = _epoch(db)
-            ids = list(db.scalars(select(Service.id).where(Service.id > last).order_by(Service.id).limit(chunk_size)))
+            ids = list(db.scalars(select(Service.id).where(Service.id > last, ~imported_service_predicate(Service.id)).order_by(Service.id).limit(chunk_size)))
             if not ids:
                 break
             last = ids[-1]

@@ -5,8 +5,8 @@ from sqlalchemy import select
 
 
 def _artifacts(db, mapping, decision):
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         from .replica_models import ReplicaRelease
         release = db.get(ReplicaRelease, decision.release_id, populate_existing=True)
         return release.artifacts if release is not None else []
@@ -49,8 +49,8 @@ def inventory(db, mapping, subject, decision):
 
 def candidate_subjects(db, mapping, object_digest):
     """Find cold digest candidates; live authorization still grants no authority here."""
-    from .operating_mode import is_replica
-    if is_replica():
+    from .imported_services import uses_imported_evidence
+    if uses_imported_evidence(db, mapping.service_id):
         from .replica_models import ReplicaRelease
         query = select(ReplicaRelease.artifacts)
         if mapping.service_id is not None:

@@ -170,8 +170,10 @@ def prepare_configuration(db, previous, current):
                        'signing_key_chain': deepcopy(previous_chain)}
         return current
     from .cyber_approvals import CyberApproval
+    from .imported_services import imported_service_predicate
     # A reserved publication must finish while its approved signing key exists.
-    for approval in db.scalars(select(CyberApproval).where(CyberApproval.status == 'approved')):
+    for approval in db.scalars(select(CyberApproval).where(CyberApproval.status == 'approved',
+            ~imported_service_predicate(CyberApproval.service_id))):
         portable = (approval.snapshot or {}).get('portable_release')
         revocation = (approval.publication or {}).get('revocation', {})
         if portable and ((not approval.revoked_at and approval.publish_status != 'published')
@@ -184,7 +186,8 @@ def prepare_configuration(db, previous, current):
     from .replica_models import ReleasePublicationSequence
     cutovers = {service: sequence + 1 for service, sequence in db.execute(
         select(Service.service_key, ReleasePublicationSequence.sequence)
-        .join(ReleasePublicationSequence, ReleasePublicationSequence.service_id == Service.id))}
+        .join(ReleasePublicationSequence, ReleasePublicationSequence.service_id == Service.id)
+        .where(~imported_service_predicate(Service.id)))}
     certificate = dict(format=FORMAT, publisher_root=root, generation=len(chain) + 1,
         previous_digest=digest(chain[-1]) if chain else None,
         from_fingerprint=previous['fingerprint'], to_fingerprint=current['fingerprint'],

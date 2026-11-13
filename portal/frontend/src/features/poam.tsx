@@ -1,4 +1,4 @@
-import {useReplica} from '../operatingMode';
+import {useServiceReadOnly} from '../operatingMode';
 import {VexPoamReview} from './native_vex';
 import {ReviewImport} from './review-import';
 import type {PageData} from '../api';
@@ -21,7 +21,7 @@ const summaryColumns: GridColumn<any>[] = [
   {key: 'action', header: 'Action', render: row => <a className="secondary-button" href={`/poam/services/${encodeURIComponent(row.service.service_key)}`}>Open POA&amp;M</a>},
 ];
 export function Page({data}: {data: PageData}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const rows = data.service_summaries || [];
   const total = (key: string) => rows.reduce((sum: number, row: any) => sum + Number(row[key] || 0), 0);
   return <><PageHeader eyebrow="Plan of action & milestones" title="POA&M" description="Select a service to review its scoped remediation plan and milestones."
@@ -37,7 +37,7 @@ export function Page({data}: {data: PageData}) {
 }
 
 export function Service({data}: {data: PageData}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const {service, embedded} = data;
   const root = embedded ? `/services/${encodeURIComponent(service.service_key)}` : `/poam/services/${encodeURIComponent(service.service_key)}`;
   const query = (status: string, sort: string) => `${root}?${embedded ? 'poam=true&' : ''}status_filter=${encodeURIComponent(status)}&sort_by=${encodeURIComponent(sort)}&page_size=${data.page_size || 50}`;
@@ -45,7 +45,7 @@ export function Service({data}: {data: PageData}) {
 }
 
 export function Entry({data}: {data: PageData}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const item = data.entry, root = `/poam/entries/${item.id}`;
   return <><a className="back" href={`/poam/services/${encodeURIComponent(item.service.service_key)}`}>← {item.service.name} POA&amp;M</a><section className="heading"><div><p className="eyebrow">{item.item_type.replaceAll('_', ' ').toUpperCase()}</p><h1>{item.title}</h1><p>{item.description}</p></div><Status value={data.is_overdue ? 'Overdue' : item.status} bad={data.is_overdue}/></section>{item.finding?.id&&<VexPoamReview serviceKey={item.service.service_key} findingId={item.finding.id}/>} {data.pending_change && <div className="save-confirmation">A {data.pending_change.request_type.replace('poam_', '').replaceAll('_', ' ')} request is awaiting Cybersecurity approval.</div>}<section className="poam-detail-grid"><article className="panel padded"><h2>Plan</h2><dl className="detail-list"><dt>Service</dt><dd><a href={`/services/${encodeURIComponent(item.service.service_key)}`}>{item.service.name}</a></dd>{[['Finding', item.finding?.cve || item.policy_finding?.finding || '—'], ['Remediation', item.remediation], ['Due date', item.due_date || '—'], ['Ticket', item.ticket || 'None'], ['Created by', item.created_by], ['Approved by', item.approved_by || 'Pending']].map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl></article><article className="panel padded"><h2>Actions</h2>{!replica && data.can_change && !data.pending_change ? <><details><summary>Request update</summary><form className="poam-action-form" method="post" action={`${root}/update`}><Csrf data={data}/><label>Title<input name="title" defaultValue={item.title} required/></label><label>Description<textarea name="description" defaultValue={item.description} required/></label><label>Remediation<textarea name="remediation" defaultValue={item.remediation} required/></label><label>Due date<input type="datetime-local" name="due_date" defaultValue={item.due_input}/></label><label>Ticket<input name="ticket" defaultValue={item.ticket || ''}/></label><label>Reason for change<textarea name="reason" required/></label><button>Submit for approval</button></form></details>{item.status === 'active' && <details><summary>Request completion</summary><form className="poam-action-form" method="post" action={`${root}/complete`}><Csrf data={data}/><label>Closure note<textarea name="closure_note" required/></label><label>Replacement evidence reference<input name="evidence_reference" placeholder="URL, ticket, repository path, or evidence ID" required/></label><button>Submit for verification</button></form></details>}{item.status === 'completed' && <details><summary>Request reopen</summary><form className="poam-action-form" method="post" action={`${root}/reopen`}><Csrf data={data}/><label>Reason<textarea name="reason" required/></label><button>Submit for approval</button></form></details>}</> : <p className="muted">No lifecycle actions are currently available.</p>}</article></section><section className="panel padded"><h2>History and comments</h2>{!replica && <form className="poam-comment-form" method="post" action={`${root}/comments`}><Csrf data={data}/><label>Add comment<textarea name="comment" minLength={3} required/></label><button>Add comment</button></form>}<ol className="poam-history">{data.history.length ? data.history.map((event: any, index: number) => <li key={index}><div><strong>{event.action.replaceAll('_', ' ')}</strong><span>{event.actor || 'System'} · {event.created_at}</span></div>{event.note && <p>{event.note}</p>}{Object.keys(event.detail || {}).length > 0 && <code>{JSON.stringify(event.detail)}</code>}</li>) : <li className="empty">No history has been recorded.</li>}</ol></section></>;
 }

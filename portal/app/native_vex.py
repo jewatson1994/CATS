@@ -1,9 +1,10 @@
 """The sole effective VEX exclusion rule, shared by reads and action checks."""
 from datetime import timedelta
-from sqlalchemy import select, and_, func, insert, bindparam, event
+from sqlalchemy import select, and_, case, func, insert, bindparam, event
 from .native_vex_models import (VexDispositionPolicy as Policy, VexDispositionService as State,
     VexDispositionEvaluation as Evaluation, VexFindingDisposition as FindingResult,
     VexObservationDisposition as ObservationResult)
+from .imported_services import imported_service_predicate, uses_imported_evidence
 from .package_identity_resolution import RESOLVER_VERSION
 from .risk_profiles import aware, utcnow
 
@@ -59,30 +60,43 @@ def current_evaluation(now, *, enabled=True):
 
 
 def finding_excluded(finding_id, now, *, preview=False):
-    """SQL predicate: all observations in the fenced, complete current scan qualify."""
+    """Choose captured publisher decisions or locally fenced VEX per service."""
     from .operating_mode import is_replica
+    from .replica_findings import predicate
+    imported_value = predicate(finding_id, 'vex_excluded').is_(True)
     if is_replica():
-        from .replica_findings import predicate
-        return predicate(finding_id, 'vex_excluded').is_(True)
-    return select(FindingResult.id).select_from(FindingResult).join(
+        return imported_value
+    from .models import Finding
+    from sqlalchemy.orm import aliased
+    owner = aliased(Finding)
+    service_id = select(owner.service_id).where(owner.id == finding_id).correlate_except(owner).scalar_subquery()
+    local_value = select(FindingResult.id).select_from(FindingResult).join(
         Evaluation, Evaluation.id == FindingResult.evaluation_id).join(
         State, State.service_id == Evaluation.service_id).join(Policy, Policy.id == 1).where(
         FindingResult.finding_id == finding_id, FindingResult.observations > 0,
         FindingResult.observations == FindingResult.excluded_observations,
         *current_evaluation(now, enabled=not preview)).exists()
+    return case((imported_service_predicate(service_id), imported_value), else_=local_value)
 
 
 def observation_excluded(observation_id, now, *, preview=False):
     from .operating_mode import is_replica
+    from .replica_models import ReplicaObservationDecision as D, ReplicaServiceState as S
+    imported_value = select(D.observation_id).join(S, S.active_release_id == D.release_id).where(
+        D.observation_id == observation_id, D.excluded.is_(True)).correlate_except(D, S).exists()
     if is_replica():
-        from .replica_models import ReplicaObservationDecision as D, ReplicaServiceState as S
-        return select(D.observation_id).join(S, S.active_release_id == D.release_id).where(
-            D.observation_id == observation_id, D.excluded.is_(True)).correlate_except(D, S).exists()
-    return select(ObservationResult.id).select_from(ObservationResult).join(
+        return imported_value
+    from .models import Finding, FindingObservation
+    from sqlalchemy.orm import aliased
+    owner, observation = aliased(Finding), aliased(FindingObservation)
+    service_id = select(owner.service_id).join(observation, observation.finding_id == owner.id).where(
+        observation.id == observation_id).correlate_except(owner, observation).scalar_subquery()
+    local_value = select(ObservationResult.id).select_from(ObservationResult).join(
         Evaluation, Evaluation.id == ObservationResult.evaluation_id).join(
         State, State.service_id == Evaluation.service_id).join(Policy, Policy.id == 1).where(
         ObservationResult.observation_id == observation_id, ObservationResult.excluded.is_(True),
         *current_evaluation(now, enabled=not preview)).exists()
+    return case((imported_service_predicate(service_id), imported_value), else_=local_value)
 
 
 def qualifies(result, now):
@@ -106,6 +120,8 @@ def evaluate_service(db, service_id, *, now=None, check=None):
     Any failure rolls back every result. No partially evaluated finding is published.
     Trigger writers use the same state rows, including bulk ingestion/import writers.
     """
+    if uses_imported_evidence(db, service_id):
+        raise ValueError('Imported service evidence is managed by its publisher')
     from .models import Finding, FindingObservation, Execution
     from .finding_classification import latest_execution_id
     from .container_intelligence import observation_identities, evaluate_container_batch
@@ -197,6 +213,10 @@ def evaluate_service(db, service_id, *, now=None, check=None):
 def excluded_finding_ids(db, service_id, now):
     """Batch bridge for existing Python classification/export evaluators."""
     from .models import Finding
+    if db is not None and uses_imported_evidence(db, service_id):
+        from .replica_findings import predicate
+        return set(db.scalars(select(Finding.id).where(Finding.service_id == service_id,
+            Finding.active.is_(True), predicate(Finding.id, 'vex_excluded').is_(True))))
     return set(db.scalars(select(Finding.id).where(Finding.service_id == service_id,
         Finding.active.is_(True), finding_excluded(Finding.id, now)))) if db is not None else set()
 

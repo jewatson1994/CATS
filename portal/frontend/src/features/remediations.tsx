@@ -1,4 +1,4 @@
-import {useReplica} from '../operatingMode';
+import {useServiceReadOnly} from '../operatingMode';
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {can, requestJson, PAGE_MEDIA_TYPE, type PageData, type PageEnvelope} from '../api';
 import {usePoll, type PollStatus} from '../hooks/usePoll';
@@ -332,7 +332,7 @@ function recordFilters(data: PageData): ActiveFilter[] {
 }
 const recordFiltersActive = (data: PageData) => recordFilters(data).length > 0;
 export function Page({data}: {data: PageData}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const f = data.filters;
   const filters = recordFilters(data);
   const clear = `/remediations?tab=${data.tab}`;
@@ -355,7 +355,7 @@ export function Page({data}: {data: PageData}) {
     <Pagination data={data}/><Records data={data}/><Pagination data={data}/></>;
 }
 export function Service({data}: {data: PageData}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const root = `/services/${encodeURIComponent(data.service.service_key)}`;
 return <div className="service-remediation-workspace"><ServiceHeader data={data}/><ServiceTabs serviceKey={data.service.service_key} active="remediations"/><section className="panel padded remediation-workspace-head"><div><h2>{replica ? "POA&Ms and mitigations" : "Service remediation"}</h2><p>{replica ? "Review the plans, exceptions and mitigations captured by the publishing system." : "Patch container images and safely update retained Helm charts. Original service versions remain unchanged."}</p></div><div className="remediation-workspace-actions" role="group" aria-label="Remediation actions">{data.can_remediate && data.remediation_enabled && <Remediate data={data}/>}{!replica && <><ServiceOCIDestinations data={data}/><ReviewImport data={data}/></>}</div></section>{data.can_remediate && <section className="panel padded"><h2>Remediation plan</h2><PlanPreview data={data}/><p>Patch support, exact image rewriting, SBOM and scan results, signing, and deployment validation are determined during the job. Original artifacts are retained.</p></section>}<nav className="request-tabs" aria-label="Remediation views">{[['pipeline','Candidates'],['poams','POA&Ms'],['exceptions','Exceptions'],['mitigations','Mitigations']].filter(([key]) => !replica || key !== 'pipeline').map(([key,label]) => <a className={data.tab === key ? 'selected' : ''} key={key} href={key === "poams" ? `${root}?poam=true` : `${root}?remediations=true&tab=${key}`}>{label}</a>)}</nav>{data.tab === 'pipeline' ? <section className="panel"><div className="panel-head"><h2>Remediation candidates</h2></div><p>Original revisions remain unchanged. Open a job to review its source mappings, validation, and artifact.</p><div className="table-wrap"><table><thead><tr>{['Candidate / Job','Scope','Source authoritative version','Lifecycle','Started','Completed'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>{data.remediation_jobs.length ? data.remediation_jobs.map((job: any) => <tr key={job.job_key}><td><a href={`${root}/remediations/${encodeURIComponent(job.job_key)}`}>{candidateLabel(job)} · {job.job_key}</a></td><td>{title(job.finding_type) || 'Entire service'}</td><td>{job.original_revision || 'Unknown'}{job.source_version_id != null && ` (version #${job.source_version_id})`}</td><td><CandidateStates job={job}/></td><td>{job.started_label || 'Queued'}</td><td>{job.finished_label || '—'}</td></tr>) : <tr><td colSpan={6} className="empty">No remediation candidates have been created.</td></tr>}</tbody></table></div><Pagination data={data}/></section> : <>{data.tab === 'poams' && <div className="remediation-record-actions"><p>Track planned work and approval here. <a href={`${root}?poam=true`}>Open the complete service POA&amp;M with exceptions and mitigations</a>.</p>{data.can_create_poam && <Create data={data} service={data.service}/>}</div>}<Pagination data={data}/><Records data={data} scoped/><Pagination data={data}/></>}</div>;
 }

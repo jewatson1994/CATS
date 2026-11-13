@@ -1,6 +1,6 @@
 import {useEffect, useState, type FormEvent} from 'react';
 import {requestJson} from '../api';
-import {useReplica} from '../operatingMode';
+import {useServiceReadOnly} from '../operatingMode';
 import '../styles/service-distributions.css';
 
 interface ChartIdentityData {
@@ -205,7 +205,7 @@ function DistributionManager({serviceKey, csrfToken, canRequestApproval}: Servic
 }
 
 export function ServiceDistributions(props: ServiceDistributionProps) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const [expanded, setExpanded] = useState(window.location.hash === '#service-distributions');
   const [opened, setOpened] = useState(expanded);
   return <section id="service-distributions" className="panel padded service-distributions"><h2>Service distributions</h2>

@@ -35,6 +35,8 @@ def _observation_vex_context(observation):
 
 
 def refresh_assessment(db, service_id, now=None, configuration=None, check=None):
+    from .imported_services import require_local_service
+    require_local_service(db, service_id)
     from . import finding_classification as fc
     from . import policy_data
     from .vex_intelligence import intelligence_token, _item_cves

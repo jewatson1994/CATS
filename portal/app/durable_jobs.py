@@ -20,6 +20,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base, SessionLocal
+from .imported_services import is_imported_service
 
 
 def now():
@@ -75,8 +76,48 @@ class JobCancelled(Exception):
     pass
 
 
+SERVICE_MUTATION_KINDS = frozenset({
+    "cyber_release_publish", "remediation_plan", "remediation_execute", "remediation_validate",
+    "remediation_deliver", "proposal_assessment", "oci_reassessment", "patch_campaign_item",
+    "artifact_recommendations", "risk_assessment", "native_vex",
+})
+
+
+def imported_mutation(db, kind, service_id, payload=None):
+    if kind not in SERVICE_MUTATION_KINDS:
+        return False
+    payload = payload if isinstance(payload, dict) else {}
+    targets = {service_id, payload.get("service_id")}
+    # Old dispatchers and malformed rows may omit the queue's service_id.
+    # Check the records the handler actually consumes as well as queue scope.
+    references = []
+    if kind in {"cyber_release_publish", "oci_reassessment"}:
+        from .cyber_approvals import CyberApproval
+        references.append((CyberApproval, "approval_id"))
+    elif kind.startswith("remediation_"):
+        from .models import Execution, RemediationExecution
+        references.extend(((RemediationExecution, "record_id"), (Execution, "source_execution_id")))
+    elif kind == "proposal_assessment":
+        from .release_revisions import ReleaseAmendmentProposal
+        references.append((ReleaseAmendmentProposal, "proposal_id"))
+    elif kind == "patch_campaign_item":
+        from .patch_campaigns import PatchCampaign
+        from .models import ServiceImage
+        references.extend(((PatchCampaign, "campaign_id"), (ServiceImage, "image_id")))
+    elif kind == "artifact_recommendations":
+        from .models import DeploymentValidationRun
+        references.append((DeploymentValidationRun, "validation_run_id"))
+    for model, key in references:
+        if payload.get(key) is not None:
+            targets.add(db.scalar(select(model.service_id).where(model.id == payload[key])))
+    return any(is_imported_service(db, identity) for identity in targets if identity is not None)
+
+
 def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
            source_execution_id=None, version="", dedupe_key=None, max_attempts=3, commit=True):
+    if imported_mutation(db, kind, service_id, payload):
+        from fastapi import HTTPException
+        raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
     if dedupe_key:
         existing = db.scalar(select(DurableJob).where(DurableJob.dedupe_key == dedupe_key))
         if existing:
@@ -139,6 +180,11 @@ def claim(kinds, worker_id, session_factory=SessionLocal):
             DurableJob.cancel_requested.is_(False)).order_by(DurableJob.created_at)
             .with_for_update(skip_locked=True).limit(1))
         if row is None:
+            return None
+        if imported_mutation(db, row.kind, row.service_id, row.payload):
+            row.status, row.completed_at = "cancelled", now()
+            row.stage = row.error = "Imported service evidence is managed by its OCI publisher"
+            db.commit()
             return None
         token = uuid.uuid4().hex
         changed = db.execute(update(DurableJob).where(DurableJob.id == row.id,
@@ -233,6 +279,9 @@ def execute(job, handler, session_factory=SessionLocal):
     thread.start()
     try:
         ctx.check()
+        with session_factory() as db:
+            if imported_mutation(db, job.kind, job.service_id, job.payload):
+                raise JobError("Imported service evidence is managed by its OCI publisher")
         result = handler(ctx, job.payload)
         ctx.finish(result or {})
     except LeaseLost:

@@ -1,4 +1,4 @@
-import {useReplica} from '../operatingMode';
+import {useServiceReadOnly} from '../operatingMode';
 import {useMemo, type ReactNode} from 'react';
 import {DataGrid, type GridColumn} from './DataGrid';
 import {FilterChips, FilterDrawer, hrefWithout, QuickSearch, type ActiveFilter} from './FilterDrawer';
@@ -55,7 +55,7 @@ export function LifecycleTabs({data}: {data: any}) {
 }
 
 export function ServiceSecurityMatrix({data}: {data: any}) {
-  const replica = useReplica();
+  const replica = useServiceReadOnly();
   const lifecycle = data.lifecycle || 'active';
   const base = useMemo(() => {
     const url = new URL(String(data.pagination_base || `/?lifecycle=${lifecycle}`), 'http://cats.invalid');

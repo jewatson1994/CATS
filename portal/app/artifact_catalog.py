@@ -13,6 +13,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.exc import IntegrityError
 from .database import Base
 from .models import DeploymentValidationRun, PatchExecution, Service, ServiceImage
+from .imported_services import imported_service_predicate, is_imported_service, require_local_service
 
 
 def _now():
@@ -139,6 +140,7 @@ def register_artifact(db, *, digest, media_type, platform="unknown", reference=N
 
 
 def assign_artifact(db, *, service_id, artifact_id, role="source"):
+    require_local_service(db, service_id)
     _require(db, Service, service_id)
     _require(db, GlobalArtifact, artifact_id)
     if role not in {"source", "patched", "release"}:
@@ -308,6 +310,7 @@ def register_patch_artifacts(db, *, patch_execution_id, media_type, platform="un
 
 
 def recommend_artifact(db, *, service_id, source_artifact_id, target_artifact_id):
+    require_local_service(db, service_id)
     _require(db, Service, service_id)
     source = _require(db, GlobalArtifact, source_artifact_id)
     target = _require(db, GlobalArtifact, target_artifact_id)
@@ -328,7 +331,7 @@ def associate_known_source_images(db, *, artifact_id):
     assignments = []
     for image in db.scalars(select(ServiceImage).join(Service, Service.id == ServiceImage.service_id).where(
         ServiceImage.image_digest == artifact.digest, ServiceImage.lifecycle_status == "active",
-        Service.lifecycle_status == "active")):
+        Service.lifecycle_status == "active", ~imported_service_predicate(Service.id))):
         reference = str(image.image_reference or "")
         if "@" in reference and reference.rsplit("@", 1)[1] != artifact.digest:
             continue
@@ -360,6 +363,8 @@ def generate_shared_recommendations(db, *, validation_run_id):
     Existing decisions are preserved; callers own the transaction.
     """
     validation = _require(db, DeploymentValidationRun, validation_run_id)
+    if is_imported_service(db, validation.service_id):
+        return []
     if validation.status != "VERIFIED" or not validation.artifact_reference:
         return []
     rows = []
@@ -385,7 +390,7 @@ def generate_shared_recommendations(db, *, validation_run_id):
             ServiceArtifactAssignment.service_id == Service.id).where(
             ServiceArtifactAssignment.artifact_id == source.id,
             ServiceArtifactAssignment.role == "source", Service.id != patch.service_id,
-            Service.lifecycle_status == "active").distinct())
+            Service.lifecycle_status == "active", ~imported_service_predicate(Service.id)).distinct())
         for service in services:
             if not has_current_source_image(db, service_id=service.id, artifact_id=source.id, target_artifact_id=target.id):
                 continue
@@ -405,7 +410,7 @@ def enqueue_recommendation_reconciliation(db, *, validation_run_id):
     """Enqueue with the validation transaction; no external effects or commits."""
     from . import durable_jobs
     validation = _require(db, DeploymentValidationRun, validation_run_id)
-    if validation.status != "VERIFIED":
+    if validation.status != "VERIFIED" or is_imported_service(db, validation.service_id):
         return None
     # Internal transactional outbox: terminal validation must survive user queue
     # saturation. One row per validation; normal leases still bound execution.

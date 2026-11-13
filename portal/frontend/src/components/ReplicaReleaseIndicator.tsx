@@ -13,6 +13,6 @@ export function ReplicaReleaseIndicator({serviceKey}: {serviceKey: string}) {
       : latest ? <p>Latest imported release {latest.sequence} · <StatusBadge value={latest.status} label={latest.status === 'active' ? 'Approved release active' : undefined}/>{latest.expires_at && <> · Expires {new Date(latest.expires_at).toLocaleString()}</>}</p>
         : <p role="status">{value ? 'No verified release is available.' : 'Checking local release status…'}</p>}
     <p>Captured assessment results describe the publisher’s evidence. Each pull also checks current release validity, trust and any separately recorded local Cyber override.</p>
-    <a href={`/approved-releases?service=${encodeURIComponent(serviceKey)}`}>Review release history and captured evidence</a>
+    <a href={`/imported-releases?service=${encodeURIComponent(serviceKey)}`}>Review release history and captured evidence</a>
   </aside>;
 }

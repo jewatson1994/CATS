@@ -216,12 +216,19 @@ def _ingest_one():
             ).order_by(jobs.ScanJob.created_at).with_for_update(skip_locked=True).limit(20)))
             from .definition_routes import complete_scan
             for finished in pending:
-                complete_scan(finished.id, dict(finished.payload))
+                if not jobs.imported_scan_target(db, finished.service_key):
+                    complete_scan(finished.id, dict(finished.payload))
                 finished.payload = {**finished.payload, "definition_notified": True}
                 finished.definition_pending = False
             db.commit()
             return
         job_id, payload = row.id, dict(row.payload)
+        if jobs.imported_scan_target(db, row.service_key):
+            row.status, row.finished_at, row.definition_pending = "error", jobs.now(), False
+            row.payload = {**payload, "status": "error", "phase": "ingest",
+                "error": "Imported service evidence is managed by its OCI publisher"}
+            db.commit()
+            return
         attempt_root = main.PUBLIC_JOB_ROOT / job_id / "attempts" / row.attempt_id
         output = main.PUBLIC_JOB_ROOT / job_id / "output"
         fatal = False
@@ -306,7 +313,9 @@ def _ingest_one():
                            "finished_at": jobs.now().isoformat(), "ingested": bool(row.service_key and payload.get("job_kind") == "scan" and not payload.get("compose_preview") and not payload.get("proposal_context"))}
             row.status = status
             row.finished_at = jobs.now()
-            for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id, not bool(payload.get("proposal_context")))):
+            from .imported_services import imported_service_predicate
+            for image in db.scalars(select(ServiceImage).where(ServiceImage.scan_job_id == job_id,
+                    not bool(payload.get("proposal_context")), ~imported_service_predicate(ServiceImage.service_id))):
                 image.scan_status = "scanned" if status == "complete" else "failed"
                 image.last_scanned_at = jobs.now()
             db.commit()

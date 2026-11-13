@@ -41,6 +41,8 @@ services:
 
     x-shared-environment: &portal_environment
       CATS_MODE: ${CATS_MODE:-full}
+      CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}
+      CATS_REPLICA_SYNC_ENABLED: ${CATS_REPLICA_SYNC_ENABLED:-true}
       <<: &intelligence_environment
         INTELLIGENCE_DATABASE_URL: postgresql+psycopg://${INTELLIGENCE_POSTGRES_USER:-cats_intelligence}@intelligence-db:5432/${INTELLIGENCE_POSTGRES_DB:-cats_intelligence}
         INTELLIGENCE_DB_PASSWORD: ${INTELLIGENCE_POSTGRES_PASSWORD:-${POSTGRES_PASSWORD}}

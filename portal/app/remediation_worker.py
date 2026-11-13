@@ -20,6 +20,9 @@ def _fail_record(db, job, payload, detail):
     from . import main
     from .models import RemediationExecution
     from .remediation_delivery import DeliveryAttempt
+    from .imported_services import is_imported_service
+    if is_imported_service(db, job.service_id):
+        return
     record = db.get(RemediationExecution, payload.get("record_id")) if payload.get("record_id") else None
     if not record or record.service_id != job.service_id:
         return
@@ -51,6 +54,9 @@ def _handle(ctx, payload):
         actor = db.get(User, ctx.job.requested_by_id)
         auth = AuthContext(user=actor, session=None) if actor and actor.enabled else None
         service = db.get(Service, ctx.job.service_id)
+        from .imported_services import is_imported_service
+        if is_imported_service(db, ctx.job.service_id):
+            raise JobError("Imported service evidence is managed by its OCI publisher")
         permission = "service.export" if ctx.job.kind == "remediation_deliver" else "remediation.execute"
         if (not service or service.lifecycle_status != "active" or not auth or not auth.has(permission, ctx.job.service_id)
                 or any(not auth.has(required, ctx.job.service_id) for required in payload.get("required_permissions", []))):
@@ -200,7 +206,9 @@ def maintenance():
         lifecycle_maintenance(db)
         from .proposal_scans import maintenance as proposal_maintenance
         proposal_maintenance(db)
+        from .imported_services import imported_service_predicate
         records = db.scalars(select(RemediationExecution).where(
+            ~imported_service_predicate(RemediationExecution.service_id),
             (RemediationExecution.status.in_(["queued", "running"])) |
             (RemediationExecution.verification_status.in_(["queued", "running"])) |
             (RemediationExecution.delivery_status.in_(["queued", "running", "staged", "publishing"]))).limit(200)).all()

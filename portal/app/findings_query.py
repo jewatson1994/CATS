@@ -30,6 +30,8 @@ def _rows(db, model, *conditions, order_by=None):
 
 def prepare_findings_view(db, service, now, configuration, service_view_callback, *, include_global_latest=True):
     """Return the existing view contract backed by scalar, history-free adapters."""
+    from .replica_findings import evidence_time
+    now = evidence_time(configuration, now)
     proxy = SimpleNamespace(**{
         column.key: getattr(service, column.key) for column in service.__table__.columns
     })
@@ -60,11 +62,11 @@ def prepare_findings_view(db, service, now, configuration, service_view_callback
             exception = SimpleNamespace(**dict(row))
             parents[getattr(exception, foreign_key.key)].exceptions.append(exception)
 
-    from .operating_mode import is_replica
+    from .imported_services import uses_imported_evidence
     latest_ids = (select(func.max(FindingObservation.id).label("id"))
                   .join(Finding, Finding.id == FindingObservation.finding_id)
                   .where(Finding.service_id == service.id))
-    if is_replica():
+    if uses_imported_evidence(db, service.id):
         latest_ids = latest_ids.where(FindingObservation.execution_id == configuration.get('_replica_execution_id'))
     latest_ids = latest_ids.group_by(FindingObservation.finding_id).subquery()
     for observation in _rows(db, FindingObservation, FindingObservation.id.in_(select(latest_ids.c.id))):
@@ -73,7 +75,7 @@ def prepare_findings_view(db, service, now, configuration, service_view_callback
     # The header evaluates the current version, while detail-page evidence has
     # historically used the newest scan across every version. Keep both bounded
     # candidates so callers can retain that distinction without scan history.
-    if is_replica():
+    if uses_imported_evidence(db, service.id):
         from .service_evidence import current_execution
         latest_execution = global_latest = current_execution(db, service)
     else:
@@ -121,12 +123,17 @@ def load_page_support(db, service_id, findings, latest_execution):
               .join(Finding, Finding.id == FindingObservation.finding_id)
               .where(Finding.service_id == service_id, Finding.id.in_(selected))
               .group_by(FindingObservation.finding_id).subquery())
-    execution_by_finding = dict(db.execute(
-        select(FindingObservation.finding_id, FindingObservation.execution_id)
-        .join(latest, latest.c.id == FindingObservation.id)
-    ).all())
     from .operating_mode import is_replica
-    replica = is_replica()
+    from .imported_services import imported_service_predicate
+    selected_rows = db.execute(
+        select(FindingObservation.finding_id, FindingObservation.execution_id,
+               imported_service_predicate(service_id))
+        .join(latest, latest.c.id == FindingObservation.id)
+    ).all()
+    execution_by_finding = {row[0]: row[1] for row in selected_rows}
+    # Carry provenance in the existing bounded query instead of adding one
+    # database round trip per support batch.
+    replica = is_replica() or any(row[2] for row in selected_rows)
     for finding in selected.values():
         # A complete scan observed every active finding. An incomplete one may
         # not have, so its active findings keep their own latest observation.
@@ -201,11 +208,11 @@ def load_simplified_support(db, service_id, findings, latest_execution):
     fallbacks = {finding.id: max(finding.observations, key=lambda row: row.id, default=None)
                  for finding in selected.values()}
     load_page_support(db, service_id, selected.values(), latest_execution)
-    from .operating_mode import is_replica
+    from .imported_services import uses_imported_evidence
     for finding in selected.values():
         if isinstance(finding, SimpleNamespace) and not finding.observations and fallbacks[finding.id]:
             fallback = fallbacks[finding.id]
-            if not is_replica() or (latest_execution and fallback.execution_id == latest_execution.id):
+            if not uses_imported_evidence(db, service_id) or (latest_execution and fallback.execution_id == latest_execution.id):
                 finding.observations = [fallback]
 
 
