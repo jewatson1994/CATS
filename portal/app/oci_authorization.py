@@ -1,5 +1,5 @@
-"""Live release authorization over Cyber-approved, immutable artifact evidence."""
-from dataclasses import dataclass
+"""Group-scoped OCI authorization over approved releases and assessed artifacts."""
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
@@ -156,6 +156,13 @@ def _distribution_execution(db, service, approval):
 
 def project_tag_allowed(db, mapping, tag, digest, now=None):
     """A revision-managed tag must sign this exact route and its current upstream bytes."""
+    from .oci_group_policy import policy_for_service
+    try:
+        if policy_for_service(db, mapping.service_id)['mode'] == 'compliance':
+            # The resolved digest still requires exact, current scan evidence.
+            return True
+    except ValueError:
+        return False
     from .imported_services import uses_imported_evidence
     if uses_imported_evidence(db, mapping.service_id):
         # Tag resolution is never an authorization source on a replica. The
@@ -235,7 +242,7 @@ def _payload_evidence_matches(db, approval, execution, service, active, now, _se
         return False
 
 
-def authorize(db, mapping, digest, now=None):
+def _authorize_approved_release(db, mapping, digest, now=None):
     """Enforce the Cyber release on every pull, including cached content.
 
     Live posture and subsequent scans inform the next Cyber review; they do not
@@ -325,3 +332,66 @@ def authorize(db, mapping, digest, now=None):
             return deny('approval_not_current', approval)
         return AuthorizationDecision(True, 'approved', approval.id, execution.id)
     return deny('digest_not_approved')
+
+
+def authorize(db, mapping, digest, now=None):
+    """Apply the receiving service's owning-group rule on every OCI read."""
+    from .oci_group_policy import policy_for_service
+    from .imported_services import uses_imported_evidence
+    from .replica_authorization import repository_policy_error
+    from .main import service_lifecycle
+    timestamp = utc(now or datetime.now(timezone.utc))
+    if not isinstance(digest, str) or not DIGEST.fullmatch(digest):
+        return AuthorizationDecision(False, 'invalid_digest')
+    if not mapping.enabled or mapping.suspended or not mapping.upstream.enabled:
+        return AuthorizationDecision(False, 'mapping_disabled')
+    service = db.get(Service, mapping.service_id, populate_existing=True)
+    if service is None:
+        return AuthorizationDecision(False, 'service_unavailable')
+    db.expire(service, ['archive_events'])
+    if service_lifecycle(service) != 'active':
+        return AuthorizationDecision(False, 'service_inactive')
+    if repository_policy_error(mapping.policy if mapping.policy is not None else {}):
+        return AuthorizationDecision(False, 'invalid_policy')
+    try:
+        policy = policy_for_service(db, service.id)
+    except ValueError:
+        return AuthorizationDecision(False, 'invalid_group_pull_policy', service_id=service.id,
+                                     artifact_digest=digest)
+    mode = policy['mode']
+
+    def scoped(decision, **values):
+        return replace(decision, service_id=service.id, artifact_digest=digest,
+            decision_at=timestamp.isoformat(),
+            effective_policy={**(decision.effective_policy or {}), 'group_pull_policy': policy},
+            **values)
+
+    approved = None
+    if mode in {'approved_release', 'both'}:
+        approved = _authorize_approved_release(db, mapping, digest, timestamp)
+        if mode == 'approved_release' or not approved.allowed:
+            # Preserve the established default response for unowned services.
+            if mode == 'approved_release' and policy['group_id'] is None:
+                return approved
+            return scoped(approved, authorization_source=approved.authorization_source
+                          or ('approved_release' if approved.allowed else 'denied'))
+    if uses_imported_evidence(db, service.id):
+        from .oci_compliance_imported import authorize_imported_compliance
+        compliance = authorize_imported_compliance(db, mapping, digest, policy, timestamp)
+    else:
+        from .oci_compliance import authorize_compliance
+        compliance_mapping = mapping
+        if mode == 'both':
+            active = release_revisions.active_revision(db, service.id, timestamp)
+            if active is not None:
+                try:
+                    repository = release_revisions.distribution_location(mapping, active, digest)
+                except ValueError:
+                    return scoped(AuthorizationDecision(False, 'signed_distribution_location_changed'))
+                from .oci_proxy import EffectiveMapping
+                compliance_mapping = EffectiveMapping(mapping, repository)
+        compliance = authorize_compliance(db, compliance_mapping, digest, policy, timestamp)
+    if mode == 'compliance' or not compliance.allowed:
+        return scoped(compliance)
+    return scoped(approved, reason='approved_and_compliant',
+                  authorization_source='approved_release_and_compliance')

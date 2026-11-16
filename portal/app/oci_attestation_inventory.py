@@ -8,7 +8,8 @@ def _artifacts(db, mapping, decision):
     from .imported_services import uses_imported_evidence
     if uses_imported_evidence(db, mapping.service_id):
         from .replica_models import ReplicaRelease
-        release = db.get(ReplicaRelease, decision.release_id, populate_existing=True)
+        identity = getattr(decision, 'release_id', None)
+        release = db.get(ReplicaRelease, identity, populate_existing=True) if identity else None
         return release.artifacts if release is not None else []
     from .cyber_approvals import CyberApproval
     identity = getattr(decision, 'approval_id', None)

@@ -1,6 +1,6 @@
 # OCI compliance proxy
 
-The CATS OCI facade is included in the main Compose stack and serves approved artifacts from configured upstream registries. It is a read-only Distribution API endpoint, not a second registry or an upload destination. Upstream Harbor remains the source of content. CATS owns release authorization, consumer access, and the local verified-content cache.
+The CATS OCI facade is included in the main Compose stack and serves artifacts authorized by each service's owning-group policy from configured upstream registries. It is a read-only Distribution API endpoint, not a second registry or an upload destination. Upstream Harbor remains the source of content. CATS owns pull authorization, consumer access, and the local verified-content cache.
 
 ## Deployment
 
@@ -27,11 +27,38 @@ Cyber release publication runs in `remediation-worker` and has a separate redire
 
 Each service has a local **Public / Private** setting for OCI pulls on its **Overview** page. Existing and newly imported services default to **Private**. Administrators with release-destination management permission can change this setting independently of the publisher's signed evidence. The choice applies to every image/chart pull route for that service, including project mappings; another service using the same image or project retains its own setting.
 
-**Public** services allow anonymous `docker pull` and Helm pulls for currently authorized artifacts. Clients do not need a machine account or `docker login`. CATS still checks the service identity, active lifecycle, approval, validity, revocation, signatures and digest on each request, including cache hits. Making a service public does not make an unapproved artifact available. The setting permits reads only and does not enable registry pushes or portal access. The separate offline evidence-bundle download remains authenticated.
+**Public** services allow anonymous `docker pull` and Helm pulls for currently authorized artifacts. Clients do not need a machine account or `docker login`. CATS still checks the service identity, active lifecycle, owning-group pull rules, artifact integrity and digest on each request, including cache hits. Making a service public does not bypass its group policy. The setting permits reads only and does not enable registry pushes or portal access. The separate offline evidence-bundle download remains authenticated.
 
 **Private** services return `401 Unauthorized` with a registry authentication challenge when credentials are missing. The existing machine-account mechanism remains available: use scoped CATS credentials with `docker login`, Helm registry login, or an equivalent OCI client. Portal browser sessions are not registry login credentials. Limit each machine identity to the explicitly mapped repositories it needs; rotate or revoke it without changing upstream credentials. Supplied invalid, expired or revoked credentials are rejected even for a public service; use `docker logout <cats-registry-host>` to remove stale credentials before pulling anonymously.
 
 Public/private changes and anonymous pulls are audited. Anonymous events have no machine principal and cannot identify an individual user. Changing a service back to private applies to subsequent requests; already downloaded artifacts cannot be recalled.
+
+## Group pull policy
+
+Open **Administration > General Policy**, select the owning group, and configure **OCI pull policy**. A group configuration administrator can change only their authorized group; a global configuration administrator can manage any group. Each group has its own policy, independent of other groups and the service's public/private setting. Parent-group template inheritance does not inherit OCI pull policy. Existing groups default to **Approved releases**.
+
+| Mode | Required for a pull | Example |
+| --- | --- | --- |
+| **Approved releases** | A current Cyber-approved release authorizes the exact artifact. | Group A accepts Cyber's release decision even when current compliance changes. |
+| **Compliance rules** | A complete, integrity-checked scan binds the exact image digest and passes the configured rules. No Cyber decision is required. | Group B sets **Block findings at or above: Critical** to reject images with retained Critical vulnerability findings. |
+| **Approved releases and compliance** | Both requirements must pass. Approval cannot bypass a failing compliance rule. | Group C requires approval and no retained Critical findings. |
+
+Compliance rules can block Critical, High, Medium, or Low findings and all severities above the selected level. They can additionally require the service to pass its existing compliance policy. A severity limit or the service-compliance check must be enabled when compliance is required. **Maximum scan age** is optional; leave it blank to apply no additional age limit. These controls use findings retained by the scan, including its configured scan filters; they do not establish the absence of vulnerabilities the scan did not assess. Unknown image identity, missing evidence, and incomplete evidence cannot establish compliance. Findings from another image or service cannot supply a clean assessment for the requested digest. Imported services use verified publisher scan evidence and captured compliance status. Compliance rules require complete image scan evidence for each requested digest; charts or multi-platform graphs without that coverage are denied in compliance modes.
+
+Saved changes apply to subsequent requests, including cached content. A compliance-only policy deliberately does not require an unexpired, unrevoked Cyber approval: the exact image must instead pass the configured scan rules. Approval expiry, revocation, and active-release restrictions apply whenever approval is required. All modes retain service lifecycle, mapping suspension, registry trust, artifact integrity, and consumer access checks. A service with ambiguous owning-group membership is denied rather than choosing the least restrictive group.
+
+The configuration API is `GET` / `PUT /api/oci/pull-policy?group_id=<id>`. Updates require a portal session, group configuration authority, and `X-CSRF-Token`; they are audited. For example, Group B can save:
+
+```json
+{
+  "mode": "compliance",
+  "blocked_severity": "Critical",
+  "require_service_compliant": false,
+  "max_scan_age_days": null
+}
+```
+
+Use `"approved_release"` or `"both"` for the other modes. This configuration is stored locally, including for imported services; signed publisher configuration cannot overwrite the receiving group's pull policy.
 
 ## Monitor OCI releases in the full suite
 
@@ -41,11 +68,11 @@ This uses the existing verified CATS release bundles, including their signed inv
 
 Locally managed services retain the normal scanning, patching and approval workflows. Imported services retain publisher-owned evidence and their signed approved release; local edits and scan ingestion cannot replace it. Their next verified source release updates them automatically. The full interface provides both local Approved Releases and **Imported releases** at `/imported-releases`. Existing scoped Local Cyber overrides remain available for imported services and remain independently revocable.
 
-The OCI proxy chooses local or imported approval from the requested service's provenance. Expiration, revocation, trust changes and service lifecycle checks continue to apply to every pull, including cached content.
+The OCI proxy chooses local or imported evidence from the requested service's provenance, then applies the receiving group's pull policy. Imported evidence must retain its verified publisher and exact artifact binding. Approval requirements apply according to the selected mode; trust changes and service lifecycle checks apply to every pull, including cached content.
 
 ## Container pull instructions
 
-In a service's **Overview** or **Artifacts** container inventory, select **Pull from CATS**. The popup uses the configured CATS registry authority, the service's local numeric ID, a matching repository mapping and its currently approved immutable image digest. Public services show that no login is needed; copy the `docker pull` command directly. Private services also show `docker login`, using CATS machine-account credentials with access to the mapping.
+In a service's **Overview** or **Artifacts** container inventory, select **Pull from CATS**. The popup uses the configured CATS registry authority, the service's local numeric ID, a matching repository mapping and an immutable image digest currently authorized by the owning-group policy. Public services show that no login is needed; copy the `docker pull` command directly. Private services also show `docker login`, using CATS machine-account credentials with access to the mapping.
 
 For example, an approved nginx image mapped to service 42 may show:
 
@@ -56,7 +83,7 @@ docker pull cats.io/cyber-approved/42/nginx@sha256:<approved-digest>
 
 The portal must receive `CATS_OCI_HOSTNAME` (hostname and optional port, without a URL scheme or path). The main deployment template and HTTPS overlay pass the existing ingress hostname through automatically. For the local HTTP stack, configure the client-visible authority explicitly, such as `localhost:5000`; external ingress deployments must pass their registry authority. The popup explains missing configuration, mapping, digest or approval instead of guessing a command. Displayed availability is a current check; the proxy rechecks authorization when the command is executed and also verifies the caller's machine-account grants.
 
-## Service ID selects the approval
+## Service ID selects the owning policy
 
 Every consumer pull uses `<project>/<service-id>/<image-path>`. The service ID is the positive numeric `Service.id` on the CATS installation receiving the request, as shown in **Approved artifact distribution**. For example:
 
@@ -65,9 +92,9 @@ docker pull cats.io/cyber-approved/42/nginx:1.27
 docker pull cats.io/cyber-approved/42/nginx@sha256:<approved-digest>
 ```
 
-CATS selects service 42 from the path before resolving the image. The service must exist and be active; its current approval and exact artifact digest determine whether delivery is allowed. An approval for another service never authorizes this request, even when the upstream repository and image bytes are identical. Archived or staged services are denied in both full and replica modes. Existing Local Cyber overrides remain scoped to their service, release and digest and cannot bypass an inactive service.
+CATS selects service 42 from the path before resolving the image. The service must exist and be active; its owning-group policy and exact artifact evidence determine whether delivery is allowed. An approval or clean scan for another service never authorizes this request, even when the upstream repository and image bytes are identical. Archived or staged services are denied in both full and replica modes. Existing Local Cyber overrides remain scoped to their service, release and digest and cannot bypass an inactive service or a required compliance rule.
 
-The service ID is mandatory for manifest, blob, signature, attestation and referrer requests. Missing, malformed or unknown IDs are rejected. The authenticated `/v2/` registry handshake is unchanged. A pull path identifies the CATS approval to evaluate; it does not identify the workload that will use the downloaded bytes.
+The service ID is mandatory for manifest, blob, signature, attestation and referrer requests. Missing, malformed or unknown IDs are rejected. The authenticated `/v2/` registry handshake is unchanged. A pull path identifies the CATS service and policy to evaluate; it does not identify the workload that will use the downloaded bytes.
 
 ### Existing mappings and client migration
 
@@ -79,21 +106,21 @@ Update consumer image references to the displayed pull path when deploying this 
 
 On the **Approved Release Destinations** page, open **Approved artifact distribution** and choose **Add mapping**. Select the Harbor upstream and enter `cyber-approved/*` for both **Public repository** and **Upstream repository**. For service 42 this exposes the upstream `cyber-approved/team/api` as `cyber-approved/42/team/api`. To use a different public project name, enter `approved/*` on the public side. Both stored patterns must consist of one project name followed by `/*`; the service ID is inserted in consumer requests, not in the upstream repository.
 
-Grant the new mapping to a CATS machine account. The grant covers current and future repositories in the project, but never supplies approval: the service ID in each request is authoritative. CATS checks only that service's current Cyber-approved release and exact artifact membership; it never chooses a service by searching for another approval of the digest. Exact scoped mappings take precedence, followed by the corresponding legacy exact mapping, then the project mapping. An exact mapping for another service, a suspended mapping or a missing exact-mapping grant blocks the request without falling back to the project. For services using signed release revisions, pulls by tag also require the tag and digest to match the active signed release.
+Grant the new mapping to a CATS machine account. The grant covers current and future repositories in the project, but never supplies release or compliance authority: the service ID in each request is authoritative. CATS checks that service's owning-group rules and exact artifact evidence; it never chooses a service by searching for another authorization of the digest. Exact scoped mappings take precedence, followed by the corresponding legacy exact mapping, then the project mapping. An exact mapping for another service, a suspended mapping or a missing exact-mapping grant blocks the request without falling back to the project. When approval is required for a service using signed release revisions, pulls by tag also require the tag and digest to match the active signed release.
 
 To test registry access, choose **Test connection**, enter an existing tag or digest, then enter a concrete service pull repository such as `cyber-approved/42/team/api`. The connection test checks transport only; it does not grant release approval. To verify the full decision, log in to the CATS proxy with the CATS machine credentials and run `docker pull cats.example/cyber-approved/42/team/api:v1` with an approved image and tag for service 42.
 
-## Content and approval behavior
+## Content and policy behavior
 
-The current Cyber-approved release is the authority for OCI pull eligibility. New vulnerability findings, changed compliance rules, expired finding exceptions, scan age, and pending or newer scans do not override that approval. Scanning and compliance reporting continue to show the current posture so Cyber can review, revoke, or replace a release explicitly. This applies to local approvals and verified imported releases.
+In **Approved releases** mode, the current Cyber-approved release is the authority for OCI pull eligibility. New vulnerability findings, changed compliance rules, expired finding exceptions, scan age, and pending or newer scans do not override that approval. Scanning and compliance reporting continue to show the current posture so Cyber can review, revoke, or replace a release explicitly. **Compliance rules** and **Approved releases and compliance** also evaluate the configured scan rules on every request, so newly failing evidence can block a previously successful pull.
 
-Every delivery rechecks release authorization, including a content-cache hit. The release must still be valid and not revoked; governed releases must remain active and not suspended or superseded. The requested repository and digest must belong to that service's approved immutable artifacts, and retained evidence and signatures must verify. Service lifecycle, enabled mappings, public/private access, and any required machine-account grants still apply. Cached bytes are never evidence of approval.
+Every delivery rechecks the effective group policy, including a content-cache hit. Where approval is required, the release must still be valid and not revoked; governed releases must remain active and not suspended or superseded. The requested repository and digest must belong to that service's authorized immutable artifacts, and retained evidence and signatures must verify. Service lifecycle, enabled mappings, public/private access, and any required machine-account grants still apply. Cached bytes never establish authority.
 
-Mutable tags resolve to immutable upstream manifest digests before release authorization. Child manifests, configs, layers, and referrers must remain within the authorized approved graph; knowing a blob digest does not grant access to it. Multi-platform indexes require all exposed children to be eligible. Unknown, expired, revoked, tampered, and out-of-scope artifacts fail closed.
+Mutable tags resolve to immutable upstream manifest digests before authorization. Child manifests, configs, layers, and referrers must remain within the authorized artifact graph; knowing a blob digest does not grant access to it. Multi-platform indexes require all exposed children to be eligible. Unknown, tampered, and out-of-scope artifacts fail closed; release restrictions and compliance failures are enforced according to the selected mode.
 
-The signed Cyber approval expiry controls release lifetime. Historical repository settings `max_scan_age_days` and `max_approval_age_days` no longer shorten a valid release. They are accepted for configuration compatibility and cleared when a mapping is saved in the UI. To stop distribution before expiry, revoke the release or suspend the mapping; to change the approved content, complete the release approval and activation workflow.
+The signed Cyber approval expiry controls release lifetime. Historical repository settings `max_scan_age_days` and `max_approval_age_days` remain ignored and are cleared when a mapping is saved in the UI. The new group-level maximum scan age applies only when its mode requires compliance. To stop delivery in every mode, suspend the mapping or inactivate the service. Revoking a release stops delivery under modes requiring approval; compliance-only delivery continues only if its independent rules still pass.
 
-An approved saved service distribution remains bound to its retained scan and frozen component selection. Its approval does not authorize excluded images. A pending or newer distribution scan does not replace the approved selection or interrupt its pulls; changed content requires a new Cyber approval.
+An approved saved service distribution remains bound to its retained scan and frozen component selection. Its approval does not authorize excluded images. In approval-only mode, a pending or newer distribution scan does not replace the approved selection or interrupt its pulls; changed approved content requires a new Cyber approval. When compliance is also required, the applicable assessment must separately satisfy the group's rules.
 
 Manifest responses preserve upstream bytes and their SHA-256 identity; retained manifest JSON is stored in PostgreSQL. The configurable disk quota applies to cached blobs, not database metadata. Blob downloads stream to temporary files in bounded chunks, verify SHA-256, and atomically enter the cache only after success. Cache hits are rehashed; corrupted entries are removed and fetched again. Writers use an interprocess lock. Older entries are evicted to enforce the byte quota. Interrupted temporary files are removed by a subsequent writer. Repository pushes, deletes, and uploads are unsupported.
 
@@ -125,7 +152,7 @@ Run these checks against a staging Harbor instance and a staging CATS database b
 3. Test an OCI Helm chart and a multi-platform image. Verify each exposed child manifest and blob is authorized and the aggregate index is denied when any required child lacks approval.
 4. Move a tag to an unknown or blocked digest. Verify the next request is denied and does not reuse approval attached to the former digest.
 5. Revoke the machine credential or remove its repository grant. Verify cached manifests and blobs are denied. Repeat with a known digest from an unrelated repository.
-6. Change compliance policy, introduce overdue findings, expire a finding exception, and ingest a newer scan. Verify the unchanged approved release remains available through GET and HEAD, including cached manifests and blobs. Then revoke or expire that release and verify subsequent requests are denied. Confirm an unapproved replacement digest remains denied throughout.
+6. In an approval-only group, introduce findings and a newer scan; verify the unchanged approved release remains available, including cached GET/HEAD requests. In a compliance-only group, verify an unapproved but completely scanned image passes the chosen severity rule, then introduce a blocking finding and confirm cache hits are denied. In a group requiring both, verify either failed condition denies the pull. Changing one group's mode must not affect the others.
 7. Verify subject-bound referrers and pagination; no unrelated or disallowed artifact may appear. Attempt write/delete operations and verify rejection.
 8. Interrupt a large download and restart the proxy. Verify no partial blob is served, subsequent download succeeds, and cache use stays within the configured content quota.
 9. With one `cyber-approved/*` mapping and one machine grant, pull through two explicit service IDs, including a nested repository. Approve identical upstream bytes for both services, revoke only one, and confirm its manifest, blob and referrer requests fail while the other's remain allowed. Also test missing IDs and archived services with warm caches. Add an exact repository mapping and confirm the project grant cannot access it until the machine receives the exact mapping's separate grant; suspending the exact mapping must block that repository.
@@ -202,7 +229,7 @@ The portal and proxy bind to loopback ports 8080 and 5000 by default. Publish th
 2. Independently obtain the publishing system's root public-key SHA-256 fingerprint through a trusted administrative channel. Add a source using the local registry, an exact `project/service/releases` repository or `project/*` discovery scope, the trusted `sha256:<64 lowercase hexadecimal characters>` fingerprint(s), and a polling interval. An unchained package must match a configured pin directly. A rotated signer must authenticate a complete succession chain from the original pinned root, with every transition signed by both predecessor and successor. Keep the original pin during authenticated rotation; a successor key does not need a separate pin. Never trust a new fingerprint merely because it appears in the downloaded archive. Use **Edit source** to update polling and trusted fingerprints; removing the root pin denies its successor chain. An imported source keeps its registry/repository binding; configure a separate source for a different scope.
 3. Enable the source or choose **Sync now**. The page shows last success, errors and job stages. Invalid signatures, incomplete evidence, graph/digest mismatches and stale or replayed versions leave the last valid imported state intact. Fix the registry/trust problem and retry; a synchronization failure does not grant access. Exact repositories avoid relying on registry catalog permission; project discovery requires listing permission within that scope.
 4. Open an imported service and **Releases** to inspect the publisher, signed manifest digest, validity and artifact inventory. Each artifact lists its local proxy pull path. Download **immutable release evidence** for the original captured evidence; queued spreadsheet/bundle generation is intentionally unavailable because the replica has no export worker.
-5. Open **Release destinations** to review the imported service-scoped repository mappings. For a private service, create a local machine principal with explicit grants to the required repositories; public services allow anonymous pulls. Automatic mapping creation does not create consumer credentials or grant access. Configure clients to pull the displayed local proxy path by digest. The proxy checks the imported release state and consumer access on every request, including cache hits. The signed release expiry controls its validity; synchronization failures never extend it, and local scan or age settings do not shorten it.
+5. Open **Release destinations** to review the imported service-scoped repository mappings. For a private service, create a local machine principal with explicit grants to the required repositories; public services allow anonymous pulls. Automatic mapping creation does not create consumer credentials or grant access. Configure clients to pull the displayed local proxy path by digest. The proxy checks verified imported evidence, the local owning-group policy, and consumer access on every request, including cache hits. When approval is required, the signed release expiry controls its validity and synchronization failures never extend it. Group compliance rules can impose separate severity or scan-age requirements.
 
 Only the local registry must be reachable for synchronization and uncached distribution; the replica does not query the authoritative CATS instance. Expiry is evaluated locally. Revocations and superseding releases take effect when their verified update arrives through the local registry. Monitor synchronization freshness as part of disconnected operations. The signed publication format and replication requirements are described in [Portable approved releases](portable-approved-releases.md).
 

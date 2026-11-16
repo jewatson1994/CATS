@@ -204,11 +204,17 @@ class EffectiveMapping:
 
 
 def resolve_distribution_tag(db, mapping, tag):
+    from .oci_group_policy import policy_for_service
+    if policy_for_service(db, mapping.service_id)['mode'] == 'compliance':
+        return None
     from .imported_services import uses_imported_evidence
     return None if uses_imported_evidence(db, mapping.service_id) else _full_distribution_tag(db, mapping, tag)
 
 
 def resolve_distribution_location(db, mapping, digest):
+    from .oci_group_policy import policy_for_service
+    if policy_for_service(db, mapping.service_id)['mode'] == 'compliance':
+        return mapping.upstream_repository
     from .imported_services import uses_imported_evidence
     if uses_imported_evidence(db, mapping.service_id):
         from .replica_authorization import distribution_location

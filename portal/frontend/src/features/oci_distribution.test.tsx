@@ -62,7 +62,7 @@ it('tests a concrete project repository and identifies project-wide machine gran
   render(<OCIDistribution data={{csrf_token: 'csrf'}}/>);
   await screen.findByText('approved/<service-id>/*');
   fireEvent.click(screen.getByRole('button', {name: 'Add machine account'}));
-  expect(screen.getByLabelText('approved/<service-id>/* (whole project; service approval required)')).toBeInTheDocument();
+  expect(screen.getByLabelText('approved/<service-id>/* (whole project; group pull policy applies)')).toBeInTheDocument();
   const prompt = vi.spyOn(window, 'prompt').mockReturnValueOnce('v2').mockReturnValueOnce('approved/42/team/api');
   fireEvent.click(screen.getByRole('button', {name: 'Test connection'}));
   await screen.findByText('Connected');
@@ -73,7 +73,7 @@ it('tests a concrete project repository and identifies project-wide machine gran
 });
 
 
-it.each(['full', 'replica'] as const)('uses signed release validity when creating a mapping in %s mode', async mode => {
+it.each(['full', 'replica'] as const)('uses group pull policy when creating a mapping in %s mode', async mode => {
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {} as any;
     if (url === '/api/oci/upstreams') return [{id: 4, name: 'Local registry', enabled: true}] as any;
@@ -90,7 +90,7 @@ it.each(['full', 'replica'] as const)('uses signed release validity when creatin
   fireEvent.change(screen.getByLabelText('Service'), {target: {value: '1'}});
   expect(screen.queryByLabelText('Maximum approval age (days)')).not.toBeInTheDocument();
   expect(screen.queryByLabelText('Local maximum release age (days)')).not.toBeInTheDocument();
-  expect(screen.getByText(/New scans and changes to service compliance do not cancel that approval/)).toBeInTheDocument();
+  expect(screen.getByText(/The owning group chooses approved releases, compliance rules, or both in General Policy/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', {name: 'Save'}));
   await screen.findByText('Distribution settings saved.');
   const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');

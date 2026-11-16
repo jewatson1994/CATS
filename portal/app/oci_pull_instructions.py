@@ -1,4 +1,4 @@
-"""Read-only, digest-pinned pull instructions from the live OCI approval path."""
+"""Read-only, digest-pinned pull instructions from the live OCI authorization path."""
 import ipaddress
 import os
 import re
@@ -99,21 +99,33 @@ def image_locations(db, image, image_identity):
                     locations.add(target)
         return locations
 
-    from .cyber_approvals import CyberApproval
+    from .cyber_approvals import CyberApproval, digest as snapshot_digest
     # Retained scan identity is also a candidate for a direct upstream mapping.
     locations.add((*image_identity, False))
     for approval in db.scalars(select(CyberApproval).where(CyberApproval.service_id == image.service_id)
                                .execution_options(populate_existing=True)):
-        snapshot, receipt = approval.snapshot or {}, approval.publication or {}
-        manifest = receipt.get('manifest') or {}
-        if (approval.publish_status != 'published' or receipt.get('status') != 'published'
+        snapshot, receipt = approval.snapshot, approval.publication
+        if not isinstance(snapshot, dict) or not isinstance(receipt, dict):
+            continue
+        try:
+            if snapshot.get('service_id') != image.service_id or snapshot_digest(snapshot) != approval.snapshot_digest:
+                continue
+        except (TypeError, ValueError):
+            continue
+        manifest = receipt.get('manifest')
+        # A revocation publication can be queued while the verified immutable
+        # relocation still identifies the scanned source. The group's live
+        # authorization decides whether that identity may currently be pulled.
+        if (not isinstance(manifest, dict)
                 or receipt.get('verification_status') != 'verified' or receipt.get('signature_status') != 'verified'
                 or manifest.get('approval_id') != approval.id
                 or manifest.get('snapshot_digest') != approval.snapshot_digest
                 or manifest.get('artifacts') != receipt.get('artifacts')):
             continue
-        originals = snapshot.get('artifacts', [])
-        for index, artifact in enumerate(receipt.get('artifacts', [])):
+        originals, published = snapshot.get('artifacts'), receipt.get('artifacts')
+        if not isinstance(originals, list) or not isinstance(published, list):
+            continue
+        for index, artifact in enumerate(published):
             if not isinstance(artifact, dict) or artifact.get('kind') != 'image' or index >= len(originals):
                 continue
             source = originals[index]
@@ -165,13 +177,13 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
     try:
         identity = _identity(image.image_reference, image.image_digest)
     except ValueError:
-        return unavailable('This image has no verified immutable digest. Complete its scan and release approval first.')
+        return unavailable('This image has no verified immutable digest. Complete its scan first.')
 
     from . import oci_proxy as proxy
     from .oci_authorization import authorize
     candidates = image_locations(db, image, identity)
     if not candidates:
-        return unavailable('No verified approved release binds this image to a distribution repository.')
+        return unavailable('No verified image identity binds this container to a distribution repository.')
     mappings = list(db.scalars(select(OCIRepository).where(or_(OCIRepository.service_id == service.id,
                                                                OCIRepository.service_id.is_(None)))
                               .execution_options(populate_existing=True)))
@@ -208,7 +220,7 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
                 anonymous_pull=public_pull, login_required=not public_pull,
                 login_command=None if public_pull else 'docker login ' + shlex.quote(result['registry']))
     if not routes:
-        return unavailable('The approved release for this service does not currently authorize this image.' if matched
+        return unavailable("This image does not meet the service's current OCI pull policy." if matched
                            else 'No enabled CATS repository mapping serves this image for this service.')
     result.update(status='available', routes=[routes[key] for key in sorted(routes)])
     return result

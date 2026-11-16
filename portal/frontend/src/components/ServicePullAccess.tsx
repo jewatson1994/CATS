@@ -83,12 +83,12 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
     {!visibleAccess && !error && <p role="status">Loading pull access.</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => setAttempt(value => value + 1)}>Refresh pull access</button></div>}
     {visibleAccess && <>
-      <p className="service-control-description">{visibleAccess.public ? 'Anyone who can reach CATS can pull approved artifacts without signing in.' : 'Pulls require authorized CATS registry credentials.'} Release approval is always required.</p>
+      <p className="service-control-description">{visibleAccess.public ? 'Anyone who can reach CATS can pull authorized artifacts without signing in.' : 'Pulls require authorized CATS registry credentials.'} The owning group's OCI pull policy determines which artifacts are authorized.</p>
       {editable && editing && <form id={editorId} className="service-control-editor" onSubmit={save}>
         <label>Pull access<select value={selected} disabled={busy} onChange={event => setSelected(event.target.value)}>
           <option value="private">Private — sign-in required</option><option value="public">Public — anonymous pulls</option>
         </select></label>
-        <p className="service-control-help">{selected === 'public' ? 'Public access permits anonymous pulls of this service’s approved artifacts.' : 'Private access requires a CATS machine account with permission to pull.'}</p>
+        <p className="service-control-help">{selected === 'public' ? 'Public access permits anonymous pulls of this service’s authorized artifacts.' : 'Private access requires a CATS machine account with permission to pull.'}</p>
         <div className="service-control-actions"><button disabled={busy || selected === (visibleAccess.public ? 'public' : 'private')}>{busy ? 'Saving pull access…' : 'Save pull access'}</button>
           <button type="button" className="secondary-button" disabled={busy} onClick={cancel}>Cancel</button></div>
       </form>}

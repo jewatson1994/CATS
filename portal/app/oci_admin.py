@@ -19,8 +19,10 @@ from .release_validity import utc
 from .secrets import encrypt_secret
 from .service_oci import _csrf, validate_destination
 from .trusted_ca import configured_certificates
+from .oci_group_policy import router as group_policy_router
 
 router = APIRouter(prefix='/api/oci', tags=['OCI administration'])
+router.include_router(group_policy_router)
 admin = require_permission('release.destination.manage')
 MODELS = {'upstreams': OCIUpstream, 'repositories': OCIRepository, 'principals': OCIPrincipal}
 REPOSITORY = re.compile(r'[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*\Z')
@@ -178,7 +180,7 @@ def overview(db: Session = Depends(get_db), auth: AuthContext = Depends(admin)):
             'available_repositories': sum(row.enabled and not row.suspended and row.upstream.enabled for row in repositories),
             'active_principals': sum(row.enabled and utc(row.expires_at) > now for row in principals),
             'services': [{'id': row.id, 'name': row.name} for row in db.scalars(select(Service).order_by(Service.name))],
-            'authorization': 'The service ID in each pull selects its Cyber-approved release; artifact identity, approval expiry and revocation are checked on every pull',
+            'authorization': 'The service ID selects its owning group policy: approved releases, compliance rules, or both. Access and artifact identity are checked on every pull.',
             'proxy_health': 'Use the separately deployed distribution endpoint to verify runtime availability'}
 
 

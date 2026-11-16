@@ -53,22 +53,22 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
   return <><button ref={trigger} type="button" className="secondary-button" aria-label={`Pull ${image.image_reference} from CATS`} onClick={() => setOpen(true)}>Pull from CATS</button>
     {open && <dialog ref={dialog} className="review-dialog modal" aria-labelledby={titleId} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
       <h3 id={titleId}>Pull image from CATS</h3><p><code className="image-ref">{image.image_reference}</code></p>
-      {!result && !error && <p role="status">Checking this service's approved image and pull route…</p>}
+      {!result && !error && <p role="status">Checking this service's image, group pull policy and pull route…</p>}
       {error && <div role="alert"><p>{error}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>}
       {result && <><p>Service ID: <strong>{result.service_id}</strong>{result.registry && <> · Registry: <code>{result.registry}</code></>}</p>
-        {!routes.length ? <p role="status">{result.reason || 'No approved pull route is currently available for this image.'}</p> : <>
+        {!routes.length ? <p role="status">{result.reason || 'No authorized pull route is currently available for this image.'}</p> : <>
           {routes.map((route, index) => {
             const loginRequired = route.login_required ?? Boolean(route.login_command);
             const login = route.login_command;
             return <section key={`${route.repository}-${route.digest}`} aria-label={`Pull route ${index + 1}`}>
-              <h4>{routes.length > 1 ? `Pull route ${index + 1}` : 'Pull the approved image'}</h4>
+              <h4>{routes.length > 1 ? `Pull route ${index + 1}` : 'Pull the authorized image'}</h4>
               {loginRequired ? <div><h5>Sign in to CATS</h5><p>Use a CATS machine account granted access to this route.</p>
                 {login && <><pre><code>{login}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(login, 'Login command')}>{routes.length > 1 ? `Copy login command ${index + 1}` : 'Copy login command'}</button></>}
               </div> : <p>No sign-in required. This service allows anonymous pulls.</p>}
               <pre><code>{route.command}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(route.command, 'Pull command')}>{routes.length > 1 ? `Copy pull command ${index + 1}` : 'Copy pull command'}</button>
             </section>;
           })}
-          <p>CATS checks this service's approval again when the image is pulled.</p>
+          <p>CATS checks this service's group pull policy again when the image is pulled.</p>
         </>}</>}
       {copyNotice && <p role="status">{copyNotice}</p>}
       <div className="dialog-actions"><button type="button" className="secondary-button" onClick={close}>Close</button></div>
