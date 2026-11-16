@@ -54,7 +54,7 @@ def test_exact_approved_digest(context):
     assert not auth.authorize(db, mapping, 'sha256:' + 'b' * 64, NOW).allowed
 
 
-@pytest.mark.parametrize('change', ['revoked', 'expired', 'incomplete', 'changed_payload', 'changed_snapshot', 'repository', 'registry', 'suspended', 'stale'])
+@pytest.mark.parametrize('change', ['revoked', 'expired', 'incomplete', 'changed_payload', 'changed_snapshot', 'repository', 'registry', 'suspended'])
 def test_fail_closed(context, change):
     db, mapping, approval, execution = context
     now = NOW
@@ -66,21 +66,21 @@ def test_fail_closed(context, change):
     if change == 'repository': mapping.upstream_repository = 'other/image'
     if change == 'registry': mapping.upstream.endpoint = 'https://other.example'
     if change == 'suspended': mapping.suspended = True
-    if change == 'stale':
-        mapping.policy = {'max_scan_age_days': 1}
-        now += timedelta(days=1)
     db.commit()
     assert not auth.authorize(db, mapping, DIGEST, now).allowed
 
 
-def test_new_scan_cannot_reuse_approval(context):
+@pytest.mark.parametrize('complete', [True, False])
+def test_new_scan_does_not_revoke_approved_artifact(context, complete):
     db, mapping, approval, execution = context
     assert auth.candidate_service_ids(db, mapping, DIGEST) == {mapping.service_id}
     db.add(Execution(service_id=mapping.service_id, execution_key='new',
-        scanned_at=NOW + timedelta(seconds=1), complete=True, raw_payload={}))
+        scanned_at=NOW + timedelta(seconds=1), complete=complete, raw_payload={}))
     db.commit()
-    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(seconds=2)).reason == 'digest_not_approved'
-    assert not auth.candidate_service_ids(db, mapping, DIGEST)
+    decision = auth.authorize(db, mapping, DIGEST, NOW + timedelta(seconds=2))
+    assert decision.allowed and decision.approval_id == approval.id and decision.execution_id == execution.id
+    assert auth.candidate_service_ids(db, mapping, DIGEST) == {mapping.service_id}
+    assert not auth.authorize(db, mapping, 'sha256:' + 'b' * 64, NOW + timedelta(seconds=2)).allowed
 
 
 def test_project_service_lookup_matches_concrete_registry_repository_and_digest(context):
@@ -106,10 +106,13 @@ def test_project_service_lookup_matches_concrete_registry_repository_and_digest(
     assert not auth.candidate_service_ids(db, mapping, DIGEST)
 
 
-def test_canonical_policy_is_live(context, monkeypatch):
+def test_live_posture_is_not_a_second_approval(context, monkeypatch):
     db, mapping, _, _ = context
-    monkeypatch.setattr(main, 'service_view', lambda *args: dict(incomplete=False, compliant=False))
-    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'service_noncompliant'
+    def unexpected(*args):
+        pytest.fail('An OCI pull must not recompute live compliance')
+    monkeypatch.setattr(main, 'service_view', unexpected)
+    monkeypatch.setattr(main, 'configuration_for_service', unexpected)
+    assert auth.authorize(db, mapping, DIGEST, NOW).allowed
 
 
 def test_cross_service_approval_is_not_reused(context):
@@ -130,7 +133,7 @@ def test_mutable_or_archive_evidence_does_not_authorize(changes):
     assert not auth._artifact_matches({'artifacts': [artifact]}, 'registry.example/team/image', DIGEST)
 
 
-def test_real_deadline_and_service_scoped_exception(context, monkeypatch):
+def test_real_deadline_and_expired_exception_do_not_revoke_release(context, monkeypatch):
     from app.models import Finding, ExceptionRecord
     db, mapping, _, _ = context
     monkeypatch.setattr(main, 'service_view', CANONICAL_VIEW)
@@ -150,18 +153,32 @@ def test_real_deadline_and_service_scoped_exception(context, monkeypatch):
         starts_at=start, expires_at=NOW + timedelta(days=1))
     db.add(exception)
     db.commit()
-    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'service_noncompliant'
+    assert not main.service_view(db.get(Service, mapping.service_id), NOW,
+                                 main.configuration_for_service(db, None))['compliant']
+    assert auth.authorize(db, mapping, DIGEST, NOW).allowed
     exception.finding_id = finding.id
     db.commit()
     assert auth.authorize(db, mapping, DIGEST, NOW).allowed
-    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(days=1)).reason == 'service_noncompliant'
+    assert not main.service_view(db.get(Service, mapping.service_id), NOW + timedelta(days=1),
+                                 main.configuration_for_service(db, None))['compliant']
+    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(days=1)).allowed
 
 
-def test_temporary_distribution_window_cannot_extend_approval(context):
+@pytest.mark.parametrize('key', ['max_scan_age_days', 'max_approval_age_days'])
+def test_legacy_mapping_age_cannot_shorten_or_extend_approval(context, key):
     db, mapping, _, _ = context
-    mapping.policy = {'max_approval_age_days': 1}
+    mapping.policy = {key: 1}
     assert auth.authorize(db, mapping, DIGEST, NOW).allowed
-    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(days=1)).reason == 'approval_window_elapsed'
+    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(days=1)).allowed
+    assert auth.authorize(db, mapping, DIGEST, NOW + timedelta(days=90)).reason == 'approval_not_current'
+
+
+@pytest.mark.parametrize('policy', [[], False, 0, '', {'allow_unreviewed': True},
+    {'max_scan_age_days': 0}, {'max_approval_age_days': True}])
+def test_malformed_mapping_policy_still_denies(context, policy):
+    db, mapping, _, _ = context
+    mapping.policy = policy
+    assert auth.authorize(db, mapping, DIGEST, NOW).reason == 'invalid_policy'
 
 
 def test_pinned_chart_digest():
@@ -229,7 +246,7 @@ def revision_context(context, monkeypatch):
     db.commit()
     # Gateway tests isolate pointer enforcement; signature/artifact/expiry checks
     # have dedicated release_revision coverage and are invoked through this hook.
-    monkeypatch.setattr(revisions, 'validate_activation', lambda *a: None)
+    monkeypatch.setattr(revisions, 'validate_current_revision', lambda *a: None)
     return db, mapping, legacy, approval, revision, state, pointer
 
 
@@ -253,7 +270,7 @@ def test_gateway_never_falls_back_to_legacy_approval(revision_context, monkeypat
     else:
         def invalid(*args):
             raise ValueError('Signature or current artifact eligibility failed')
-        monkeypatch.setattr(revisions, 'validate_activation', invalid)
+        monkeypatch.setattr(revisions, 'validate_current_revision', invalid)
     db.commit()
     result = auth.authorize(db, mapping, DIGEST, NOW)
     assert not result.allowed
@@ -314,7 +331,7 @@ def test_amendment_payload_remains_separate_and_integrity_bound(monkeypatch, cha
     from app.proposal_assessments import ProposalAssessment
     from app.artifact_catalog import GlobalArtifact
     service = SimpleNamespace(id=1, service_key='test', current_version_id=2)
-    execution = SimpleNamespace(id=3, raw_payload={'original': True})
+    execution = SimpleNamespace(id=3, service_version_id=2, raw_payload={'original': True})
     raw = dict(service={'id': 'test'}, complete=True, fixable_only=True, scan_scope='service',
         scanned_at=NOW.isoformat(), service_overview={'images': [dict(image='registry.example/patched@'+DIGEST,
         digest=DIGEST, platform='linux/amd64', media_type='manifest')]})
@@ -371,4 +388,4 @@ def test_amendment_payload_remains_separate_and_integrity_bound(monkeypatch, cha
             base.manifest['base_revision_id']=6
             base.manifest_digest=snapshot_digest(base.manifest)
     now=NOW+timedelta(days=2) if change=='expired' else NOW
-    assert auth._payload_evidence_matches(db,approval,execution,service,active,now) is (change in (None, 'chain'))
+    assert auth._payload_evidence_matches(db,approval,execution,service,active,now) is (change in (None, 'chain', 'expired', 'inputs'))

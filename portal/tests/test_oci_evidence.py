@@ -1,8 +1,10 @@
 from types import SimpleNamespace
+from datetime import timedelta
 import pytest
-from app import oci_proxy as proxy, oci_evidence as evidence, cyber_approvals as approvals
+from app import main, oci_proxy as proxy, oci_evidence as evidence, cyber_approvals as approvals
 from test_oci_proxy import digest, project, registry, setup
-from app.models import Execution
+from app.models import Execution, Finding, Service
+from app.oci_models import OCIRepository, service_repository
 from app.durable_jobs import now
 
 @pytest.fixture
@@ -28,12 +30,14 @@ def bundle(setup, monkeypatch, tmp_path):
             'bundle_path':str(path),'bundle_digest':digest(data)}
         db.commit()
         identity = row.id
+        mapping = db.get(OCIRepository, s.mapping_id)
+        repository = service_repository(mapping.public_repository, mapping.service_id)
     def authorize(db, mapping, value):
         return SimpleNamespace(allowed=value in s.allowed and mapping.enabled and not mapping.suspended,
             reason='test_denied', approval_id=identity)
     monkeypatch.setattr(proxy, 'authorize', authorize)
     return SimpleNamespace(**vars(s), path=path, data=data, identity=identity,
-        url='/api/oci/evidence/project/image/manifests/'+s.image+'/offline')
+        url=f'/api/oci/evidence/{repository}/manifests/{s.image}/offline')
 
 
 def test_original_bundle_and_digest_returned(bundle):
@@ -58,12 +62,28 @@ def test_project_evidence_uses_the_concrete_repository_approval(project, monkeyp
                                     bundle_digest=digest(data))
         db.commit()
     suffix = f'/manifests/{s.image}/offline'
-    url = f'/api/oci/evidence/{s.published}' + suffix
+    url = f'/api/oci/evidence/{s.routes[s.published]}' + suffix
     response = s.client.get(url)
     assert response.status_code == 200 and response.content == data
     assert response.headers['X-CATS-Approval-ID'] == str(published_id)
     # Same image, different approval: only the published service has a bundle.
-    assert s.client.get(f'/api/oci/evidence/{s.scanned}' + suffix).status_code == 404
+    assert s.client.get(f'/api/oci/evidence/{s.routes[s.scanned]}' + suffix).status_code == 404
+    with s.sessions() as db:
+        approval = db.get(approvals.CyberApproval, published_id)
+        timestamp = now()
+        past = timestamp - timedelta(days=200)
+        db.add(Finding(service_id=approval.service_id, cve='CVE-2026-9876', severity='Critical',
+            first_seen=past, episode_started=past, last_seen=timestamp))
+        db.add(Execution(service_id=approval.service_id, execution_key='later-evidence-scan',
+            scanned_at=timestamp, complete=False, scan_scope='service', raw_payload={}))
+        db.commit()
+        service = db.get(Service, approval.service_id)
+        assert not main.service_view(service, timestamp, main.configuration_for_service(db, service))['compliant']
+    # A later scan or overdue findings do not withdraw the release's original
+    # signed evidence bundle; explicit revocation below still does.
+    response = s.client.get(url)
+    assert response.status_code == 200 and response.content == data
+    assert response.headers['X-CATS-Approval-ID'] == str(published_id)
     with s.sessions() as db:
         db.get(approvals.CyberApproval, published_id).revoked_at = now()
         db.commit()

@@ -3,7 +3,7 @@
 This module deliberately does not evaluate vulnerability policy or require an
 assessment worker or connection to the originating CATS installation.
 """
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 import hashlib
 
 from sqlalchemy import select
@@ -55,47 +55,29 @@ def release_denial(release, state, timestamp):
 
 
 def repository_policy_error(policy):
+    """Accept retained age settings without giving them authority over a release."""
     if (not isinstance(policy, dict) or set(policy) - {'max_scan_age_days', 'max_approval_age_days'}
             or any(type(value) is not int or not 1 <= value <= 3650 for value in policy.values())):
         return 'invalid_policy'
-    if policy.get('max_scan_age_days') is not None:
-        return 'replica_scan_policy_unsupported'
     return None
 
 
 def effective_release_denial(release, state, timestamp, policy):
-    """The same expiry condition applies to enforcement and local risk acceptance."""
-    denial = release_denial(release, state, timestamp)
-    if (denial is None and policy.get('max_approval_age_days') is not None
-            and timestamp >= utc(release.approved_at) + timedelta(days=policy['max_approval_age_days'])):
-        return 'expired'
-    return denial
+    """Only signed release validity and explicit release state limit approval.
+
+    Historical repository age settings remain readable for compatibility, but
+    cannot shorten Cyber's approval or impose a second scan freshness decision.
+    """
+    return release_denial(release, state, timestamp)
 
 
 def override_release_denial(db, release, state, digests, timestamp):
-    """Validate every selected root against its service's actual repository policy.
+    """Require actual release expiry, revocation or supersession for an override.
 
-    Publisher expiry/revocation/supersession is release-wide. Local freshness
-    expiry must exist on an enabled matching route for every selected artifact;
-    a claim of expiry alone cannot authorize a normal approved artifact.
+    Legacy repository age settings cannot manufacture an expired release and
+    cannot provide a reason to create a redundant Local Cyber override.
     """
-    from .oci_models import OCIRepository
-    denial = release_denial(release, state, timestamp)
-    if denial is not None:
-        return denial
-    mappings = list(db.scalars(select(OCIRepository).where(
-        OCIRepository.service_id == release.service_id,
-        OCIRepository.upstream_id == state.upstream_id,
-        OCIRepository.enabled.is_(True), OCIRepository.suspended.is_(False))
-        .execution_options(populate_existing=True)))
-    for digest in digests:
-        repositories = {item['repository'] for item in release.artifacts if item['digest'] == digest}
-        if not any(mapping.upstream.enabled and mapping.upstream_repository in repositories
-                and repository_policy_error(mapping.policy or {}) is None
-                and effective_release_denial(release, state, timestamp, mapping.policy or {}) == 'expired'
-                for mapping in mappings):
-            return None
-    return 'expired' if digests else None
+    return release_denial(release, state, timestamp)
 
 
 def _matches(release, repository, digest):
@@ -141,7 +123,7 @@ def authorize(db, mapping, digest, now=None):
     db.expire(service, ['archive_events'])
     if service_lifecycle(service) != 'active':
         return decision(False, 'service_inactive')
-    policy = mapping.policy or {}
+    policy = mapping.policy if mapping.policy is not None else {}
     policy_error = repository_policy_error(policy)
     if policy_error:
         return decision(False, policy_error)

@@ -224,7 +224,7 @@ def test_signed_revision_location_uses_original_mapping_identity(local, monkeypa
     local.db.commit()
     # Signature mechanics have their own suite; preserve and exercise real
     # signed binding validation, active pointer, and live approval adjudication.
-    monkeypatch.setattr(release_revisions, 'validate_activation', lambda *args: None)
+    monkeypatch.setattr(release_revisions, 'validate_current_revision', lambda *args: None)
     assert pull(local)['status'] == 'available'
     local.mapping.upstream_repository = 'tampered/nginx'
     local.db.commit()

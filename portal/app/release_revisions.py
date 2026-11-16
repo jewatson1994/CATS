@@ -169,17 +169,35 @@ def manifest_directory(revision):
     return root() / 'revisions' / str(revision.id)
 
 
-def validate_activation(db, revision, now=None):
-    from .artifact_catalog import artifact_eligibility
+def validate_current_revision(db, revision, now=None):
+    """Verify retained Cyber authority without re-running admission policy.
+
+    Catalog eligibility and service inventory may change after activation. The
+    signed manifest and its frozen approval remain authoritative for those
+    exact artifacts until the release is restricted or its approval expires.
+    """
     approval = _approval(db, revision.approval_id)
+    if not isinstance(approval.snapshot, dict) or not isinstance(revision.manifest, dict):
+        raise ValueError('Revision evidence changed')
     if approval.status != 'approved' or approval.revoked_at or not approval.decided_by_id:
         raise ValueError('Cyber approval is not current')
     release_validity.require_current(approval, now)
-    if digest(revision.manifest) != revision.manifest_digest or _manifest(db, approval) != revision.manifest:
+    manifest = revision.manifest
+    specification = approval.snapshot.get('release_revision')
+    expected = dict(purpose=PURPOSE, schema_version=1, approval_id=approval.id,
+        release_key=approval.release_key, service_id=approval.service_id,
+        snapshot_digest=approval.snapshot_digest, base_revision_id=revision.base_revision_id,
+        approval_validity=approval.snapshot.get('approval_validity'),
+        signing_fingerprint=approval.snapshot.get('signing_fingerprint'))
+    if (revision.service_id != approval.service_id or not isinstance(specification, dict)
+            or specification.get('base_revision_id') != revision.base_revision_id
+            or digest(manifest) != revision.manifest_digest
+            or any(manifest.get(key) != value for key, value in expected.items())
+            or manifest.get('distribution') != approval.snapshot.get('distribution')
+            or sorted(a['id'] for a in manifest['artifacts']) != sorted(specification['artifact_ids'])
+            or {a['digest'] for a in manifest['artifacts']}
+                != {a.get('digest') for a in approval.snapshot.get('artifacts', [])}):
         raise ValueError('Revision evidence changed')
-    for artifact in revision.manifest['artifacts']:
-        if artifact_eligibility(db, artifact['id'], service_id=revision.service_id).get('eligible') is not True:
-            raise ValueError('Artifact lacks trusted release eligibility evidence')
     fingerprint = approval.snapshot.get('signing_fingerprint')
     if not isinstance(fingerprint, str) or not fingerprint.startswith('sha256:'):
         raise ValueError('Trusted signing fingerprint missing')
@@ -196,6 +214,14 @@ def validate_activation(db, revision, now=None):
             raise ValueError('Manifest signature not verified')
     except OSError as exc:
         raise ValueError('Signed revision manifest unavailable') from exc
+
+
+def validate_activation(db, revision, now=None):
+    """Activate Cyber's signed decision with its exact inventory and bindings."""
+    validate_current_revision(db, revision, now)
+    approval = _approval(db, revision.approval_id)
+    if _manifest(db, approval) != revision.manifest:
+        raise ValueError('Revision evidence changed')
 
 
 def activate(db, auth, revision_id, expected_pointer_version, now=None):
@@ -263,8 +289,8 @@ def active_revision(db, service_id, now=None):
             or state.decision != 'approved' or state.suspended or state.revoked):
         return None
     try:
-        validate_activation(db, revision, now)
-    except (ValueError, OSError, TypeError, KeyError):
+        validate_current_revision(db, revision, now)
+    except (ValueError, OSError, TypeError, KeyError, AttributeError):
         return None
     return revision
 

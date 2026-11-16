@@ -20,6 +20,8 @@ New requests freeze KEV/EPSS lookups from the portal's installed intelligence ca
 
 The top-level **Approvals** queue lists pending, approved, and denied requests. Open a request to inspect its artifacts, findings, mitigations, exceptions, remediation provenance, coverage and verification notes, destination, and complete snapshot. Cyber can approve images with remaining vulnerabilities. Authorized reviewers must enter a rationale when approving or denying. Destination and signing identity are bound before approval; these publication settings must be available to approve. Denial does not require publication setup. Approval does not mean that registry publication has succeeded.
 
+For OCI pulls, the current Cyber-approved release is authoritative even when current findings or compliance status change. New scans and expired finding exceptions do not automatically withdraw that approval. The proxy continues to enforce signed release expiry, revocation, active-release state, exact artifact membership and integrity, and public/private consumer access. To stop an approved release before expiry, revoke it explicitly. See [OCI content and approval behavior](oci-proxy.md#content-and-approval-behavior).
+
 ## Retrieve a release
 
 The **Approved Releases** catalog separates the Cyber decision from publication status. Open a release to inspect the decision record, destination, immutable artifact references, signature evidence, and available evidence or offline downloads. Pull and deployment instructions are shown with the release. Deploy the immutable references recorded there instead of a mutable tag.

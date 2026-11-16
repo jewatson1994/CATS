@@ -165,67 +165,82 @@ def test_selected_distribution_pull_and_cached_revocation(published_distribution
         assert s.client.get(s.path + route).status_code == 403
 
 
+@pytest.mark.parametrize('published_distribution', ['exact', 'project'], indirect=True)
+@pytest.mark.parametrize('change', ['new_scan', 'pending_scan'])
+def test_approved_distribution_survives_later_scans_on_cached_reads(published_distribution, change):
+    s = published_distribution
+    routes = ('manifests/' + s.digest, 'blobs/' + s.blob, 'referrers/' + s.digest)
+    for route in routes:
+        response = s.client.get(s.path + route)
+        assert response.status_code == 200, response.text
+    assert s.client.get(s.path + 'blobs/' + s.blob).content == b'actual container filesystem bytes'
+    if change == 'new_scan':
+        s.case.scan([(SELECTED, s.digest)])
+    else:
+        admitted = s.case.client.post(f"/api/services/payments-service/distributions/{s.case.selected['id']}/scan",
+            headers=s.case.headers, json={})
+        assert admitted.status_code == 200, admitted.text
+    for route in routes:
+        methods = ('GET',) if route.startswith('referrers/') else ('GET', 'HEAD')
+        for method in methods:
+            response = s.client.request(method, s.path + route)
+            assert response.status_code == 200, (change, method, route, response.text)
+
+
 @pytest.mark.parametrize('change', ['selection', 'scope_only', 'missing_distribution', 'version', 'payload',
-    'new_scan', 'pending_scan', 'job_provenance', 'service_ownership', 'incomplete', 'revision_pointer', 'policy'])
+    'job_provenance', 'service_ownership', 'incomplete', 'revision_pointer', 'policy'])
 def test_distribution_evidence_rechecked_after_cache(published_distribution, change):
     from app.discovery_models import DiscoveryConfirmation
     from app.release_revisions import ServiceActiveRelease
     from app.scan_coordination import ScanJob
     s = published_distribution
     assert s.client.get(s.path + 'manifests/' + s.digest).status_code == 200
-    if change == 'new_scan':
-        s.case.scan([(SELECTED, s.digest)])
-    elif change == 'pending_scan':
-        admitted = s.case.client.post(f"/api/services/payments-service/distributions/{s.case.selected['id']}/scan",
-            headers=s.case.headers, json={})
-        assert admitted.status_code == 200, admitted.text
-    else:
-        with SessionLocal() as db:
-            approval = db.get(cyber_approvals.CyberApproval, s.approval_id)
-            execution = db.get(Execution, approval.source_execution_id)
-            snapshot = deepcopy(approval.snapshot)
-            if change == 'selection':
-                snapshot['distribution']['images'] = [EXCLUDED]
-            elif change == 'scope_only':
-                snapshot.pop('distribution')
-            elif change == 'missing_distribution':
-                snapshot['distribution']['id'] = 'missing'
-            elif change == 'version':
-                snapshot['source_version_id'] = s.case.baseline_version
-            elif change == 'payload':
-                execution.raw_payload = {**execution.raw_payload, 'findings': [{'cve': 'tampered'}]}
-            elif change == 'job_provenance':
-                job = db.get(ScanJob, execution.execution_key.removeprefix('public:'))
-                job.payload = {**job.payload, 'definition_context': {}}
-            elif change == 'service_ownership':
-                other = Service(service_key='other', name='Other')
-                db.add(other)
-                db.flush()
-                db.get(DiscoveryConfirmation, 'confirmed').service_id = other.id
-            elif change == 'incomplete':
-                execution.complete = False
-            elif change == 'revision_pointer':
-                db.add(ServiceActiveRelease(service_id=s.service_id, revision_id=None))
-            elif change == 'policy':
-                db.get(OCIRepository, s.mapping_id).policy = {'allow_unreviewed': True}
-            approval.snapshot = snapshot
-            approval.snapshot_digest = snapshot_digest(snapshot)
-            # Keep publication binding intact to test the distribution validation itself.
-            receipt = deepcopy(approval.publication)
-            receipt['manifest']['snapshot_digest'] = approval.snapshot_digest
-            approval.publication = receipt
-            db.commit()
+    with SessionLocal() as db:
+        approval = db.get(cyber_approvals.CyberApproval, s.approval_id)
+        execution = db.get(Execution, approval.source_execution_id)
+        snapshot = deepcopy(approval.snapshot)
+        if change == 'selection':
+            snapshot['distribution']['images'] = [EXCLUDED]
+        elif change == 'scope_only':
+            snapshot.pop('distribution')
+        elif change == 'missing_distribution':
+            snapshot['distribution']['id'] = 'missing'
+        elif change == 'version':
+            snapshot['source_version_id'] = s.case.baseline_version
+        elif change == 'payload':
+            execution.raw_payload = {**execution.raw_payload, 'findings': [{'cve': 'tampered'}]}
+        elif change == 'job_provenance':
+            job = db.get(ScanJob, execution.execution_key.removeprefix('public:'))
+            job.payload = {**job.payload, 'definition_context': {}}
+        elif change == 'service_ownership':
+            other = Service(service_key='other', name='Other')
+            db.add(other)
+            db.flush()
+            db.get(DiscoveryConfirmation, 'confirmed').service_id = other.id
+        elif change == 'incomplete':
+            execution.complete = False
+        elif change == 'revision_pointer':
+            db.add(ServiceActiveRelease(service_id=s.service_id, revision_id=None))
+        elif change == 'policy':
+            db.get(OCIRepository, s.mapping_id).policy = {'allow_unreviewed': True}
+        approval.snapshot = snapshot
+        approval.snapshot_digest = snapshot_digest(snapshot)
+        # Keep publication binding intact to test the distribution validation itself.
+        receipt = deepcopy(approval.publication)
+        receipt['manifest']['snapshot_digest'] = approval.snapshot_digest
+        approval.publication = receipt
+        db.commit()
     for route in ('manifests/' + s.digest, 'blobs/' + s.blob, 'referrers/' + s.digest):
         assert s.client.get(s.path + route).status_code == 403, (change, route)
 
 
 @pytest.mark.parametrize('published_distribution', ['risk'], indirect=True)
 @pytest.mark.parametrize('change', ['revoked', 'expired'])
-def test_distribution_uses_live_exceptions_and_preserves_finding_age(published_distribution, change):
+def test_approved_distribution_does_not_depend_on_live_exceptions(published_distribution, change):
     from app.models import ExceptionRecord
     s = published_distribution
     path = s.path + 'manifests/' + s.digest
-    assert s.client.get(path).status_code == 403
+    assert s.client.get(path).status_code == 200
     now = datetime.now(timezone.utc)
     with SessionLocal() as db:
         finding = db.scalar(select(Finding).where(Finding.service_id == s.service_id, Finding.cve == 'CVE-1'))
@@ -242,22 +257,25 @@ def test_distribution_uses_live_exceptions_and_preserves_finding_age(published_d
         else:
             exception.expires_at = now - timedelta(seconds=1)
         db.commit()
-    assert s.client.get(path).status_code == 403
+    for route in ('manifests/' + s.digest, 'blobs/' + s.blob, 'referrers/' + s.digest):
+        methods = ('GET',) if route.startswith('referrers/') else ('GET', 'HEAD')
+        for method in methods:
+            response = s.client.request(method, s.path + route)
+            assert response.status_code == 200, (change, method, route, response.text)
 
 
-@pytest.mark.parametrize('published_distribution,expected', [
-    ('policy', 403), ('policy_gap', 200), ('policy_incomplete', 403)], indirect=['published_distribution'])
-def test_distribution_policy_age_survives_rescan_until_complete_absence(published_distribution, expected):
+@pytest.mark.parametrize('published_distribution', ['policy', 'policy_gap', 'policy_incomplete'], indirect=True)
+def test_approved_distribution_is_authoritative_over_policy_findings(published_distribution):
     from app.models import PolicyFinding
     s = published_distribution
     with SessionLocal() as db:
         assert db.scalar(select(PolicyFinding.id).where(PolicyFinding.service_id == s.service_id)) is None
-    assert s.client.get(s.path + 'manifests/' + s.digest).status_code == expected
+    assert s.client.get(s.path + 'manifests/' + s.digest).status_code == 200
 
 
-@pytest.mark.parametrize('policy,reason', [({'max_scan_age_days': 1}, 'scan_stale'),
-    ({'max_approval_age_days': 1}, 'approval_window_elapsed')])
-def test_distribution_mapping_age_limits(published_distribution, policy, reason):
+@pytest.mark.parametrize('policy', [{'max_scan_age_days': 1}, {'max_approval_age_days': 1},
+    {'max_scan_age_days': 1, 'max_approval_age_days': 1}])
+def test_distribution_uses_signed_expiry_instead_of_mapping_age_limits(published_distribution, policy):
     s = published_distribution
     with SessionLocal() as db:
         mapping = db.get(OCIRepository, s.mapping_id)
@@ -266,4 +284,8 @@ def test_distribution_mapping_age_limits(published_distribution, policy, reason)
         mapping.upstream_repository = s.repository
         decision = oci_authorization.authorize(db, mapping, s.digest,
             datetime.now(timezone.utc) + timedelta(days=2))
-        assert not decision.allowed and decision.reason == reason
+        assert decision.allowed and decision.approval_id == s.approval_id
+        approval = db.get(cyber_approvals.CyberApproval, s.approval_id)
+        expiry = datetime.fromisoformat(approval.snapshot['approval_validity']['expires_at'])
+        expired = oci_authorization.authorize(db, mapping, s.digest, expiry)
+        assert not expired.allowed and expired.reason == 'approval_not_current'

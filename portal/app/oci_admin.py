@@ -178,7 +178,7 @@ def overview(db: Session = Depends(get_db), auth: AuthContext = Depends(admin)):
             'available_repositories': sum(row.enabled and not row.suspended and row.upstream.enabled for row in repositories),
             'active_principals': sum(row.enabled and utc(row.expires_at) > now for row in principals),
             'services': [{'id': row.id, 'name': row.name} for row in db.scalars(select(Service).order_by(Service.name))],
-            'authorization': 'The service ID in each pull selects the active service; its Cyber approval and compliance are checked on every pull',
+            'authorization': 'The service ID in each pull selects its Cyber-approved release; artifact identity, approval expiry and revocation are checked on every pull',
             'proxy_health': 'Use the separately deployed distribution endpoint to verify runtime availability'}
 
 

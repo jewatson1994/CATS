@@ -73,14 +73,14 @@ it('tests a concrete project repository and identifies project-wide machine gran
 });
 
 
-it('configures local replica release expiry without scan policy', async () => {
+it.each(['full', 'replica'] as const)('uses signed release validity when creating a mapping in %s mode', async mode => {
   vi.mocked(requestJson).mockImplementation(async (url, options) => {
     if (options?.method === 'POST') return {} as any;
     if (url === '/api/oci/upstreams') return [{id: 4, name: 'Local registry', enabled: true}] as any;
     if (url === '/api/oci/status/overview') return {services: [{id: 1, name: 'Mission'}]} as any;
     return [] as any;
   });
-  render(<OperatingMode.Provider value="replica"><OCIDistribution data={{csrf_token: 'csrf'}}/></OperatingMode.Provider>);
+  render(<OperatingMode.Provider value={mode}><OCIDistribution data={{csrf_token: 'csrf'}}/></OperatingMode.Provider>);
   await screen.findByText('Local registry');
   fireEvent.click(screen.getByRole('button', {name: 'Add mapping'}));
   expect(screen.queryByLabelText('Maximum scan age (days)')).not.toBeInTheDocument();
@@ -88,9 +88,39 @@ it('configures local replica release expiry without scan policy', async () => {
   fireEvent.change(screen.getByLabelText('Upstream repository'), {target: {value: 'approved/image'}});
   fireEvent.change(screen.getByLabelText('Upstream'), {target: {value: '4'}});
   fireEvent.change(screen.getByLabelText('Service'), {target: {value: '1'}});
-  fireEvent.change(screen.getByLabelText('Local maximum release age (days)'), {target: {value: '14'}});
+  expect(screen.queryByLabelText('Maximum approval age (days)')).not.toBeInTheDocument();
+  expect(screen.queryByLabelText('Local maximum release age (days)')).not.toBeInTheDocument();
+  expect(screen.getByText(/New scans and changes to service compliance do not cancel that approval/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', {name: 'Save'}));
   await screen.findByText('Distribution settings saved.');
   const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'POST');
-  expect(JSON.parse(String(call?.[1]?.body)).policy).toEqual({max_approval_age_days: 14});
+  expect(JSON.parse(String(call?.[1]?.body)).policy).toEqual({});
+});
+
+
+it.each(['full', 'replica'] as const)('clears retired age limits when editing a mapping in %s mode', async mode => {
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (options?.method === 'PUT') return {} as any;
+    if (url === '/api/oci/upstreams') return [{id: 4, name: 'Harbor', enabled: true}] as any;
+    if (url === '/api/oci/repositories') return [{
+      id: 7, public_repository: 'approved/image', upstream_repository: 'platform/image',
+      service_id: 1, upstream_id: 4, enabled: true,
+      policy: {max_scan_age_days: 1, max_approval_age_days: 7},
+    }] as any;
+    if (url === '/api/oci/status/overview') return {services: [{id: 1, name: 'API'}]} as any;
+    return [] as any;
+  });
+  render(<OperatingMode.Provider value={mode}><OCIDistribution data={{csrf_token: 'csrf'}}/></OperatingMode.Provider>);
+  const repository = await screen.findByText('approved/image');
+  fireEvent.click(repository.closest('tr')!.querySelector('button')!);
+  expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Save'}));
+  await screen.findByText('Distribution settings saved.');
+  const call = vi.mocked(requestJson).mock.calls.find(([, options]) => options?.method === 'PUT');
+  expect(call?.[0]).toBe('/api/oci/repositories/7');
+  expect(call?.[1]?.headers).toMatchObject({'X-CSRF-Token': 'csrf'});
+  expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({
+    public_repository: 'approved/image', upstream_repository: 'platform/image',
+    upstream_id: 4, service_id: 1, enabled: true, policy: {},
+  });
 });

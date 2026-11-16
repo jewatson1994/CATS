@@ -114,18 +114,21 @@ def approved_revision(db):
     return revision, auth
 
 
-def test_activation_rejects_untrusted_artifact_evidence(db, approved_revision):
+def test_activation_requires_retained_signature(db, approved_revision, monkeypatch, tmp_path):
     revision, auth = approved_revision
-    with pytest.raises(ValueError, match='trusted release eligibility'):
+    monkeypatch.setattr(revisions, 'manifest_directory', lambda row: tmp_path)
+    with pytest.raises(ValueError, match='Signed revision manifest unavailable'):
         revisions.activate(db, auth, revision.id, 0)
     assert db.get(revisions.ServiceActiveRelease, revision.service_id).revision_id is None
 
 
-def test_verified_activation_and_suspension(db, approved_revision, monkeypatch, tmp_path):
+def test_cyber_approval_activates_despite_failed_eligibility_and_can_be_suspended(
+        db, approved_revision, monkeypatch, tmp_path):
     import hashlib
     from app import artifact_catalog
     revision, auth = approved_revision
-    monkeypatch.setattr(artifact_catalog, 'artifact_eligibility', lambda *a, **kw: {'eligible': True})
+    monkeypatch.setattr(artifact_catalog, 'artifact_eligibility', lambda *a, **kw:
+        {'eligible': False, 'reasons': ['validation_failed']})
     monkeypatch.setattr(revisions, 'manifest_directory', lambda row: tmp_path)
     content = revisions.canonical(revision.manifest)
     (tmp_path / 'release-manifest.json').write_bytes(content)
@@ -147,6 +150,84 @@ def test_signed_digest_mismatch_cannot_activate(db, approved_revision, monkeypat
         {'status': 'verified', 'manifest_sha256': '0' * 64})
     with pytest.raises(ValueError, match='signature not verified'):
         revisions.activate(db, auth, revision.id, 0)
+
+
+@pytest.fixture
+def active_signed_revision(db, approved_revision, monkeypatch, tmp_path):
+    import hashlib
+    revision, auth = approved_revision
+    monkeypatch.setattr(artifact_catalog, 'artifact_eligibility', lambda *a, **kw:
+        {'eligible': False, 'reasons': ['validation_failed']})
+    monkeypatch.setattr(revisions, 'manifest_directory', lambda row: tmp_path)
+    content = revisions.canonical(revision.manifest)
+    (tmp_path / 'release-manifest.json').write_bytes(content)
+    monkeypatch.setattr(revisions.release_signing, 'verify_release_manifest', lambda *a, **kw:
+        {'status': 'verified', 'manifest_sha256': hashlib.sha256(content).hexdigest()})
+    revisions.activate(db, auth, revision.id, 0)
+    db.commit()
+    return revision
+
+
+def test_active_revision_does_not_reassess_catalog_eligibility(db, active_signed_revision, monkeypatch):
+    revision = active_signed_revision
+    monkeypatch.setattr(artifact_catalog, 'artifact_eligibility', lambda *a, **kw:
+        {'eligible': False, 'reasons': ['validation_failed', 'newer_scan_requires_approval']})
+    assert revisions.active_revision(db, revision.service_id).id == revision.id
+    revisions.validate_activation(db, revision)
+
+
+def test_active_revision_uses_frozen_inventory_after_assignment_changes(db, active_signed_revision):
+    from sqlalchemy import delete
+    revision = active_signed_revision
+    db.execute(delete(artifact_catalog.ServiceArtifactAssignment).where(
+        artifact_catalog.ServiceArtifactAssignment.service_id == revision.service_id))
+    db.commit()
+    assert revisions.active_revision(db, revision.service_id).id == revision.id
+    with pytest.raises(ValueError, match='Artifact unavailable'):
+        revisions.validate_activation(db, revision)
+
+
+@pytest.mark.parametrize('change', ['revoked', 'expired', 'denied', 'missing_decider',
+    'snapshot_tampered', 'snapshot_rehashed', 'manifest_bytes', 'signature', 'suspended', 'revision_revoked',
+    'malformed_snapshot', 'malformed_manifest', 'malformed_manifest_artifact'])
+def test_active_revision_retains_authority_and_integrity_checks(
+        db, active_signed_revision, monkeypatch, tmp_path, change):
+    from datetime import timedelta
+    from app.cyber_approvals import CyberApproval, digest
+    revision = active_signed_revision
+    approval = db.get(CyberApproval, revision.approval_id)
+    now = approval.decided_at
+    if change == 'revoked':
+        approval.revoked_at = now
+    elif change == 'expired':
+        now += timedelta(days=90)
+    elif change == 'denied':
+        approval.status = 'denied'
+    elif change == 'missing_decider':
+        approval.decided_by_id = None
+    elif change in {'snapshot_tampered', 'snapshot_rehashed'}:
+        approval.snapshot = dict(approval.snapshot, artifacts=[dict(digest='sha256:' + '0' * 64)])
+        if change == 'snapshot_rehashed':
+            approval.snapshot_digest = digest(approval.snapshot)
+    elif change == 'manifest_bytes':
+        (tmp_path / 'release-manifest.json').write_bytes(b'{}')
+    elif change == 'signature':
+        monkeypatch.setattr(revisions.release_signing, 'verify_release_manifest',
+            lambda *a, **kw: {'status': 'verification_failed'})
+    elif change == 'malformed_snapshot':
+        approval.snapshot = ['malformed']
+        approval.snapshot_digest = digest(approval.snapshot)
+    elif change in {'malformed_manifest', 'malformed_manifest_artifact'}:
+        from sqlalchemy import update
+        manifest = ['malformed'] if change == 'malformed_manifest' else dict(revision.manifest, artifacts=[None])
+        # Simulate corrupt retained database content without the ORM immutability hook.
+        db.execute(update(revisions.ReleaseRevision).where(revisions.ReleaseRevision.id == revision.id)
+            .values(manifest=manifest, manifest_digest=digest(manifest)))
+    else:
+        state = db.get(revisions.ReleaseRevisionState, revision.id)
+        setattr(state, 'suspended' if change == 'suspended' else 'revoked', True)
+    db.commit()
+    assert revisions.active_revision(db, revision.service_id, now) is None
 
 
 

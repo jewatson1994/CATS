@@ -106,10 +106,76 @@ def test_active_and_superseded_release_enforcement_requires_no_scan(replica):
     assert not decision(replica, 'sha256:' + 'd' * 64).allowed
 
 
-def test_local_freshness_expiry_can_be_overridden_and_revoked(replica):
+@pytest.mark.parametrize('mode', ['full', 'replica'])
+@pytest.mark.parametrize('policy', [
+    {'max_scan_age_days': 1}, {'max_approval_age_days': 1},
+    {'max_scan_age_days': 1, 'max_approval_age_days': 1},
+])
+def test_retained_mapping_age_limits_cannot_shorten_cyber_approval(replica, monkeypatch, mode, policy):
+    monkeypatch.setenv('CATS_MODE', mode)
     with replica.sessions() as db:
         mapping = db.get(OCIRepository, replica.mapping_id)
-        mapping.policy = {'max_approval_age_days': 1}
+        mapping.policy = policy
+        db.commit()
+        accepted = authorize(db, mapping, replica.new, replica.now + timedelta(days=2))
+        assert accepted.allowed and accepted.authorization_source == 'approved_release'
+        assert accepted.override_id is None
+        expires_at = db.get(ReplicaRelease, replica.new_id).expires_at.replace(tzinfo=timezone.utc)
+        assert authorize(db, mapping, replica.new, expires_at).reason == 'release_expired'
+
+
+def test_cached_pull_obeys_signed_expiry_instead_of_mapping_age(replica, monkeypatch):
+    with replica.sessions() as db:
+        db.get(ReplicaServiceState, replica.service_id).active_release_id = replica.old_id
+        db.get(OCIRepository, replica.mapping_id).policy = {
+            'max_scan_age_days': 1, 'max_approval_age_days': 1}
+        db.commit()
+    class Transport:
+        def fetch_manifest(self, repository, reference):
+            if reference != replica.old:
+                raise proxy.RegistryError('Manifest not found', 404)
+            return replica.raw, 'application/vnd.oci.image.manifest.v1+json', replica.old
+        def fetch_blob(self, repository, reference, cache):
+            return cache.get(reference) or cache.store(reference, io.BytesIO(replica.blob))
+        def referrers(self, repository, reference):
+            return {'manifests': []}
+    monkeypatch.setattr(proxy, 'SessionLocal', replica.sessions)
+    monkeypatch.setattr(proxy, 'client', lambda mapping: Transport())
+    with TestClient(proxy.app) as client:
+        client.headers['Authorization'] = 'Basic ' + base64.b64encode(b'robot:secret').decode()
+        path = f'/v2/replica/{replica.service_id}/nginx/'
+        routes = ('manifests/' + replica.old, 'blobs/' + replica.blob_digest, 'referrers/' + replica.old)
+        for route in routes:
+            assert client.get(path + route).status_code == 200
+            if not route.startswith('referrers/'):
+                assert client.head(path + route).status_code == 200
+        with replica.sessions() as db:
+            release = db.get(ReplicaRelease, replica.old_id)
+            release.expires_at = replica.now
+            seal_record(release)
+            db.commit()
+        for route in routes:
+            assert client.get(path + route).status_code == 403
+            if not route.startswith('referrers/'):
+                assert client.head(path + route).status_code == 403
+
+
+@pytest.mark.parametrize('policy', [[], False, {'unsupported': 1}, {'max_approval_age_days': True},
+    {'max_scan_age_days': 0}, {'max_approval_age_days': 3651}])
+def test_invalid_repository_policy_still_fails_closed(replica, policy):
+    with replica.sessions() as db:
+        mapping = db.get(OCIRepository, replica.mapping_id)
+        mapping.policy = policy
+        db.commit()
+        assert authorize(db, mapping, replica.new, replica.now).reason == 'invalid_policy'
+
+
+def test_signed_expiry_can_be_overridden_and_override_revoked(replica):
+    with replica.sessions() as db:
+        mapping = db.get(OCIRepository, replica.mapping_id)
+        release = db.get(ReplicaRelease, replica.new_id)
+        release.expires_at = replica.now
+        seal_record(release)
         db.commit()
         assert authorize(db, mapping, replica.new, replica.now).reason == 'release_expired'
         grant = create_override(db, replica.auth, replica.service_id, replica.data | {
@@ -124,13 +190,13 @@ def test_local_freshness_expiry_can_be_overridden_and_revoked(replica):
 
 
 @pytest.mark.parametrize('route_change', [
-    {'policy': {}}, {'policy': {'max_approval_age_days': 2}},
+    {'policy': {}}, {'policy': {'max_approval_age_days': 1}}, {'policy': {'max_approval_age_days': 2}},
     {'policy': {'max_approval_age_days': 1, 'max_scan_age_days': 1}},
     {'policy': {'max_approval_age_days': 1, 'unsupported': 1}},
     {'upstream_repository': 'another/repository'}, {'service_id': None},
     {'enabled': False}, {'suspended': True},
 ])
-def test_override_rejects_unsubstantiated_local_expiry(replica, route_change):
+def test_override_rejects_local_age_as_reason_to_bypass_valid_release(replica, route_change):
     with replica.sessions() as db:
         mapping = db.get(OCIRepository, replica.mapping_id)
         mapping.policy = {'max_approval_age_days': 1}

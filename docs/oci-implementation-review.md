@@ -2,6 +2,8 @@
 
 ## Review status and scope
 
+**Historical review:** the compliance and scan-age pull gates described below have been superseded. Current OCI pull authorization follows the Cyber-approved release, its signed expiry, revocation and active-release state. New scans and compliance changes do not cancel approval, and historical repository age limits no longer shorten it. See [current content and approval behavior](oci-proxy.md#content-and-approval-behavior) and the updated acceptance checklist. The dated test results below remain a record of the earlier implementation.
+
 This review describes the implementation on `feature/oci-compliance-proxy`. It is not a production certification. Final integration results below distinguish automated coverage, real local registry and signer checks, and acceptance work still requiring the deployment environment. Use the commit containing this document as the review revision.
 
 Operational references: [proxy deployment and rollback](oci-proxy.md), [machine evidence retrieval](oci-evidence.md), and [Harbor integration testing](oci-harbor-testing.md) and [acceptance checklist](oci-proxy.md#harbor-acceptance-checklist).

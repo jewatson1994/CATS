@@ -93,7 +93,7 @@ def test_missing_imported_state_never_falls_back_to_local_approval(full_imported
         db.commit()
         assert is_imported_service(db, f.service_id)
         assert imported_service_ids(db, [f.service_id]) == {f.service_id}
-        monkeypatch.setattr(oci_authorization, 'current_execution',
+        monkeypatch.setattr(oci_authorization, 'select',
             lambda *args: pytest.fail('Imported service cannot consult local approval evidence'))
         mapping = db.get(OCIRepository, f.mapping_id)
         assert oci_authorization.authorize(db, mapping, f.new).reason == 'replica_service_unavailable'
