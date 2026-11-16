@@ -21,6 +21,9 @@ it('loads service visibility for a viewer without showing a setting control', as
 it('uses the persisted page setting without an extra request or assuming public access', () => {
   render(<ServicePullAccess data={admin} serviceId={42}/>);
   expect(screen.getByText('Private')).toBeInTheDocument();
+  expect(screen.queryByRole('combobox', {name: 'Pull access'})).not.toBeInTheDocument();
+  expect(screen.getByRole('button', {name: 'Edit pull access'})).toHaveAttribute('aria-expanded', 'false');
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
   expect(screen.getByRole('button', {name: 'Save pull access'})).toBeDisabled();
   expect(request).not.toHaveBeenCalled();
@@ -29,6 +32,7 @@ it('uses the persisted page setting without an extra request or assuming public 
 it.each([false, true])('saves a service public setting with CSRF, including imported read-only pages: %s', async imported => {
   request.mockResolvedValue({service_id: 42, public: true});
   render(<ServicePullAccess data={{...admin, imported_service: imported, read_only: imported}} serviceId={42}/>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   fireEvent.change(screen.getByRole('combobox', {name: 'Pull access'}), {target: {value: 'public'}});
   expect(screen.getByText('Private')).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', {name: 'Save pull access'}));
@@ -42,6 +46,7 @@ it.each([false, true])('saves a service public setting with CSRF, including impo
 it('can return a public service to private access', async () => {
   request.mockResolvedValue(privateAccess);
   render(<ServicePullAccess data={{...admin, service_pull_access: {service_id: 42, public: true}}} serviceId={42}/>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   fireEvent.change(screen.getByRole('combobox', {name: 'Pull access'}), {target: {value: 'private'}});
   fireEvent.click(screen.getByRole('button', {name: 'Save pull access'}));
   await screen.findByText('Service pull access saved.');
@@ -52,6 +57,7 @@ it('can return a public service to private access', async () => {
 it('does not claim a failed change succeeded and can reload the actual setting', async () => {
   request.mockRejectedValueOnce(new Error('Permission denied')).mockResolvedValue(privateAccess);
   render(<ServicePullAccess data={admin} serviceId={42}/>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   fireEvent.change(screen.getByRole('combobox', {name: 'Pull access'}), {target: {value: 'public'}});
   fireEvent.click(screen.getByRole('button', {name: 'Save pull access'}));
   expect(await screen.findByRole('alert')).toHaveTextContent('Permission denied');
@@ -60,6 +66,7 @@ it('does not claim a failed change succeeded and can reload the actual setting',
   fireEvent.click(screen.getByRole('button', {name: 'Refresh pull access'}));
   await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
   expect(await screen.findByText('Private')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
 });
 
@@ -74,12 +81,27 @@ it('does not apply a completed save to a different service after navigation', as
   let finishSave!: (value: unknown) => void;
   request.mockImplementation(() => new Promise(resolve => {finishSave = resolve;}));
   const {rerender} = render(<ServicePullAccess data={admin} serviceId={42}/>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   fireEvent.change(screen.getByRole('combobox', {name: 'Pull access'}), {target: {value: 'public'}});
   fireEvent.click(screen.getByRole('button', {name: 'Save pull access'}));
   expect(screen.getByRole('button', {name: 'Saving pull access…'})).toBeDisabled();
   rerender(<ServicePullAccess data={{...admin, service_pull_access: {service_id: 43, public: false}}} serviceId={43}/>);
   await act(async () => finishSave({service_id: 42, public: true}));
   expect(screen.getByText('Private')).toBeInTheDocument();
+  expect(screen.queryByRole('combobox', {name: 'Pull access'})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
   expect(screen.queryByText('Service pull access saved.')).not.toBeInTheDocument();
+});
+
+it('cancels unsaved visibility changes without a request', () => {
+  render(<ServicePullAccess data={admin} serviceId={42}/>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
+  expect(screen.getByRole('button', {name: 'Edit pull access'})).toHaveAttribute('aria-expanded', 'true');
+  fireEvent.change(screen.getByRole('combobox', {name: 'Pull access'}), {target: {value: 'public'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+  expect(screen.queryByRole('combobox', {name: 'Pull access'})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
+  expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
+  expect(request).not.toHaveBeenCalled();
 });

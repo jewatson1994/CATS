@@ -48,6 +48,7 @@ it('keeps local pull access editable for imported services when distribution man
   mockReads();
   const managerData = {...data, can: {...data.can, 'release.destination.manage': {'*': true}}};
   render(<Shell data={managerData}><Overview data={managerData}/></Shell>);
+  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
   expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
   expect(screen.queryByRole('link', {name: 'Patch registry/api:1'})).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();

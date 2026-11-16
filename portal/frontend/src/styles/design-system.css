@@ -124,7 +124,7 @@ body > #root > header, header:has(> .brand) {
 
 /* --------------------------------------------------------------- tabs */
 .service-tabs, .admin-tabs, .tab-nav {
-  display: flex !important; gap: var(--space-1) !important; flex-wrap: nowrap !important; overflow-x: auto; scrollbar-width: thin;
+  display: flex !important; gap: var(--space-1) !important; flex-wrap: nowrap !important; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin;
   margin: 0 0 var(--space-5) !important; padding: 0 !important; border-bottom: 1px solid var(--border);
 }
 .service-tabs a, .admin-tabs a, .tab-nav a {

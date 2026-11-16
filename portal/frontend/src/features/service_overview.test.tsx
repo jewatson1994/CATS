@@ -117,3 +117,24 @@ it('shows Risk Profile as a card without VEX evidence on Overview', () => {
   expect(screen.getByRole('button', {name: 'View assessment'})).toHaveAttribute('aria-expanded', 'false');
   expect(screen.queryByText('Automatic VEX disposition and evidence')).not.toBeInTheDocument();
 });
+
+it('cancels an edited schedule without changing its saved summary or posting', () => {
+  render(<Page data={fixture({can_schedule_scans: true, scan_schedule: {cadence: 'off', timezone: 'UTC'}})}/>);
+  expect(screen.queryByLabelText('Frequency')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit scan schedule'}));
+  fireEvent.change(screen.getByLabelText('Frequency'), {target: {value: 'weekly'}});
+  fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+  expect(screen.queryByLabelText('Frequency')).not.toBeInTheDocument();
+  expect(screen.getByText('Off')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: 'Edit scan schedule'}));
+  expect(screen.getByLabelText('Frequency')).toHaveValue('off');
+});
+
+it('keeps disable-only scan permission without exposing the schedule editor', () => {
+  render(<Page data={fixture({csrf_token: 'disable-token', can_disable_scan_schedule: true,
+    scan_schedule: {cadence: 'daily', timezone: 'UTC'}})}/>);
+  expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
+  const form = screen.getByRole('button', {name: 'Turn off scheduled scans'}).closest('form')!;
+  expect(form).toHaveAttribute('action', '/services/sample/scan-schedule');
+  expect(Object.fromEntries(new FormData(form))).toEqual({csrf_token: 'disable-token', cadence: 'off'});
+});

@@ -156,15 +156,22 @@ def _public(value):
 def dto(db, row, auth, detail=False):
     service = db.get(Service, row.service_id)
     requested_by = db.get(User, row.requested_by_id) if row.requested_by_id else None
+    approved_by_id = row.decided_by_id if row.status == 'approved' else None
+    approved_by = db.get(User, approved_by_id) if approved_by_id else None
+    approved_by_name = ((approved_by.display_name or '').strip() or approved_by.username
+                        if approved_by else 'Retained account' if approved_by_id else None)
     result = {key: getattr(row, key) for key in ('id', 'release_key', 'variant', 'status', 'publish_status', 'rationale', 'decision_rationale', 'snapshot_digest', 'revocation_reason')}
-    result.update(service_key=service.service_key, service_name=service.name, version=row.snapshot.get('version'),
+    result.update(service_id=row.service_id, service_key=service.service_key, service_name=service.name, version=row.snapshot.get('version'),
         distribution_name=(row.snapshot.get('distribution') or {}).get('name'),
         scan_date=row.snapshot.get('scan_date'), label='CATS Remediated' if row.variant == 'cats_remediated' else 'Current Service',
         requested_at=row.requested_at.isoformat(), decided_at=row.decided_at.isoformat() if row.decided_at else None,
+        approved_by=approved_by_name, approved_by_id=approved_by_id,
         requested_by=requested_by.display_name if requested_by else 'Retained account', destination=row.destination,
         publication=_public(row.publication), can_decide=row.status == 'pending' and auth.has('approval.decide', row.service_id),
         can_retry=row.status == 'approved' and row.publish_status == 'failed' and not row.revoked_at and auth.has('approval.decide', row.service_id),
-        revoked=bool(row.revoked_at), release_id=row.id)
+        can_revoke=row.status == 'approved' and not row.revoked_at
+            and row.publish_status not in ('queued', 'publishing') and auth.has('approval.decide', row.service_id),
+        revoked=bool(row.revoked_at), revoked_at=row.revoked_at.isoformat() if row.revoked_at else None, release_id=row.id)
     result.update(release_validity.summary(row))
     result['can_retry'] = ((result['can_retry'] and result['validity_status'] in ('valid', 'expiring_soon'))
         or bool(row.revoked_at and row.publish_status == 'failed'

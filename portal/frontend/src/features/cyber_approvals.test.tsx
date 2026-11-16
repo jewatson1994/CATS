@@ -1,7 +1,7 @@
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
-import {requestJson} from '../api';
-import {ApprovalDetail, Destinations, ReleaseDetail, RequestApproval, Reassessment} from './cyber_approvals';
+import {ApiError, requestJson} from '../api';
+import {ApprovalDetail, Destinations, ReleaseDetail, Releases, RequestApproval, Reassessment} from './cyber_approvals';
 
 vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.resetAllMocks();});
@@ -227,7 +227,7 @@ it.each(['expired', 'reapproval_required', 'invalid'])('shows %s releases as aud
     publish_status:'failed', validity_status, can_retry:true, expires_at:'2026-01-01T00:00:00Z'});
   render(<ReleaseDetail data={data} id="23"/>);
   expect(await screen.findByText(/needs a new Cyber approval before deployment/)).toBeInTheDocument();
-  expect(screen.getByText(/Expires:/)).toBeInTheDocument();
+  expect(screen.getByText('Expires').nextElementSibling).toHaveTextContent(new Date('2026-01-01T00:00:00Z').toLocaleString());
   expect(screen.queryByRole('button', {name:'Retry publication'})).not.toBeInTheDocument();
 });
 
@@ -262,4 +262,126 @@ it('passes the amendment identity through the existing approval request', async 
   await screen.findByText('Review request #88');
   const call = vi.mocked(requestJson).mock.calls.find(([url]) => url === '/api/cyber-approvals');
   expect(JSON.parse(String(call?.[1]?.body))).toMatchObject({amendment_proposal_id:19, service_key:'payments'});
+});
+
+
+const legacyRelease = {id:5, service_id:7, service_key:'sample', service_name:'Example service', status:'approved',
+  publish_status:'published', validity_status:'valid', approved_by:'Actual Cyber Reviewer', decided_at:'2026-11-12T10:00:00Z',
+  can_revoke:true, revoked:false, destination:{name:'Cyber Approved',endpoint:'https://registry.test',namespace:'approved'},
+  snapshot:{portable_release:{publisher:'trusted'}}, publication:{artifacts:[]}};
+function mockLegacyRelease(row: Record<string, any> = legacyRelease, mutation?: (url: string, options?: RequestInit) => Promise<any>) {
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (options?.method === 'POST') return mutation ? mutation(url, options) : {...row, revoked:true, can_revoke:false, revocation_reason:'Exposure found', revoked_at:'2026-11-14T12:00:00Z'};
+    if (url.endsWith('/revision')) throw new ApiError('This approval has no governed revision', 404);
+    return row;
+  });
+}
+it('revokes a legacy release without a governed revision using the approval endpoint and CSRF', async () => {
+  mockLegacyRelease();
+  render(<ReleaseDetail data={data} id="5"/>);
+  expect(await screen.findByText('Actual Cyber Reviewer')).toBeVisible();
+  await waitFor(() => expect(screen.queryByText('Advanced release controls')).not.toBeInTheDocument());
+  expect(screen.queryByText('This release has no governed revision record.')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name:'Revoke release'}));
+  const confirmation = within(screen.getByRole('region', {name:'Confirm release revocation'}));
+  expect(confirmation.getByText(/Running containers and images already downloaded are not removed/)).toBeVisible();
+  expect(confirmation.getByText(/signed revocation/)).toBeVisible();
+  expect(confirmation.getByRole('button', {name:'Confirm revocation'})).toBeDisabled();
+  fireEvent.change(confirmation.getByLabelText('Revocation reason'), {target:{value:'  Exposure found  '}});
+  fireEvent.click(confirmation.getByRole('button', {name:'Confirm revocation'}));
+  await screen.findByText('Release revoked. Future pulls must satisfy another current approval.');
+  expect(requestJson).toHaveBeenCalledWith('/api/approved-releases/5/revoke', expect.objectContaining({method:'POST',
+    headers:expect.objectContaining({'X-CSRF-Token':'csrf'}), body:JSON.stringify({rationale:'Exposure found'})}));
+  expect(screen.getByRole('alert')).toHaveTextContent('no longer authorized for deployment');
+  expect(screen.queryByRole('button', {name:'Revoke release'})).not.toBeInTheDocument();
+  expect(screen.getByText('Actual Cyber Reviewer')).toBeVisible();
+});
+it('cancels release revocation without a mutation and requires a meaningful reason', async () => {
+  mockLegacyRelease(); render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button', {name:'Revoke release'}));
+  fireEvent.change(screen.getByLabelText('Revocation reason'), {target:{value:'  '}});
+  expect(screen.getByRole('button', {name:'Confirm revocation'})).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', {name:'Cancel'}));
+  expect(screen.queryByLabelText('Revocation reason')).not.toBeInTheDocument();
+  expect(vi.mocked(requestJson).mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false);
+  fireEvent.click(screen.getByRole('button', {name:'Revoke release'}));
+  expect(screen.getByLabelText('Revocation reason')).toHaveValue('');
+});
+it('keeps a failed revocation reviewable and blocks duplicate submission while pending', async () => {
+  let fail!: (reason: Error) => void;
+  mockLegacyRelease(legacyRelease, () => new Promise((_resolve, reject) => {fail = reject;}));
+  render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button', {name:'Revoke release'}));
+  fireEvent.change(screen.getByLabelText('Revocation reason'), {target:{value:'Exposure found'}});
+  fireEvent.click(screen.getByRole('button', {name:'Confirm revocation'}));
+  expect(screen.getByRole('button', {name:'Revoking release…'})).toBeDisabled();
+  expect(screen.getByRole('button', {name:'Cancel'})).toBeDisabled();
+  expect(screen.getByRole('button', {name:'Refresh publication'})).toBeDisabled();
+  fail(new Error('Publication started; refresh before retrying.'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Publication started');
+  expect(screen.getByLabelText('Revocation reason')).toHaveValue('Exposure found');
+  expect(screen.getByRole('button', {name:'Confirm revocation'})).toBeEnabled();
+  expect(vi.mocked(requestJson).mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1);
+});
+it.each(['published', 'queued', 'publishing'])('honors server revocation capability for %s releases', async publish_status => {
+  mockLegacyRelease({...legacyRelease, publish_status, can_revoke:false});
+  render(<ReleaseDetail data={{...data,can:{'approval.decide':{'7':true}}}} id="5"/>);
+  await screen.findByText('Actual Cyber Reviewer');
+  expect(screen.queryByRole('button', {name:'Revoke release'})).not.toBeInTheDocument();
+  if (publish_status !== 'published') expect(screen.getByText('Revocation is available after publication completes or fails.')).toBeVisible();
+});
+it('retries a failed signed revocation while retaining the revoked approval state', async () => {
+  mockLegacyRelease({...legacyRelease, revoked:true, can_revoke:false, publish_status:'failed', can_retry:true,
+    publication:{revocation:{status:'failed',portable:{target_release_id:'5'},error:'Registry unavailable'}}});
+  render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button', {name:'Retry revocation publication'}));
+  await waitFor(() => expect(requestJson).toHaveBeenCalledWith('/api/approved-releases/5/retry',expect.objectContaining({method:'POST'})));
+  expect(screen.queryByRole('button',{name:'Retry publication'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Revoke release'})).not.toBeInTheDocument();
+});
+it('shows the recorded approver in the release list and allows searching by name', async () => {
+  window.history.replaceState({}, '', '/approved-releases');
+  vi.mocked(requestJson).mockResolvedValue({items:[legacyRelease,{...legacyRelease,id:6,service_name:'Unknown reviewer service',approved_by:null}]});
+  render(<Releases data={data}/>);
+  expect(await screen.findByRole('columnheader',{name:/Approved by/})).toBeVisible();
+  expect(screen.getByText('Actual Cyber Reviewer')).toBeVisible();
+  fireEvent.change(screen.getByLabelText('Find a release'),{target:{value:'Actual Cyber Reviewer'}});
+  expect(screen.getByRole('link',{name:'Example service'})).toBeVisible();
+  expect(screen.queryByRole('link',{name:'Unknown reviewer service'})).not.toBeInTheDocument();
+});
+it('copies immutable references and reports clipboard failure without losing the reference', async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error('Clipboard unavailable'));
+  Object.defineProperty(window.navigator, 'clipboard', {configurable:true,value:{writeText}});
+  mockLegacyRelease({...legacyRelease,publication:{artifacts:[{kind:'image',reference:'registry.test/image@sha256:abc'}]}});
+  render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button', {name:'Copy image reference'}));
+  expect(await screen.findByText('Select the reference to copy it manually.')).toBeVisible();
+  expect(writeText).toHaveBeenCalledWith('registry.test/image@sha256:abc');
+  expect(screen.getByText('registry.test/image@sha256:abc')).toBeVisible();
+});
+
+it('shows missing approver identity honestly instead of using the requester', async () => {
+  mockLegacyRelease({...legacyRelease, approved_by:null, requested_by:'Requesting service manager'});
+  render(<ReleaseDetail data={data} id="5"/>);
+  expect((await screen.findByText('Approved by')).nextElementSibling).toHaveTextContent('Not recorded');
+  expect(screen.queryByText('Requesting service manager')).not.toBeInTheDocument();
+});
+it('does not apply a late revocation response to a different release', async () => {
+  let finish!: (value: any) => void;
+  vi.mocked(requestJson).mockImplementation(async (url, options) => {
+    if (url.endsWith('/revision')) throw new ApiError('No revision',404);
+    if (options?.method === 'POST') return new Promise(resolve => {finish=resolve;});
+    return url.endsWith('/6') ? {...legacyRelease,id:6,service_name:'Different release'} : legacyRelease;
+  });
+  const view = render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button',{name:'Revoke release'}));
+  fireEvent.change(screen.getByLabelText('Revocation reason'),{target:{value:'Withdraw original release'}});
+  fireEvent.click(screen.getByRole('button',{name:'Confirm revocation'}));
+  view.rerender(<ReleaseDetail data={data} id="6"/>);
+  await screen.findByRole('heading',{name:'Different release'});
+  finish({...legacyRelease, revoked:true, can_revoke:false});
+  await waitFor(() => expect(screen.getByRole('heading',{name:'Different release'})).toBeVisible());
+  expect(screen.getByRole('button',{name:'Revoke release'})).toBeEnabled();
+  expect(screen.queryByText('Release revoked. Future pulls must satisfy another current approval.')).not.toBeInTheDocument();
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 });

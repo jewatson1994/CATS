@@ -24,7 +24,7 @@ function useResource(url: string) {
     requestJson<Row>(url, {signal: controller.signal}).then(value => {if (!controller.signal.aborted) setValue(value);}).catch(error => {if (!controller.signal.aborted) setError(message(error));});
     return () => controller.abort();
   }, [url, revision]);
-  return {value, error, refresh: () => setRevision(value => value + 1)};
+  return {value, error, update: setValue, refresh: () => setRevision(value => value + 1)};
 }
 async function mutate(data: PageData, url: string, body: Row) {
   return requestJson<Row>(url, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-CSRF-Token': data.csrf_token || ''}, body: JSON.stringify(body)});
@@ -56,8 +56,8 @@ function ResourceState({error, pending}: {error: string; pending: boolean}) {
   return error ? <p className="error" role="alert">{error}</p> : pending ? <p role="status">Loading…</p> : null;
 }
 const currentApproval = (row: Row) => ['valid', 'expiring_soon'].includes(row.validity_status);
-function Badges({row}: {row: Row}) {
-  return <div className="approval-badges">{row.revoked && <StatusBadge value="revoked" label="Revoked" tone="danger"/>}<span>Cyber decision: <StatusBadge value={row.status || 'pending'}/></span><span>Publication: <StatusBadge value={row.publish_status || 'not_started'}/></span>{row.status === 'approved' && <span>Authorization: <StatusBadge value={row.validity_status || 'reapproval_required'} label={(row.validity_status || 'reapproval_required').replaceAll('_', ' ')}/></span>}{row.expires_at && <span>Expires: {new Date(row.expires_at).toLocaleString()}</span>}</div>;
+function Badges({row, showExpiry = true}: {row: Row; showExpiry?: boolean}) {
+  return <div className="approval-badges">{row.revoked && <StatusBadge value="revoked" label="Revoked" tone="danger"/>}<span>Cyber decision: <StatusBadge value={row.status || 'pending'}/></span><span>Publication: <StatusBadge value={row.publish_status || 'not_started'}/></span>{row.status === 'approved' && <span>Authorization: <StatusBadge value={row.revoked ? 'revoked' : row.validity_status || 'reapproval_required'} label={row.revoked ? 'Revoked' : humanize(row.validity_status || 'reapproval_required')}/></span>}{showExpiry && row.expires_at && <span>Expires: {dateLabel(row.expires_at)}</span>}</div>;
 }
 function EvidenceSection({title, value}: {title: string; value: any}) {
   const [open, setOpen] = useState(false);
@@ -268,7 +268,7 @@ function ReleaseList() {
   const serviceKey = new URLSearchParams(window.location.search).get('service') || '';
   const [query, setQuery] = useState(''), [variant, setVariant] = useState('');
   const resource = useResource(`/api/approved-releases${serviceKey ? `?service=${encodeURIComponent(serviceKey)}` : ''}`), all = list(resource.value);
-  const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version} ${row.distribution_name || ''}`.toLowerCase().includes(query.toLowerCase()));
+  const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version} ${row.distribution_name || ''} ${row.approved_by || ''}`.toLowerCase().includes(query.toLowerCase()));
   const columns: GridColumn<Row>[] = [
     {key: 'service', header: 'Service', identifier: true, hideable: false, value: row => row.service_name || row.service_key,
       render: row => <a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
@@ -277,8 +277,9 @@ function ReleaseList() {
     {key: 'authorization', header: 'Authorization', hideable: false, value: row => row.revoked ? 'revoked' : row.validity_status, description: 'Whether the approval currently authorizes deployment',
       render: row => row.revoked ? <StatusBadge value="revoked" label="Revoked" tone="danger" size="sm"/> : <StatusBadge value={row.validity_status || 'reapproval_required'} label={humanize(row.validity_status || 'reapproval_required')} size="sm"/>},
     {key: 'publication', header: 'Publication', hideable: false, value: row => row.publish_status || 'not_started', render: row => <StatusBadge value={row.publish_status || 'not_started'} size="sm"/>},
+    {key: 'approved_by', header: 'Approved by', hideable: false, value: row => row.approved_by || '', render: row => row.approved_by || 'Not recorded'},
     {key: 'expires', header: 'Expires', type: 'date', value: row => row.expires_at, render: row => row.expires_at ? new Date(row.expires_at).toLocaleString() : '—'},
-    {key: 'scan', header: 'Scan date', type: 'date', value: row => row.scan_date, render: row => row.scan_date || 'Not recorded'},
+    {key: 'scan', header: 'Scan date', type: 'date', value: row => row.scan_date, render: row => dateLabel(row.scan_date)},
     {key: 'destination', header: 'Destination', value: row => row.destination?.name, render: row => row.destination?.name || 'Recorded in release'},
   ];
   const filtered = Boolean(query || variant);
@@ -287,7 +288,7 @@ function ReleaseList() {
     {serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}
     <section className="panel"><DataGrid<Row> id="approved-releases" label="Approved releases" title="Approved releases"
       description={resource.value ? `${rows.length} of ${all.length} releases` : undefined}
-      toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service, version or distribution"/></label>
+      toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service, version, distribution or approver"/></label>
         <label className="inline-field">Variant<select value={variant} onChange={event => setVariant(event.target.value)}><option value="">All variants</option><option value="current_service">Current Service</option><option value="cats_remediated">CATS Remediated</option></select></label></div>}
       trailingActions={<button type="button" className="secondary-button" onClick={resource.refresh}>Refresh</button>}
       above={resource.error ? <ResourceState error={resource.error} pending={false}/> : null}
@@ -299,12 +300,122 @@ function ArtifactLinks({value}: {value: any}) {
   const rows = Array.isArray(value) ? value : value && typeof value === 'object' ? Object.entries(value).map(([name, url]) => ({name, url})) : [];
   return <ul>{rows.map((row: Row, index: number) => {const href = row.url || row.href || row.download_url; return <li key={index}>{typeof href === 'string' && href.startsWith('/') && !href.startsWith('//') ? <a href={href}>{row.name || row.label || 'Download evidence'}</a> : <span>{row.name || row.label || label(row)}</span>}</li>;})}</ul>;
 }
+function ReleaseReference({value, title}: {value: string; title: string}) {
+  const [notice, setNotice] = useState('');
+  async function copy() {
+    try {await window.navigator.clipboard.writeText(value); setNotice('Copied.');}
+    catch {setNotice('Select the reference to copy it manually.');}
+  }
+  return <div className="release-reference"><div><span className="approval-muted">{title}</span><code className="approval-ref">{value}</code></div>
+    <button type="button" className="secondary-button" aria-label={`Copy ${title.toLowerCase()}`} onClick={copy}>Copy</button>
+    {notice && <small role="status">{notice}</small>}
+  </div>;
+}
+
 export function ReleaseDetail({data, id}: {data: PageData; id: string}) {
+  // A different release must never inherit an open confirmation or pending action.
+  return <ReleaseDetailView key={id} data={data} id={id}/>;
+}
+function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
   const resource = useResource(`/api/approved-releases/${encodeURIComponent(id)}`), row = resource.value;
-  const [busy, setBusy] = useState(false), [error, setError] = useState('');
-  async function retry() {setBusy(true); setError(''); try {await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/retry`, {}); resource.refresh();} catch (error) {setError(message(error));} finally {setBusy(false);}}
-  const publication = row?.publication || {}, artifacts = row?.artifacts || publication.artifacts || [];
-  return <><a className="back" href="/approved-releases">All approved releases</a><ResourceState error={resource.error} pending={!row && !resource.error}/>{row && <><section className="heading"><div><p className="eyebrow">APPROVED RELEASE · #{row.id}</p><h1>{row.service_name || row.service_key}</h1><p>{row.version || row.label} · {variantLabel(row.variant)} · Scan date: {row.scan_date || 'Not recorded'}</p><Badges row={{...row, status: 'approved'}}/></div><button className="secondary-button" type="button" onClick={resource.refresh}>Refresh publication</button></section><section className="panel padded"><h2>Publication</h2>{row.revoked && <p className="error" role="alert">This release has been revoked and is no longer authorized for deployment. {row.revocation_reason}</p>}<p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p><p>Destination: {row.destination?.name} · <code>{row.destination?.endpoint}/{row.destination?.namespace}</code></p>{(row.publish_error || publication.error) && <p className="error" role="alert">{row.publish_error || publication.error}</p>}{row.publish_status === 'failed' && <PublicationDiagnostic publication={publication}/>}<ResourceState error={error} pending={false}/>{!row.revoked && currentApproval(row) && row.publish_status === 'failed' && (row.can_retry ?? can(data, 'approval.decide', row.service_id)) && <button type="button" disabled={busy} onClick={retry}>{busy ? 'Queuing publication…' : 'Retry publication'}</button>}<p><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></p></section><FrozenDistribution selection={row.snapshot?.distribution}/><ReleaseRevision showDistribution={!row.snapshot?.distribution} data={data} approvalId={String(row.approval_id || row.id)} serviceId={row.service_id}/><section className="panel padded"><h2>Immutable artifacts</h2>{publication.release?.reference && <p>Release manifest: <code className="approval-ref">{publication.release.reference}</code></p>}{!list(artifacts).length && <p>Artifact references will appear when publication completes.</p>}{list(artifacts).map((artifact, index) => <article className="approval-evidence" key={index}><h3>{artifact.name || artifact.kind || artifact.type || `Artifact ${index + 1}`}</h3><code className="approval-ref">{artifact.immutable_ref || artifact.ref || artifact.reference || artifact.digest}</code>{artifact.digest && <p>Digest: <code>{artifact.digest}</code></p>}<EvidenceSection title="Signature verification" value={artifact.signature || artifact.signature_evidence}/></article>)}</section><section className="panel padded"><h2>Signature and release evidence</h2><EvidenceSection title="Signing evidence" value={row.signature || publication.signature || publication.release?.signature || row.signature_evidence || (publication.signing_fingerprint ? {signing_fingerprint:publication.signing_fingerprint} : undefined)}/><ArtifactLinks value={row.evidence_links || publication.evidence_links || (row.evidence_url ? [{name:'Download retained evidence',url:row.evidence_url}] : [])}/><h3>Offline bundle</h3><ArtifactLinks value={row.offline_links || publication.offline_links || (row.offline_bundle_url ? [{name:'Download offline release bundle', url:row.offline_bundle_url}] : [])}/><h3>Pull and deployment instructions</h3>{row.publish_status === 'published' && !row.revoked && currentApproval(row) && publication.release?.reference && <pre className="approval-json">{`oras pull ${publication.release.reference}`}</pre>}<p>Verify the signatures and approval expiry against the signing key fingerprint supplied independently by your Cyber approver. A signature-only check does not enforce expiry. Registry access controls and deployment admission policies determine who can retrieve and deploy these artifacts.</p><pre className="approval-json">{row.pull_instructions || publication.pull_instructions || row.destination?.pull_instructions || 'Use the offline bundle README to verify the retained release and import it into your registry. Map the approved image digests into your environment-specific Helm values before deploying the retained charts.'}</pre>{row.deploy_instructions && <pre className="approval-json">{row.deploy_instructions}</pre>}</section></>}</>;
+  const [busy, setBusy] = useState<'retry' | 'revoke' | null>(null), [error, setError] = useState('');
+  const [confirming, setConfirming] = useState(false), [rationale, setRationale] = useState(''), [notice, setNotice] = useState('');
+  async function retry() {
+    if (busy) return;
+    setBusy('retry'); setError(''); setNotice('');
+    try {await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/retry`, {}); resource.refresh();}
+    catch (error) {setError(message(error));} finally {setBusy(null);}
+  }
+  async function revoke(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (busy || row?.can_revoke !== true || rationale.trim().length < 3) return;
+    setBusy('revoke'); setError(''); setNotice('');
+    try {
+      const result = await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/revoke`, {rationale: rationale.trim()});
+      resource.update(result); setConfirming(false); setRationale(''); setNotice('Release revoked. Future pulls must satisfy another current approval.');
+    } catch (error) {setError(message(error));} finally {setBusy(null);}
+  }
+  const publication = row?.publication || {}, artifacts = list(row?.artifacts || publication.artifacts || []);
+  const revocation = publication.revocation || {};
+  const publishing = ['queued', 'publishing'].includes(row?.publish_status);
+  const canRetry = row?.publish_status === 'failed' && (row.revoked
+    ? row.can_retry === true && Boolean(revocation.portable)
+    : currentApproval(row) && (row.can_retry ?? can(data, 'approval.decide', row.service_id)));
+  const destination = [row?.destination?.endpoint, row?.destination?.namespace].filter(Boolean).join('/');
+  return <div className="release-detail">
+    <a className="back" href="/approved-releases">All approved releases</a>
+    <ResourceState error={resource.error} pending={!row && !resource.error}/>
+    {notice && <p className="release-notice" role="status">{notice}</p>}
+    {row && <>
+      <section className="release-heading" aria-label="Release summary">
+        <div><p className="eyebrow">APPROVED RELEASE · #{row.id}</p><h1>{row.service_name || row.service_key}</h1>
+          <p className="approval-muted">{row.version || row.label || 'Version not recorded'} · {variantLabel(row.variant)}{row.distribution_name && <> · {row.distribution_name}</>}</p>
+          <Badges row={{...row, status: 'approved'}} showExpiry={false}/>
+        </div>
+        <div className="release-actions"><button className="secondary-button" type="button" disabled={!!busy} onClick={resource.refresh}>Refresh publication</button>
+          {row.can_revoke === true && !row.revoked && <button className="release-danger-button" type="button" disabled={!!busy || confirming} onClick={() => {setConfirming(true); setError(''); setNotice('');}}>Revoke release</button>}
+        </div>
+      </section>
+      <dl className="release-facts" aria-label="Release approval details">
+        <div><dt>Approved by</dt><dd>{row.approved_by || 'Not recorded'}</dd></div>
+        <div><dt>Approved on</dt><dd>{dateLabel(row.decided_at)}</dd></div>
+        <div><dt>Expires</dt><dd>{dateLabel(row.expires_at)}</dd></div>
+        <div><dt>Scan date</dt><dd>{dateLabel(row.scan_date)}</dd></div>
+      </dl>
+      {row.revoked && <div className="release-revoked" role="alert"><strong>This release has been revoked and is no longer authorized for deployment.</strong>
+        {row.revocation_reason && <p>{row.revocation_reason}</p>}{row.revoked_at && <small>Revoked {dateLabel(row.revoked_at)}</small>}
+      </div>}
+      {confirming && row.can_revoke === true && !row.revoked && <section className="panel padded release-confirmation" aria-label="Confirm release revocation">
+        <h2>Revoke release #{row.id}</h2><p>This withdraws the Cyber approval and blocks future CATS pulls authorized by this release. Running containers and images already downloaded are not removed. Retained evidence remains available for audit.</p>
+        {row.snapshot?.portable_release && row.destination && <p>CATS will publish a signed revocation. Other CATS installations enforce it after synchronization.</p>}
+        <form className="approval-form" onSubmit={revoke}><label>Revocation reason<textarea required minLength={3} maxLength={10000} value={rationale} disabled={!!busy} onChange={event => setRationale(event.target.value)} autoFocus/></label>
+          <ResourceState error={error} pending={false}/><div className="release-actions"><button type="submit" className="release-danger-button" disabled={!!busy || rationale.trim().length < 3}>{busy === 'revoke' ? 'Revoking release…' : 'Confirm revocation'}</button>
+            <button type="button" className="secondary-button" disabled={!!busy} onClick={() => {setConfirming(false); setRationale(''); setError('');}}>Cancel</button></div>
+        </form>
+      </section>}
+      <section className="panel padded release-publication" aria-label="Release publication">
+        <div className="release-section-heading"><h2>Publication</h2><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></div>
+        <p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p>
+        <p className="release-destination"><span className="approval-muted">Destination</span> <strong>{row.destination?.name || 'Not recorded'}</strong>{destination && <code>{destination}</code>}</p>
+        {publishing && !row.revoked && <p className="approval-muted">Revocation is available after publication completes or fails.</p>}
+        {row.revoked && revocation.status && <p>Signed revocation: <StatusBadge value={revocation.status}/>{['queued', 'publishing'].includes(revocation.status) && ' Other CATS installations update after publication and synchronization.'}</p>}
+        {(row.publish_error || publication.error || revocation.error) && <p className="error" role="alert">{row.publish_error || publication.error || revocation.error}</p>}
+        {row.publish_status === 'failed' && <PublicationDiagnostic publication={row.revoked && revocation.diagnostic ? revocation : publication}/>}
+        {!confirming && <ResourceState error={error} pending={false}/>}
+        {canRetry && <button type="button" className="secondary-button" disabled={!!busy} onClick={retry}>{busy === 'retry' ? 'Queuing publication…' : row.revoked ? 'Retry revocation publication' : 'Retry publication'}</button>}
+      </section>
+      <FrozenDistribution selection={row.snapshot?.distribution}/>
+      <div className="release-content-grid">
+        <section className="panel padded release-artifacts" aria-label="Immutable artifacts">
+          <div className="release-section-heading"><h2>Immutable artifacts</h2><span className="approval-count">{artifacts.length} {artifacts.length === 1 ? 'artifact' : 'artifacts'}</span></div>
+          {publication.release?.reference && <ReleaseReference title="Release manifest" value={publication.release.reference}/>}
+          {!artifacts.length && <p className="approval-muted">Artifact references will appear when publication completes.</p>}
+          <ul className="release-artifact-list">{artifacts.map((artifact, index) => {
+            const reference = artifact.immutable_ref || artifact.ref || artifact.reference || artifact.digest;
+            const name = artifact.name || humanize(artifact.kind || artifact.type || `Artifact ${index + 1}`);
+            return <li key={index}><h3>{name}</h3>{reference && <ReleaseReference title={`${name} reference`} value={reference}/>}
+              {artifact.digest && !String(reference || '').includes(artifact.digest) && <p className="approval-muted">Digest: <code className="approval-ref">{artifact.digest}</code></p>}
+              <EvidenceSection title="Signature verification" value={artifact.signature || artifact.signature_evidence}/>
+            </li>;
+          })}</ul>
+        </section>
+        <section className="panel padded release-evidence" aria-label="Release evidence and downloads"><h2>Evidence and downloads</h2>
+          <p className="approval-muted">Retained evidence for this exact release.</p>
+          <ArtifactLinks value={row.evidence_links || publication.evidence_links || (row.evidence_url ? [{name:'Download retained evidence',url:row.evidence_url}] : [])}/>
+          <ArtifactLinks value={row.offline_links || publication.offline_links || (row.offline_bundle_url ? [{name:'Download offline release bundle',url:row.offline_bundle_url}] : [])}/>
+          {!row.evidence_links && !publication.evidence_links && !row.evidence_url && !row.offline_links && !publication.offline_links && !row.offline_bundle_url && <p className="approval-muted">No downloads are available for this account.</p>}
+          <EvidenceSection title="Signing evidence" value={row.signature || publication.signature || publication.release?.signature || row.signature_evidence || (publication.signing_fingerprint ? {signing_fingerprint:publication.signing_fingerprint} : undefined)}/>
+          <details className="approval-support-section"><summary>Pull and deployment instructions</summary>
+            {row.publish_status === 'published' && !row.revoked && currentApproval(row) && publication.release?.reference && <pre className="approval-json">{`oras pull ${publication.release.reference}`}</pre>}
+            <p>Verify signatures and approval expiry with the signing key fingerprint supplied independently by your Cyber approver. A signature alone does not establish current authorization.</p>
+            <pre className="approval-json">{row.pull_instructions || publication.pull_instructions || row.destination?.pull_instructions || 'Use the offline bundle README to verify the retained release and import it into your registry. Map the approved image digests into your environment-specific Helm values before deploying the retained charts.'}</pre>
+            {row.deploy_instructions && <pre className="approval-json">{row.deploy_instructions}</pre>}
+          </details>
+        </section>
+      </div>
+      <ReleaseRevision key={`${id}:${row.revoked_at || row.revoked || ''}`} compact hideMissing readOnly={!!row.revoked} showDistribution={!row.snapshot?.distribution} data={data} approvalId={String(row.approval_id || row.id)} serviceId={row.service_id}/>
+    </>}
+  </div>;
 }
 
 export function Destinations({data}: {data: PageData}) {
