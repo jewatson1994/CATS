@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import Boolean, ForeignKey, String, Text, select
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
-from .auth import AuthContext, record_audit, require_permission
+from .auth import AuthContext, record_audit, require_permission, require_user
 from .database import Base, get_db
 from .models import Service
 from .secrets import decrypt_secret, encrypt_secret, secret_configured
@@ -148,8 +148,10 @@ def _csrf(request, auth):
 
 
 @router.get("")
-def destinations(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_permission("remediation.execute", scoped=True))):
+def destinations(service_key: str, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     service = _service(db, service_key)
+    if not (auth.has("service.edit", service.id) or auth.has("remediation.execute", service.id)):
+        raise HTTPException(403, "Permission denied")
     return [public_destination(r) for r in db.scalars(select(ServiceOCIDestination).where(ServiceOCIDestination.service_id == service.id))]
 
 

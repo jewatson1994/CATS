@@ -3,12 +3,14 @@ import ipaddress
 import os
 import re
 import shlex
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from pydantic import BaseModel
 from sqlalchemy import or_, select
 
-from .auth import AuthContext, require_permission
+from .auth import AuthContext, require_permission, require_user
 from .cyber_approval_evidence import _identity, _registry_path, _repository_identity
 from .database import get_db
 from .models import Service, ServiceImage
@@ -17,6 +19,34 @@ from .oci_service_access import service_pull_is_public
 from .oci_transport import DIGEST, REPOSITORY
 
 router = APIRouter(tags=['OCI pull instructions'])
+
+
+class PullRoute(BaseModel):
+    repository: str
+    digest: str
+    reference: str
+    command: str
+    login_command: str | None
+    login_required: bool
+    anonymous_pull: bool
+
+
+class PullInstructions(BaseModel):
+    service_id: int
+    image_reference: str | None
+    registry: str | None
+    status: Literal['available', 'unavailable']
+    reason: str | None
+    routes: list[PullRoute]
+
+
+class InventoryImagePull(PullInstructions):
+    image_id: int
+
+
+class ReleaseImagePull(PullInstructions):
+    release_id: int
+    artifact_index: int
 
 
 def registry_authority():
@@ -112,37 +142,57 @@ def image_locations(db, image, image_identity):
                 continue
         except (TypeError, ValueError):
             continue
-        manifest = receipt.get('manifest')
-        # A revocation publication can be queued while the verified immutable
-        # relocation still identifies the scanned source. The group's live
-        # authorization decides whether that identity may currently be pulled.
-        if (not isinstance(manifest, dict)
-                or receipt.get('verification_status') != 'verified' or receipt.get('signature_status') != 'verified'
-                or manifest.get('approval_id') != approval.id
-                or manifest.get('snapshot_digest') != approval.snapshot_digest
-                or manifest.get('artifacts') != receipt.get('artifacts')):
-            continue
-        originals, published = snapshot.get('artifacts'), receipt.get('artifacts')
-        if not isinstance(originals, list) or not isinstance(published, list):
-            continue
-        for index, artifact in enumerate(published):
-            if not isinstance(artifact, dict) or artifact.get('kind') != 'image' or index >= len(originals):
-                continue
-            source = originals[index]
-            if (not isinstance(source, dict) or source.get('kind') != 'image'
-                    or not same_image(source.get('reference'), source.get('digest'), image_identity)
-                    or artifact.get('source_digest') != source.get('digest')
-                    or artifact.get('scan_identity_retained') is not True
-                    or artifact.get('identity_resolution') != 'retained-evidence'
-                    or artifact.get('verification_status') != 'verified'):
-                continue
-            target = _location(artifact.get('reference'), artifact.get('digest'), published=True)
-            if target:
+        for source, target in _published_locations(approval):
+            if same_image(source.get('reference'), source.get('digest'), image_identity):
                 locations.add(target)
     return locations
 
 
-@router.get('/api/services/{service_key}/artifacts/images/{image_id}/pull')
+def _published_locations(approval, artifact_index=None):
+    """A verified receipt binds each published manifest to its exact snapshot slot."""
+    receipt = approval.publication
+    if not isinstance(receipt, dict):
+        return
+    manifest = receipt.get('manifest')
+    if (not isinstance(manifest, dict) or receipt.get('verification_status') != 'verified'
+            or receipt.get('signature_status') != 'verified' or manifest.get('approval_id') != approval.id
+            or manifest.get('snapshot_digest') != approval.snapshot_digest
+            or manifest.get('artifacts') != receipt.get('artifacts')):
+        return
+    originals, published = approval.snapshot.get('artifacts'), receipt.get('artifacts')
+    if not isinstance(originals, list) or not isinstance(published, list):
+        return
+    for index, (source, artifact) in enumerate(zip(originals, published)):
+        if artifact_index is not None and index != artifact_index:
+            continue
+        if (not isinstance(source, dict) or source.get('kind') != 'image'
+                or not DIGEST.fullmatch(str(source.get('digest')))
+                or not isinstance(artifact, dict) or artifact.get('kind') != 'image'
+                or artifact.get('source_digest') != source.get('digest')
+                or artifact.get('scan_identity_retained') is not True
+                or artifact.get('identity_resolution') != 'retained-evidence'
+                or artifact.get('verification_status') != 'verified'):
+            continue
+        target = _location(artifact.get('reference'), artifact.get('digest'), published=True)
+        if target:
+            yield source, target
+
+
+def _base_result(service_id, image_reference, **identity):
+    return dict(service_id=service_id, image_reference=image_reference, registry=None,
+                status='unavailable', reason=None, routes=[], **identity)
+
+
+def _image_slot(artifacts, index):
+    if not isinstance(artifacts, list) or not 0 <= index < len(artifacts):
+        raise HTTPException(404, 'Container image not found in this release')
+    artifact = artifacts[index]
+    if not isinstance(artifact, dict) or artifact.get('kind') != 'image':
+        raise HTTPException(404, 'Container image not found in this release')
+    return artifact
+
+
+@router.get('/api/services/{service_key}/artifacts/images/{image_id}/pull', response_model=InventoryImagePull)
 def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
                       auth: AuthContext = Depends(require_permission('service.view', scoped=True)),
                       response: Response = None):
@@ -155,35 +205,96 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
                       .execution_options(populate_existing=True))
     if image is None:
         raise HTTPException(404, 'Container image not found in this service')
-    result = dict(service_id=service.id, image_id=image.id, image_reference=image.image_reference,
-                  registry=None, status='unavailable', reason=None, routes=[])
-
-    def unavailable(reason):
-        result['reason'] = reason
-        return result
-
-    try:
-        result['registry'] = registry_authority()
-    except ValueError:
-        return unavailable('The configured CATS OCI hostname is invalid. Ask an administrator to correct it.')
-    if result['registry'] is None:
-        return unavailable('The CATS OCI hostname is not configured. Ask an administrator to set CATS_OCI_HOSTNAME.')
-    from .main import service_lifecycle
-    db.expire(service, ['archive_events'])
-    if service_lifecycle(service) != 'active':
-        return unavailable('This service is not active and cannot distribute images.')
+    result = _base_result(service.id, image.image_reference, image_id=image.id)
     if image.lifecycle_status != 'active':
-        return unavailable('This container image is not active in the service inventory.')
+        return dict(result, reason='This container image is not active in the service inventory.')
     try:
         identity = _identity(image.image_reference, image.image_digest)
     except ValueError:
-        return unavailable('This image has no verified immutable digest. Complete its scan first.')
+        return dict(result, reason='This image has no verified immutable digest. Complete its scan first.')
+    return _pull_routes(db, service, result, image_locations(db, image, identity))
 
+
+@router.get('/api/approved-releases/{identity}/artifacts/{artifact_index}/pull', response_model=ReleaseImagePull)
+def release_pull_instructions(identity: int, artifact_index: int, response: Response, db=Depends(get_db),
+                              auth: AuthContext = Depends(require_user)):
+    """Resolve a zero-based snapshot artifact without consulting mutable service inventory."""
+    from .cyber_approvals import _record, digest as snapshot_digest
+    from .release_validity import summary
+    from .release_revisions import ReleaseRevision, ServiceActiveRelease, active_revision
+    response.headers['Cache-Control'] = 'private, no-store'
+    approval = _record(db, auth, identity)
+    if approval.status != 'approved':
+        raise HTTPException(404, 'Approved release not found')
+    snapshot = approval.snapshot
+    if (not isinstance(snapshot, dict) or snapshot.get('service_id') != approval.service_id
+            or snapshot_digest(snapshot) != approval.snapshot_digest):
+        raise HTTPException(409, 'Retained approval snapshot integrity check failed')
+    artifact = _image_slot(snapshot.get('artifacts'), artifact_index)
+    result = _base_result(approval.service_id, artifact.get('reference'), release_id=identity, artifact_index=artifact_index)
+    validity = summary(approval)['validity_status']
+    if validity not in {'valid', 'expiring_soon'}:
+        return dict(result, reason=f'This release cannot supply pull instructions. Approval status: {validity}.')
+    managed = ('release_revision' in snapshot or db.get(ServiceActiveRelease, approval.service_id) is not None
+               or db.scalar(select(ReleaseRevision.id).where(ReleaseRevision.service_id == approval.service_id).limit(1)) is not None)
+    if managed:
+        active = active_revision(db, approval.service_id)
+        if active is None or active.approval_id != identity:
+            return dict(result, reason='This release is not the active, verified release revision.')
+    candidates = {target for _, target in _published_locations(approval, artifact_index)}
+    if not artifact.get('resolve_at_publication') and not artifact.get('path') and artifact.get('format') != 'docker-archive':
+        scanned = _location(artifact.get('reference'), artifact.get('digest'))
+        if scanned:
+            candidates.add(scanned)
+    return _pull_routes(db, db.get(Service, approval.service_id), result, candidates)
+
+
+@router.get('/api/replica/releases/{identity}/artifacts/{artifact_index}/pull', response_model=ReleaseImagePull)
+def replica_pull_instructions(identity: int, artifact_index: int, response: Response, db=Depends(get_db),
+                             auth: AuthContext = Depends(require_user)):
+    """Use the signed imported inventory and its local registry repository."""
+    from datetime import datetime, timezone
+    from .oci_models import OCIUpstream
+    from .replica_authorization import trusted_release, release_denial
+    from .replica_models import ReplicaRelease, ReplicaServiceState
+    response.headers['Cache-Control'] = 'private, no-store'
+    release = db.get(ReplicaRelease, identity, populate_existing=True)
+    if release is None or not auth.has('service.view', release.service_id):
+        raise HTTPException(404, 'Release not found')
+    state = db.get(ReplicaServiceState, release.service_id, populate_existing=True)
+    now = datetime.now(timezone.utc)
+    if not trusted_release(db, release, state, now):
+        raise HTTPException(409, 'Imported release trust check failed')
+    artifact = _image_slot(release.artifacts, artifact_index)
+    repository = artifact.get('repository')
+    result = _base_result(release.service_id, artifact.get('reference') or repository,
+                          release_id=identity, artifact_index=artifact_index)
+    denial = release_denial(release, state, now)
+    if denial:
+        return dict(result, reason=f'This imported release is {denial}.')
+    upstream = db.get(OCIUpstream, state.upstream_id)
+    if upstream is None or not REPOSITORY.fullmatch(str(repository or '')):
+        return dict(result, reason='No verified registry repository is available for this release image.')
+    reference = urlsplit(upstream.endpoint).netloc + '/' + repository
+    target = _location(reference, artifact.get('digest'), published=True)
+    return _pull_routes(db, db.get(Service, release.service_id), result, {target} if target else set())
+
+
+def _pull_routes(db, service, result, candidates):
     from . import oci_proxy as proxy
     from .oci_authorization import authorize
-    candidates = image_locations(db, image, identity)
+    from .main import service_lifecycle
+    try:
+        result['registry'] = registry_authority()
+    except ValueError:
+        return dict(result, reason='The configured CATS OCI hostname is invalid. Ask an administrator to correct it.')
+    if result['registry'] is None:
+        return dict(result, reason='The CATS OCI hostname is not configured. Ask an administrator to set CATS_OCI_HOSTNAME.')
+    db.expire(service, ['archive_events'])
+    if service_lifecycle(service) != 'active':
+        return dict(result, reason='This service is not active and cannot distribute images.')
     if not candidates:
-        return unavailable('No verified image identity binds this container to a distribution repository.')
+        return dict(result, reason='No verified image identity binds this container to a distribution repository.')
     mappings = list(db.scalars(select(OCIRepository).where(or_(OCIRepository.service_id == service.id,
                                                                OCIRepository.service_id.is_(None)))
                               .execution_options(populate_existing=True)))
@@ -220,7 +331,7 @@ def pull_instructions(service_key: str, image_id: int, db=Depends(get_db),
                 anonymous_pull=public_pull, login_required=not public_pull,
                 login_command=None if public_pull else 'docker login ' + shlex.quote(result['registry']))
     if not routes:
-        return unavailable("This image does not meet the service's current OCI pull policy." if matched
-                           else 'No enabled CATS repository mapping serves this image for this service.')
+        return dict(result, reason="This image does not meet the service's current OCI pull policy." if matched
+                    else 'No enabled CATS repository mapping serves this image for this service.')
     result.update(status='available', routes=[routes[key] for key in sorted(routes)])
     return result

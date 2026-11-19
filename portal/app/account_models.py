@@ -41,3 +41,11 @@ class AccountAccessRequest(Base):
     claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     claimed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+
+
+class ServiceAccessRequest(Base):
+    """A pending request. Approval consumes the row alongside the scoped grant."""
+    __tablename__ = "service_access_requests"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id", ondelete="CASCADE"), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

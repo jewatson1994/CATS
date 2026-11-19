@@ -36,10 +36,13 @@ def permission_available(permission: str) -> bool:
 # prefix: many existing admin routes edit authoritative service evidence.
 _LOCAL_WRITES = (
     ("POST", r"/(?:login|logout|account/password|account/appearance)"),
+    ("POST", r"/account/access/service"),
     ("POST", r"/admin/(?:users|roles|assignments|audit-policy)"),
     ("POST", r"/admin/users/\d+/(?:toggle|reset-password|delete)"),
     ("POST", r"/admin/assignments/\d+/delete"),
     ("POST", r"/admin/configuration/(?:oidc|oidc-test|oidc-mappings|oidc-mappings/discover|trusted-certificates)"),
+    ("POST", r"/admin/configuration/announcements(?:/\d+/withdraw)?"),
+    ("POST", r"/account/announcements/\d+/read"),
     ("POST", r"/api/admin/accounts/(?:preview|apply)"),
     ("POST", r"/api/accounts/access-requests/\d+/claim"),
     ("POST", r"/api/oci/(?:upstreams|repositories|principals)"),

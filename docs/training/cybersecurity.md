@@ -42,8 +42,10 @@ Use **Administration → Risk Policy** for profiles and assessment review within
 
 ## Onboard accounts within your groups
 
-A signed-in account with no effective permissions sees only: **Contact your cybersecurity POC for access.** Its pending request appears in the notification bell for Cybersecurity users. Open the request to reach **Accounts & Roles**.
+After organizational sign-in, an account without effective permissions sees a directory of active services. The user selects **Request access** for each service they need. The directory displays service names and the user's pending status. The user can refresh the page after approval to enter CATS using the same session.
 
-Choose **Claim as Assessor**. A single authorized group is preselected; when you cover several groups, select the appropriate one before claiming. Claiming grants Assessor access only to that group, not your own Cybersecurity permissions. The user can refresh their existing session to enter CATS. Once claimed, the request is no longer available to other reviewers.
+Open an access request in the notification bell to reach **Accounts & Roles**. Group-scoped Cybersecurity users can review requests for services in their authorized groups. Choose **Approve service access as Assessor** to grant the built-in Assessor role on the requested service. Each request has its own approval. The grant is a local CATS assignment and persists across OIDC logins until removed.
+
+For a local-only account awaiting its initial assignment, choose **Claim as Assessor** and select an authorized group. This grants Assessor access across that group.
 
 Use the **Local**, **OIDC**, and **Both** tabs to distinguish sign-in methods. Both means the account has a local password and a linked OIDC identity. Use the role assignment dialog to choose a role and its scope. Cybersecurity can grant only eligible roles within its groups and cannot grant global administration or alter externally managed OIDC grants. Global administrators manage identity linking and account lifecycle actions.

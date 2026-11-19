@@ -29,6 +29,8 @@ it('loads on demand and copies only the exact service-bound commands returned by
   fireEvent.click(within(dialog).getByRole('button', {name: 'Copy pull command'}));
   expect(writeText).toHaveBeenCalledWith(route.command);
   expect(await within(dialog).findByText('Pull command copied.')).toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole('button', {name: 'Copy deployment image reference'}));
+  expect(writeText).toHaveBeenCalledWith(route.reference);
   fireEvent.click(within(dialog).getByRole('button', {name: 'Copy login command'}));
   expect(writeText).toHaveBeenCalledWith(route.login_command);
 });

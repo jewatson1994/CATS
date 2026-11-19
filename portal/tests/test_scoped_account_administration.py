@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.auth import AuthContext, SYSTEM_ROLES
 from app.database import Base
 from app.main import assign_role, remove_assignment, manageable_groups, scoped_role_allowed, scoped_assignment_visible, stage_service
-from app.models import Group, Role, User, UserRoleAssignment, UserSession, utcnow
+from app.models import Group, Role, Service, User, UserRoleAssignment, UserSession, utcnow
 
 
 @pytest.fixture
@@ -43,6 +43,20 @@ def test_group_assignment_and_revocation(setup):
     assert assign(setup).status_code == 303
     grant = db.scalar(select(UserRoleAssignment).where(UserRoleAssignment.user_id == target.id, UserRoleAssignment.role_id == manager.id))
     assert grant.group_id == group.id
+    assert remove_assignment(grant.id, 'csrf', db, auth).status_code == 303
+
+
+def test_service_assessor_revocation_uses_current_owner(setup):
+    db, auth, target, group, other, assessor, _ = setup
+    service = Service(name='Application', service_key='application', groups=[other])
+    grant = UserRoleAssignment(user=target, role=assessor, service=service, source='local')
+    db.add(grant)
+    db.commit()
+    with pytest.raises(HTTPException) as denied:
+        remove_assignment(grant.id, 'csrf', db, auth)
+    assert denied.value.status_code == 403
+    service.groups = [group]
+    db.commit()
     assert remove_assignment(grant.id, 'csrf', db, auth).status_code == 303
 
 

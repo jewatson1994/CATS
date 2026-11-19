@@ -31,7 +31,7 @@ from typing import Any
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, available_timezones
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
@@ -97,12 +97,13 @@ from .models import (
 )
 from .security_data import (MAX_GRYPE_LISTING, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD,
                             DEFAULT_SOURCES, SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
-from . import daily_security_data, service_scan_schedule
+from . import announcements, daily_security_data, service_scan_schedule
 from .validator_client import validate as validate_remote_artifact, health as validator_health
 from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
 from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
+from .pipeline_api import AmendmentReceipt, PipelineReceipt, pipeline_openapi, router as pipeline_router
 from .policy_data import epss_scores, intelligence_status, kev_cves, observation_risk, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
@@ -528,36 +529,49 @@ PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_
 ACCESS_PENDING_MESSAGE = "Contact your cybersecurity POC for access."
 
 
-def access_pending_response():
-    return HTMLResponse("<!doctype html><html><head><title>CATS</title></head>"
-        '<body style="margin:0;min-height:100vh;display:grid;place-items:center;'
-        'background:#081411;color:#e4efeb;font:18px system-ui">'
-        '<p>Contact your cybersecurity POC for access.</p></body></html>',
-        headers={"Cache-Control": "no-store"})
+def access_pending_response(request, db, auth):
+    from . import announcements
+    directory = access_requests.uses_service_directory(auth.user)
+    return templates.TemplateResponse(request, "access_directory.html", {
+        "services": access_requests.service_directory(db, auth.user.id) if directory else None,
+        "notice": announcements.current(db, auth.user.id), "csrf_token": auth.csrf_token,
+        "contact_message": ACCESS_PENDING_MESSAGE,
+    }, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @app.middleware("http")
 async def pending_access_gate(request: Request, call_next):
     # Authenticated accounts without effective access must not fall through to
     # anonymous/public workflows or receive a navigation/data payload.
-    if request.cookies.get(SESSION_COOKIE) and request.url.path not in {"/logout"}:
+    path = request.url.path
+    account_action = request.method == "POST" and (
+        path in {"/logout", "/account/access/service"} or re.fullmatch(r"/account/announcements/\d+/read", path))
+    if request.cookies.get(SESSION_COOKIE) and not account_action and not (request.method == "GET" and path == "/account/access"):
         with SessionLocal() as db:
             auth = optional_user(request, db)
             if auth and not access_requests.has_effective_access(auth):
                 access_requests.register_pending_request(db, auth)
                 db.commit()
-                if request.url.path.startswith("/api/") or request.method != "GET":
-                    return JSONResponse({"detail": ACCESS_PENDING_MESSAGE}, status_code=403,
+                directory = access_requests.uses_service_directory(auth.user)
+                if path.startswith("/api/") or request.method != "GET":
+                    detail = "Request service access at /account/access." if directory else ACCESS_PENDING_MESSAGE
+                    return JSONResponse({"detail": detail}, status_code=403,
                                         headers={"Cache-Control": "no-store"})
-                return access_pending_response()
+                if directory:
+                    return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
+                return access_pending_response(request, db, auth)
     return await call_next(request)
 
 
 @app.middleware("http")
 async def pipeline_request_size_middleware(request: Request, call_next):
-    if request.url.path == "/api/v1/pipeline-results":
+    path = request.url.path.removesuffix("/")
+    if request.method == "POST" and (path == "/api/v1/pipeline-results"
+            or re.fullmatch(r"/api/v1/amendment-assessments/[^/]+", path)):
         try:
             content_length = int(request.headers.get("content-length", "0"))
+            if content_length < 0:
+                raise ValueError()
         except ValueError:
             return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
         if content_length > PIPELINE_MAX_REQUEST_BYTES:
@@ -1434,9 +1448,11 @@ def page_context(auth: AuthContext, **values):
     pending_request_count = 0
     pending_poam_count = 0
     actionable_notifications = []
+    announcement = None
     try:
         allowed_services = auth.accessible_service_ids("service.view")
         with SessionLocal() as nav_db:
+            announcement = announcements.current(nav_db, auth.user.id)
             request_query = select(
                 WorkflowRequest.request_type, WorkflowRequest.service_id,
                 WorkflowRequest.requested_by_id, Service.name, WorkflowRequest.id,
@@ -1465,9 +1481,11 @@ def page_context(auth: AuthContext, **values):
                     notification["count"] += 1
                 else:
                     actionable_notifications.append({"label": item.request_type.replace("_", " ").title(), "service": item.name or "Service", "href": f"/requests#request-{item.id}"})
-            access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
-                                     "href": "/admin#access-requests"}
-                                    for item in access_requests.list_pending_requests(nav_db, auth)]
+            access_notifications = []
+            for item in access_requests.list_pending_requests(nav_db, auth):
+                requester = item["display_name"] or item["username"]
+                name = f"{requester} · {item['service_name']}" if item.get("service_name") else requester
+                access_notifications.append({"label": "Access requested", "service": name, "href": "/admin#access-requests"})
             actionable_notifications = access_notifications + artifact_catalog_routes.replacement_notifications(nav_db, auth) + actionable_notifications
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
@@ -1495,6 +1513,7 @@ def page_context(auth: AuthContext, **values):
         "pending_request_count": pending_request_count,
         "pending_poam_count": pending_poam_count,
         "actionable_notifications": actionable_notifications[:8],
+        "announcement": announcement,
         **values,
     }
 
@@ -1704,6 +1723,17 @@ def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int) -> bool:
     return bool(permissions) and permissions <= PERMISSIONS.keys() and (permissions - APPLICATION_PERMISSIONS) <= available
 
 
+def may_remove_scoped_assignment(auth: AuthContext, assignment: UserRoleAssignment, group_ids: set[int]) -> bool:
+    group_id = assignment.group_id
+    if group_id is None and assignment.source == "local" and assignment.role.system and assignment.role.name == "Assessor":
+        # Onboarding grants are service-only. Resolve the current owner again
+        # so a group that lost ownership cannot revoke that service's grant.
+        groups = assignment.service.groups if assignment.service is not None else []
+        if len(groups) == 1:
+            group_id = groups[0].id
+    return group_id in group_ids and scoped_role_allowed(auth, assignment.role, group_id)
+
+
 def requested_group_scope(group_id: str | int | None, db: Session, auth: AuthContext) -> int | None:
     try:
         selected = int(group_id) if group_id not in (None, "", "global") else None
@@ -1845,13 +1875,6 @@ templates.env.globals["cats_datetime"] = lambda value, configuration=None: confi
 def check_csrf(auth: AuthContext, supplied: str):
     if not secrets.compare_digest(auth.csrf_token, supplied):
         raise HTTPException(403, detail="Invalid CSRF token")
-
-
-def require_pipeline(authorization: str | None = Header(default=None)):
-    expected = os.getenv("PIPELINE_API_TOKEN", "development-token")
-    supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
-    if not secrets.compare_digest(supplied.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Invalid pipeline token")
 
 
 def active_exception(finding: Finding, now: datetime):
@@ -2943,9 +2966,14 @@ def _oidc_failure_response(message, reference):
     return response
 
 
-@app.get("/account/access")
-def account_access(request: Request, auth: AuthContext = Depends(require_user)):
-    return RedirectResponse("/", status_code=303) if access_requests.has_effective_access(auth) else access_pending_response()
+@app.get("/account/access", response_class=HTMLResponse)
+def account_access(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    if access_requests.has_effective_access(auth):
+        return RedirectResponse("/", status_code=303)
+    if not access_requests.uses_service_directory(auth.user):
+        access_requests.register_pending_request(db, auth)
+        db.commit()
+    return access_pending_response(request, db, auth)
 
 
 @app.post("/login")
@@ -3245,7 +3273,8 @@ def backfill_incomplete_scan_findings() -> None:
 
 
 
-@app.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201, dependencies=[Depends(require_pipeline)])
+@pipeline_router.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201,
+                      operation_id="submitAmendmentAssessment", response_model=AmendmentReceipt)
 def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db)):
     try:
         row = proposal_assessments.retain(db, proposal_id, payload)
@@ -3257,7 +3286,9 @@ def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db:
             "active_release_changed": False}
 
 
-@app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
+@pipeline_router.post("/api/v1/pipeline-results", status_code=201,
+                      operation_id="submitPipelineResults", response_model=PipelineReceipt,
+                      response_model_exclude_unset=True)
 def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
     if payload.scan_scope == "distribution":
         raise HTTPException(422, "Submit distribution results through the scan bound to the saved selection")
@@ -3265,6 +3296,11 @@ def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_
     if background_tasks is not None and isinstance(result, dict) and result.get("accepted") and not result.get("duplicate"):
         queue_dependency_projection(db, background_tasks, result.get("execution_id"))
     return result
+
+
+app.include_router(pipeline_router)
+app.add_api_route("/api/v1/pipeline/openapi.json", pipeline_openapi, methods=["GET"],
+                  tags=["API discovery"], summary="Download the pipeline integration contract")
 
 
 def _ingest_projection_enabled() -> bool:
@@ -3497,13 +3533,16 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         if scan_scope == "image":
             ensure_ingest_image(scope_image)
             _reconcile_image_scope(db, service, scope_image or "", observed, payload.scanned_at)
-        else:
+        elif scan_scope == "service":
             for finding in db.scalars(select(Finding).where(Finding.service_id == service.id, Finding.active.is_(True))):
                 if finding.cve not in observed:
                     finding.active = False
                     finding.resolved_at = payload.scanned_at
     if current_ingest:
-        sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at, effective_complete)
+        # Policy findings cover the service configuration. Only a whole-service
+        # scan can resolve an omitted policy finding by absence.
+        sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at,
+                             complete=effective_complete and scan_scope == "service")
     for image in db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all():
         if image.id not in known_service_image_ids:
             db.add(AuditEvent(
@@ -10670,6 +10709,7 @@ def delete_service(
     if policy_finding_ids:
         db.execute(delete(PolicyExceptionRecord).where(PolicyExceptionRecord.policy_finding_id.in_(policy_finding_ids)))
         db.execute(delete(PolicyFinding).where(PolicyFinding.id.in_(policy_finding_ids)))
+    db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.service_id == service.id))
     db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.service_id == service.id))
     db.execute(delete(RemediationExecution).where(RemediationExecution.service_id == service.id))
     db.execute(delete(PatchExecution).where(PatchExecution.service_id == service.id))
@@ -11065,8 +11105,7 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
                 ),
                 "id": assignment.id,
                 "source": assignment.source,
-                "may_remove": (auth.has("role.manage") or (scoped and assignment.group_id in group_ids
-                               and scoped_role_allowed(auth, assignment.role, assignment.group_id)))
+                "may_remove": (auth.has("role.manage") or (scoped and may_remove_scoped_assignment(auth, assignment, group_ids)))
                               and assignment.source != "oidc" and not assignment.oidc_mapping_id,
                 "active": active,
                 "permissions": assignment_permissions if active else [],
@@ -11223,12 +11262,6 @@ def create_group(
     record_audit(db, auth, "group.created", "group", group.id, name=name)
     db.commit()
     return RedirectResponse("/admin?saved=1", status_code=303)
-
-
-@app.get("/admin/validators", response_class=HTMLResponse)
-def managed_validators_page(request: Request, auth: AuthContext = Depends(require_permission('validator.view'))):
-    return templates.TemplateResponse(request, 'validators.html', page_context(auth,
-        can_manage_validators=True))
 
 
 @app.get("/admin/configuration", response_class=HTMLResponse)
@@ -11561,6 +11594,61 @@ def save_configuration(
     record_audit(db, auth, "configuration.updated", "portal", "global", changed=list(values))
     db.commit()
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.get("/api/announcements/current", tags=["Announcements"])
+def current_announcement(response: Response, db: Session = Depends(get_db),
+                         auth: AuthContext = Depends(require_user)) -> announcements.Notice | None:
+    response.headers["Cache-Control"] = "private, no-store"
+    return announcements.current(db, auth.user.id)
+
+
+@app.post("/account/announcements/{notice_id}/read")
+def read_announcement(request: Request, notice_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
+                      auth: AuthContext = Depends(require_user)):
+    check_csrf(auth, csrf_token)
+    notice = announcements.current(db, auth.user.id)
+    if notice and notice["id"] == notice_id and notice["unread"]:
+        announcements.mark_read(db, notice_id, auth.user.id)
+        db.commit()
+        notice["unread"] = False
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse(notice, headers={"Cache-Control": "private, no-store"})
+    return RedirectResponse("/account/access", status_code=303)
+
+
+@app.post("/admin/configuration/announcements")
+def publish_announcement(title: str = Form(max_length=120), message: str = Form(max_length=2000),
+                         expires_at: str = Form(""), csrf_token: str = Form(),
+                         db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    title, message = title.strip(), message.strip()
+    if not title or not message:
+        raise HTTPException(422, detail="Enter a title and message for the announcement")
+    expiry = optional_form_datetime(expires_at, "Announcement expiry")
+    if expiry and expiry <= utcnow():
+        raise HTTPException(422, detail="Announcement expiry must be in the future")
+    notice = announcements.PortalAnnouncement(title=title, message=message,
+                                              expires_at=expiry.astimezone(timezone.utc) if expiry else None)
+    db.add(notice)
+    db.flush()
+    record_audit(db, auth, "announcement.published", "portal_announcement", notice.id, title=title)
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1#general", status_code=303)
+
+
+@app.post("/admin/configuration/announcements/{notice_id}/withdraw")
+def withdraw_announcement(notice_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
+                          auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    notice = db.get(announcements.PortalAnnouncement, notice_id)
+    if notice is None:
+        raise HTTPException(404, detail="Announcement not found")
+    if not notice.withdrawn:
+        notice.withdrawn = True
+        record_audit(db, auth, "announcement.withdrawn", "portal_announcement", notice.id)
+        db.commit()
+    return RedirectResponse("/admin/configuration?saved=1#general", status_code=303)
 
 
 @app.post("/admin/configuration/remediation")
@@ -12469,8 +12557,7 @@ def remove_assignment(
     if not auth.has("role.manage"):
         from .access_requests import is_cybersecurity
         group_ids = {group.id for group in manageable_groups(db, auth)}
-        if (not is_cybersecurity(auth) or assignment.group_id not in group_ids
-                or not scoped_role_allowed(auth, assignment.role, assignment.group_id)):
+        if not is_cybersecurity(auth) or not may_remove_scoped_assignment(auth, assignment, group_ids):
             raise HTTPException(403, detail="Assignment is outside your delegation authority")
     if assignment.user_id == auth.user.id and assignment.role.name == "Administrator":
         raise HTTPException(409, detail="You cannot remove your own Administrator role")
@@ -12564,6 +12651,8 @@ def delete_user_account(
         cyber_approvals.CyberApproval.decided_by_id == user.id)).limit(1)):
         raise HTTPException(409, detail="This account has retained Cyber approval records. Disable it to preserve approval history.")
     username, display_name = user.username, user.display_name
+    db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.user_id == user.id))
+    db.execute(delete(announcements.AnnouncementRead).where(announcements.AnnouncementRead.user_id == user.id))
     for background_job in db.scalars(select(DurableJob).where(DurableJob.requested_by_id == user.id)):
         background_job.requested_by_id = None
         if background_job.status in {"queued", "running"}:

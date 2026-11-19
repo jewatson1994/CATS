@@ -75,6 +75,14 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
   return data as T;
 }
 
+export interface Announcement {
+  id: number;
+  title: string;
+  message: string;
+  expires_at: string | null;
+  unread: boolean;
+}
+
 export interface PageData {
   current_user?: {display_name: string; theme: string} | null;
   csrf_token?: string;
@@ -82,6 +90,7 @@ export interface PageData {
   can?: Record<string, Record<string, boolean>>;
   next_path?: string;
   pending_request_count?: number;
+  announcement?: Announcement | null;
   actionable_notifications?: {label: string; service: string; href?: string}[];
   cats_deployed_version?: string;
   [key: string]: any;

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Service access · CATS</title>
+  <style>
+    :root { color-scheme: dark; font: 1rem/1.5 system-ui, sans-serif; background: #081411; color: #e4efeb; }
+    body { margin: 0; }
+    main { max-width: 42rem; margin: 8vh auto; padding: 1.5rem; }
+    h1 { line-height: 1.2; margin: 0; }
+    p, .pending { color: #bacac4; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 0; border-top: 1px solid #355348; }
+    li span { overflow-wrap: anywhere; }
+    button, summary { cursor: pointer; font: inherit; }
+    button { background: #17352a; border: 1px solid #588774; border-radius: .35rem; padding: .35rem .75rem; color: inherit; white-space: nowrap; }
+    button:hover { background: #264c3e; }
+    a { color: #aee5cc; }
+    details { border: 1px solid #355348; border-radius: .35rem; padding: .65rem; margin-bottom: 1.25rem; }
+    details p { white-space: pre-wrap; overflow-wrap: anywhere; }
+    footer { display: flex; justify-content: space-between; align-items: center; gap: .75rem; margin-top: 2rem; }
+  </style>
+</head>
+<body><main>
+  {% if notice %}
+    <details>
+      <summary><span aria-hidden="true">🔔</span> Announcement{% if notice.unread %} (unread){% endif %}</summary>
+      <strong>{{ notice.title }}</strong><p>{{ notice.message }}</p>
+      {% if notice.unread %}
+        <form method="post" action="/account/announcements/{{ notice.id }}/read">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit">Mark as read</button>
+        </form>
+      {% endif %}
+    </details>
+  {% endif %}
+  {% if services is none %}
+    <p>{{ contact_message }}</p>
+  {% else %}
+    <h1>Request service access</h1>
+    {% if services %}
+      <p>Select the services you need. Cybersecurity reviews each request for Assessor access.</p>
+      <ul>
+        {% for service in services %}
+          <li>
+            <span>{{ service.name }}</span>
+            {% if service.pending %}
+              <span class="pending">Pending review</span>
+            {% else %}
+              <form method="post" action="/account/access/service">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="service_id" value="{{ service.id }}">
+                <button type="submit" aria-label="Request access to {{ service.name }}">Request access</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No active services are available to request.</p>
+    {% endif %}
+    <footer>
+      <a href="/account/access">Refresh access status</a>
+      <form method="post" action="/logout">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit">Sign out</button>
+      </form>
+    </footer>
+  {% endif %}
+</main></body>
+</html>

@@ -20,7 +20,7 @@ const SettingsContext = createContext({category: 'general', query: ''});
 function Block({group, title, terms = '', children, headingAction}: {group: string; title: string; terms?: string; children: ReactNode; headingAction?: ReactNode}) {
   const {category, query} = useContext(SettingsContext);
   const replica = useReplica();
-  if (replica && !['OIDC identity provider', 'OIDC Claim Mapping', 'Trusted CA certificates'].includes(title)) return null;
+  if (replica && !['Portal announcement', 'OIDC identity provider', 'OIDC Claim Mapping', 'Trusted CA certificates'].includes(title)) return null;
   const visible = query.trim() ? `${title} ${terms}`.toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()) : category === group;
   return <section hidden={!visible} className="panel padded config-subpanel">{headingAction ? <div className="config-section-heading"><h2>{title}</h2>{headingAction}</div> : <h2>{title}</h2>}{children}</section>;
 }
@@ -42,8 +42,8 @@ function IntelligenceStatus({status}: {status?: {state?: string; records?: numbe
 
 export function Page({data}: {data: PageData}) {
   const replica = useReplica();
-  const visibleCategories = replica ? categories.filter(([key]) => ['identity-access', 'integrations'].includes(key)) : categories;
-  const initialCategory = useCallback(() => {const hash = window.location.hash.slice(1), saved = sessionStorage.getItem('cats-settings-category'); return (!replica || ['identity-access', 'integrations'].includes(hash)) && categories.some(([key]) => key === hash) ? hash : data.edit_os_id ? 'integrations' : (!replica || ['identity-access', 'integrations'].includes(saved || '')) && categories.some(([key]) => key === saved) ? saved! : replica ? 'identity-access' : 'general';}, [data.edit_os_id, replica]);
+  const visibleCategories = replica ? categories.filter(([key]) => ['general', 'identity-access', 'integrations'].includes(key)) : categories;
+  const initialCategory = useCallback(() => {const hash = window.location.hash.slice(1), saved = sessionStorage.getItem('cats-settings-category'); return (!replica || ['general', 'identity-access', 'integrations'].includes(hash)) && categories.some(([key]) => key === hash) ? hash : data.edit_os_id ? 'integrations' : (!replica || ['general', 'identity-access', 'integrations'].includes(saved || '')) && categories.some(([key]) => key === saved) ? saved! : replica ? 'identity-access' : 'general';}, [data.edit_os_id, replica]);
   const [category, setCategory] = useState(initialCategory), [query, setQuery] = useState('');
   const [mappingScope, setMappingScope] = useState('cats_managed');
   const [mapping, setMapping] = useState<any>(null), [mappingOpen, setMappingOpen] = useState(false);
@@ -56,6 +56,20 @@ export function Page({data}: {data: PageData}) {
   // Keep editor state outside category blocks so filtering never exposes or populates stored secrets.
   return <SettingsContext.Provider value={{category, query}}><div className="admin-workspace settings-workspace"><Heading title="Settings" description="Global runtime preferences for this CATS portal."/><AdminTabs data={data} selected="configuration"/><section ref={panel} className="panel padded configuration-panel"><Saved data={data} message="Configuration saved successfully."/><p className="muted">These settings apply to the portal instance. Group and service governance remains managed in the policy tabs.</p><nav className="settings-nav" aria-label="Settings categories">{visibleCategories.map(([key, title]) => <a href={`#${key}`} key={key} aria-current={!query && category === key ? 'page' : undefined} onClick={() => {setCategory(key); setQuery('');}}>{title}</a>)}</nav><label className="settings-search-label" htmlFor="settings-search">Search settings</label><input id="settings-search" type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search settings..."/><small className="muted">Search section names and fields across all categories.</small>{noMatches && <p className="muted" role="status">No matching settings found.</p>}
   {!can(data, 'config.manage') ? <p>You do not have permission to change global settings.</p> : <>
+  <Block group="general" title="Portal announcement" terms="notification bell maintenance outage broadcast">
+    <p>Publishing places a notice in every signed-in user's notification bell on this portal, including accounts awaiting service access.</p>
+    {data.announcement && <div className="config-edit-card">
+      <h3>{data.announcement.title}</h3><p className="wrap-text">{data.announcement.message}</p>
+      {data.announcement.expires_at && <p>Expires {new Date(data.announcement.expires_at).toUTCString()}</p>}
+      <Post data={data} action={`/admin/configuration/announcements/${data.announcement.id}/withdraw`}><button className="button-secondary">Withdraw announcement</button></Post>
+    </div>}
+    <Post data={data} action="/admin/configuration/announcements">
+      <label>Announcement title<input name="title" required maxLength={120}/></label>
+      <label>Announcement message<textarea name="message" required maxLength={2000}/></label>
+      <label>Expires at (UTC, optional)<input name="expires_at" type="datetime-local"/></label>
+      <button>{data.announcement ? 'Replace announcement' : 'Publish announcement'}</button>
+    </Post>
+  </Block>
   <Block group="general" title="Portal Preferences" terms="display timezone date format time format"><Post data={data} action="/admin/configuration"><div className="config-grid"><Choice name="display_timezone" label="Display timezone" options={data.timezones || []} value={config.display_timezone}/><Choice name="date_format" label="Date format" options={data.date_formats || []} value={config.date_format}/><Choice name="time_format" label="Time format" options={data.time_formats || []} value={config.time_format}/><Hidden name="identity_mode" value={config.identity_mode}/></div><div className="config-actions"><button>Save configuration</button><span>Changes are recorded in the audit history.</span></div></Post></Block>
   <Block group="identity-access" title="Authentication" terms="identity mode local accounts organizational OIDC recovery access"><p>Choose local accounts, organizational OIDC, or both for recovery access.</p><Post data={data} action="/admin/configuration"><Hidden name="display_timezone" value={config.display_timezone}/><Hidden name="date_format" value={config.date_format}/><Hidden name="time_format" value={config.time_format}/><Choice name="identity_mode" label="Identity mode" value={config.identity_mode} options={ [['local', 'Local accounts'], ['oidc', 'OIDC'], ['both', 'Both local and OIDC']] }/><button>Save authentication mode</button></Post></Block>
   <Block group="security" title="Remediation" terms="enable patch worker registry trust validation"><p>Enable service remediation only after the patch worker, registry, trust, and validation infrastructure have been reviewed. Existing jobs continue to a safe terminal state and history remains available.</p><Post data={data} action="/admin/configuration/remediation"><Check name="enabled" label="Enable Remediation" checked={config.remediation_enabled === 'true'}/><button>Save Remediation setting</button></Post></Block>

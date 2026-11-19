@@ -68,6 +68,8 @@ body > #root > header.app-header, header.app-header {
 .notification-popover > a:hover, .notification-popover > a:focus-visible { background: var(--surface-raised); }
 .notification-popover > a.notification-all { margin-top: 2px; color: var(--accent); border-top: 1px solid var(--border); border-radius: 0; }
 .notification-empty { padding: 8px; font-size: var(--text-sm); }
+.bell-announcement { padding: 8px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.bell-announcement p { margin: 4px 0; white-space: pre-wrap; max-height: 28vh; overflow-y: auto; }
 .header-utilities .user-menu > summary { display: inline-flex; align-items: center; gap: 6px; height: 34px; margin-left: 6px; padding: 0 8px 0 4px; }
 .user-avatar {
   display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%;

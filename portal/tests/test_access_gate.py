@@ -11,11 +11,11 @@ from sqlalchemy.pool import StaticPool
 
 from app import main
 from app.access_requests import ClaimInput, claim_route
-from app.account_models import AccountAccessRequest
+from app.account_models import AccountAccessRequest, ServiceAccessRequest
 from app.auth import AuthContext, SESSION_COOKIE, SYSTEM_ROLES, hash_password
 from app.database import Base
 from app.frontend import PAGE_MEDIA_TYPE
-from app.models import Group, Role, User, UserRoleAssignment, UserSession, utcnow
+from app.models import AuditEvent, Group, Role, Service, ServiceArchiveEvent, User, UserRoleAssignment, UserSession, utcnow
 
 PASSWORD = "integration-test-password"
 
@@ -96,7 +96,7 @@ def test_local_login_creates_pending_and_only_contact_message_is_visible(environ
     for method, path in (("GET", "/api/accounts/access-requests"), ("POST", "/scan"), ("POST", "/login")):
         response = client.request(method, path)
         assert response.status_code == 403
-        assert response.json() == {"detail": main.ACCESS_PENDING_MESSAGE}
+        assert response.json()["detail"] == main.ACCESS_PENDING_MESSAGE
 
 
 def test_claim_unlocks_existing_session_and_empty_group_counts_as_access(environment):
@@ -117,8 +117,7 @@ def test_claim_unlocks_existing_session_and_empty_group_counts_as_access(environ
     assert response.headers["location"] == "/admin/accounts"
 
 
-def test_oidc_login_without_roles_registers_pending_request(environment, monkeypatch):
-    client, factory, _ = environment
+def sign_in_oidc(client, monkeypatch):
     monkeypatch.setattr(main, "configured_ca_bundle", lambda configuration: None)
     monkeypatch.setattr(main, "oidc_exchange_code", lambda *args: ({"access_token": "test"}, {}))
     monkeypatch.setattr(main, "verify_oidc_id_token", lambda *args: {
@@ -127,12 +126,87 @@ def test_oidc_login_without_roles_registers_pending_request(environment, monkeyp
     client.cookies.set("cats_oidc_nonce", "nonce")
     response = client.get("/auth/oidc/callback?state=state&code=code")
     assert response.status_code == 303 and response.headers["location"] == "/account/access"
+
+
+def test_oidc_directory_round_trip_scopes_and_retries(environment, monkeypatch):
+    client, factory, ids = environment
+    sign_in_oidc(client, monkeypatch)
     with factory() as db:
         user = db.scalar(select(User).where(User.username == "oidc-new"))
-        assert user and db.get(AccountAccessRequest, user.id).status == "pending"
-        assert user.role_assignments == []
-    assert client.cookies.get(SESSION_COOKIE)
-    assert main.ACCESS_PENDING_MESSAGE in client.get("/").text
+        assert user and user.role_assignments == [] and db.get(AccountAccessRequest, user.id) is None
+        user_id = user.id
+        csrf = db.scalar(select(UserSession.csrf_token).where(UserSession.user_id == user_id))
+        group = db.get(Group, ids[2])
+        outside_group = Group(name="Other group")
+        services = [Service(service_key=key, name=name, groups=[owner], lifecycle_status=status,
+                            description="sensitive description")
+                    for key, name, owner, status in [
+                        ("first", "Alpha & Delta", group, "active"), ("second", "Beta", group, "active"),
+                        ("outside", "Other service", outside_group, "active"), ("stage", "Hidden stage", group, "staged"),
+                        ("archive", "Hidden archive", group, "active")]]
+        db.add_all(services)
+        db.add(ServiceArchiveEvent(service=services[-1], action="archive", performed_by="operator", reason="retired"))
+        db.commit()
+        first, second, outside, staged, archived = [service.id for service in services]
+
+    cookie = client.cookies.get(SESSION_COOKIE)
+    landing = client.get("/account/access")
+    assert landing.status_code == 200 and landing.headers["Cache-Control"] == "no-store"
+    assert "Alpha &amp; Delta" in landing.text and "Beta" in landing.text
+    assert all(text not in landing.text for text in ["Hidden stage", "Hidden archive", "sensitive description", "cats-bootstrap"])
+    assert client.get("/services/first").headers["location"] == "/account/access"
+    assert client.get("/api/accounts/access-requests").status_code == 403
+    headers = {"accept": "application/json"}
+    def submit(service_id, token=csrf):
+        return client.post("/account/access/service", data={"service_id": service_id, "csrf_token": token}, headers=headers)
+    assert submit(first, "invalid").status_code == 403
+    assert submit(staged).status_code == submit(archived).status_code == 404
+    for service in [first, first, second, outside]:
+        assert submit(service).status_code == 303
+    assert client.get("/account/access").text.count("Pending review") == 3
+    with factory() as db:
+        # A pre-upgrade general request cannot be used to grant a wider group.
+        db.add(AccountAccessRequest(user_id=user_id))
+        db.commit()
+        cyber = AuthContext(db.get(User, ids[1]), db.scalar(select(UserSession).where(UserSession.user_id == ids[1])))
+        assert [r["service_id"] for r in main.access_requests.list_pending_requests(db, cyber)] == [first, second]
+        assert len(db.scalars(select(AuditEvent).where(AuditEvent.action == "account.service_access_requested")).all()) == 3
+        with pytest.raises(main.HTTPException, match="Select a pending service request"):
+            claim_route(user_id, ClaimInput(csrf_token="csrf", group_id=ids[2]), db, cyber)
+        with pytest.raises(main.HTTPException) as rejected:
+            claim_route(user_id, ClaimInput(csrf_token="csrf", service_id=outside), db, cyber)
+        assert rejected.value.status_code == 403
+        for service in [first, second]:
+            assert claim_route(user_id, ClaimInput(csrf_token="csrf", service_id=service), db, cyber)["service_id"] == service
+            with pytest.raises(main.HTTPException) as duplicate:
+                claim_route(user_id, ClaimInput(csrf_token="csrf", service_id=service), db, cyber)
+            assert duplicate.value.status_code == 409
+        grants = db.scalars(select(UserRoleAssignment).where(UserRoleAssignment.user_id == user_id)).all()
+        assert {(g.service_id, g.group_id, g.role.name, g.source) for g in grants} == {
+            (first, None, "Assessor", "local"), (second, None, "Assessor", "local")}
+        assert [r.service_id for r in db.scalars(select(ServiceAccessRequest))] == [outside]
+    assert client.cookies.get(SESSION_COOKIE) == cookie
+    assert client.get("/account/access").headers["location"] == "/"
+
+
+def test_pending_oidc_user_can_read_announcement_and_sign_out(environment, monkeypatch):
+    client, factory, _ = environment
+    sign_in_oidc(client, monkeypatch)
+    with factory() as db:
+        user = db.scalar(select(User).where(User.username == "oidc-new"))
+        csrf = db.scalar(select(UserSession.csrf_token).where(UserSession.user_id == user.id))
+        notice = main.announcements.PortalAnnouncement(title="Outage", message="Maintenance <window>")
+        db.add(notice)
+        db.commit()
+        read_path = f"/account/announcements/{notice.id}/read"
+    response = client.get("/account/access")
+    assert "No active services" in response.text and "Maintenance &lt;window&gt;" in response.text
+    assert read_path in response.text and "Mark as read" in response.text
+    response = client.post(read_path, data={"csrf_token": csrf})
+    assert response.status_code == 303 and response.headers["location"] == "/account/access"
+    assert "Mark as read" not in client.get("/account/access").text
+    assert client.post("/logout", data={"csrf_token": csrf}).status_code == 303
+    assert not client.cookies.get(SESSION_COOKIE)
 
 
 @pytest.mark.parametrize("next_path", [None, "/?lifecycle=staged", "/home"])

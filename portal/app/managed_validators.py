@@ -12,6 +12,7 @@ import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from sqlalchemy import select, update
 
 from .auth import require_user, record_audit
@@ -375,7 +376,7 @@ async def form(request, auth):
     return dict(value)
 
 
-@router.get("/admin/validators")
+@router.get("/admin/validators", response_class=HTMLResponse)
 def page(request: Request, auth=Depends(admin), db=Depends(get_db)):
     from .main import templates, page_context
     rows = db.scalars(select(ManagedValidator).order_by(ManagedValidator.name)).all()

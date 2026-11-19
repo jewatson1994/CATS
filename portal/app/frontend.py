@@ -178,6 +178,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "permissions": {permission: bool(can(permission)) if callable(can) else False
                         for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage", "replica.admin", "replica.sync")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
+        "announcement": _fields(context["announcement"], ("id", "title", "message", "expires_at", "unread"))
+                        if user is not None and context.get("announcement") else None,
         "pending_poam_count": _scalar(context.get("pending_poam_count", 0)),
         "actionable_notifications": [_fields(item, ("label", "service", "href"))
                                      for item in context.get("actionable_notifications", [])],
