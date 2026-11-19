@@ -8,7 +8,7 @@ export interface AdminNavItem {key: string; href: string; label: string; allowed
 /** Section and icon for each administration destination (presentation only). */
 const sections: [string, string[]][] = [
   ['Access', ['accounts']],
-  ['Platform', ['configuration']],
+  ['Platform', ['configuration', 'diagnostics']],
   ['Policy', ['general', 'compliance', 'vulnerability', 'risk', 'watchlist']],
   ['Delivery', ['release-destinations']],
 ];
@@ -38,6 +38,7 @@ export function AdminTabs({data, selected}: {data: PageData; selected: string}) 
   const items: AdminNavItem[] = [
     {key: 'accounts', href: '/admin', label: 'Accounts & roles', allowed: can(data, 'user.manage') || can(data, 'role.manage') || data.may_assign_roles === true || data.may_manage_accounts === true},
     {key: 'configuration', href: '/admin/configuration', label: 'Settings', allowed: can(data, 'config.manage')},
+    {key: 'diagnostics', href: '/admin/diagnostics', label: 'Diagnostics Center', allowed: data.may_view_diagnostics === true},
     {key: 'general', href: `/admin/general-policy${group}`, label: 'General Policy', allowed: can(data, 'audit.view') || can(data, 'config.manage')},
     {key: 'compliance', href: '/admin/compliance-frameworks', label: 'Hardening Policy', allowed: can(data, 'config.manage')},
     {key: 'vulnerability', href: `/admin/compliance${group}`, label: 'Vulnerability Policy', allowed: can(data, 'config.manage')},

@@ -31,6 +31,7 @@ MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.h
 
 
 MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html", "imported_releases.html"}
+MIGRATED_PAGES |= {"diagnostics.html"}
 
 
 def _field(value, name, default=None):
@@ -170,6 +171,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "read_only": bool(context.get("read_only")),
         "may_claim_accounts": bool(context.get("may_claim_accounts")),
         "may_manage_accounts": bool(context.get("may_manage_accounts")),
+        "may_view_diagnostics": bool(context.get("may_view_diagnostics")),
         "current_user": _fields(user, ("display_name", "theme")) if user is not None else None,
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},
@@ -299,6 +301,9 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
                                            ("excepted_count", "excepted", "policy_excepted")):
                 row[target] = len(_field(view, first, []) or []) + len(_field(view, second, []) or [])
             data["views"].append(row)
+    if name in {"request_error.html", "boozled.html"} and context.get("diagnostic"):
+        from .diagnostics import public_diagnostic
+        data["diagnostic"] = public_diagnostic(context["diagnostic"])
     if name.startswith("service") and request.query_params.get("saved") == "1":
         data["saved"] = True
     # Client page-cache partition: session + user + authorization revision.

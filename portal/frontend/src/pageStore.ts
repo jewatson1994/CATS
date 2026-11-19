@@ -1,4 +1,5 @@
-import {ApiError, PAGE_MEDIA_TYPE, sessionEnded, type PageEnvelope} from './api';
+import {ApiError, detailMessage, PAGE_MEDIA_TYPE, sessionEnded, type PageEnvelope} from './api';
+import {localDiagnostic, sanitizeDiagnostic} from './diagnostics';
 
 /**
  * In-memory page workspace. A UX optimization only: never an authorization
@@ -48,7 +49,8 @@ async function fetchPage(location: string, signal: AbortSignal): Promise<CachedP
   const data: any = JSON.parse(text);
   if (!response.ok) {
     const detail = data?.detail;
-    throw new ApiError(typeof detail === 'string' ? detail : 'The request could not be completed.', response.status);
+    const message = sanitizeDiagnostic(detailMessage(detail) || data?.diagnostic?.summary || 'The request could not be completed.');
+    throw new ApiError(message, response.status, sanitizeDiagnostic(data?.diagnostic || localDiagnostic(message, response.status, `GET ${target.pathname}`)), sanitizeDiagnostic(detail));
   }
   return {envelope: data as PageEnvelope, bytes: text.length, digest: digestText(text), fetchedAt: Date.now()};
 }

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Page, type SelfServiceData } from './self_service';
 const mocks = vi.hoisted(() => ({ request: vi.fn(), retry: vi.fn(), job: null as any }));
@@ -9,6 +9,11 @@ const data: SelfServiceData = {
   authenticated_ingest: true, authenticated_services: [{ service_key: 'a', name: 'A' }, { service_key: 'b', name: 'B' }],
   service_version_options: { a: ['1'], b: ['2'] }, ingest_service_id: 'a', ingest_service_version: '1',
 };
+async function inspectionSettled() {
+  await waitFor(() => expect(screen.queryByText('Inspecting Compose documents and variables…')).not.toBeInTheDocument());
+  // Submission reads validation published by ComposeFiles' effect after its DOM update.
+  await act(async () => {});
+}
 describe('self service workspace', () => {
   afterEach(() => { cleanup(); vi.restoreAllMocks(); });
   beforeEach(() => { mocks.job = null; mocks.request.mockReset().mockResolvedValue({page: 'self_service', data}); mocks.retry.mockReset(); });
@@ -24,9 +29,10 @@ describe('self service workspace', () => {
       : {page: 'self_service', data});
     fireEvent.change(uploads, {target: {files}});
     await screen.findByText('Detected Compose documents (2)');
+    await inspectionSettled();
     fireEvent.change(screen.getByLabelText(/Compose file order/), {target: {value: 'compose.yaml\ncompose.prod.yaml'}});
     fireEvent.change(screen.getByLabelText(/Compose profiles/), {target: {value: 'production,monitoring'}});
-    await waitFor(() => expect(screen.queryByText('Inspecting Compose documents and variables…')).not.toBeInTheDocument());
+    await inspectionSettled();
     expect((mocks.request.mock.calls[1][1].body as FormData).get('compose_profiles')).toBe('production,monitoring');
     mocks.request.mockClear(); formData.mockClear();
     const button = screen.getByRole('button', {name: 'Preview Compose'});
@@ -53,6 +59,7 @@ describe('self service workspace', () => {
     render(<Page data={data} />);
     fireEvent.change(screen.getByLabelText(/Docker Compose files and companions/), {target: {files: [new File(['bundle'], 'project.zip')]}});
     await screen.findByText('Detected Compose documents (2)');
+    await inspectionSettled();
     const preview = screen.getByRole('button', {name: 'Preview Compose'});
     fireEvent.click(preview);
     expect(mocks.request).toHaveBeenCalledTimes(1);
@@ -62,7 +69,7 @@ describe('self service workspace', () => {
     fireEvent.click(preview);
     expect(mocks.request).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('alert')).toHaveTextContent('Wait for Compose file inspection to finish.');
-    await waitFor(() => expect(screen.queryByText('Inspecting Compose documents and variables…')).not.toBeInTheDocument());
+    await inspectionSettled();
     fireEvent.click(preview);
     await waitFor(() => expect(preview).toBeEnabled());
     expect(mocks.request).toHaveBeenCalledTimes(3);

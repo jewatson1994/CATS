@@ -5,6 +5,8 @@ import {digestText, pageStore, type PageStore} from './pageStore';
 import {afterPaint, installPerformanceTools, recordTiming} from './perf';
 import {Shell} from './components/Shell';
 import {ErrorBoundary} from './components/ErrorBoundary';
+import {ErrorDetails} from './components/ErrorDetails';
+import {diagnosticNotices, type Diagnostic} from './diagnostics';
 import {Page as Home} from './features/home';
 import {Page as Login} from './features/login';
 import {Page as Dashboard} from './features/dashboard';
@@ -27,6 +29,7 @@ const loaders: Record<string, () => Promise<any>> = {
   './features/cyber_approvals': () => import('./features/cyber_approvals'),
   './features/admin': () => import('./features/admin'),
   './features/audit': () => import('./features/audit'),
+  './features/diagnostics': () => import('./features/diagnostics'),
   './features/jobs': () => import('./features/jobs'),
   './features/compliance': () => import('./features/compliance'),
   './features/compliance_frameworks': () => import('./features/compliance_frameworks'),
@@ -105,6 +108,7 @@ const Staging = lazyPage('./features/staging', 'Page');
 const Configuration = lazyPage('./features/configuration', 'Page');
 const Validators = lazyPage('./features/validators', 'Page');
 const Audit = lazyPage('./features/audit', 'Page');
+const Diagnostics = lazyPage('./features/diagnostics', 'Page');
 const GeneralPolicy = lazyPage('./features/general_policy', 'Page');
 const EvidencePolicy = lazyPage('./features/evidence_policy', 'Page');
 const WorkflowPolicy = lazyPage('./features/workflow_policy', 'Page');
@@ -124,7 +128,7 @@ export function preloadPages() {
 
 const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
   '/cyber-approvals', '/approved-releases', '/imported-releases', '/admin/approved-release-destinations',
-  '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration',
+  '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration', '/admin/diagnostics',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
   '/admin/compliance-frameworks', '/admin/dependency-watchlist']);
 /** Only page routes are intercepted. Export, auth and artifact links remain native. */
@@ -151,13 +155,13 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   jobs: Jobs, remediations: Remediations, service_remediations: ServiceRemediations, remediation_report: RemediationReport, requests: Requests,
   service_architecture: ServiceArchitecture,
   risk_intelligence: RiskIntelligence,
-  admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit,
+  admin: Admin, staging: Staging, configuration: Configuration, validators: Validators, audit: Audit, diagnostics: Diagnostics,
   general_policy: GeneralPolicy, evidence_policy: EvidencePolicy, workflow_policy: WorkflowPolicy,
   compliance: Compliance, compliance_frameworks: ComplianceFrameworks, dependency_watchlist: DependencyWatchlist,
   request_error: ({data}) => <section className="panel padded" role="alert"><h1>{data.title || 'Request could not be completed'}</h1>
-    <p>{data.detail}</p><a href={data.home_url || '/'}>Return to CATS</a></section>,
+    <ErrorDetails diagnostic={data.diagnostic} message={typeof data.detail === 'string' ? data.detail : undefined} admin={data.may_view_diagnostics === true}/><a href={data.home_url || '/'}>Return to CATS</a></section>,
   boozled: ({data}) => <section className="panel padded" role="alert"><h1>Something went wrong</h1>
-    <p>Please try again.</p><a href={data.home_url || '/'}>Return to CATS</a></section>,
+    <ErrorDetails diagnostic={data.diagnostic} message="Please try again." admin={data.may_view_diagnostics === true}/><a href={data.home_url || '/'}>Return to CATS</a></section>,
 };
 
 /** Readable browser tab titles: page name, then the service it concerns, then CATS. */
@@ -173,7 +177,7 @@ const pageNames: Record<string, string> = {
   service_definitions: 'Service definitions', exchange: 'Data exchange', purpose_export_template: 'Export template', jobs: 'Jobs',
   remediations: 'Remediations', service_remediations: 'Remediations', remediation_report: 'Remediation results', requests: 'Requests',
   service_architecture: 'Architecture', risk_intelligence: 'Risk Policy', admin: 'Accounts and roles', staging: 'Service staging',
-  configuration: 'Settings', validators: 'Validators', audit: 'Audit Policy', general_policy: 'General Policy', evidence_policy: 'Evidence Policy',
+  configuration: 'Settings', validators: 'Validators', audit: 'Audit Policy', diagnostics: 'Diagnostics Center', general_policy: 'General Policy', evidence_policy: 'Evidence Policy',
   workflow_policy: 'Workflow Policy', compliance: 'Vulnerability Policy', compliance_frameworks: 'Hardening Policy',
   dependency_watchlist: 'Dependency Watchlist', request_error: 'Request could not be completed', boozled: 'Something went wrong',
 };
@@ -212,7 +216,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
   const [location, setLocation] = useState(currentLocation);
   const generation = useRef(0);
   const [view, setView] = useState<View | null>(initial ? {location, envelope: initial, generation: 0} : null);
-  const [error, setError] = useState<{location: string; message: string; signIn?: boolean} | null>(null);
+  const [error, setError] = useState<{location: string; message: string; signIn?: boolean; diagnostic?: Diagnostic} | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const locationRef = useRef(location);
@@ -242,6 +246,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
     const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel(SESSION_CHANNEL) : null;
     const post = (message: Record<string, unknown>) => {try {channel?.postMessage(message);} catch { /* closed */ }};
     const forget = () => {
+      diagnosticNotices.clear();
       store.clear();
       generation.current += 1;
       setView(null);
@@ -258,7 +263,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
     };
     if (initial) post({type: 'session', session: initial.sessionIdentity || '', scope: initial.cacheScope || '',
                        signedOut: initial.page === 'login' && !initial.sessionIdentity});
-    const stopScope = store.onScopeChange(scope => post({type: 'session', session: store.currentSession, scope}));
+    const stopScope = store.onScopeChange(scope => {diagnosticNotices.clear(); post({type: 'session', session: store.currentSession, scope});});
     // This tab learned the session ended (any request answered 401 or
     // redirected to sign-in): forget and hide everything. Not re-announced:
     // other tabs learn it from their own next request, and announcing here
@@ -272,7 +277,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
     // Sign-out from this tab: forget locally now. Other tabs are told by the
     // sign-in page once the sign-out has actually been processed (announcing
     // here would race the logout request).
-    const ending = () => {store.clear();};
+    const ending = () => {diagnosticNotices.clear(); store.clear();};
     window.addEventListener(SESSION_ENDING_EVENT, ending);
     return () => {
       stop(); stopScope(); stopSession(); window.removeEventListener(SESSION_ENDING_EVENT, ending); channel?.close();
@@ -360,7 +365,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
         if (cause instanceof ApiError && cause.status === 401) {
           // The session ended: the store has already forgotten every page.
           setView(null);
-          setError({location, message: cause.message, signIn: true});
+          setError({location, message: cause.message, signIn: true, diagnostic: cause.diagnostic});
         } else if (cause instanceof ApiError && ACCESS_ERRORS.has(cause.status)) {
           // Access to this page changed: never keep showing the saved copy.
           store.delete(location);
@@ -383,7 +388,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
       // when the session ended.
       const ended = cause instanceof ApiError && cause.status === 401;
       if (ended) setView(null);
-      setError({location, message: cause instanceof Error ? cause.message : 'Unable to load the page.', signIn: ended});
+      setError({location, message: cause instanceof Error ? cause.message : 'Unable to load the page.', signIn: ended, diagnostic: cause instanceof ApiError ? cause.diagnostic : undefined});
     });
     return () => controller.abort();
     // The page result must not restart its own request.
@@ -418,7 +423,7 @@ export function App({initial, store = pageStore}: {initial: PageEnvelope | null;
         {previous && <p className="sr-only" role="status">Loading page…</p>}
         <ErrorBoundary key={`${shown.location}#${shown.generation}`}><Suspense fallback={<section className="panel padded" aria-busy="true"><p role="status">Loading page…</p></section>}><Page data={shown.envelope.data}/></Suspense></ErrorBoundary>
       </div> : <section className="panel padded" aria-busy={!failed}>
-        {failed ? <div role="alert"><h1>Unable to load page</h1><p>{failed}</p>{signIn
+        {failed ? <div role="alert"><h1>Unable to load page</h1><ErrorDetails diagnostic={error?.diagnostic} message={failed} admin={current?.data.may_view_diagnostics === true}/>{signIn
           ? <a className="button" href={`/login?next=${encodeURIComponent(location)}`}>Sign in</a>
           : <button onClick={() => setAttempt(value => value + 1)}>Retry</button>}</div>
           : <p role="status">Loading page…</p>}

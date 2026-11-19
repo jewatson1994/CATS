@@ -15,6 +15,7 @@ from . import scan_intelligence, security_data
 from .auth import record_audit
 from .database import SessionLocal
 from .durable_jobs import JobCancelled, JobError, LeaseLost, now, run_worker, submit
+from .diagnostics import capture_failure, sanitize
 from .models import PortalSetting, SecurityDataSource
 from .patching import redact
 from .trusted_ca import additional_pem
@@ -90,7 +91,9 @@ def refresh_source(db, record, *, auth=None, upload=None, grype_listing=None, sc
         if scheduled_job:
             before_activate()
         record.status = "FAILED"
-        record.failure_reason = f"{type(exc).__name__}: {redact(exc)}"[:1000]
+        diagnostic = capture_failure(exc, component="Security data worker", operation=f"{action} security data source",
+            resource={"source_id": record.key}, context={"failed_stage": "security data installation", **detail})
+        record.failure_reason = f"{type(exc).__name__}: {sanitize(redact(exc))}"[:850] + f"; diagnostic {diagnostic['error_id']}"
         record_audit(db, auth, "security_data.update_failed", "security_data_source", record.key,
                      reason=record.failure_reason, **detail)
         return False
@@ -145,7 +148,9 @@ def handler(context, payload):
         root = Path(os.getenv(variable, scan_intelligence.DEFAULT_SOURCES[key]))
         try:
             scan_intelligence.prune_scheduled(root)
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError) as exc:
+            capture_failure(exc, component="Security data worker", operation="Retire older security databases",
+                resource={"source_id": key}, context={"failed_stage": "database retention cleanup"})
             logging.getLogger(__name__).exception("Could not retire older %s databases", key)
     return {"outcome": outcome}
 

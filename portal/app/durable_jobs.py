@@ -15,12 +15,13 @@ import threading
 import time
 import uuid
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func, select, update, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func, select, update, text, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base, SessionLocal
 from .imported_services import is_imported_service
+from .diagnostics import build_diagnostic, record_diagnostic, enqueue_diagnostic, sanitize, correlation
 
 
 def now():
@@ -138,6 +139,7 @@ def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
         from fastapi import HTTPException
         raise HTTPException(429, "Background work queue is full; retry later")
     row = DurableJob(id=uuid.uuid4().hex, kind=kind, payload=payload,
+        correlation_id=correlation.get() or uuid.uuid4().hex,
         service_id=service_id, requested_by_id=requested_by_id,
         source_execution_id=source_execution_id, version=version,
         dedupe_key=dedupe_key, max_attempts=max(1, min(5, max_attempts)))
@@ -159,22 +161,51 @@ def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
 
 def recover(db, kinds):
     """Expired owners are fenced; attempts are bounded even after process death."""
+    diagnostics = []
     rows = db.scalars(select(DurableJob).where(DurableJob.kind.in_(kinds),
-        DurableJob.status == "running", DurableJob.lease_until < now()).with_for_update(skip_locked=True)).all()
+        DurableJob.status == "running", or_(DurableJob.lease_until < now(), DurableJob.lease_until.is_(None)))
+        .with_for_update(skip_locked=True)).all()
     for row in rows:
         terminal = row.cancel_requested or row.attempts >= row.max_attempts
+        diagnostic = job_diagnostic(row, TimeoutError("Worker lease expired before completion"),
+            code="worker_lease_expired", retryable=not terminal)
+        row.result = {**(row.result or {}), "diagnostic": diagnostic}
         row.status = "cancelled" if row.cancel_requested else "failed" if terminal else "queued"
+        diagnostic["status"] = row.status
+        diagnostics.append(diagnostic)
         row.stage = "Worker lease expired" if terminal else "Waiting to retry after worker loss"
         row.error = "Worker stopped before completing this job. Review the result before retrying." if terminal else None
         row.completed_at = now() if terminal else None
         row.available_at = now() + timedelta(seconds=min(300, 5 * 2 ** row.attempts))
         row.lease_token, row.lease_until = None, None
     db.commit()
+    return diagnostics
+
+
+def job_diagnostic(row, error, **kwargs):
+    family = row.kind.split("_", 1)[0]
+    command = getattr(error, "cmd", None)
+    tool = getattr(error, "tool", None)
+    if tool is None and isinstance(command, (list, tuple)) and command:
+        tool = os.path.basename(str(command[0]))
+    return build_diagnostic(error, component=family, operation=row.kind,
+        correlation_id=row.correlation_id, resource={"job_id": row.id, "jobs_view_id": row.id, "service_id": row.service_id},
+        context={"stage": row.stage, "last_successful_stage": (row.result or {}).get("last_successful_stage"),
+                 "worker_id": row.worker_id, "attempts": row.attempts, "max_attempts": row.max_attempts,
+                 "heartbeat_at": row.heartbeat_at.isoformat() if row.heartbeat_at else None,
+                 "tool": tool, "exit_code": getattr(error, "exit_code", getattr(error, "returncode", None)),
+                 "timeout_seconds": getattr(error, "timeout_seconds", getattr(error, "timeout", None)) or
+                                    int(os.getenv("CATS_JOB_MAX_RUNTIME_SECONDS", "0")) or None}, **kwargs)
 
 
 def claim(kinds, worker_id, session_factory=SessionLocal):
     with session_factory() as db:
-        recover(db, kinds)
+        diagnostics = recover(db, kinds)
+        for diagnostic in diagnostics:
+            if session_factory is SessionLocal:
+                enqueue_diagnostic(diagnostic)
+            else:
+                record_diagnostic(diagnostic, session_factory=session_factory)
         row = db.scalar(select(DurableJob).where(DurableJob.kind.in_(kinds),
             DurableJob.status == "queued", DurableJob.available_at <= now(),
             DurableJob.cancel_requested.is_(False)).order_by(DurableJob.created_at)
@@ -201,8 +232,9 @@ def claim(kinds, worker_id, session_factory=SessionLocal):
 
 
 class JobContext:
-    def __init__(self, job, session_factory=SessionLocal):
-        self.job, self.session_factory = job, session_factory
+    def __init__(self, job, session_factory=None):
+        self.record_factory = session_factory
+        self.job, self.session_factory = job, session_factory or SessionLocal
         self.lost = threading.Event()
 
     def _owned(self, db):
@@ -222,7 +254,12 @@ class JobContext:
             row = self._owned(db)
             if row.cancel_requested:
                 raise JobCancelled()
-            row.stage = stage[:160]
+            previous = row.stage
+            row.stage = sanitize(stage)[:160]
+            if previous != row.stage:
+                row.result = {**(row.result or {}), "last_successful_stage": previous,
+                    "stage_history": [*(row.result or {}).get("stage_history", [])[-19:],
+                        {"stage": row.stage, "at": now().isoformat()}]}
             if progress is not None:
                 row.progress = max(0, min(99, int(progress)))
             db.commit()
@@ -243,12 +280,17 @@ class JobContext:
             row.lease_until = now() + timedelta(seconds=setting("CATS_JOB_LEASE_SECONDS", 120))
             db.commit()
 
-    def finish(self, result=None, error=None, cancelled=False, retry=False):
+    def finish(self, result=None, error=None, cancelled=False, retry=False, diagnostic=None):
         with self.session_factory() as db:
             row = self._owned(db)
             cancelled = cancelled or row.cancel_requested
             retry = retry and not cancelled and row.attempts < row.max_attempts
             status = "cancelled" if cancelled else "queued" if retry else "failed" if error else "completed"
+            if error and diagnostic is None:
+                diagnostic = job_diagnostic(row, error, retryable=retry)
+            if diagnostic:
+                diagnostic = {**diagnostic, "status": status, "retryable": retry}
+                row.result = {**(row.result or {}), "diagnostic": diagnostic}
             row.stage = "Waiting to retry" if retry else status.capitalize()
             row.error = error
             if result is not None:
@@ -263,20 +305,38 @@ class JobContext:
             row.available_at = now() + timedelta(seconds=min(300, 5 * 2 ** row.attempts))
             row.lease_token, row.lease_until = None, None
             db.commit()
+        if diagnostic:
+            if self.record_factory is None:
+                enqueue_diagnostic(diagnostic)
+            else:
+                record_diagnostic(diagnostic, session_factory=self.record_factory)
 
 
-def execute(job, handler, session_factory=SessionLocal):
+def execute(job, handler, session_factory=None):
     ctx = JobContext(job, session_factory)
+    session_factory = session_factory or SessionLocal
     done = threading.Event()
+    runtime_limit = max(0, int(os.getenv("CATS_JOB_MAX_RUNTIME_SECONDS", "0")))
+    deadline = time.monotonic() + runtime_limit if runtime_limit else None
     def renew():
-        while not done.wait(max(1, setting("CATS_JOB_LEASE_SECONDS", 120) // 3)):
+        while not done.wait(max(1, min(setting("CATS_JOB_LEASE_SECONDS", 120) // 3,
+                                      runtime_limit or 120))):
             try:
+                if deadline is not None and time.monotonic() >= deadline:
+                    with session_factory() as db:
+                        row = ctx._owned(db)
+                        diagnostic = job_diagnostic(row, TimeoutError("Worker operation timed out"),
+                            code="worker_timeout", retryable=False)
+                    ctx.finish(error=diagnostic["summary"], diagnostic=diagnostic)
+                    ctx.lost.set()
+                    return
                 ctx.heartbeat()
             except Exception:
                 ctx.lost.set()
                 return
     thread = threading.Thread(target=renew, daemon=True)
     thread.start()
+    correlation_token = correlation.set(job.correlation_id)
     try:
         ctx.check()
         with session_factory() as db:
@@ -296,10 +356,16 @@ def execute(job, handler, session_factory=SessionLocal):
         logging.getLogger(__name__).error("job_failure kind=%s correlation_id=%s exception_type=%s",
             job.kind, job.correlation_id, type(exc).__name__)
         try:
-            ctx.finish(error=f"{safe} Reference: {job.correlation_id}", retry=not isinstance(exc, JobError))
+            with session_factory() as db:
+                row = ctx._owned(db)
+                diagnostic = job_diagnostic(row, exc, summary=sanitize(safe) if isinstance(exc, JobError) else None,
+                    retryable=not isinstance(exc, JobError))
+            ctx.finish(error=f"{sanitize(safe)} Reference: {job.correlation_id}",
+                diagnostic=diagnostic, retry=not isinstance(exc, JobError))
         except LeaseLost:
             pass
     finally:
+        correlation.reset(correlation_token)
         done.set()
         thread.join(timeout=2)
 
@@ -326,6 +392,8 @@ def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
                         future.result()
                     except Exception as exc:
                         logging.getLogger(__name__).error("worker_job_failure exception_type=%s", type(exc).__name__)
+                        enqueue_diagnostic(build_diagnostic(exc, component="worker", operation="job_dispatch",
+                            context={"worker_id": worker_id, "kinds": list(kinds)}))
                 if maintenance and time.monotonic() - last_maintenance >= 60:
                     # Failed reconciliation must neither busy-loop nor prevent
                     # already queued work from running until the next interval.
@@ -334,6 +402,8 @@ def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
                         maintenance()
                     except Exception as exc:
                         logging.getLogger(__name__).error("worker_maintenance_failure exception_type=%s", type(exc).__name__)
+                        enqueue_diagnostic(build_diagnostic(exc, component="worker", operation="maintenance",
+                            context={"worker_id": worker_id, "kinds": list(kinds)}))
                 if len(active) < max_workers and not stop.is_set():
                     job = claim(kinds, worker_id)
                     if job:
@@ -345,6 +415,8 @@ def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
                 stop.wait(2)
             except Exception as exc:
                 logging.getLogger(__name__).error("worker_loop_failure exception_type=%s", type(exc).__name__)
+                enqueue_diagnostic(build_diagnostic(exc, component="worker", operation="claim",
+                    context={"worker_id": worker_id, "kinds": list(kinds)}))
                 stop.wait(5)
         # Executor shutdown waits for active handlers; their heartbeat threads
         # remain alive while they finish. No queued job is claimed on shutdown.

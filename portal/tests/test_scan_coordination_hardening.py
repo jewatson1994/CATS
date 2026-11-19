@@ -43,6 +43,22 @@ def test_heartbeat_reports_actual_lease(database):
     assert response["lease_until"] >= claim["lease_until"]
 
 
+def test_failure_keeps_stage_and_tool_evidence_without_history(database, monkeypatch):
+    monkeypatch.setattr(jobs, 'record_diagnostic', lambda *args, **kwargs: False)
+    enqueue()
+    claim = jobs.claim('worker')
+    jobs.heartbeat('job', claim['attempt_id'], claim['attempt_token'], 'scan')
+    jobs.report_failure('job', claim['attempt_id'], claim['attempt_token'], 'scanner_execution',
+        'Tool failed: token=hidden-value', context={'exit_code': 17, 'tool': 'grype',
+            'timeout_seconds': 90, 'worker_id': 'forged', 'password': 'hidden-value'})
+    diagnostic = jobs.DurableJobs()['job']['diagnostic']
+    assert diagnostic['context']['stage'] == 'scan'
+    assert diagnostic['context']['last_successful_stage'] == 'prepare'
+    assert diagnostic['context']['worker_id'] == 'worker'
+    assert diagnostic['context']['exit_code'] == 17
+    assert 'hidden-value' not in str(diagnostic)
+
+
 @pytest.mark.parametrize("token", ["é" * 40, "replace-with-a-long-random-scan-worker-token"])
 def test_invalid_unicode_and_placeholder_credentials_fail_closed(monkeypatch, token):
     monkeypatch.delenv("CATS_SCAN_WORKER_CREDENTIALS", raising=False)

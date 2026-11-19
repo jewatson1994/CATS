@@ -2,12 +2,15 @@ import {useEffect, useMemo, useState} from 'react';
 import {requestJson, type PageData} from '../api';
 import {DataGrid, type GridColumn} from '../components/DataGrid';
 import {Callout, EmptyState, KeyValueGrid, PageHeader, StatusBadge} from '../components/ui';
+import {ErrorDetails} from '../components/ErrorDetails';
+import type {Diagnostic} from '../diagnostics';
 
 interface Job {
   id: string; kind: string; service?: string; validator?: string; version?: string;
   requested_by: string; status: string; stage: string; progress?: number;
   elapsed_seconds: number; error?: string; correlation_id?: string;
   result_url?: string; download_url?: string; can_retry: boolean; can_cancel: boolean;
+  diagnostic?: Diagnostic; attempts?: number; max_attempts?: number; worker_id?: string; heartbeat_at?: string;
 }
 interface Snapshot {jobs: Job[]; counts: Record<string, number>; limit: number}
 const labels: Record<string, string> = {export: 'Export', scan: 'Scan', 'remediation_plan': 'Remediation plan',
@@ -75,14 +78,14 @@ export function Page({data}: {data: PageData}) {
       render: job => <span className="cell-stack"><span>{job.service || job.validator || 'Portfolio'}</span>{job.version && <small>{job.version}</small>}</span>},
     {key: 'requested_by', header: 'Requested by', value: job => job.requested_by, render: job => job.requested_by},
     {key: 'status', header: 'State', hideable: false, value: job => job.status, render: job => <StatusBadge value={job.status} size="sm"/>},
-    {key: 'stage', header: 'Stage', wrap: true, minWidth: 160, value: job => job.stage, render: job => <span className="cell-stack"><span>{job.stage}</span>
+    {key: 'stage', header: 'Stage', wrap: true, minWidth: 160, value: job => job.stage, render: job => <div className="cell-stack"><span>{job.stage}</span>
       {job.status === 'running' && job.progress != null && <progress max={100} value={job.progress} aria-label="Job progress"/>}
-      {job.error && <span className="text-danger cell-error">{job.error}</span>}</span>},
+      {job.diagnostic ? <ErrorDetails diagnostic={job.diagnostic} admin={data.may_view_diagnostics === true}/> : job.error && <span className="text-danger cell-error">{job.error}</span>}</div>},
     {key: 'elapsed', header: 'Elapsed', type: 'number', value: job => job.elapsed_seconds, render: job => duration(job.elapsed_seconds)},
     {key: 'actions', header: 'Actions', minWidth: 120, render: job => actions(job)},
     // actions() reads the latest busy state on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  ], [busy, data.csrf_token]);
+  ], [busy, data.csrf_token, data.may_view_diagnostics]);
   const counts = Object.entries(snapshot?.counts || {});
   return <><PageHeader eyebrow="Operations" title="Jobs" description="Scans, remediation, exports, and validator provisioning. Updates every five seconds."/>
     {error && <Callout tone="danger" title="Jobs could not be refreshed">{error}</Callout>}
@@ -91,7 +94,10 @@ export function Page({data}: {data: PageData}) {
     {selected && <section className="panel padded selected-job" aria-label="Selected job"><div className="selected-job-head"><h2>{kindLabel(selected.kind)} — {selected.status}</h2><StatusBadge value={selected.status}/></div>
       <KeyValueGrid columns={3} items={[['Stage', selected.stage], ['Elapsed', duration(selected.elapsed_seconds)], ['Requested by', selected.requested_by],
         ['Service / validator', selected.service || selected.validator || 'Portfolio'], ['Version', selected.version], ['Correlation ID', selected.correlation_id && <code>{selected.correlation_id}</code>]]}/>
-      {selected.error && <p role="alert" className="text-danger">{selected.error}</p>}
+      {(selected.diagnostic || selected.error) && <ErrorDetails diagnostic={selected.diagnostic} message={selected.error} admin={data.may_view_diagnostics === true}/>}
+      {(selected.attempts != null || selected.worker_id || selected.heartbeat_at) && <KeyValueGrid columns={3} items={[
+        ['Attempts', selected.max_attempts ? `${selected.attempts ?? 0} / ${selected.max_attempts}` : selected.attempts],
+        ['Worker', selected.worker_id], ['Last heartbeat', selected.heartbeat_at]]}/>}
       <div className="selected-job-actions">{actions(selected)}</div></section>}
     <section className="panel"><DataGrid<Job> id="jobs" label="Jobs" columns={columns} rows={snapshot?.jobs || []} rowKey={job => job.id}
       loading={!snapshot && !error} sort={{mode: 'client'}} rowClassName={job => job.id === selectedId ? 'dg-row-current' : undefined}

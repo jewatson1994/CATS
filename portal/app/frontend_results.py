@@ -1,6 +1,7 @@
 """Public result projections deliberately exclude worker credentials and paths."""
 from collections.abc import Mapping
 from .frontend_compose import compose_data
+from .diagnostics import public_diagnostic
 
 
 def fields(source, names):
@@ -15,6 +16,8 @@ def rows(source, names):
 def public_results_data(context):
     data = fields(context, ('vulnerability_count', 'configuration_count'))
     data['job'] = fields(context.get('job'), ('job_id', 'status', 'started_at', 'finished_at'))
+    if (context.get('job') or {}).get('diagnostic'):
+        data['job']['diagnostic'] = public_diagnostic(context['job']['diagnostic'])
     data['service'] = fields(context.get('service'), ('name',))
     data['missing_evidence'] = bool(context.get('skipped_images') or context.get('skipped_charts'))
     data['rows'] = rows(context.get('rows'), ('type', 'finding', 'title', 'scanner', 'severity', 'state', 'image', 'target', 'kev', 'epss', 'details', 'remediation'))
@@ -39,8 +42,12 @@ def public_results_data(context):
 
 def patch_results_data(context):
     data = {'job': fields(context.get('job'), ('job_id', 'status', 'started_at', 'finished_at', 'source_image'))}
+    if (context.get('job') or {}).get('diagnostic'):
+        data['job']['diagnostic'] = public_diagnostic(context['job']['diagnostic'])
     result = context.get('result') or {}
     data['result'] = fields(result, ('status', 'source_image', 'patched_image', 'reason', 'delivery_status', 'delivery_error', 'signature_status', 'immutable_destination', 'vulnerabilities_before', 'vulnerabilities_after', 'vulnerabilities_removed', 'vulnerabilities_unresolved', 'vulnerabilities_remaining', 'patch_status', 'output_mode', 'artifact_available', 'destination_image'))
+    if result.get('diagnostic'):
+        data['result']['diagnostic'] = public_diagnostic(result['diagnostic'])
     if result.get('signature'):
         data['result']['signature'] = fields(result['signature'], ('key_fingerprint', 'verified_at', 'generator', 'generator_version'))
     data['result']['vulnerability_results'] = []

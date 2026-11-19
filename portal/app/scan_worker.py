@@ -387,7 +387,10 @@ class Worker:
             if not lost.is_set() and not STOP.is_set():
                 try:
                     self.request("POST", suffix + "/failure", headers=headers,
-                        json={"category": category, "reason": message, "log_tail": log_tail[0]})
+                        json={"category": category, "reason": message, "log_tail": log_tail[0],
+                            "context": {"stage": phase[0], "exception_type": type(exc).__name__,
+                                "timeout_seconds": int(os.getenv("CATS_SCAN_JOB_TIMEOUT", "3600")),
+                                "exit_code": process.returncode if process is not None else None}})
                 except requests.RequestException:
                     logging.getLogger(__name__).warning("Failure report unavailable; fenced lease recovery will retry %s", attempt)
             raise

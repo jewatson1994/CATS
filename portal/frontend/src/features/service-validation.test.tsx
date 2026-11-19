@@ -1,8 +1,16 @@
 import {afterEach, expect, it} from 'vitest';
 import {cleanup, render, screen} from '@testing-library/react';
 import {Page} from './service-validation';
+import {localDiagnostic} from '../diagnostics';
 
 afterEach(cleanup);
+it('shows the persisted validation diagnostic with authorized admin inspection', () => {
+  const diagnostic = {...localDiagnostic('Cluster creation timed out.'), error_id:'validation-error', cause:null, resolution:['Check validator capacity, then retry.']};
+  render(<Page data={{may_view_diagnostics:true,view:{service:{id:1,service_key:'demo'}},validation:{status:'FAILED',phase:'COMPLETE',cleanup_status:'COMPLETE',diagnostics:{diagnostic}}}}/>);
+  expect(screen.getByText('Cluster creation timed out.')).toBeInTheDocument();
+  expect(screen.getByText('The cause has not been confirmed.')).toBeInTheDocument();
+  expect(screen.getByRole('link',{name:'Inspect in Diagnostics Center',hidden:true})).toHaveAttribute('href','/admin/diagnostics?error_id=validation-error');
+});
 it('shows the observed failure and actionable guidance outside technical diagnostics', () => {
   render(<Page data={{view:{service:{id:1,service_key:'demo'}},validation:{status:'FAILED',phase:'COMPLETE',cleanup_status:'COMPLETE',failure_details:[{resource:'demo / nginx',reason:'CreateContainerConfigError',message:'image will run as root',guidance:'Set securityContext.runAsUser to a non-root UID.'}]}} as any} />);
   expect(screen.getByText('What failed and how to fix it')).toBeTruthy();

@@ -1,11 +1,13 @@
 import {useCallback, useEffect, useState} from 'react';
 import {requestJson} from '../api';
 import {visibleTimeout} from './visibleTimer';
+import type {Diagnostic} from '../diagnostics';
 
 export interface JobState {
   status: string;
   started_at?: string | null;
   finished_at?: string | null;
+  diagnostic?: Diagnostic;
   [key: string]: unknown;
 }
 export const TERMINAL = new Set(['complete', 'incomplete', 'error', 'cancelled', 'failed',
@@ -16,7 +18,7 @@ const loadJson = <T,>(url: string, signal: AbortSignal) => requestJson<T>(url, {
 /** Each service/version/job scope owns its requests and timers. Never retain old evidence. */
 export function useJob<T extends JobState>(url: string | null, scope: string,
   load: (url: string, signal: AbortSignal) => Promise<T> = loadJson) {
-  const [result, setResult] = useState<{scope: string; job: T | null; error: string | null}>({scope, job: null, error: null});
+  const [result, setResult] = useState<{scope: string; job: T | null; error: string | null; diagnostic?: Diagnostic}>({scope, job: null, error: null});
   const [attempt, setAttempt] = useState(0);
   const [now, setNow] = useState(Date.now());
   const retry = useCallback(() => setAttempt(value => value + 1), []);
@@ -34,7 +36,7 @@ export function useJob<T extends JobState>(url: string | null, scope: string,
       } catch (error) {
         if (controller.signal.aborted) return;
         setResult(previous => ({scope, job: previous.scope === scope ? previous.job : null,
-          error: error instanceof Error ? error.message : 'Unable to read job status.'}));
+          error: error instanceof Error ? error.message : 'Unable to read job status.', diagnostic: (error as {diagnostic?: Diagnostic} | null)?.diagnostic}));
         cancelTimer = visibleTimeout(poll, 3000);
       }
     };
@@ -50,5 +52,5 @@ export function useJob<T extends JobState>(url: string | null, scope: string,
   const start = job?.started_at ? Date.parse(job.started_at) : NaN;
   const end = job?.finished_at ? Date.parse(job.finished_at) : now;
   const elapsedSeconds = Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, Math.floor((end - start) / 1000)) : 0;
-  return {job, error: result.scope === scope ? result.error : null, retry, elapsedSeconds};
+  return {job, error: result.scope === scope ? result.error : null, diagnostic: result.scope === scope ? result.diagnostic : undefined, retry, elapsedSeconds};
 }

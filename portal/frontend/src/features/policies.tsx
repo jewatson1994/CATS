@@ -41,6 +41,7 @@ function Editor({data,kind}:{data:PolicyData;kind:Kind}) {
  return <div className="admin-workspace policy-workspace"><Heading title={titles[kind]}/><AdminNav selected={kind==='hardening'?'compliance':kind==='compliance'?'vulnerability':kind} items={[
   {key:'accounts',href:'/admin',label:'Accounts & roles',allowed:Boolean(data.may_manage_users)},
   {key:'configuration',href:'/admin/configuration',label:'Settings',allowed:Boolean(data.may_manage)},
+  {key:'diagnostics',href:'/admin/diagnostics',label:'Diagnostics Center',allowed:data.may_view_diagnostics === true},
   {key:'general',href:`/admin/general-policy${group?query:''}`,label:'General Policy',allowed:Boolean(data.may_audit||data.may_manage)},
   {key:'compliance',href:`/admin/${paths.hardening}`,label:titles.hardening,allowed:Boolean(data.may_manage)},
   {key:'vulnerability',href:`/admin/${paths.compliance}${group?query:''}`,label:titles.compliance,allowed:Boolean(data.may_manage)},

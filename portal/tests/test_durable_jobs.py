@@ -30,7 +30,8 @@ def test_duplicate_admission_claim_and_stale_owner_are_fenced():
         row.available_at = now() - timedelta(seconds=1)
         db.commit()
     replacement = claim(('remediation_plan',), 'two', SessionLocal)
-    assert replacement.result == {'receipt': 'retained'}
+    assert replacement.result['receipt'] == 'retained'
+    assert replacement.result['diagnostic']['code'] == 'worker_lease_expired'
     assert replacement.lease_token != owner.lease_token
     for operation in (stale.check, stale.heartbeat, lambda: stale.finish({'bad': True})):
         with pytest.raises(LeaseLost):
@@ -39,7 +40,7 @@ def test_duplicate_admission_claim_and_stale_owner_are_fenced():
     with SessionLocal() as db:
         row = db.get(DurableJob, owner.id)
         assert row.status == 'completed' and row.attempts == 2
-        assert row.result == {'receipt': 'retained', 'ok': True}
+        assert row.result['receipt'] == 'retained' and row.result['ok'] is True
 
 
 def test_repeated_worker_death_is_bounded():
@@ -53,6 +54,91 @@ def test_repeated_worker_death_is_bounded():
         db.refresh(row)
         assert row.status == 'failed'
     assert claim(('remediation_plan',), 'two', SessionLocal) is None
+
+
+def test_worker_diagnostic_survives_history_unavailable(monkeypatch):
+    from app import durable_jobs
+    monkeypatch.setattr(durable_jobs, 'record_diagnostic', lambda *args, **kwargs: False)
+    job = enqueue(max_attempts=1)
+    claimed = claim(('remediation_plan',), 'diagnostic-worker', SessionLocal)
+    def fail(ctx, payload):
+        from app.diagnostics import build_diagnostic
+        assert build_diagnostic(RuntimeError('nested'), component='nested', operation='nested')['correlation_id'] == claimed.correlation_id
+        ctx.stage('Loading evidence', 10)
+        ctx.stage('Running tool', 30)
+        raise TimeoutError('Tool timed out; password=hidden-value')
+    execute(claimed, fail, SessionLocal)
+    with SessionLocal() as db:
+        row = db.get(DurableJob, job.id)
+        diagnostic = row.result['diagnostic']
+        assert row.status == 'failed' and row.lease_until is None and row.lease_token is None
+        assert diagnostic['context']['stage'] == 'Running tool'
+        assert diagnostic['context']['last_successful_stage'] == 'Loading evidence'
+        assert diagnostic['context']['worker_id'] == 'diagnostic-worker'
+        assert diagnostic['category'] == 'timeout' and diagnostic['correlation_id'] == row.correlation_id
+        assert 'hidden-value' not in str(diagnostic)
+        from app.jobs_view import dto
+        public = dto(db, row, None)
+        assert public['diagnostic']['error_id'] == diagnostic['error_id']
+        assert 'technical' not in public['diagnostic']
+        assert 'diagnostic' not in public['result']
+
+
+def test_missing_lease_is_recovered_and_terminalized():
+    job = enqueue(max_attempts=1)
+    claim(('remediation_plan',), 'missing-lease-worker', SessionLocal)
+    with SessionLocal() as db:
+        row = db.get(DurableJob, job.id)
+        row.lease_until = None
+        db.commit()
+        recover(db, ('remediation_plan',))
+        db.refresh(row)
+        assert row.status == 'failed' and row.lease_token is None
+        assert row.result['diagnostic']['status'] == 'failed'
+        assert row.result['diagnostic']['code'] == 'worker_lease_expired'
+
+
+@pytest.mark.parametrize('failure', ['exit', 'timeout'])
+def test_tool_metadata_survives_durable_failure(failure):
+    import subprocess
+    from app.patching import ToolCommandError
+    from app.diagnostics import public_diagnostic
+    job = enqueue(max_attempts=1)
+    claimed = claim(('remediation_plan',), 'tool-worker', SessionLocal)
+    error = (ToolCommandError('Tool exited with code 7', tool='/usr/local/bin/grype', exit_code=7,
+                              timeout_seconds=42) if failure == 'exit' else
+             subprocess.TimeoutExpired(['/usr/local/bin/grype', 'token=not-public'], timeout=42))
+
+    def fail(ctx, payload):
+        ctx.stage('Scanning evidence')
+        raise error
+
+    execute(claimed, fail, SessionLocal)
+    with SessionLocal() as db:
+        row = db.get(DurableJob, job.id)
+        diagnostic = public_diagnostic(row.result['diagnostic'])
+        assert row.status == 'failed' and row.lease_token is None
+        assert diagnostic['context']['tool'] == 'grype'
+        assert diagnostic['context']['timeout_seconds'] == 42
+        assert diagnostic['context']['exit_code'] == (7 if failure == 'exit' else None)
+        assert 'not-public' not in str(diagnostic)
+
+
+def test_configured_runtime_limit_fences_late_completion(monkeypatch):
+    monkeypatch.setenv('CATS_JOB_MAX_RUNTIME_SECONDS', '1')
+    job = enqueue(max_attempts=1)
+    claimed = claim(('remediation_plan',), 'timeout-worker', SessionLocal)
+    def delayed(ctx, payload):
+        ctx.stage('Waiting for external tool')
+        assert ctx.lost.wait(5)
+        return {'late_result': True}
+    execute(claimed, delayed, SessionLocal)
+    with SessionLocal() as db:
+        row = db.get(DurableJob, job.id)
+        assert row.status == 'failed' and row.lease_until is None
+        assert row.result['diagnostic']['code'] == 'worker_timeout'
+        assert row.result['diagnostic']['context']['timeout_seconds'] == 1
+        assert 'late_result' not in row.result
 
 
 def test_untrusted_errors_are_sanitized_and_retried_with_backoff(caplog):

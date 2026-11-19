@@ -583,6 +583,16 @@ def _cancellable_command(command, *, env, stdin, stdout, timeout, checkpoint, cw
         raise
 
 
+class ToolCommandError(RuntimeError):
+    """Command failure with safe metadata retained across worker boundaries."""
+
+    def __init__(self, message: str, *, tool: str, exit_code: int, timeout_seconds: int):
+        super().__init__(message)
+        self.tool = Path(tool).name
+        self.exit_code = exit_code
+        self.timeout_seconds = timeout_seconds
+
+
 def run_command(
     command: list[str], *, env: dict[str, str], log: Callable[[str], None],
     timeout: int, stdin: str | None = None, stdout_path: Path | None = None,
@@ -621,5 +631,6 @@ def run_command(
             category = "Package resolution failure"
         else:
             category = "Patch command failure"
-        raise RuntimeError(f"{category}: {command[0]} exited with code {completed.returncode}: {detail}")
+        raise ToolCommandError(f"{category}: {command[0]} exited with code {completed.returncode}: {detail}",
+                               tool=command[0], exit_code=completed.returncode, timeout_seconds=timeout)
     return completed

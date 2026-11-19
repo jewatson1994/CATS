@@ -1,0 +1,15 @@
+.diagnostic-error {overflow-wrap: anywhere; min-width: 0;}
+.diagnostic-summary {font-weight: 600; margin-block: .5rem;}
+.diagnostic-error summary {cursor: pointer; padding-block: .5rem;}
+.diagnostic-fields {display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 1rem;}
+.diagnostic-fields dt {font-weight: 600;}
+.diagnostic-fields dd {margin: .25rem 0 0;}
+.diagnostic-actions {display: flex; align-items: center; flex-wrap: wrap; gap: .75rem; margin-block: .75rem;}
+.diagnostic-report {white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; padding: 1rem; background: var(--surface-alt, rgba(127,127,127,.08));}
+.diagnostic-notifications {margin-block: 1rem; max-height: 60vh; overflow: auto;}
+.diagnostic-notice {border-inline-start: 4px solid var(--danger, #b04444); margin-block: .5rem;}
+.diagnostic-filters {display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: .75rem;}
+.diagnostic-filters label {display: grid; gap: .3rem;}
+.diagnostic-results {width: 100%; border-collapse: collapse;}
+.diagnostic-results th, .diagnostic-results td {padding: .7rem; text-align: left; border-bottom: 1px solid var(--border, #8885); vertical-align: top; overflow-wrap: anywhere;}
+.diagnostic-table-scroll {overflow-x: auto;}

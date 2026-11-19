@@ -2,6 +2,7 @@
 from .frontend_governance import entries, service
 from .remediation_summary import _redact
 from .remediation_workflow import workflow_projection
+from .diagnostics import public_diagnostic
 
 
 def project_remediations(data, name, context, can, formatters):
@@ -45,9 +46,11 @@ def project_remediations(data, name, context, can, formatters):
         projected = _fields(value, ("status", "reason", "validation_type", "offlineVerified", "artifact_digest", "detail", "request_id", "validation_id", "validator_id", "cleanup_status", "validated_at", "phase"))
         projected["service"] = _fields(_field(value, "service", {}) or {}, ("id", "version"))
         projected["network"] = _fields(_field(value, "network", {}) or {}, ("isolated", "external_chart_fetches", "external_image_pulls"))
+        projected["diagnostic"] = public_diagnostic(_field(value, "diagnostic")) or None
         return projected
     def job(item, full=False):
         result = _fields(item, ("job_key", "finding_type", "original_revision", "resulting_revision", "retry_of_id", "status", "output_mode", "failure_reason", "rollback_reference", "source_execution_id", "source_version_id", "revision_number", "remediation_status", "delivery_status", "verification_status", "signing_status", "artifact_digest"))
+        result["diagnostic"] = public_diagnostic(_field(_field(item, "validation_results", {}) or {}, "diagnostic")) or None
         result.update(started_at=_formatted(_field(item, "started_at")), finished_at=_formatted(_field(item, "completed_at")), started_label=timestamp(_field(item, "started_at")), finished_label=timestamp(_field(item, "completed_at")), has_artifact=bool(_field(item, "artifact_path")))
         result["workflow"] = workflow_projection(item, can=can, service_id=_field(item, "service_id") or sid,
             signing_required=bool(context.get("remediation_signing_required")), include_details=full)
@@ -62,6 +65,7 @@ def project_remediations(data, name, context, can, formatters):
                 "helm_digest": _scalar(_field(delivery_result, "materialized_digest")), "actor": _scalar(_field(row, "actor_id")),
                 "timestamp": timestamp(_field(row, "started_at")), "result": _scalar(_field(row, "status")),
                 "error": _scalar(_field(delivery_result, "error")),
+                "diagnostic": public_diagnostic(_field(delivery_result, "diagnostic")) or None,
                 "validation_type": _scalar(_field(delivery_result, "validation_type")),
                 "service": _fields(_field(delivery_result, "service", {}) or {}, ("id", "version")),
                 "verification": validation_evidence(_field(delivery_result, "verification", {}) or {})})

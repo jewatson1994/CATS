@@ -108,7 +108,8 @@ def heartbeat(job_id: str, attempt_id: str, payload: dict, x_attempt_token: str 
 @router.post("/{job_id}/{attempt_id}/failure")
 def failure(job_id: str, attempt_id: str, payload: dict, x_attempt_token: str = Header(default=""), worker_id: str = Depends(authenticated)):
     return jobs.report_failure(job_id, attempt_id, x_attempt_token, payload.get("category"),
-                               payload.get("reason", ""), payload.get("log_tail", ""), worker_id=_identity(worker_id))
+                               payload.get("reason", ""), payload.get("log_tail", ""), worker_id=_identity(worker_id),
+                               context=payload.get("context"))
 
 
 @router.get("/{job_id}/{attempt_id}/input")

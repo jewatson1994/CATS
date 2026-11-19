@@ -1,10 +1,19 @@
 import {cleanup, fireEvent, render, screen, within} from '@testing-library/react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {Page} from './public_results';
+import {localDiagnostic} from '../diagnostics';
 afterEach(cleanup);
 const finding = {type:'Vulnerability',finding:'cve-2026-1234',scanner:'Grype',severity:'High',state:'Active',image:'app:1',target:'openssl',kev:'No',epss:0.125,details:'<script>alert(1)</script>',remediation:'Upgrade'};
 const base = {job:{job_id:'test'},service:{name:'Example'},vulnerability_count:1,configuration_count:1,rows:[finding,{...finding,type:'Configuration',finding:'CFG-1'}],simplified_rows:[{type:'Vulnerability',finding_ids:[finding.finding],finding_indices:[0],count:1,severity:'High',image:'app:1',remediation:'Upgrade'}],overview_data:{source:'Submitted scan evidence'}};
 describe('public scan results', () => {
+  it('shows incomplete scan guidance without administrator links', () => {
+    const diagnostic = {...localDiagnostic('One scanner did not complete.'), error_id: 'err-scan', cause: null, resolution: ['Review missing evidence before using these results.']};
+    render(<Page data={{...base, job: {...base.job, diagnostic}}}/>);
+    expect(screen.getByText('One scanner did not complete.')).toBeInTheDocument();
+    expect(screen.getByText('The cause has not been confirmed.')).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Copy sanitized report', hidden: true})).toBeInTheDocument();
+    expect(screen.queryByRole('link', {name: 'Inspect in Diagnostics Center', hidden: true})).toBeNull();
+  });
   it('shows the safe Compose inventory in the overview', () => {
     render(<Page data={{...base, service_overview: {compose: {complete: true, images: ['app:1'], services: [{name: 'app', image: 'app:1', status: 'ready', configuration: {command: '<script>alert(1)</script>'}}]}}}} />);
     expect(screen.getByRole('region', {name: 'Compose inventory'})).toHaveTextContent('app:1');

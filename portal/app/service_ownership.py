@@ -6,7 +6,8 @@ from .models import Group
 def require_owner(service):
     groups = list(service.groups)
     if len(groups) != 1:
-        raise ValueError("Service must have exactly one owning group. Edit the service and select its owning group before continuing.")
+        reason = "Service has no owning group." if not groups else "Service has multiple owning groups."
+        raise ValueError(f"{reason} Service must have exactly one owning group. Edit the service and select its owning group before continuing.")
     return groups[0]
 
 

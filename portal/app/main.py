@@ -131,6 +131,9 @@ from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
+from . import diagnostic_store, diagnostic_routes
+from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
+from .diagnostics import public_diagnostic, sanitize, capture_failure
 from .service_evidence import view_executions
 from .remediation_lineage import record_reingestion_provenance, provenance_for_execution
 from .service_image_patches import image_patch_history
@@ -150,6 +153,8 @@ from .preview_cleanup import preview_cleanup_lifespan
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection, tables=portal_tables())
+    from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
+    upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)
     upgrade_connection(connection)
     upgrade_validators(connection)
@@ -383,7 +388,8 @@ def _start_read_model_maintenance():
             started = time.perf_counter()
             try:
                 result = work()
-            except Exception:
+            except Exception as exc:
+                capture_failure(exc, component="Portal maintenance", operation=name)
                 log.exception("Maintenance step %s failed; readers fall back to authoritative evidence", name)
                 result = None
             log.info("maintenance_step %s", json.dumps({"step": name, "ms": round((time.perf_counter() - started) * 1000),
@@ -449,7 +455,8 @@ async def app_lifespan(_app: FastAPI):
         while True:
             try:
                 await asyncio.to_thread(validator_management.maintenance)
-            except Exception:
+            except Exception as exc:
+                capture_failure(exc, component="Validation", operation="validator maintenance")
                 logging.getLogger(__name__).exception('Managed validator maintenance failed')
             await asyncio.sleep(30)
     monitor = asyncio.create_task(monitor_validators())
@@ -504,6 +511,7 @@ from .jobs_view import router as jobs_router
 from .export_jobs import router as export_jobs_router
 app.include_router(jobs_router)
 app.include_router(export_jobs_router)
+app.include_router(diagnostic_routes.router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
 # Registered once, inside GZip: it measures uncompressed response bytes (the
@@ -590,33 +598,41 @@ def _api_error_request(request: Request) -> bool:
 @app.exception_handler(StarletteHTTPException)
 async def expected_http_error(request: Request, exc: StarletteHTTPException):
     if _api_error_request(request):
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        if exc.status_code < 400:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+        return error_response(request, exc, status=exc.status_code, detail=exc.detail, headers=exc.headers)
     descriptions = {403: "You do not have permission to access this page or perform this action.",
                     404: "The requested page or item was not found."}
     # Structured errors carry a user-facing message; never stringify their
     # remaining diagnostic fields into the browser response.
     message = exc.detail.get("message") if isinstance(exc.detail, dict) else exc.detail
     detail = descriptions.get(exc.status_code, message if isinstance(message, str) else "The request could not be completed.")
+    diagnostic = request_diagnostic(request, exc, status=exc.status_code, summary=detail) if exc.status_code >= 400 else None
     return templates.TemplateResponse(request, "request_error.html",
-                                      {"detail": detail, "home_url": request.url_for("dashboard")},
+                                      {"detail": sanitize(detail), "diagnostic": public_diagnostic(diagnostic) if diagnostic else None, "home_url": request.url_for("dashboard")},
                                       status_code=exc.status_code, headers=exc.headers)
 
 
 @app.exception_handler(RequestValidationError)
 async def expected_validation_error(request: Request, exc: RequestValidationError):
+    # Pydantic's input/ctx may contain submitted passwords or entire request bodies.
+    errors = [{key: sanitize(value) for key, value in row.items() if key in {"type", "loc", "msg"}} for row in exc.errors()[:30]]
     if _api_error_request(request):
-        return JSONResponse({"detail": jsonable_encoder(exc.errors())}, status_code=422)
+        return error_response(request, exc, status=422, detail=errors, context={"validation_errors": errors})
+    diagnostic = request_diagnostic(request, exc, status=422,
+        summary="Please check the submitted fields and try again.", context={"validation_errors": errors})
     return templates.TemplateResponse(request, "request_error.html",
                                       {"detail": "Please check the submitted fields and try again.",
+                                       "diagnostic": public_diagnostic(diagnostic),
                                        "home_url": request.url_for("dashboard")}, status_code=422)
 
 
 @app.exception_handler(Exception)
 async def unexpected_error(request: Request, exc: Exception):
-    logging.getLogger("cats.portal").exception("Unexpected request failure", exc_info=exc)
     if _api_error_request(request):
-        return JSONResponse({"detail": "Something went wrong while processing your request."}, status_code=500)
-    return templates.TemplateResponse(request, "boozled.html", {"home_url": request.url_for("dashboard")}, status_code=500)
+        return error_response(request, exc, status=500, detail="The operation failed while processing your request.")
+    diagnostic = request_diagnostic(request, exc, status=500)
+    return templates.TemplateResponse(request, "boozled.html", {"home_url": request.url_for("dashboard"), "diagnostic": public_diagnostic(diagnostic)}, status_code=500)
 
 # Public scan jobs retain immutable artifacts in a persistent directory.
 # PostgreSQL owns durable execution and recovery state.
@@ -691,6 +707,10 @@ VALIDATION_TERMINAL_STATUSES = {item.value for item in ValidationStatus} | {"FAI
 def deployment_validation_view(run: DeploymentValidationRun | None) -> dict | None:
     if not run:
         return None
+    diagnostics = dict(run.diagnostics or {})
+    if "diagnostic" in diagnostics:
+        # Technical exception chains are available only through the admin center.
+        diagnostics["diagnostic"] = public_diagnostic(diagnostics["diagnostic"])
     terminal_statuses = VALIDATION_TERMINAL_STATUSES
     cleanup_terminal = str(run.cleanup_status or "").upper() in {"COMPLETE", "FAILED", "NOT_REQUIRED", "NOT_ATTEMPTED", "UNKNOWN"}
     terminal = str(run.status or "").upper() in terminal_statuses and str(run.phase or "").upper() == "COMPLETE" and cleanup_terminal
@@ -727,7 +747,7 @@ def deployment_validation_view(run: DeploymentValidationRun | None) -> dict | No
         "policy_violations": run.security_policy_violations or [],
         "resource_isolation": run.resource_isolation or {},
         "warnings": run.warnings or [],
-        "diagnostics": run.diagnostics or {},
+        "diagnostics": diagnostics,
         "checks": {"helm_template": (run.helm_result or {}).get("template", "NOT_ATTEMPTED"),
                    "helm_install": (run.helm_result or {}).get("install", "NOT_ATTEMPTED"),
                    "cleanup": run.cleanup_status},
@@ -833,6 +853,7 @@ def _remediation_preview_counts(db: Session, service: Service, preview_payload, 
         else:
             plan_images, plan_charts, plan_changes, plan_review = compute_preview()
     except Exception as exc:
+        capture_failure(exc, component="Remediation", operation="plan preview", resource={"service_id": service.id})
         logging.getLogger("cats.remediation").exception(
             "Remediation plan preview failed", extra={"service_id": service.id})
         plan_images, plan_charts, plan_changes, plan_review = set(), 0, 0, 0
@@ -953,6 +974,8 @@ def _run_deployment_validation(run_id: int) -> None:
         _execute_deployment_validation(run_id)
     except Exception as exc:
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation setup failed", extra={"run_id": run_id})
+        diagnostic = capture_failure(exc, component="Validation", operation="deployment validation setup",
+            resource={"job_id": str(run_id)}, context={"failed_stage": "setup"})
         with SessionLocal() as db:
             run = db.get(DeploymentValidationRun, run_id)
             from .imported_services import is_imported_service
@@ -961,7 +984,8 @@ def _run_deployment_validation(run_id: int) -> None:
             run.status = ValidationStatus.COULD_NOT_VALIDATE.value if run.started_at else "NOT_ATTEMPTED"
             run.phase = "COMPLETE"
             run.reason_category = "INTERNAL_VALIDATION_ERROR"
-            run.reason = f"Validation could not complete: {type(exc).__name__}. Inspect the portal logs for this validation run."
+            run.reason = f"Validation could not complete: {type(exc).__name__}. Open diagnostics for technical evidence and resolution."
+            run.diagnostics = {**(run.diagnostics or {}), "diagnostic": diagnostic}
             run.cleanup_status = "UNKNOWN" if run.started_at else "NOT_REQUIRED"
             run.classification_reasons = [{"code": run.reason_category, "severity": "blocking", "explanation": run.reason}]
             run.completed_at = utcnow()
@@ -1063,6 +1087,8 @@ def _execute_deployment_validation(run_id: int) -> None:
             "validated_at": utcnow().isoformat(), "validation_run_id": run.run_key}
     except Exception as exc:  # The optional pass must never escape into scan state.
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation worker failed", extra={"run_id": run_id})
+        diagnostic = capture_failure(exc, component="Validation", operation="deployment validation",
+            resource={"job_id": str(run_id)}, context={"failed_stage": "validation"})
         error_reason = f"Deployment Validation encountered an internal error: {type(exc).__name__}"
         result = {
             "status": ValidationStatus.COULD_NOT_VALIDATE.value, "phase": "COMPLETE",
@@ -1073,6 +1099,7 @@ def _execute_deployment_validation(run_id: int) -> None:
                 "explanation": error_reason,
             }],
             "diagnostics": {
+                "diagnostic": diagnostic,
                 "classification_summary": {
                     "expected_resources": 0, "observed_expected": 0,
                     "expected_only": 0, "runtime_generated": 0,
@@ -1126,12 +1153,15 @@ def _execute_deployment_validation(run_id: int) -> None:
 def _submit_validation_run(run_id: int) -> None:
     try:
         DEPLOYMENT_VALIDATION_WORKERS.submit(_run_deployment_validation, run_id)
-    except Exception:
+    except Exception as exc:
         logging.getLogger("cats.deployment_validation").exception("Deployment Validation could not be scheduled", extra={"run_id": run_id})
+        diagnostic = capture_failure(exc, component="Validation", operation="schedule validation",
+            resource={"job_id": str(run_id)}, context={"failed_stage": "queued"})
         with SessionLocal() as db:
             run = db.get(DeploymentValidationRun, run_id)
             from .imported_services import is_imported_service
             if run and not is_imported_service(db, run.service_id):
+                run.diagnostics = {**(run.diagnostics or {}), "diagnostic": diagnostic}
                 run.status = ValidationStatus.NOT_ATTEMPTED.value; run.phase = "COMPLETE"
                 run.reason = "Deployment Validation could not be scheduled. Static scan results are unaffected."
                 run.completed_at = utcnow(); run.updated_at = utcnow()
@@ -1166,6 +1196,11 @@ def recover_stale_validation_runs() -> None:
                 _validation_audit(db, run, "deployment_validation.cleanup_retried", cleanup_status=run.cleanup_status)
                 continue
             never_started = not run.cluster_name and not run.started_at
+            diagnostic = capture_failure(RuntimeError("Validation worker stopped before completing the run"),
+                component="Validation", operation="Recover stale validation run",
+                resource={"service_id": run.service_id, "job_id": run.run_key},
+                context={"failed_stage": run.phase, "timeout_seconds": config.total_timeout_seconds * 2})
+            run.diagnostics = {**(run.diagnostics or {}), "diagnostic": diagnostic}
             run.status = ValidationStatus.NOT_ATTEMPTED.value if never_started else ValidationStatus.COULD_NOT_VALIDATE.value; run.phase = "COMPLETE"
             run.reason_category = None if never_started else ("CLEANUP_FAILURE" if run.cluster_name in cleanup["failed"] else "WORKLOAD_TIMEOUT")
             run.reason = "A queued validation could not be scheduled before the worker stopped." if never_started else "A stale validation attempt was recovered after the worker stopped unexpectedly."
@@ -1455,6 +1490,7 @@ def page_context(auth: AuthContext, **values):
         "session_identity": session_identity(auth.session.id, auth.user.id) if getattr(auth, "session", None) else "",
         "csrf_token": auth.csrf_token,
         "can": auth.has,
+        "may_view_diagnostics": diagnostic_routes.may_view_diagnostics(auth),
         "themes": THEMES,
         "pending_request_count": pending_request_count,
         "pending_poam_count": pending_poam_count,
@@ -3258,7 +3294,9 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
         if state and state["status"] == "pending":
             background_tasks.add_task(schedule_projection, db.get_bind(), execution.id, state["build_token"], risk_metadata)
         return state
-    except Exception:
+    except Exception as exc:
+        capture_failure(exc, component="Artifact ingestion", operation="queue dependency projection",
+            resource={"execution_id": execution_id})
         logging.getLogger("cats.dependencies").exception(
             "Dependency projection could not be queued after ingest", extra={"execution_id": execution_id})
         return None
@@ -3293,7 +3331,10 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     try:
         owning_group = ingest_owner(db, service, payload.service.groups)
     except ValueError as exc:
-        raise HTTPException(409 if service else 422, detail=str(exc)) from exc
+        failure = HTTPException(409 if service else 422, detail=str(exc))
+        failure.diagnostic_resource = {"service_key": payload.service.id, **({"service_id": service.id} if service else {})}
+        failure.diagnostic_context = {"failed_stage": "Service ownership validation"}
+        raise failure from exc
     if not service:
         service = Service(service_key=payload.service.id, name=payload.service.name, lifecycle_status="active", groups=[owning_group])
         db.add(service)
@@ -3508,9 +3549,11 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
                     validation_run, schedule_validation = _new_validation_run(validation_db, validation_service, validation_execution)
                     validation_db.commit()
                     validation_run_id = validation_run.id
-        except Exception:
+        except Exception as exc:
             # Deployment Validation is optional evidence. Its persistence can
             # never roll back or change the already-committed static scan.
+            capture_failure(exc, component="Artifact ingestion", operation="create validation record",
+                resource={"service_id": service_id, "execution_id": execution_id})
             logging.getLogger("cats.deployment_validation").exception(
                 "Deployment Validation record could not be created", extra={"execution_id": execution_id})
     if schedule_validation and validation_run_id:
@@ -5169,7 +5212,9 @@ def _patch_job_update(job_id: str, **values):
                             # catalog import must never roll back its retained result.
                             with db.begin_nested():
                                 register_patch_artifacts(db, patch_execution_id=record.id, **metadata)
-                        except Exception:
+                        except Exception as exc:
+                            capture_failure(exc, component="Artifact catalog", operation="register patched artifact",
+                                resource={"service_id": record.service_id, "job_id": job_id})
                             diagnostic = "Worker artifact identity could not be catalogued"
                     if diagnostic and not db.scalar(select(AuditEvent.id).where(
                         AuditEvent.action == "artifact.catalog.import_skipped", AuditEvent.target_type == "patch_execution",
@@ -5523,10 +5568,13 @@ def _run_patch_job(job_id: str, credential_env: dict[str, str]) -> None:
     except Exception as exc:
         with PATCH_JOB_LOCK:
             existing = dict(PATCH_JOBS.get(job_id, {}))
+        diagnostic = capture_failure(exc, component="Patch worker", operation="patch artifact",
+            resource={"job_id": job_id}, correlation_id=existing.get("correlation_id"),
+            context={"failed_stage": existing.get("phase") or "queued"})
         _patch_job_update(
             job_id, status="failed", phase=existing.get("phase") or "queued",
             stages=existing.get("stages"), failed_stage=existing.get("phase") or "queued",
-            error=redact(exc),
+            error=redact(exc), diagnostic=diagnostic,
         )
     finally:
         credential_env.clear()
@@ -5915,6 +5963,8 @@ def _run_remediation_image_patches(db: Session, record: RemediationExecution, se
             _run_patch_job(patch_key, {**signing_credentials, "CATS_PATCH_SOURCE_USERNAME": source_user, "CATS_PATCH_SOURCE_PASSWORD": source_password,
                                        "CATS_PATCH_DEST_USERNAME": destination_user, "CATS_PATCH_DEST_PASSWORD": destination_password})
         except Exception as exc:
+            image["diagnostic"] = capture_failure(exc, component="Remediation worker", operation="patch image",
+                resource={"service_id": record.service_id, "job_id": patch_key}, context={"failed_stage": "image_patching"})
             image.update(classification="REVIEW REQUIRED", patch_job_id=patch_key, patch_status="FAILED",
                          reason=f"Image patch worker failed: {type(exc).__name__}")
             patched_by_source[source] = {"classification": image["classification"], "reason": image["reason"],
@@ -6507,6 +6557,9 @@ def _run_remediation_job(record_id: int) -> None:
                 except Exception as delivery_error:
                     db.rollback()
                     record.delivery_status = "failed"
+                    record.validation_results = {**(record.validation_results or {}), "diagnostic": capture_failure(
+                        delivery_error, component="Remediation worker", operation="queue delivery",
+                        resource={"service_id": record.service_id, "job_id": record.job_key})}
                     _remediation_audit(db, record, "remediation.delivery_failed", error=type(delivery_error).__name__)
                     db.commit()
         except Exception as exc:
@@ -6514,6 +6567,10 @@ def _run_remediation_job(record_id: int) -> None:
             record = db.get(RemediationExecution, record_id)
             if record:
                 failed_phase = record.phase
+                record.validation_results = {**(record.validation_results or {}), "diagnostic": capture_failure(
+                    exc, component="Remediation worker", operation="remediate service",
+                    resource={"service_id": record.service_id, "job_id": record.job_key},
+                    context={"failed_stage": failed_phase})}
                 detail = str(exc) if isinstance(exc, remediation_jobs.PlanReviewRequired) else type(exc).__name__
                 from .remediation_safety import SourceSafetyError
                 if isinstance(exc, SourceSafetyError):
@@ -6603,6 +6660,8 @@ def _validate_retained_remediation(db, record):
         # A failed attempt preserves remediation, scan, packaging, signing and delivery evidence.
         record.verification_status = "unavailable"
         validation["deployment"] = {**(validation.get("deployment") or {}), "request": request, "status": "UNAVAILABLE", "detail": f"Candidate validation unavailable ({type(exc).__name__}); inspect validator availability, artifact integrity and cleanup evidence.",
+            "diagnostic": capture_failure(exc, component="Validation", operation="validate retained candidate",
+                resource={"service_id": record.service_id, "job_id": record.job_key}, context={"failed_stage": "deployment_validation"}),
             "artifact_digest": record.artifact_digest, "request_id": request["request_id"] if request else None,
             "validation_id": (validation.get("deployment") or {}).get("validation_id"),
             "validator_id": (validation.get("deployment") or {}).get("validator_id"),
@@ -6732,8 +6791,10 @@ def _cleanup_completed_remediations(db):
             db.add(AuditEvent(action="remediation.retention_cleanup", target_type="remediation_execution",
                 target_id="retention", detail={"job_keys": result["removed"], "removed_bytes": result["removed_bytes"]}))
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        capture_failure(exc, component="Remediation worker", operation="Clean up expired remediation artifacts",
+            context={"failed_stage": "retention cleanup"})
 
 
 def _queue_remediation(db: Session, auth: AuthContext, service: Service, finding_type: str | None = None,
@@ -7102,6 +7163,8 @@ def _run_bundle_delivery(db, record, attempt):
             validation_result(verification, request)
         except Exception as exc:
             verification = {"status": "COULD_NOT_VALIDATE", "reason": f"Independent validation unavailable ({type(exc).__name__})",
+                            "diagnostic": capture_failure(exc, component="Validation", operation="validate delivery bundle",
+                                resource={"service_id": record.service_id, "job_id": record.job_key, "attempt_id": attempt.id}),
                             "validation_type": mode, "service": request["service"], "artifact_digest": request["artifact"]["digest"]}
         if file_digest(path) != result["materialized_digest"]:
             verification = {"status": "FAILED", "reason": "Final artifact changed after validation", "artifact_digest": result["materialized_digest"],
@@ -7129,13 +7192,16 @@ def _run_bundle_delivery(db, record, attempt):
         detail = re.sub(r"(https?://)[^/\s@]+@", r"\1[REDACTED]@", detail)
         detail = re.sub(r"(https?://[^\s?#]+)[?#][^\s]*", r"\1", detail)[:1000]
         message = f"Final bundle preparation failed ({type(exc).__name__}): {detail}"
-        attempt.result = {**(attempt.result or {}), "error": message}
+        attempt.result = {**(attempt.result or {}), "error": message, "diagnostic": capture_failure(
+            exc, component="Artifact delivery", operation="prepare final bundle",
+            resource={"service_id": record.service_id, "job_id": record.job_key, "attempt_id": attempt.id},
+            context={"failed_stage": (attempt.result or {}).get("release_stage", "preparation")})}
         if getattr(exc, "receipt", None):
             attempt.result = {**attempt.result, "documentation": exc.receipt}
         diagnostics = REMEDIATION_JOB_ROOT / record.job_key / f"delivery-{attempt.id}-diagnostics.json"
         try:
             diagnostics.parent.mkdir(parents=True, exist_ok=True)
-            diagnostics.write_text(json.dumps({"attempt_id": attempt.id, "error": message}, indent=2), encoding="utf-8")
+            diagnostics.write_text(json.dumps({"attempt_id": attempt.id, "error": message, "diagnostic": attempt.result["diagnostic"]}, indent=2), encoding="utf-8")
         except OSError:
             # The durable delivery record still preserves the diagnosis if the disk is full.
             pass
@@ -7221,7 +7287,9 @@ def _execute_delivery_attempt(attempt_id):
                 raise ValueError("Retained candidate provenance changed after delivery was requested")
         except Exception as exc:
             attempt.status = record.delivery_status = "failed"
-            attempt.result = {**(attempt.result or {}), "error": "Delivery authorization, validation policy, or candidate provenance no longer permits this operation."}
+            attempt.result = {**(attempt.result or {}), "error": "Delivery authorization, validation policy, or candidate provenance no longer permits this operation.",
+                "diagnostic": capture_failure(exc, component="Artifact delivery", operation="authorize delivery",
+                    resource={"service_id": record.service_id, "job_id": record.job_key, "attempt_id": attempt.id}, status=403)}
             attempt.completed_at = utcnow()
             _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
             db.commit()
@@ -7284,8 +7352,10 @@ def _execute_delivery_attempt(attempt_id):
                 verification = verify_delivery(record, {**result, "artifact_path": attempt.artifact_path,
                     "service": {"id": record.service.service_key, "version": version.version}},
                     validator_management.select_configuration(db, parse_json(get_global_configuration(db).get("validator_configuration"), {}), 'oci'), REMEDIATION_JOB_ROOT)
-            except Exception:
-                verification = {"status": "verification_unavailable", "detail": "Sandbox verification unavailable"}
+            except Exception as exc:
+                verification = {"status": "verification_unavailable", "detail": "Sandbox verification unavailable",
+                    "diagnostic": capture_failure(exc, component="Validation", operation="verify OCI delivery",
+                        resource={"service_id": record.service_id, "job_id": record.job_key, "attempt_id": attempt.id})}
             attempt.result = {**(attempt.result or {}), **result, "verification_requested": True, "delivery_mode": "oci", "validation_type": "oci", "verification": verification}
             if verification["status"] == "verified":
                 checkpoint({"release_stage": "generating_documentation"})
@@ -7311,7 +7381,10 @@ def _execute_delivery_attempt(attempt_id):
                 content_digest=attempt.content_digest, materialized_digest=result.get("materialized_digest"))
         except Exception as exc:
             attempt.status = "failed"; record.delivery_status = "failed"
-            attempt.result = {**(attempt.result or {}), "error": f"Delivery failed during {(attempt.result or {}).get('release_stage', 'preparation')} ({type(exc).__name__}); check destination access, signing, trust, and retained evidence."}
+            attempt.result = {**(attempt.result or {}), "error": f"Delivery failed during {(attempt.result or {}).get('release_stage', 'preparation')} ({type(exc).__name__}); check destination access, signing, trust, and retained evidence.",
+                "diagnostic": capture_failure(exc, component="Artifact delivery", operation="publish OCI delivery",
+                    resource={"service_id": record.service_id, "job_id": record.job_key, "attempt_id": attempt.id},
+                    context={"failed_stage": (attempt.result or {}).get("release_stage", "preparation")})}
             if getattr(exc, "receipt", None):
                 attempt.result = {**attempt.result, "documentation": exc.receipt}
             _remediation_audit(db, record, "remediation.delivery_failed", attempt_id=attempt.id, error=type(exc).__name__)
@@ -11562,7 +11635,9 @@ def save_oidc_configuration(
             oidc_discovery(current, configured_ca_bundle(get_global_configuration(db)))
             result = "OIDC discovery succeeded"
         except Exception as exc:
-            result = f"OIDC discovery failed: {redact(exc)}"
+            diagnostic = capture_failure(f"OIDC discovery failed ({type(exc).__name__})",
+                component="Authentication / OIDC", operation="Test saved OIDC configuration")
+            result = f"OIDC discovery failed ({type(exc).__name__}); diagnostic {diagnostic['error_id']}"
         return RedirectResponse(f"/admin/configuration?saved=1&oidc_result={urllib.parse.quote(result)}", status_code=303)
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
 
@@ -11713,6 +11788,9 @@ def save_validator_configuration(
         message = f"Connected; mTLS verified; ready={bool(result.get('ready'))}; active={result.get('active_jobs')}/{result.get('max_jobs')}; schema={result.get('schema_version')}"
     except Exception as exc:
         message = f"Connection failed: {type(exc).__name__}"
+        diagnostic = capture_failure(exc, component="Validator", operation="Test validator connection",
+            context={"failed_stage": "validator connection test"})
+        message += f"; diagnostic {diagnostic['error_id']}"
     record_audit(db, auth, "validator.connection_tested", "portal", "global", success=message.startswith("Connected"))
     db.commit()
     return RedirectResponse("/admin/configuration?validator_result=" + urllib.parse.quote(message), status_code=303)
@@ -11781,7 +11859,9 @@ def test_oidc_configuration(csrf_token: str = Form(), db: Session = Depends(get_
         oidc_discovery(config, configured_ca_bundle(get_global_configuration(db)))
         result = "OIDC discovery succeeded"
     except Exception as exc:
-        result = f"OIDC discovery failed: {redact(exc)}"
+        diagnostic = capture_failure(f"OIDC discovery failed ({type(exc).__name__})",
+            component="Authentication / OIDC", operation="Test OIDC configuration")
+        result = f"OIDC discovery failed ({type(exc).__name__}); diagnostic {diagnostic['error_id']}"
     return RedirectResponse(f"/admin/configuration?saved=1&oidc_result={urllib.parse.quote(result)}", status_code=303)
 
 
@@ -11850,7 +11930,9 @@ def test_registry_configuration(registry_id: str = Form(), csrf_token: str = For
             with urllib.request.urlopen(request, timeout=10) as response:
                 if response.status >= 400: raise RuntimeError(f"HTTP {response.status}")
     except Exception as exc:
-        status_text, detail = "Unavailable", redact(exc)
+        diagnostic = capture_failure(exc, component="OCI registry", operation="Test registry connection",
+            resource={"registry_id": registry_id}, context={"failed_stage": "registry connection test"})
+        status_text, detail = "Unavailable", f"{sanitize(str(exc))[:140]}; diagnostic {diagnostic['error_id']}"
     for entry in registries:
         if str(entry.get("id")) == registry_id:
             entry["status"], entry["status_detail"] = status_text, detail[:240]
@@ -12563,3 +12645,6 @@ def risk_intelligence_page(request: Request, auth: AuthContext = Depends(require
 @app.get('/discovery', response_class=HTMLResponse)
 def discovery_page(request: Request, auth: AuthContext = Depends(require_user)):
     return templates.TemplateResponse(request, 'discovery.html', page_context(auth))
+
+# Outermost application middleware: correlation also covers early policy/upload failures.
+app.add_middleware(DiagnosticMiddleware, error_handler=unexpected_error)

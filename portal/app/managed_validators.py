@@ -21,6 +21,9 @@ from .managed_validator_bootstrap import SSHBootstrap, BootstrapError, validate_
 from .managed_validator_pki import create_identity, deployment_identity
 from .managed_validator_release import load_release, selftest_request, assert_selftest, SelfTestError
 from . import validator_client
+from .diagnostics import build_diagnostic, public_diagnostic, record_diagnostic, enqueue_diagnostic
+
+_DEFAULT_SESSION_FACTORY = SessionLocal
 
 router = APIRouter()
 READINESS_LOCK = threading.Lock()
@@ -38,6 +41,8 @@ def public_record(db, row):
     history = db.scalars(select(ManagedValidatorOperation).where(
         ManagedValidatorOperation.validator_id == row.id).order_by(
         ManagedValidatorOperation.started_at.desc()).limit(30)).all()
+    attempts = {attempt.id: attempt for attempt in db.scalars(select(ValidatorProvisioningAttempt).where(
+        ValidatorProvisioningAttempt.id.in_([op.id for op in history])))}
     return {key: getattr(row, key) for key in (
         "id", "name", "host", "ssh_port", "ssh_username", "api_port", "status",
         "fingerprint", "fingerprint_confirmed", "preflight", "certificate",
@@ -46,7 +51,12 @@ def public_record(db, row):
         "last_contact_at": row.last_contact_at.isoformat() if row.last_contact_at else None,
         "history": [{key: (getattr(op, key).isoformat() if isinstance(getattr(op, key), datetime)
             else getattr(op, key)) for key in ("id", "action", "status", "phase", "error",
-            "cancel_requested", "started_at", "finished_at")} for op in history]}
+            "cancel_requested", "started_at", "finished_at")} | {
+                "diagnostic": public_diagnostic((attempts[op.id].request or {}).get("diagnostic"))
+                    if op.id in attempts and (attempts[op.id].request or {}).get("diagnostic") else None,
+                "attempts": attempts[op.id].attempts if op.id in attempts else 0,
+                "stages": attempts[op.id].stages if op.id in attempts else [],
+            } for op in history]}
 
 
 def readiness():
@@ -139,6 +149,7 @@ def health_checked(configuration, validator_id):
 
 
 def run_operation(validator_id, operation_id, credentials, acknowledgments, *, lease_owner=None, session_factory=None):
+    observed_diagnostics = []
     with (session_factory or SessionLocal)() as db:
         db.info['provisioning_lease_owner'] = lease_owner
         row, op = db.get(ManagedValidator, validator_id), db.get(ManagedValidatorOperation, operation_id)
@@ -201,7 +212,10 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments, *, l
                             if row.configuration:
                                 try:
                                     current_health = health_checked(row.configuration, row.id)
-                                except Exception:
+                                except Exception as exc:
+                                    observed_diagnostics.append(build_diagnostic(exc, component="validator", operation="predeployment_health",
+                                        correlation_id=operation_id, status="warning", resource={"validator_id": row.id, "operation_id": operation_id},
+                                        context={"stage": op.phase}))
                                     current_health = {}  # SSH deploy still rejects unfinished strict runtime resources.
                                 if current_health.get("active_jobs", 0):
                                     raise BootstrapError("Wait for active validation jobs before replacing the validator")
@@ -241,9 +255,9 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments, *, l
                                     row.last_health = health_checked(row.configuration, row.id)
                                     row.last_contact_at = datetime.now(timezone.utc)
                                     break
-                                except Exception:
+                                except Exception as exc:
                                     if time.monotonic() >= deadline:
-                                        raise BootstrapError("Managed mTLS health did not become ready") from None
+                                        raise BootstrapError("Managed mTLS health did not become ready") from exc
                                     phase(db, op, "HEALTH")
                                     time.sleep(2)
                             row.status = "DEGRADED"
@@ -283,6 +297,10 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments, *, l
             # Only bootstrap errors are authored safe messages; no stderr/SSH exception disclosure.
             op.error = str(exc)[:1000] if isinstance(exc, (BootstrapError, SelfTestError)) else "Operation failed; verify host, release and mTLS configuration."
             op.error += ' Correlation ID: ' + operation_id
+            attempt = db.get(ValidatorProvisioningAttempt, operation_id)
+            if attempt:
+                from .provisioning_worker import operation_diagnostic
+                operation_diagnostic(attempt, op, exc, summary=op.error, secret_values=credentials.values())
         finally:
             if identity is not None:
                 identity["deployment"].clear()
@@ -300,6 +318,15 @@ def run_operation(validator_id, operation_id, credentials, acknowledgments, *, l
             row.updated_at = datetime.now(timezone.utc)
             op.finished_at = datetime.now(timezone.utc)
             db.commit()
+
+        attempt = db.get(ValidatorProvisioningAttempt, operation_id)
+        if attempt and (attempt.request or {}).get('diagnostic'):
+            observed_diagnostics.append(attempt.request['diagnostic'])
+        for diagnostic in observed_diagnostics:
+            if (session_factory or SessionLocal) is _DEFAULT_SESSION_FACTORY:
+                enqueue_diagnostic(diagnostic)
+            else:
+                record_diagnostic(diagnostic, session_factory=session_factory or SessionLocal)
 
 
 def run_selftest(db, row, op, release):
@@ -327,10 +354,10 @@ def run_selftest(db, row, op, release):
     try:
         result = validator_client.validate(row.configuration, declaration,
             progress_callback=progress, artifact_path=artifact, cancel_requested=cancelled, **resume)
-    except TimeoutError:
-        raise SelfTestError("Self-test timed out waiting for a terminal result; verify sandbox cleanup before retrying.") from None
-    except Exception:
-        raise SelfTestError("Self-test API exchange failed before a usable result was received; check validator connectivity and protocol compatibility.") from None
+    except TimeoutError as exc:
+        raise SelfTestError("Self-test timed out waiting for a terminal result; verify sandbox cleanup before retrying.") from exc
+    except Exception as exc:
+        raise SelfTestError("Self-test API exchange failed before a usable result was received; check validator connectivity and protocol compatibility.") from exc
     phase(db, op, 'SELF_TEST')
     row.last_self_test = {key: result.get(key) for key in (
         "status", "request_id", "reason_category", "cleanup_status", "helm_result", "resource_summary", "completed_at")}
@@ -483,6 +510,7 @@ def select_configuration(db, manual_configuration, validation_type):
 
 
 def maintenance():
+    diagnostics = []
     with SessionLocal() as db:
         for row in db.scalars(select(ManagedValidator).where(ManagedValidator.status.in_(["HEALTHY", "DEGRADED"]))):
             if row.active_operation_id or not row.configuration:
@@ -492,7 +520,16 @@ def maintenance():
                 row.last_contact_at = datetime.now(timezone.utc)
                 expiry = datetime.fromisoformat(row.certificate["expires_at"]).replace(tzinfo=timezone.utc)
                 row.status = "HEALTHY" if expiry > datetime.now(timezone.utc) and row.last_self_test.get("status") == "VERIFIED" else "DEGRADED"
-            except Exception:
+            except Exception as exc:
                 row.status = "DEGRADED"
                 clear_selection(db, row.id)
+                diagnostic = build_diagnostic(exc, component="validator", operation="health_check", status="DEGRADED",
+                    resource={"validator_id": row.id}, context={"stage": "health_check"})
+                row.last_health = {**(row.last_health or {}), "diagnostic": public_diagnostic(diagnostic)}
+                diagnostics.append(diagnostic)
         db.commit()
+    for diagnostic in diagnostics:
+        if SessionLocal is _DEFAULT_SESSION_FACTORY:
+            enqueue_diagnostic(diagnostic)
+        else:
+            record_diagnostic(diagnostic, session_factory=SessionLocal)

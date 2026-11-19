@@ -12,6 +12,7 @@ from .database import get_db
 from .durable_jobs import DurableJob, aware, now
 from .models import ManagedValidator, RemediationExecution, Service, User, ValidatorProvisioningAttempt
 from .scan_coordination import ScanJob
+from .diagnostics import public_diagnostic
 
 router = APIRouter(tags=["jobs"])
 
@@ -56,7 +57,8 @@ def dto(db, job, auth, list_result=None):
             stage = phase.replace("_", " ").capitalize()
     # Artifacts, filesystem locations, approved requests and credentials are
     # never part of this generic status API.
-    result = {key: value for key, value in (list_result if list_result is not None else job.result or {}).items()
+    source_result = list_result if list_result is not None else job.result or {}
+    result = {key: value for key, value in source_result.items()
               if key in {"result_url", "download_url", "plan", "preview", "filename", "size_bytes", "sha256"}}
     for key in ("result_url", "download_url"):
         value = result.get(key)
@@ -64,6 +66,8 @@ def dto(db, job, auth, list_result=None):
             result.pop(key, None)
     return {"id": job.id, "job_id": job.id, "kind": job.kind, "status": job.status,
         "stage": stage, "progress": job.progress, "error": job.error,
+        "diagnostic": public_diagnostic(source_result.get("diagnostic")) or None,
+        "worker_id": job.worker_id, "heartbeat_at": _iso(job.heartbeat_at), "max_attempts": job.max_attempts,
         "correlation_id": job.correlation_id, "requested_by": _person(db, job.requested_by_id),
         "service": service.name if service else None, "version": job.version,
         "created_at": _iso(job.created_at), "started_at": _iso(job.started_at),
@@ -109,6 +113,8 @@ def scan_dto(db, job):
         "status": status, "stage": str(payload.get("phase") or job.status),
         "created_at": _iso(job.created_at), "elapsed_seconds": _elapsed(job.created_at, job.finished_at),
         "error": "Scan did not finish successfully; open its result for diagnostics." if status == "failed" else None,
+        "diagnostic": public_diagnostic(payload.get("diagnostic")) or None,
+        "correlation_id": payload.get("correlation_id") or job.id, "attempts": job.attempts, "worker_id": payload.get("worker_id"),
         "result_url": f"/api/public/jobs/{job.id}/results/view", "can_cancel": False, "can_retry": False}
 
 
@@ -120,6 +126,8 @@ def validator_dto(db, attempt):
         "stage": attempt.stage, "created_at": _iso(attempt.created_at),
         "elapsed_seconds": _elapsed(attempt.started_at or attempt.created_at, attempt.completed_at),
         "error": attempt.failure, "correlation_id": attempt.id,
+        "diagnostic": public_diagnostic((attempt.request or {}).get("diagnostic")) or None,
+        "attempts": attempt.attempts, "heartbeat_at": _iso(attempt.heartbeat_at),
         "result_url": "/admin/validators", "can_cancel": False, "can_retry": False}
 
 
@@ -144,10 +152,10 @@ def jobs(db: Session = Depends(get_db), auth: AuthContext = Depends(require_user
             if len(visible) < 100:
                 visible.append(row.id)
     query = select(DurableJob, DurableJob.result["result_url"].as_string(),
-        DurableJob.result["download_url"].as_string()).options(defer(DurableJob.result)).where(scoped,
+        DurableJob.result["download_url"].as_string(), DurableJob.result["diagnostic"]).options(defer(DurableJob.result)).where(scoped,
         or_(DurableJob.id.in_(visible), (~DurableJob.kind.startswith("export")) & (DurableJob.kind != "remediation_deliver")))
-    for row, result_url, download_url in db.execute(query.order_by(DurableJob.created_at.desc()).limit(100)):
-        recent.append(dto(db, row, auth, {"result_url": result_url, "download_url": download_url}))
+    for row, result_url, download_url, diagnostic in db.execute(query.order_by(DurableJob.created_at.desc()).limit(100)):
+        recent.append(dto(db, row, auth, {"result_url": result_url, "download_url": download_url, "diagnostic": diagnostic}))
     scan_scope = _scan_filter(db, auth)
     for status, count in db.execute(select(ScanJob.status, func.count()).where(scan_scope).group_by(ScanJob.status)):
         state = {"complete": "completed", "incomplete": "completed", "error": "failed", "cancelled": "cancelled", "queued": "queued"}.get(status, "running")

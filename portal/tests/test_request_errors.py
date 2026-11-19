@@ -43,4 +43,8 @@ def test_api_preserves_structured_error_contract():
               "source_safety": {"blocked_charts": ["auth"]}}
     response = asyncio.run(main.expected_http_error(request("application/json"), HTTPException(422, detail)))
     assert response.status_code == 422
-    assert json.loads(response.body) == {"detail": detail}
+    body = json.loads(response.body)
+    assert body["detail"] == detail
+    assert body["diagnostic"]["status"] == 422
+    assert body["diagnostic"]["correlation_id"]
+    assert "technical" not in body["diagnostic"]

@@ -102,6 +102,24 @@ def test_public_record_excludes_private_persistence(sessions):
         assert 'encrypted-sensitive' not in json.dumps(dto)
 
 
+def test_maintenance_failure_retains_public_diagnostic_without_history(sessions, monkeypatch):
+    with sessions() as db:
+        row = db.get(ManagedValidator, 'host-1')
+        row.status, row.configuration = 'HEALTHY', {'endpoint': 'https://validator.example'}
+        db.commit()
+    def unavailable(*args):
+        raise TimeoutError('health check timed out; token=private-value')
+    monkeypatch.setattr(managed, 'health_checked', unavailable)
+    monkeypatch.setattr(managed, 'record_diagnostic', lambda *args, **kwargs: False)
+    managed.maintenance()
+    with sessions() as db:
+        row = db.get(ManagedValidator, 'host-1')
+        assert row.status == 'DEGRADED'
+        diagnostic = managed.public_record(db, row)['last_health']['diagnostic']
+        assert diagnostic['category'] == 'timeout'
+        assert 'technical' not in diagnostic and 'private-value' not in json.dumps(diagnostic)
+
+
 @pytest.mark.parametrize('change', [{'validator_id':'different'}, {'ready':False}, {'request_schema_versions':['cats.validation/v1']}])
 def test_health_requires_matching_id_readiness_and_v2(monkeypatch, change):
     monkeypatch.setattr(managed.validator_client,'health',lambda config: healthy() | change)

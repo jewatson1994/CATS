@@ -73,6 +73,30 @@ def test_completion_purges_credentials(sessions, monkeypatch):
         assert db.get(ManagedValidator, 'host1').active_operation_id is None
 
 
+def test_nonterminal_return_is_failed_and_retried_with_diagnostic(sessions, monkeypatch):
+    operation = enqueue(sessions)
+    monkeypatch.setattr(managed, 'run_operation', lambda *args, **kwargs: None)
+    monkeypatch.setattr(worker, 'record_diagnostic', lambda *args, **kwargs: False)
+    assert worker.run_once(sessions)
+    with sessions() as db:
+        attempt = db.get(ValidatorProvisioningAttempt, operation)
+        assert attempt.status == 'QUEUED' and attempt.lease_until is None
+        assert attempt.request['diagnostic']['context']['stage'] == 'RECONCILING'
+        assert attempt.request['diagnostic']['correlation_id'] == operation
+
+
+def test_provisioning_diagnostic_redacts_decrypted_credentials(sessions, monkeypatch):
+    operation = enqueue(sessions)
+    def fail(*args):
+        raise RuntimeError('SSH rejected DO_NOT_LEAK')
+    monkeypatch.setattr(managed, 'health_checked', fail)
+    assert worker.run_once(sessions)
+    with sessions() as db:
+        attempt = db.get(ValidatorProvisioningAttempt, operation)
+        assert attempt.request['diagnostic']['technical']['exceptions']
+        assert 'DO_NOT_LEAK' not in json.dumps(attempt.request['diagnostic'])
+
+
 def test_failure_retries_with_backoff_then_purges(sessions, monkeypatch):
     operation = enqueue(sessions)
     def failure(*args):

@@ -78,6 +78,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for backend setup, frontend commands, tar
 
 Operational guides live in [docs/](docs/README.md). Historical implementation handoffs and qualification evidence are retained for traceability; use the [archive index](docs/archive/README.md) to distinguish older handoffs from current operating instructions.
 
+For operational failures, use the [Diagnostics Center and troubleshooting guide](docs/diagnostics.md) for GUI reports, worker evidence, correlation IDs, retention and access controls.
+
 ## License
 
 CATS-authored code and documentation are available under the [MIT License with Commons Clause v1.0](LICENSE). This is a **source-available** license, not an OSI-approved open-source license. It permits use, modification, and redistribution subject to the full license terms, including the restriction on selling products or services whose value derives entirely or substantially from CATS. The restriction also covers qualifying paid hosting, consulting, and support services; ordinary internal use is permitted. See the [Commons Clause terms](https://commonsclause.com/) for the definition of "Sell".

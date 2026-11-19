@@ -17,6 +17,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
+from .diagnostics import build_diagnostic, enqueue_diagnostic, public_diagnostic
+
 
 ARTIFACT_TYPE = "application/vnd.cats.release.documentation.v1"
 MANIFEST_TYPE = "application/vnd.oci.image.manifest.v1+json"
@@ -400,8 +402,12 @@ def verify_documentation(reference: str, subject: str, env: Mapping[str, str]) -
             raise ValueError("Documentation must use the deployment artifact repository")
         client = _Client(host, repository, env)
         result.update(_verify(client, reference, subject), status="verified")
-    except Exception:
+    except Exception as exc:
         result["error"] = "Documentation retrieval verification failed; check digest, subject, registry access and destination trust."
+        event = build_diagnostic(exc, component='offline_bundle', operation='verify_documentation',
+            resource={'reference': reference, 'subject': subject}, summary=result['error'])
+        enqueue_diagnostic(event)
+        result['diagnostic'] = public_diagnostic(event)
     return result
 
 
@@ -474,12 +480,22 @@ def publish_documentation(files: Mapping[str, Path], subject: str, env: Mapping[
                 index = json.loads(data)
                 if any(item.get("digest") == digest for item in index.get("manifests", [])):
                     result["association_mode"] = "oci_referrers"
-            except Exception:
+            except Exception as exc:
                 # Publication was verified by digest; unavailable discovery
                 # cannot invalidate it. The deterministic tag remains usable.
-                pass
+                if not isinstance(exc, _RegistryError) or exc.status not in (404, 405):
+                    event = build_diagnostic(exc, component='offline_bundle', operation='discover_documentation',
+                        resource={'reference': reference, 'subject': subject},
+                        summary='Documentation was published, but registry referrer discovery failed.')
+                    enqueue_diagnostic(event)
+                    result['diagnostic'] = public_diagnostic(event)
         result["status"] = "published"
-    except Exception:
+    except Exception as exc:
         result["error"] = ("Documentation publication or verification failed; check registry access, "
                            "destination trust, immutable subject and documentation files.")
+        event = build_diagnostic(exc, component='offline_bundle', operation='publish_documentation',
+            resource={'subject': subject}, context={'publication_status': result['publication_status'],
+                'verification_status': result['verification_status']}, summary=result['error'])
+        enqueue_diagnostic(event)
+        result['diagnostic'] = public_diagnostic(event)
     return result

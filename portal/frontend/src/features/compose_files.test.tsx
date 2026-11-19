@@ -30,7 +30,8 @@ it('lists archive documents and submits a unique, ordered subset using numbered 
   expect(request.mock.calls[0][0]).toBe('/api/public/compose/files');
   expect(body(0).getAll('compose_uploads')).toHaveLength(1);
   expect(body(0).has('compose_files')).toBe(false);
-  expect(state).toHaveBeenLastCalledWith('Choose at least one Compose document and its merge order.');
+  // The picker renders before its effect publishes validation to the parent.
+  await waitFor(() => expect(state).toHaveBeenLastCalledWith('Choose at least one Compose document and its merge order.'));
   fireEvent.change(screen.getByLabelText(names[0]), {target: {value: '1'}});
   fireEvent.change(screen.getByLabelText(names[1]), {target: {value: '2'}});
   fireEvent.change(screen.getByLabelText(names[1]), {target: {value: '1'}});

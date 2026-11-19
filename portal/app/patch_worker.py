@@ -20,6 +20,7 @@ from .scanner_actions import inventory, scan_sbom, scan_rootfs, scan_image_confi
 from .patch_inputs import consume_binding, default_binding_root, system_ca_bundle
 from .patch_ownership import execution_lock, ExecutionAlreadyOwned
 from .patch_publication import publication_error
+from .diagnostics import build_diagnostic
 from .patching import (
     PATCH_PHASES,
     archive_sha256, image_repository, certificate_cleanup_script, certificate_trust_script, compare_reports, copa_command, copa_native_report, grype_archive_source, grype_records, normalize_package_manager, package_ecosystem, package_manager_probe_script, patched_reference,
@@ -140,6 +141,7 @@ def execute() -> int:
     if not config.get("signing_enabled"):
         stages["signing_image"] = {"status": "skipped", "reason": "not_configured"}
     current_phase = "queued"
+    command_context = {}
 
     def log(message: str) -> None:
         with log_path.open("a", encoding="utf-8") as stream:
@@ -153,6 +155,22 @@ def execute() -> int:
         payload = {"status": status, "phase": phase, "stages": stages, "updated_at": now(), **values}
         if status == "failed":
             payload["failed_stage"] = phase
+            payload["diagnostic"] = build_diagnostic(redact(values.get("error", "Patch failed"), secrets),
+                component="patch", operation=phase, correlation_id=config.get("job_id"), status="failed",
+                resource={"job_id": config.get("job_id")}, context={
+                    "stage": phase, "worker_id": os.getenv("HOSTNAME", "patch-worker"),
+                    "last_successful_stage": next((key for key, value in reversed(list(stages.items()))
+                        if value.get("status") in {"success", "complete", "completed"}), None), **command_context})
+            # State and result survive scratch cleanup and are ingested by HQ.
+            result_path = output / "patch-result.json"
+            result = dict(values.get("result") or {})
+            if result_path.exists():
+                try:
+                    result = {**json.loads(result_path.read_text(encoding="utf-8")), **result}
+                except (OSError, ValueError):
+                    pass
+            result.update(status="failed", diagnostic=payload["diagnostic"])
+            result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         temp = output / "patch-state.json.tmp"
         temp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         temp.replace(output / "patch-state.json")
@@ -228,7 +246,17 @@ def execute() -> int:
             raise RuntimeError("Scanners must use the shared offline action")
         if execution_binding is not None:
             kwargs["cwd"] = workspace
-        result = run_command(command, env=env, log=log, timeout=kwargs.pop("timeout", timeout), checkpoint=check_cancelled, **kwargs)
+        command_timeout = kwargs.pop("timeout", timeout)
+        command_context.clear()
+        command_context.update(tool=Path(command[0]).name, timeout_seconds=command_timeout)
+        try:
+            result = run_command(command, env=env, log=log, timeout=command_timeout, checkpoint=check_cancelled, **kwargs)
+        except Exception as exc:
+            code = getattr(exc, "returncode", None)
+            match = re.search(r"exited with code (-?\d+)", str(exc))
+            command_context["exit_code"] = code if code is not None else int(match.group(1)) if match else None
+            raise
+        command_context.clear()
         return result
 
     def scan_image(reference: str, root: Path, label: str):
@@ -246,12 +274,16 @@ def execute() -> int:
             # Missing daemon descriptor metadata never invents registry identity.
             pass
         sbom_path = output / f"sbom-{label}.json"
+        command_context.update(tool="syft", timeout_seconds=timeout)
         inventory(root, sbom_path, image=reference, provenance=provenance, timeout=timeout, check_cancelled=check_cancelled)
+        command_context.clear()
         check_cancelled()
         if scanner_binding is not None:
             scanner_binding.verify()
         report_path = output / f"grype-{label}.json"
+        command_context.update(tool="grype", timeout_seconds=timeout)
         report = scan_sbom(sbom_path, report_path, environment=env, timeout=timeout, check_cancelled=check_cancelled)
+        command_context.clear()
         check_cancelled()
         full_status = "failed"
         full_path = output / f"grype-full-{label}.json"

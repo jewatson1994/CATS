@@ -11,6 +11,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from openpyxl.writer.excel import ExcelWriter
 
 from .models import Execution, Service, ServiceVersion
+from .diagnostics import build_diagnostic, enqueue_diagnostic, public_diagnostic, sanitize
 
 
 class EvidenceUnavailable(ValueError):
@@ -57,13 +58,18 @@ def write_export_archive(output, *, workbook_builders, evidence_builders,
                 raise ValueError("Unsafe documentation entry name")
             if len(entries) >= 128:
                 raise ValueError("Release documentation entry limit exceeded")
-            status, reason = "included", None
+            status, reason, diagnostic = "included", None, None
             try:
                 value = builder()
             except Exception as exc:
                 if not isinstance(exc, EvidenceUnavailable) and getattr(exc, "status_code", None) != 422:
                     raise
-                reason = str(getattr(exc, "detail", exc))
+                reason = sanitize(str(getattr(exc, "detail", exc)))
+                event = build_diagnostic(exc, component='offline_bundle', operation='export_evidence',
+                    status=422, resource={'entry': name},
+                    summary='An export entry is unavailable because its source evidence is missing or invalid.')
+                enqueue_diagnostic(event)
+                diagnostic = public_diagnostic(event)
                 value, status = reason + "\n", "unavailable"
             actual_name = name if status == "included" else name + ".unavailable.txt"
             with tempfile.SpooledTemporaryFile(max_size=1024 * 1024) as member:
@@ -95,6 +101,8 @@ def write_export_archive(output, *, workbook_builders, evidence_builders,
                     "bytes": size, "sha256": digest.hexdigest()}
             if reason:
                 item["reason"] = reason
+            if diagnostic:
+                item['diagnostic'] = diagnostic
             entries.append(item)
 
         for name, builder in workbook_builders.items():

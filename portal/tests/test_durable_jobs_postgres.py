@@ -40,12 +40,25 @@ def test_real_postgres_concurrent_claim_and_lease_recovery():
             db.commit()
         replacement = claim(('test',), 'replacement', sessions)
         assert replacement and replacement.attempts == 2
-        assert replacement.result == {'receipt': 'immutable'}
+        assert replacement.result['receipt'] == 'immutable'
+        diagnostic = replacement.result['diagnostic']
+        assert diagnostic['code'] == 'worker_lease_expired'
+        assert diagnostic['correlation_id'] == original.correlation_id
+        assert diagnostic['resource']['job_id'] == original.id
+        assert diagnostic['status'] == 'queued' and diagnostic['retryable'] is True
+        assert diagnostic['context']['attempts'] == 1
+        assert diagnostic['context']['max_attempts'] == original.max_attempts
+        assert diagnostic['resolution']
         with pytest.raises(LeaseLost):
             stale.finish({'stale': True})
         JobContext(replacement, sessions).finish({'complete': True})
         with sessions() as db:
-            assert db.get(DurableJob, original.id).status == 'completed'
+            completed = db.get(DurableJob, original.id)
+            assert completed.status == 'completed'
+            assert completed.result['receipt'] == 'immutable'
+            assert completed.result['complete'] is True
+            assert completed.result['diagnostic']['error_id'] == diagnostic['error_id']
+            assert 'stale' not in completed.result
     finally:
         isolated.dispose()
         with engine.begin() as db:

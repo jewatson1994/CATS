@@ -1,7 +1,8 @@
+import {diagnosticNotices, localDiagnostic, publishDiagnostic, sanitizeDiagnostic, type Diagnostic} from './diagnostics';
 export const PAGE_MEDIA_TYPE = 'application/vnd.cats.page+json';
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {super(message);}
+  constructor(message: string, readonly status: number, readonly diagnostic?: Diagnostic, readonly detail?: unknown) {super(message); this.name = 'ApiError';}
 }
 
 type MutationListener = () => void;
@@ -17,7 +18,16 @@ export function onSessionEnded(listener: () => void): () => void {
   sessionListeners.add(listener);
   return () => {sessionListeners.delete(listener);};
 }
-export function sessionEnded() {for (const listener of [...sessionListeners]) listener();}
+export function sessionEnded() {diagnosticNotices.clear(); for (const listener of [...sessionListeners]) listener();}
+
+export function detailMessage(detail: unknown): string | undefined {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(detailMessage).filter(Boolean).join('; ') || undefined;
+  if (detail && typeof detail === 'object') {
+    const value = detail as Record<string, unknown>;
+    return detailMessage(value.message ?? value.reason ?? value.detail ?? value.msg ?? value.error ?? value.summary);
+  }
+}
 
 /** Cookies stay HttpOnly. FormData preserves backend-owned validation and CSRF. */
 export async function requestJson<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -26,12 +36,21 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
   const headers = new Headers(options.headers);
   if (!headers.has('Accept')) headers.set('Accept', 'application/json');
   const mutation = (options.method || 'GET').toUpperCase() !== 'GET';
+  const fail = (message: string, status: number, detail?: unknown, diagnostic?: Diagnostic): never => {
+    const safe = sanitizeDiagnostic(diagnostic || localDiagnostic(message, status, `${options.method || 'GET'} ${target.pathname}`)) as Diagnostic;
+    publishDiagnostic(safe);
+    throw new ApiError(sanitizeDiagnostic(message), status, safe, sanitizeDiagnostic(detail));
+  };
   let response: Response;
   try {
     response = await fetch(target.href, {
       ...options, credentials: 'same-origin', cache: 'no-store',
       headers,
     });
+  } catch (error) {
+    if (options.signal?.aborted || (error instanceof Error && error.name === 'AbortError')) throw error;
+    return fail(error instanceof Error && !(error instanceof TypeError) && error.message
+      ? error.message : 'Unable to reach the server. Check your connection and try again.', 0);
   } finally {
     // Any mutation may have changed server state, including one whose
     // response was lost: discard cached reads either way.
@@ -40,16 +59,18 @@ export async function requestJson<T>(url: string, options: RequestInit = {}): Pr
   if (response.redirected && new URL(response.url).pathname === '/login') {
     sessionEnded();
     window.location.assign(response.url);
-    throw new ApiError('Your session has expired. Please sign in again.', 401);
+    return fail('Your session has expired. Please sign in again.', 401);
   }
   if (response.status === 401) sessionEnded();
   if (!response.headers.get('content-type')?.includes('json')) {
-    throw new ApiError('The server returned an unexpected response.', response.status);
+    return fail('The server returned an unexpected response.', response.status);
   }
-  const data: unknown = await response.json();
+  let data: unknown;
+  try {data = await response.json();} catch {return fail('The server returned invalid JSON.', response.status);}
   if (!response.ok) {
     const detail = (data as {detail?: unknown})?.detail;
-    throw new ApiError(typeof detail === 'string' ? detail : 'The request could not be completed.', response.status);
+    const diagnostic = (data as {diagnostic?: Diagnostic})?.diagnostic;
+    return fail(detailMessage(detail) || diagnostic?.summary || 'The request could not be completed.', response.status, detail, diagnostic);
   }
   return data as T;
 }

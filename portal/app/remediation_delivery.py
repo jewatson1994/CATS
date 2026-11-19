@@ -20,6 +20,7 @@ from .secrets import decrypt_secret
 from .service_oci import destination_trust, validate_destination
 from .deployment_bundle import file_digest
 from .rendering import helm_template, isolated_runner
+from .diagnostics import public_diagnostic
 
 
 class DeliveryAttempt(Base):
@@ -37,8 +38,13 @@ class DeliveryAttempt(Base):
 
 
 def attempt_dto(row):
+    result = dict(row.result or {})
+    if result.get("diagnostic"):
+        result["diagnostic"] = public_diagnostic(result["diagnostic"])
+    if isinstance(result.get("verification"), dict) and result["verification"].get("diagnostic"):
+        result["verification"] = {**result["verification"], "diagnostic": public_diagnostic(result["verification"]["diagnostic"])}
     return {"id": row.id, "remediation_id": row.remediation_id, "actor_id": row.actor_id, "destination": row.destination, "content_digest": row.content_digest,
-            "status": row.status, "result": row.result, "started_at": row.started_at.isoformat() if row.started_at else None,
+            "status": row.status, "result": result, "started_at": row.started_at.isoformat() if row.started_at else None,
             "completed_at": row.completed_at.isoformat() if row.completed_at else None}
 
 

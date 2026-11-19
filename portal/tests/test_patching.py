@@ -233,8 +233,11 @@ def test_tls_error_is_prioritized_over_downstream_package_resolution(monkeypatch
         ["copa"], 1, "", "TLS: server certificate not trusted\nca-certificates (no such package)"
     )
     monkeypatch.setattr("app.patching.subprocess.run", lambda *_args, **_kwargs: completed)
-    with pytest.raises(RuntimeError, match="Repository TLS trust failure"):
+    with pytest.raises(RuntimeError, match="Repository TLS trust failure") as failure:
         run_command(["copa"], env={"PATH": "/usr/bin"}, log=lambda _message: None, timeout=1)
+    assert failure.value.tool == "copa"
+    assert failure.value.exit_code == 1
+    assert failure.value.timeout_seconds == 1
 
 
 def test_package_manager_probe_stops_after_first_supported_command():
@@ -496,6 +499,12 @@ def test_failed_job_redacts_and_cleans_credentials(monkeypatch, tmp_path: Path):
     assert state["stages"]["scanning_source"]["status"] == "failed"
     assert state["stages"]["patching_image"]["reason"] == "not_reached"
     assert "super-secret" not in state["error"]
+    diagnostic = state["diagnostic"]
+    assert diagnostic["context"]["stage"] == "scanning_source"
+    assert diagnostic["context"]["last_successful_stage"] == "acquiring_image"
+    assert diagnostic["context"]["tool"] == "grype"
+    assert "super-secret" not in json.dumps(diagnostic)
+    assert json.loads((output / "patch-result.json").read_text())["diagnostic"] == diagnostic
     assert "super-secret" not in (output / "patch.log").read_text(encoding="utf-8")
     assert not any(path.name == "docker-config" for path in output.rglob("docker-config"))
 

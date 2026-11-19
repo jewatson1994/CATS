@@ -190,7 +190,7 @@ def test_five_active_jobs_can_renew_leases_while_retaining_sessions(monkeypatch)
     monkeypatch.setenv("CATS_JOB_LEASE_SECONDS", "3")
     try:
         with ThreadPoolExecutor(max_workers=5) as pool:
-            futures = [pool.submit(durable_jobs.execute, SimpleNamespace(id=job, payload={}, kind="test", correlation_id=str(job)), handler)
+            futures = [pool.submit(durable_jobs.execute, SimpleNamespace(id=job, payload={}, kind="test", service_id=None, correlation_id=str(job)), handler)
                        for job in range(5)]
             try:
                 holding.wait(timeout=5)

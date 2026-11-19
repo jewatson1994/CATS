@@ -60,6 +60,22 @@ def test_report_keeps_patch_blockers_and_worker_identity():
     assert data['job']['patched_images'][0]['patch_job_id'] == 'patch-1'
 
 
+def test_report_preserves_public_diagnostics_across_delivery_and_validation():
+    from app.diagnostics import build_diagnostic
+    diagnostic = build_diagnostic(RuntimeError('private diagnostic detail'), component='validator', operation='validate')
+    evidence = {'status': 'FAILED', 'diagnostic': diagnostic}
+    job = N(job_key='job', validation_results={'diagnostic': diagnostic, 'deployment': evidence, 'runtime_attempts': [evidence]},
+        delivery_attempts=[N(id=1, status='failed', result={'diagnostic': diagnostic, 'verification': evidence})])
+    data = {'can': {}, 'next_path': '/remediations'}
+    project_remediations(data, 'remediation_report.html', {'service': service(), 'job': job}, lambda *args: False, {})
+    projected = data['job']
+    values = [projected['diagnostic'], projected['candidate_validation']['diagnostic'],
+        projected['candidate_validation_attempts'][0]['diagnostic'], projected['delivery_attempts'][0]['diagnostic'],
+        projected['delivery_attempts'][0]['verification']['diagnostic']]
+    assert all(item['error_id'] == diagnostic['error_id'] and 'technical' not in item for item in values)
+    assert 'private diagnostic detail' not in json.dumps(data)
+
+
 def test_report_preserves_full_comparison_counts_and_coverage_notes():
     snapshot = {'vulnerabilities': {'Critical': 1, 'Negligible': 0, 'Unknown': 2},
                 'vulnerability_observations': 3, 'comparison_note': 'Same scan method.',

@@ -5,6 +5,8 @@ import { PAGE_MEDIA_TYPE, requestJson, type PageData, type PageEnvelope } from '
 import { useJob, type JobState } from '../hooks/useJob';
 import { ComposeInventory, type ComposeModel } from './compose_inventory';
 import { ComposeFiles } from './compose_files';
+import {ErrorDetails} from '../components/ErrorDetails';
+import type {Diagnostic} from '../diagnostics';
 
 interface ScanJob extends JobState {
   status: string; started_at?: string | null; finished_at?: string | null; phase?: string;
@@ -23,11 +25,12 @@ export interface SelfServiceData {
   job_id?: string; job?: ScanJob; status_message?: string;
   progress_phases: [string, string][]; progress_order: string[];
   current_user?: PageData['current_user']; csrf_token?: string;
+  may_view_diagnostics?: boolean;
 }
 const labels: Record<string, string> = { preparing: 'Preparing', queued: 'Queued', running: 'Running', complete: 'Complete', incomplete: 'Incomplete', error: 'Error', cancelled: 'Cancelled' };
 const phaseLabels: Record<string, string> = { preparing: 'Preparing submission', prepare: 'Preparing scan', transfer: 'Transferring evidence', ingest: 'Ingesting evidence', done: 'Finished', queued: 'Queued', prepare_inputs: 'Prepare inputs', compose_discovery: 'Discover Compose services', generate_sboms: 'SBOM generation', scan_sboms: 'SBOM scan', configuration_scan: 'Configuration scans', report_results: 'Report results', report_to_portal: 'Portal ingest' };
 const ingestRequests = new Map<string, Promise<unknown>>();
-const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Request failed. Please retry.';
+const errorMessage = (error: unknown) => typeof error === 'string' ? error : error instanceof Error ? error.message : 'Request failed. Please retry.';
 
 export function Page({ data: pageData }: { data: PageData }) {
   return <Workspace initial={pageData as SelfServiceData} />;
@@ -74,13 +77,14 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
   const [cancelError, setCancelError] = useState('');
   const [ingestState, setIngestState] = useState<'idle' | 'pending' | 'complete' | 'error'>('idle');
   const [ingestError, setIngestError] = useState('');
+  const [ingestDiagnostic, setIngestDiagnostic] = useState<Diagnostic>();
   const [ingestRetry, setIngestRetry] = useState(0);
   const [manualIngest, setManualIngest] = useState<{scope: string; service: string; version: string; assessmentScope: string} | null>(null);
-  useEffect(() => { setIngestState('idle'); setIngestError(''); setCancelError(''); }, [scope]);
+  useEffect(() => { setIngestState('idle'); setIngestError(''); setIngestDiagnostic(undefined); setCancelError(''); }, [scope]);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const base = data.job_id ? `/api/public/jobs/${encodeURIComponent(data.job_id)}` : null;
-  const { job: polledJob, error, retry, elapsedSeconds } = useJob<ScanJob>(base, scope);
+  const { job: polledJob, error, diagnostic: pollingDiagnostic, retry, elapsedSeconds } = useJob<ScanJob>(base, scope);
   const job = polledJob || data.job;
   const preview = job?.compose_preview ?? data.compose_preview ?? false;
   const progressPhases = preview ? data.progress_phases.filter(([step]) => ['prepare_inputs', 'compose_discovery'].includes(step)) : data.progress_phases;
@@ -129,7 +133,7 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
       ingestRequests.set(ingestKey, request);
     }
     request.then(() => { if (active) setIngestState('complete'); }, reason => {
-      if (active) { setIngestState('error'); setIngestError(errorMessage(reason)); }
+      if (active) { setIngestState('error'); setIngestError(errorMessage(reason)); setIngestDiagnostic((reason as {diagnostic?: Diagnostic} | null)?.diagnostic); }
     });
     return () => { active = false; };
   }, [sbom, preview, base, resultsReady, ingestTarget, ingestKey, ingestUrl, ingestRetry]);
@@ -201,8 +205,9 @@ function Workspace({ initial }: { initial: SelfServiceData }) {
           <p className="muted">Each attempt uses a fixed database version. Importing newer intelligence does not change a scan already running; rescan to use the latest version.</p>
           <ul>{Object.entries(job.intelligence.databases).map(([scanner, database]) => <li key={scanner}>{scanner === 'grype' ? 'Grype' : 'Trivy'}: {database.status || 'unavailable'}{database.version && ` · version ${database.version}`}{database.built && ` · built ${database.built}`}</li>)}</ul>
         </details>}
-        {error && <p role="alert">Unable to read scan status. {errorMessage(error)} <button type="button" onClick={retry}>Retry status</button></p>}
-        {ingestState === 'error' && <p role="alert">Ingest failed. {ingestError} <button type="button" onClick={() => { ingestRequests.delete(ingestKey); setIngestRetry(value => value + 1); }}>Retry ingestion</button></p>}
+        {job?.diagnostic && <ErrorDetails diagnostic={job.diagnostic} admin={data.may_view_diagnostics === true}/>}
+        {error && <div role="alert">Unable to read scan status.<ErrorDetails diagnostic={pollingDiagnostic} message={errorMessage(error)} admin={data.may_view_diagnostics === true}/><button type="button" onClick={retry}>Retry status</button></div>}
+        {ingestState === 'error' && <div role="alert">Ingest failed.<ErrorDetails diagnostic={ingestDiagnostic} message={ingestError} admin={data.may_view_diagnostics === true}/><button type="button" onClick={() => { ingestRequests.delete(ingestKey); setIngestRetry(value => value + 1); }}>Retry ingestion</button></div>}
         {!sbom && !!job?.skipped_charts?.length && <details><summary>Charts not acquired</summary><ul>{job.skipped_charts.map((entry, index) => <li key={index}>{entry}</li>)}</ul></details>}
         {terminal && status !== 'cancelled' && <div className="scan-result-actions">{!sbom && !preview && <>{download('overview.html', 'Open HTML overview', resultsReady)}{download('results/view', 'Detailed results', resultsReady)}{download('export.xlsx', 'Download Excel', resultsReady)}</>}{download(sbom ? 'sboms' : 'artifacts', sbom ? 'Download SBOMs' : 'Download artifacts')}{download('logs', 'View debug log')}</div>}
         {['preparing', 'queued', 'running'].includes(status) && <div className="scan-result-actions"><button type="button" className="secondary-button" disabled={cancelling} onClick={cancel}>{cancelling ? 'Cancelling…' : preview ? 'Cancel preview' : 'Cancel scan'}</button></div>}

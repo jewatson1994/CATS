@@ -8,11 +8,21 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import MutableMapping
 
 from fastapi import HTTPException
-from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, select, update, func, text, inspect, delete
+from sqlalchemy import Boolean, DateTime, Integer, JSON, String, Text, select, update, func, text, inspect, delete, or_
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base, SessionLocal
 from .schema_migrations import create_index_if_missing
 from .imported_services import imported_service_predicate
+from .diagnostics import build_diagnostic, record_diagnostic, enqueue_diagnostic, correlation
+
+_DEFAULT_SESSION_FACTORY = SessionLocal
+
+
+def publish_diagnostic(diagnostic):
+    if SessionLocal is _DEFAULT_SESSION_FACTORY:
+        enqueue_diagnostic(diagnostic)
+    else:
+        record_diagnostic(diagnostic, session_factory=SessionLocal)
 
 
 def now():
@@ -53,6 +63,15 @@ class ScanAttempt(Base):
 
 
 TERMINAL = {"complete", "incomplete", "error", "cancelled"}
+
+
+def scan_diagnostic(job, error, *, code=None, retryable=False, worker_id=None):
+    return build_diagnostic(error, component="scanner", operation="scan",
+        correlation_id=job.payload.get("correlation_id") or job.id, status=job.status, code=code, retryable=retryable,
+        resource={"job_id": job.id, "service_key": job.service_key},
+        context={"stage": job.payload.get("phase"), "last_successful_stage": job.payload.get("last_successful_stage"),
+            "worker_id": worker_id or job.payload.get("worker_id"), "attempts": job.attempts,
+            "attempt_id": job.attempt_id, "max_attempts": setting("CATS_SCAN_MAX_ATTEMPTS", 3)})
 
 
 def imported_scan_target(db, service_key):
@@ -104,6 +123,7 @@ class DurableJobs(MutableMapping):
             return dict(row.payload)
 
     def __setitem__(self, key, payload):
+        payload = {**payload, "correlation_id": payload.get("correlation_id") or correlation.get() or key}
         with SessionLocal() as db:
             if imported_scan_target(db, payload.get("ingest_service_id")):
                 raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
@@ -143,6 +163,7 @@ class DurableJobs(MutableMapping):
             return db.scalar(select(func.count()).select_from(ScanJob))
 
     def update_job(self, key, values):
+        diagnostic = None
         with SessionLocal() as db:
             row = db.scalar(select(ScanJob).where(ScanJob.id == key).with_for_update())
             if row:
@@ -150,6 +171,11 @@ class DurableJobs(MutableMapping):
                     return
                 if values.get("status") == "cancelled" and row.status in TERMINAL:
                     return
+                if values.get("status") in {"error", "incomplete"} and not values.get("diagnostic"):
+                    diagnostic = scan_diagnostic(row, values.get("error") or "Scan did not complete",
+                        code="scan_incomplete" if values["status"] == "incomplete" else None)
+                    diagnostic["status"] = values["status"]
+                    values = {**values, "diagnostic": diagnostic}
                 row.payload = {**row.payload, **values}
                 row.status = row.payload["status"]
                 row.input_digest = row.payload.get("input_digest", row.input_digest)
@@ -164,41 +190,56 @@ class DurableJobs(MutableMapping):
                     db.execute(local_image_update(key)
                                .values(scan_status="failed", scan_error=row.payload.get("error") or "Scan cancelled"))
                 db.commit()
+        if diagnostic:
+            publish_diagnostic(diagnostic)
 
 
 def recover(db):
+    diagnostics = []
     abandoned = list(db.scalars(select(ScanJob).where(
         ScanJob.status == "preparing",
         ScanJob.created_at < now() - timedelta(seconds=setting("CATS_SCAN_PREPARATION_TTL_SECONDS", 900)))
         .with_for_update(skip_locked=True).limit(setting("CATS_SCAN_CLEANUP_BATCH_SIZE", 20))))
     for job in abandoned:
+        diagnostic = scan_diagnostic(job, TimeoutError("Scan input preparation expired before submission"), code="scan_preparation_timeout")
         job.status = "error"
         job.finished_at = now()
-        job.payload = {**job.payload, "status": "error", "phase": "error", "error": "Scan input preparation expired before submission"}
+        job.payload = {**job.payload, "status": "error", "phase": "error", "error": "Scan input preparation expired before submission",
+            "diagnostic": {**diagnostic, "status": "error"}}
+        diagnostics.append(job.payload["diagnostic"])
         db.execute(local_image_update(job.id)
                    .values(scan_status="failed", scan_error=job.payload["error"]))
     expired = list(db.scalars(select(ScanJob).where(
-        ScanJob.status.in_(["running", "claimed"]), ScanJob.lease_until < now()).with_for_update(skip_locked=True)))
+        ScanJob.status.in_(["running", "claimed"]), or_(ScanJob.lease_until < now(), ScanJob.lease_until.is_(None)))
+        .with_for_update(skip_locked=True)))
     for job in expired:
         attempt = db.get(ScanAttempt, job.attempt_id)
         if attempt:
             attempt.state = "expired"
         exhausted = job.attempts >= setting("CATS_SCAN_MAX_ATTEMPTS", 3)
+        diagnostic = scan_diagnostic(job, TimeoutError("Worker lease expired"),
+            code="worker_lease_expired", retryable=not exhausted, worker_id=attempt.worker_id if attempt else None)
         job.status = "error" if exhausted else "queued"
         job.available_at = now() + timedelta(seconds=min(300, 2 ** job.attempts))
         job.lease_until = None
         if exhausted:
             job.finished_at = now()
         job.payload = {**job.payload, "status": job.status, "phase": "error" if exhausted else "recovering",
+                       "diagnostic": {**diagnostic, "status": job.status},
                        "error": "Worker lease expired; retry limit reached" if exhausted else "Worker lease expired; queued for recovery"}
+        diagnostics.append(job.payload["diagnostic"])
         if exhausted:
             db.execute(local_image_update(job.id)
                        .values(scan_status="failed", scan_error=job.payload["error"]))
+    return diagnostics
 
 
 def claim(worker_id):
     with SessionLocal() as db:
-        recover(db)
+        diagnostics = recover(db)
+        db.commit()
+        for diagnostic in diagnostics:
+            publish_diagnostic(diagnostic)
         row = db.scalar(select(ScanJob).where(ScanJob.status == "queued", ScanJob.available_at <= now())
                         .order_by(ScanJob.anonymous, ScanJob.created_at).with_for_update(skip_locked=True).limit(1))
         if row is None:
@@ -229,7 +270,7 @@ def claim(worker_id):
             db.rollback()
             return None
         row.payload = {**row.payload, "status": "running", "phase": "prepare", "attempt_id": attempt_id,
-                       "started_at": now().isoformat(), "error": ""}
+                       "started_at": now().isoformat(), "error": "", "worker_id": worker_id, "attempts": row.attempts}
         db.add(ScanAttempt(id=attempt_id, job_id=row.id, worker_id=worker_id,
                            token_hash=hashlib.sha256(token.encode()).hexdigest(), state="running"))
         db.commit()
@@ -264,7 +305,11 @@ def heartbeat(job_id, attempt_id, token, phase, log_tail="", worker_id=None):
         job, _ = fenced(db, job_id, attempt_id, token, worker_id=worker_id)
         job.status = "running"
         job.lease_until = now() + timedelta(seconds=setting("CATS_SCAN_LEASE_SECONDS", 90))
-        job.payload = {**job.payload, "status": "running", "phase": str(phase)[:32], "log_tail": sanitize_diagnostic(log_tail, 8192)}
+        previous = job.payload.get("phase")
+        job.payload = {**job.payload, "status": "running", "phase": str(phase)[:32],
+            "heartbeat_at": now().isoformat(),
+            "last_successful_stage": previous if previous != phase else job.payload.get("last_successful_stage"),
+            "log_tail": sanitize_diagnostic(log_tail, 8192)}
         lease_until = job.lease_until.isoformat()
         db.commit()
     return {"cancelled": False, "lease_until": lease_until}
@@ -298,14 +343,21 @@ def sanitize_diagnostic(value, limit=1024):
     return "".join(c for c in value if c.isprintable() or c in "\n\t")[:limit]
 
 
-def report_failure(job_id, attempt_id, token, category, reason="", log_tail="", worker_id=None):
+def report_failure(job_id, attempt_id, token, category, reason="", log_tail="", worker_id=None, context=None):
     if category not in FAILURE_POLICY:
         raise HTTPException(422, "Invalid failure category")
     with SessionLocal() as db:
         job, attempt = fenced(db, job_id, attempt_id, token, worker_id=worker_id)
         retry = FAILURE_POLICY[category] and job.attempts < setting("CATS_SCAN_MAX_ATTEMPTS", 3)
-        diagnostic = sanitize_diagnostic(reason)
-        failure = {"category": category, "reason": diagnostic, "retryable": FAILURE_POLICY[category],
+        reason = sanitize_diagnostic(reason)
+        diagnostic = scan_diagnostic(job, reason or category.replace("_", " "), code=category,
+            retryable=retry, worker_id=attempt.worker_id)
+        # Worker-authored evidence never overrides coordinator identity or fencing.
+        if isinstance(context, dict):
+            from .diagnostics import sanitize
+            diagnostic["context"].update(sanitize({key: value for key, value in context.items()
+                if key in {"exit_code", "tool", "timeout_seconds", "stage", "exception_type"}}))
+        failure = {"category": category, "reason": reason, "retryable": FAILURE_POLICY[category],
                    "attempt_id": attempt_id, "reported_at": now().isoformat()}
         attempt.state = "failed"
         job.status = "queued" if retry else "error"
@@ -314,7 +366,8 @@ def report_failure(job_id, attempt_id, token, category, reason="", log_tail="", 
         if not retry:
             job.finished_at = now()
         job.payload = {**job.payload, "status": job.status, "phase": "recovering" if retry else "error",
-                       "error": diagnostic or category.replace("_", " ").capitalize(), "failure": failure,
+                       "error": reason or category.replace("_", " ").capitalize(), "failure": failure,
+                       "diagnostic": {**diagnostic, "status": job.status},
                        "failure_history": [*job.payload.get("failure_history", []), failure][-10:],
                        "log_tail": sanitize_diagnostic(log_tail, 8192)}
         if not retry:
@@ -322,6 +375,7 @@ def report_failure(job_id, attempt_id, token, category, reason="", log_tail="", 
             db.execute(local_image_update(job_id)
                        .values(scan_status="failed", scan_error=job.payload["error"]))
         db.commit()
+    publish_diagnostic({**diagnostic, "status": "queued" if retry else "error"})
     return {"accepted": True, "retry": retry, "status": "queued" if retry else "error"}
 
 

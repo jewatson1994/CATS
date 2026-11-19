@@ -2,6 +2,7 @@ import {afterEach, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {Page} from './jobs';
 import {requestJson} from '../api';
+import {localDiagnostic} from '../diagnostics';
 vi.mock('../api', async () => ({...await vi.importActual('../api'), requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.clearAllMocks();});
 const row = {id: 'job-1', kind: 'export', service: 'Payments', requested_by: 'Alice', status: 'queued', stage: 'Queued', elapsed_seconds: 12, can_cancel: true, can_retry: false};
@@ -30,4 +31,16 @@ it('hides an Open result link that only points back to the same job, keeping rea
   const results = screen.getAllByRole('link', {name: 'Open result'});
   expect(results).toHaveLength(1);
   expect(results[0]).toHaveAttribute('href', '/api/public/jobs/scan-1/results/view');
+});
+it('renders the selected job diagnostic and worker recovery context', async () => {
+  window.history.replaceState({}, '', '/jobs?job=job-1');
+  const diagnostic = {...localDiagnostic('Worker heartbeat expired.'), error_id: 'err-1', cause: 'The worker stopped reporting progress.', resolution: ['Check the worker before retrying.'], resource: {job_id: 'job-1'}};
+  vi.mocked(requestJson).mockResolvedValue({jobs: [{...row, status: 'failed', diagnostic, attempts: 2, max_attempts: 3, worker_id: 'worker-a', heartbeat_at: '2026-11-16T12:00:00Z'}], counts: {failed: 1}, limit: 100});
+  render(<Page data={{may_view_diagnostics: true}}/>);
+  await screen.findByRole('region', {name: 'Selected job'});
+  expect(screen.getByText('2 / 3')).toBeInTheDocument();
+  expect(screen.getByText('worker-a')).toBeInTheDocument();
+  expect(screen.getAllByRole('link', {name: 'Inspect in Diagnostics Center', hidden: true})[0]).toHaveAttribute('href', '/admin/diagnostics?error_id=err-1');
+  expect(screen.getAllByText('Check the worker before retrying.')).toHaveLength(2);
+  window.history.replaceState({}, '', '/');
 });

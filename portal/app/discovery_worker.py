@@ -12,6 +12,7 @@ from . import models, discovery_models
 from .durable_jobs import DurableJob, JobError, LeaseLost, run_worker
 from .discovery_models import DiscoveryInventory
 from .discovery_sources import decrypted_source, SourceStorageError
+from .diagnostics import build_diagnostic, record_diagnostic, enqueue_diagnostic
 
 def upload_root():
     return Path(os.environ.get('CATS_DISCOVERY_UPLOAD_ROOT', '/data/discovery-uploads'))
@@ -161,6 +162,14 @@ def handle(ctx, payload):
                 source_hash=payload['source_hash'], content_hash=content, inventory=inventory)
             db.add(existing)
         result = {**job.result, 'inventory_id': existing.id, 'completeness': existing.inventory.get('completeness'), 'metrics': existing.inventory.get('metrics', {})}
+        diagnostic = None
+        if existing.inventory.get('completeness') in {'invalid', 'incomplete', 'partial'}:
+            diagnostic = build_diagnostic("Discovery produced incomplete evidence", component="discovery",
+                operation="render", correlation_id=job.correlation_id, status="incomplete",
+                code="discovery_incomplete", resource={"job_id": job.id, "inventory_id": existing.id},
+                context={"stage": job.stage, "worker_id": job.worker_id, "attempts": job.attempts,
+                    "diagnostics": existing.inventory.get('diagnostics', [])})
+            result['diagnostic'] = diagnostic
         publication = {'result': result}
         if redacted_overrides:
             publication['payload'] = {**job.payload, 'options': {**job.payload.get('options', {}),
@@ -174,6 +183,11 @@ def handle(ctx, payload):
             ctx.check()
             raise LeaseLost()
         db.commit()
+        if diagnostic:
+            if getattr(ctx, 'record_factory', None) is None:
+                enqueue_diagnostic(diagnostic)
+            else:
+                record_diagnostic(diagnostic, session_factory=ctx.session_factory)
         return result
 
 if __name__ == '__main__':

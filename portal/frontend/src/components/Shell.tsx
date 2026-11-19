@@ -2,6 +2,7 @@ import {useEffect, useRef, type KeyboardEvent, type ReactNode} from 'react';
 import {can, type PageData} from '../api';
 import {Icon, type IconName} from './ui';
 import {OperatingMode, ServiceReadOnly} from '../operatingMode';
+import {ErrorNotifications} from './ErrorDetails';
 
 export const PRODUCT_NAME = 'Continuous Assessment & Tracking System';
 
@@ -113,8 +114,8 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
   const version = data.cats_deployed_version;
   const pending = Number(data.pending_request_count || 0);
   const adminHref = replica && (can(data, 'replica.admin') || can(data, 'replica.sync')) ? '/admin/replica' : data.may_manage_accounts || can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration'
-    : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : '/admin/approved-release-destinations';
-  const mayAdminister = can(data, 'replica.admin') || can(data, 'replica.sync') || data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy;
+    : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : data.may_view_diagnostics === true ? '/admin/diagnostics' : '/admin/approved-release-destinations';
+  const mayAdminister = data.may_view_diagnostics === true || can(data, 'replica.admin') || can(data, 'replica.sync') || data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy;
   return <OperatingMode.Provider value={replica ? 'replica' : 'full'}><a className="skip-link" href="#main-content">Skip to main content</a><header ref={header} className="app-header">
     <a className="brand" href={user ? '/' : '/home'} title={`CATS — ${PRODUCT_NAME}${version ? ` · ${version}` : ''}`}>
       <img className="brand-icon" src={icon} alt=""/><span className="brand-name">CATS</span><span className="sr-only">, {PRODUCT_NAME}</span>
@@ -156,5 +157,5 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
     <dl className="kv-grid kv-cols-1"><div><dt>Deployed version</dt><dd>{version || <span className="muted">Not reported</span>}</dd></div></dl>
     <div className="dialog-actions"><button type="button" className="secondary-button" onClick={() => about.current?.close?.()}>Close</button></div>
   </dialog>
-  <main id="main-content" tabIndex={-1}>{replica && <aside className="panel padded" aria-label="Replica mode"><strong>Read-only replica</strong> · Imported evidence and approvals are authoritative. Local Cyber exceptions do not change compliance or approval.</aside>}<ServiceReadOnly.Provider value={Boolean(data.imported_service || data.read_only)}>{!replica && data.imported_service && <aside className="panel padded" aria-label="Imported service"><strong>Imported service evidence</strong> · Captured approval and service records are read-only. Synchronization updates them from signed releases.</aside>}{children}</ServiceReadOnly.Provider></main></OperatingMode.Provider>;
+  <main id="main-content" tabIndex={-1}><ErrorNotifications admin={data.may_view_diagnostics === true}/>{replica && <aside className="panel padded" aria-label="Replica mode"><strong>Read-only replica</strong> · Imported evidence and approvals are authoritative. Local Cyber exceptions do not change compliance or approval.</aside>}<ServiceReadOnly.Provider value={Boolean(data.imported_service || data.read_only)}>{!replica && data.imported_service && <aside className="panel padded" aria-label="Imported service"><strong>Imported service evidence</strong> · Captured approval and service records are read-only. Synchronization updates them from signed releases.</aside>}{children}</ServiceReadOnly.Provider></main></OperatingMode.Provider>;
 }

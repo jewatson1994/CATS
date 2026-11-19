@@ -22,6 +22,7 @@ from .release_documentation import registry_environment
 from .release_validity import utc
 from .secrets import decrypt_secret
 from .trusted_ca import configured_certificates
+from .diagnostics import build_diagnostic, record_diagnostic, public_diagnostic, enqueue_diagnostic
 
 KIND = 'replica_sync'
 FAILURE_MESSAGES = {
@@ -60,7 +61,7 @@ def enqueue(db, source, actor_id=None):
 def sync(ctx, payload):
     # Clear an earlier attempt's diagnostic before any validation can fail.
     # DurableJobs keeps retry/backoff semantics; only this handler authors codes.
-    ctx.checkpoint({'failure_code': None})
+    ctx.checkpoint({'failure_code': None, 'diagnostics': [], 'diagnostics_truncated': 0})
     source_id = payload['source_id']
     with ctx.session_factory() as db:
         source = db.get(ReplicaSource, source_id)
@@ -86,7 +87,8 @@ def sync(ctx, payload):
             .where(ReplicaServiceState.source_id == source.id,
                    ReplicaServiceState.upstream_id == source.upstream_id,
                    ReplicaRelease.publisher.in_(trusted))) if retained_complete(release)}
-    result = {'discovered': 0, 'activated': 0, 'revoked': 0, 'unchanged': 0, 'failed': 0}
+    result = {'discovered': 0, 'activated': 0, 'revoked': 0, 'unchanged': 0, 'failed': 0,
+              'diagnostics': [], 'diagnostics_truncated': 0}
     try:
         ctx.stage('Discovering signed releases in the local registry', 5)
         with registry_environment(destination, certificates) as env:
@@ -125,9 +127,17 @@ def sync(ctx, payload):
                 except (jobs.JobCancelled, jobs.LeaseLost, jobs.JobError):
                     raise
                 except Exception as exc:
-                    # Registry responses can contain credentials/hostile text.
-                    # Keep public diagnostics fixed and correlation-addressable.
                     result['failed'] += 1
+                    event = build_diagnostic(exc, component='replica', operation='verify_release',
+                        correlation_id=ctx.job.correlation_id,
+                        resource={'source_id': source_id, 'reference': reference},
+                        context={'job_id': ctx.job.id, 'source_id': source_id, 'reference': reference},
+                        summary='A replicated release could not be verified or activated.')
+                    record_diagnostic(event, session_factory=ctx.session_factory)
+                    if len(result['diagnostics']) < 20:
+                        result['diagnostics'].append(public_diagnostic(event))
+                    else:
+                        result['diagnostics_truncated'] += 1
                     logging.getLogger(__name__).warning('replica_release_rejected source=%s correlation=%s type=%s',
                         source_id, ctx.job.correlation_id, type(exc).__name__)
                     with ctx.session_factory() as db:
@@ -185,6 +195,7 @@ async def replica_lifespan():
                     jobs.execute(job, sync)
                     continue
             except Exception as exc:
+                enqueue_diagnostic(build_diagnostic(exc, component='replica', operation='worker_poll'))
                 logging.getLogger(__name__).error('replica_worker_failure type=%s', type(exc).__name__)
             stop.wait(5)
     thread = threading.Thread(target=worker, name='replica-sync', daemon=True)

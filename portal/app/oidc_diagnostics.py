@@ -58,6 +58,16 @@ def diagnostic(stage, reason, *, outcome="failed"):
              "reason": reason, "outcome": outcome}
     logger.log(logging.INFO if outcome == "success" else logging.WARNING,
                "OIDC %s", json.dumps(event, sort_keys=True))
+    if outcome != "success":
+        # Preserve the existing allowlist boundary: provider content and tokens
+        # never enter the diagnostic exception chain, even for administrators.
+        from .diagnostics import build_diagnostic, enqueue_diagnostic
+        item = build_diagnostic(reason, component="Authentication / OIDC", operation=stage,
+            status=401, correlation_id=correlation_id.get(), code="CAT-OIDC-001",
+            summary="Single sign-on could not complete", context={"reason_category": reason, "stage": stage})
+        item["technical"] = {"reason_category": reason}
+        item["resolution"] = ["Review the reported OIDC reason, issuer/audience settings, client configuration, account linking and provider connectivity. Retry sign-in after correcting the configuration."]
+        enqueue_diagnostic(item)
     return event
 
 

@@ -32,6 +32,7 @@ from .oci_signatures import legacy_subject, discover_legacy_signature, verify_le
 from .oci_signatures import verify_legacy_attestation
 from .oci_attestations import ATTESTATION_TYPE, legacy_attestation_subject
 from . import oci_attestation_inventory
+from .diagnostics import build_diagnostic, enqueue_diagnostic, request_correlation, correlation, sanitize
 
 app = FastAPI(title='CATS OCI distribution', docs_url=None, redoc_url=None, openapi_url=None)
 from .oci_evidence import router as evidence_router
@@ -42,9 +43,92 @@ MANIFEST_TYPES = {'application/vnd.oci.image.manifest.v1+json', 'application/vnd
 
 
 class Denied(Exception):
-    def __init__(self, reason, status=403, code='DENIED', decision=None):
+    def __init__(self, reason, status=403, code='DENIED', decision=None, context=None):
+        super().__init__(reason)
         self.reason, self.status, self.code = reason, status, code
         self.decision = asdict(decision) if is_dataclass(decision) else None
+        self.context = context or {}
+
+
+def pull_context(mapping, digest=None):
+    return {'matched_repository_id': mapping.id, 'matched_service_id': mapping.service_id,
+            'matched_repository': mapping.public_repository, 'resolved_digest': digest,
+            'upstream_repository': mapping.upstream_repository}
+
+
+def pull_diagnostic(request, exc, status, code):
+    repository = request.path_params.get('repository')
+    reference = request.path_params.get('reference') or request.path_params.get('digest')
+    try:
+        service_id, _ = parse_service_repository(repository)
+    except (ValueError, TypeError, AttributeError):
+        service_id = None
+    decision = getattr(exc, 'decision', None)
+    context = {**getattr(request.state, 'pull_context', {}), **getattr(exc, 'context', {}),
+               'requested_repository': repository, 'parsed_service_id': service_id,
+               'requested_reference': reference,
+               'requested_tag': reference if reference and not DIGEST.fullmatch(reference) else None,
+               'requested_digest': reference if reference and DIGEST.fullmatch(reference) else None,
+               'authentication': getattr(request.state, 'authentication', 'anonymous'),
+               'principal_id': getattr(request.state, 'principal_id', None),
+               'decision': decision, 'distribution_error_code': code}
+    if decision:
+        policy = decision.get('effective_policy') or {}
+        context['enforcement_mode'] = ((policy.get('group_pull_policy') or {}).get('mode')
+                                       or policy.get('mode') or context.get('enforcement_mode'))
+        context['specific_reason'] = decision.get('reason')
+    requested_image = (repository + ('@' if DIGEST.fullmatch(reference) else ':') + reference
+                       if repository and reference else repository)
+    context['requested_image'] = requested_image
+    event = build_diagnostic(exc, component='oci_proxy', operation='pull', status=status,
+        correlation_id=request_correlation(request),
+        resource={'repository': repository, 'reference': reference, 'service_id': service_id},
+        context=context)
+    if decision and status == 403:
+        reason = str(decision.get('reason') or exc)
+        event.update(code='CAT-OCI-POLICY-001', category='policy',
+                     summary='The requested image failed the effective OCI pull policy.',
+                     cause=sanitize(reason), retryable=False)
+        if 'signature' in reason or 'verified_release' in reason:
+            resolution = 'Verify publisher trust, artifact signatures and complete release replication for this digest, then retry.'
+        elif any(term in reason for term in ('approval', 'approved', 'active_revision', 'distribution_location')):
+            resolution = 'Verify the active approved release and its signed repository/tag/digest binding; publish or synchronize the correct release, then retry.'
+        elif any(term in reason for term in ('scan', 'evidence', 'evaluation')):
+            resolution = 'Inspect the retained assessment for this exact digest; complete or refresh the required scan and evidence, then retry.'
+        elif any(term in reason for term in ('compliance', 'compliant', 'severity', 'finding')):
+            resolution = 'Inspect the reported assessment and owning group pull policy; resolve blocking findings or obtain an authorized policy decision, then retry.'
+        elif 'policy' in reason:
+            resolution = 'Have the owning group administrator repair the invalid repository or group pull policy, then retry.'
+        else:
+            resolution = 'Inspect the recorded service, mapping and authorization decision; restore the required active service and repository access, then retry.'
+        event['resolution'] = [resolution]
+    enqueue_diagnostic(event)
+    return event
+
+
+def diagnostic_response(request, exc, status, code, message, headers=None):
+    event = pull_diagnostic(request, exc, status, code)
+    # Registry credentials grant pulls, never access to policy or assessment data.
+    detail = {'error_id': event['error_id'], 'correlation_id': event['correlation_id'],
+              'resolution': ['Ask a CATS administrator to inspect this error reference in Diagnostics.']}
+    return JSONResponse({'errors': [{'code': code, 'message': message, 'detail': detail}]},
+        status_code=status, headers={**V2, **(headers or {}),
+        'X-Correlation-ID': event['correlation_id'], 'X-Error-ID': event['error_id']})
+
+
+@app.middleware('http')
+async def correlate_pull(request, call_next):
+    correlation_id = request_correlation(request)
+    token = correlation.set(correlation_id)
+    try:
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            response = diagnostic_response(request, exc, 500, 'UNKNOWN', 'Registry request failed')
+    finally:
+        correlation.reset(token)
+    response.headers['X-Correlation-ID'] = correlation_id
+    return response
 
 
 @app.exception_handler(Denied)
@@ -63,26 +147,27 @@ async def denied(request, exc):
                          request_repository=repository[:255] if repository else None, service_id=service_id,
                          decision=exc.decision)
             db.commit()
-    except SQLAlchemyError:
-        pass  # Unavailable audit storage never converts a denial to permission.
+    except SQLAlchemyError as audit_error:
+        # Unavailable audit storage never converts a denial to permission.
+        enqueue_diagnostic(build_diagnostic(audit_error, component='oci_proxy', operation='audit_denial',
+            status=503, correlation_id=request_correlation(request), resource={'repository': repository}))
     headers = dict(V2)
     if exc.status == 401:
         headers['WWW-Authenticate'] = 'Basic realm="CATS OCI"'
-    error = {'code': exc.code, 'message': exc.reason}
-    if exc.decision:
-        error['detail'] = exc.decision
-    return JSONResponse({'errors': [error]}, status_code=exc.status, headers=headers)
+    message = 'Machine authentication required' if exc.status == 401 else 'Registry request denied'
+    return diagnostic_response(request, exc, exc.status, exc.code, message, headers)
 
 
 @app.exception_handler(RegistryError)
 async def upstream_error(request, exc):
     status = exc.status if exc.status in (400, 404, 413, 429) else 502
-    return JSONResponse({'errors': [{'code': 'MANIFEST_UNKNOWN' if status == 404 else 'UNKNOWN', 'message': str(exc)}]}, status_code=status, headers=V2)
+    return diagnostic_response(request, exc, status,
+        'MANIFEST_UNKNOWN' if status == 404 else 'UNKNOWN', 'Upstream registry request failed')
 
 
 @app.exception_handler(SQLAlchemyError)
 async def unavailable(request, exc):
-    return JSONResponse({'errors': [{'code': 'UNAVAILABLE', 'message': 'Authorization storage unavailable'}]}, status_code=503, headers=V2)
+    return diagnostic_response(request, exc, 503, 'UNAVAILABLE', 'Authorization storage unavailable')
 
 
 def principal(db, request, repository_id=None, *, allow_anonymous=False, service_id=None):
@@ -93,6 +178,12 @@ def principal(db, request, repository_id=None, *, allow_anonymous=False, service
     a public service, so disabled credentials never silently become anonymous.
     """
     request.state.repository_id = repository_id
+    db.info['oci_pull_request'] = request
+    if repository_id is not None:
+        mapping = db.get(OCIRepository, repository_id)
+        if mapping is not None:
+            request.state.pull_context = pull_context(mapping)
+            request.state.pull_context['matched_service_id'] = service_id
     request.state.authentication = 'machine' if 'authorization' in request.headers else 'anonymous'
     if (allow_anonymous and request.method in {'GET', 'HEAD'}
             and 'authorization' not in request.headers):
@@ -203,17 +294,24 @@ class EffectiveMapping:
         return getattr(self._mapping, name)
 
 
-def resolve_distribution_tag(db, mapping, tag):
+def pull_policy(db, mapping):
     from .oci_group_policy import policy_for_service
-    if policy_for_service(db, mapping.service_id)['mode'] == 'compliance':
+    policy = policy_for_service(db, mapping.service_id)
+    request = db.info.get('oci_pull_request')
+    if request is not None:
+        request.state.pull_context.update(enforcement_mode=policy['mode'], effective_policy=policy)
+    return policy
+
+
+def resolve_distribution_tag(db, mapping, tag):
+    if pull_policy(db, mapping)['mode'] == 'compliance':
         return None
     from .imported_services import uses_imported_evidence
     return None if uses_imported_evidence(db, mapping.service_id) else _full_distribution_tag(db, mapping, tag)
 
 
 def resolve_distribution_location(db, mapping, digest):
-    from .oci_group_policy import policy_for_service
-    if policy_for_service(db, mapping.service_id)['mode'] == 'compliance':
+    if pull_policy(db, mapping)['mode'] == 'compliance':
         return mapping.upstream_repository
     from .imported_services import uses_imported_evidence
     if uses_imported_evidence(db, mapping.service_id):
@@ -258,7 +356,7 @@ def attestation_inventory(db, mapping, subject):
     owner = service_mapping(db, getattr(mapping, '_mapping', mapping), subject)
     decision = authorize(db, owner, subject)
     if not decision.allowed:
-        raise Denied(decision.reason, decision=decision)
+        raise Denied(decision.reason, decision=decision, context=pull_context(owner, subject))
     return oci_attestation_inventory.inventory(db, mapping, subject, decision)
 
 
@@ -289,7 +387,7 @@ def require(db, mapping, digest):
     owner = service_mapping(db, getattr(mapping, '_mapping', mapping), digest)
     decision = authorize(db, owner, digest)
     if not decision.allowed:
-        raise Denied(decision.reason, decision=decision)
+        raise Denied(decision.reason, decision=decision, context=pull_context(owner, digest))
     remember_decision(db, owner, digest, decision)
     return decision
 
@@ -428,7 +526,8 @@ def authorize_object(db, mapping, digest, kind):
             for member, member_decision in decisions:
                 remember_decision(db, owner, member, member_decision)
             return root
-    raise Denied('Object has no currently authorized image association', decision=last_denial)
+    raise Denied('Object has no currently authorized image association', decision=last_denial,
+                 context=pull_context(mapping, digest))
 
 
 def audit(db, machine, mapping, digest, outcome, request_repository=None, request=None):
@@ -685,9 +784,10 @@ def get_blob(repository: str, digest: str, request: Request):
             header = None
         try:
             start, end, partial = byte_range(header, size)
-        except Denied:
+        except Denied as exc:
             stream.close()
-            return JSONResponse({'errors': [{'code': 'RANGE_INVALID', 'message': 'Unsatisfiable range'}]}, status_code=416, headers={**V2, 'Content-Range': f'bytes */{size}'})
+            return diagnostic_response(request, exc, 416, 'RANGE_INVALID', 'Unsatisfiable range',
+                                       {'Content-Range': f'bytes */{size}'})
         headers = {**V2, 'Docker-Content-Digest': digest, 'ETag': '"' + digest + '"',
                    'Accept-Ranges': 'bytes', 'Content-Length': str(end - start + 1)}
         if partial:
@@ -702,9 +802,12 @@ def get_blob(repository: str, digest: str, request: Request):
                 while remaining:
                     part = stream.read(min(1024 * 1024, remaining))
                     if not part:
-                        break
+                        raise OSError('Cached object ended before the declared content length')
                     remaining -= len(part)
                     yield part
+            except Exception as exc:
+                pull_diagnostic(request, exc, 500, 'UNKNOWN')
+                raise
             finally:
                 stream.close()
         return StreamingResponse(chunks(), status_code=206 if partial else 200, headers=headers,

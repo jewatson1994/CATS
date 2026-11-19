@@ -1,6 +1,7 @@
 import {cleanup, render, screen, within} from '@testing-library/react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {Report, Service} from './remediations';
+import {localDiagnostic} from '../diagnostics';
 
 vi.mock('../components/ServiceHeader', () => ({ServiceHeader: () => null, ServiceTabs: () => null}));
 afterEach(cleanup);
@@ -13,6 +14,19 @@ const job = {
 const data = {service:{id:7,service_key:'example',name:'Example'}, can:{'service.export':{'7':true}}, job};
 
 describe('remediation candidate lifecycle', () => {
+  it.each(['projected','nested'])('shows %s remediation and delivery diagnostics without granting admin links', shape => {
+    const remediation = {...localDiagnostic('Remediation execution failed.'),error_id:'remediation-error'};
+    const delivery = {...localDiagnostic('Registry rejected the artifact.'),error_id:'delivery-error'};
+    const verification = {...localDiagnostic('Bundle verification failed.'),error_id:'verification-error'};
+    render(<Report data={{...data,job:{...job,...(shape === 'projected' ? {diagnostic:remediation} : {validation_results:{diagnostic:remediation}}),delivery_attempts:[shape === 'projected'
+      ? {id:1,result:'failed',diagnostic:delivery,verification:{diagnostic:verification}}
+      : {id:1,status:'failed',result:{diagnostic:delivery,verification:{diagnostic:verification}}}]}}}/>);
+    expect(screen.getByText('Remediation execution failed.')).toBeInTheDocument();
+    expect(screen.getByText('Registry rejected the artifact.')).toBeInTheDocument();
+    expect(screen.getByText('Bundle verification failed.')).toBeInTheDocument();
+    expect(screen.getAllByRole('button',{name:'Copy sanitized report',hidden:true})).toHaveLength(3);
+    expect(screen.queryByRole('link',{name:'Inspect in Diagnostics Center',hidden:true})).not.toBeInTheDocument();
+  });
   it('groups remediation and destination actions and keeps POA&M creation in its tab', () => {
     const workspace = {...data,can:{'service.edit':{'7':true}},can_remediate:true,remediation_enabled:true,can_create_poam:true,remediation_preview:{images:2,charts:1,configuration_changes:0,manual_review:12},remediation_jobs:[],poams:[],tab:'pipeline'};
     const {rerender} = render(<Service data={workspace}/>);
