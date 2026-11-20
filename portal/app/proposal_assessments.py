@@ -57,12 +57,15 @@ def proposal(db, identity, service_id):
     return row
 
 
-def retain(db, identity, payload):
+def retain(db, identity, payload, *, require_dispatched_version=False):
     """Only called behind the existing authenticated pipeline boundary."""
     service = db.scalar(select(Service).where(Service.service_key == payload.service.id))
     if service is None or service.lifecycle_status != 'active':
         raise ValueError('An active existing service is required')
     row = proposal(db, identity, service.id)
+    if require_dispatched_version:
+        from .proposal_scans import require_assessment_dispatch
+        require_assessment_dispatch(db, row, payload.execution_id, required_version=payload.service.version)
     if not payload.fixable_only or not payload.complete or payload.scan_scope != 'service' or payload.skipped_images or payload.skipped_charts:
         raise ValueError('A complete whole-service fixable assessment without skipped inputs is required')
     raw = payload.model_dump(mode='json')
@@ -70,7 +73,14 @@ def retain(db, identity, payload):
     if existing is None:
         existing = db.scalar(select(LegacyProposalAssessment).where(LegacyProposalAssessment.execution_key == payload.execution_id))
     if existing:
-        if existing.proposal_id != row.id or existing.raw_payload != raw:
+        retained = existing.raw_payload
+        if require_dispatched_version and isinstance(retained.get('service'), dict):
+            # Keep exact dispatch, version and scan data while allowing the
+            # service manager to change display metadata between retries.
+            previous = retained['service']
+            if (previous.get('id'), previous.get('version')) == (payload.service.id, payload.service.version):
+                retained = {**retained, 'service': raw['service']}
+        if existing.proposal_id != row.id or retained != raw:
             raise ValueError('Proposal assessment already retained with different evidence')
         return existing
     assessment = ProposalAssessment(proposal_id=row.id, execution_key=payload.execution_id,

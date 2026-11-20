@@ -231,6 +231,33 @@ def test_new_dispatch_blocks_retained_evidence_and_unbound_execution(case):
         assessments.assess(db, service, proposal.id, assessment=evidence)
 
 
+def test_scoped_project_evidence_requires_dispatched_service_version(case):
+    from app import proposal_scans
+    from app.models import AuditEvent, Group
+    db, service, proposal, payload = case
+    data = ExecutionPayload.model_validate(dict(payload, execution_id="proposal:isolated-job"))
+    with pytest.raises(ValueError, match="dispatched proposal scan"):
+        assessments.retain(db, proposal.id, data, require_dispatched_version=True)
+    dispatch = proposal_scans.enqueue(db, proposal, None)
+    scan = persist_scan(db, service, proposal, dispatch, proposal_scans.inventory(db, proposal))
+    scan.service_version = data.service.version
+    db.flush()
+    wrong_version = data.model_copy(update={"service": data.service.model_copy(update={"version": "wrong"})})
+    with pytest.raises(ValueError, match="latest persisted scan"):
+        assessments.retain(db, proposal.id, wrong_version, require_dispatched_version=True)
+    service.groups = [Group(name="Proposal owners")]
+    project = SimpleNamespace(id=17, service=service, service_id=service.id, project_label="demo/ci")
+    receipt = main.ingest_amendment_assessment(proposal.id, data, db, project)
+    assert receipt["proposal_id"] == proposal.id and receipt["active_release_changed"] is False
+    service.name = "Updated display name"
+    db.commit()
+    assert main.ingest_amendment_assessment(proposal.id, data, db, project) == receipt
+    audit = db.scalars(select(AuditEvent).where(AuditEvent.action == "project_credential.used")).all()
+    assert len(audit) == 2
+    assert all(event.detail["operation"] == "evidence.amendment" and event.detail["credential_id"] == project.id
+               and event.target_id == str(receipt["assessment_id"]) for event in audit)
+
+
 def test_maintenance_refreshes_expired_evidence_once(case, monkeypatch):
     from datetime import timedelta
     from app import proposal_scans

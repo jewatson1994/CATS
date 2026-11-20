@@ -284,6 +284,7 @@ def _ingest_one():
                 db.refresh(row, with_for_update=True)
                 if row.status == "cancelled":
                     return
+            project_complete = True
             if payload.get("proposal_context"):
                 from .proposal_scans import ingest
                 ingest(db, job_id, payload, output)
@@ -300,13 +301,23 @@ def _ingest_one():
                     def has(self, permission, service_id):
                         return permission == "scan.ingest" and service_id == service.id
                 # Existing execution ID public:<job> makes crash/replay ingestion idempotent.
-                main.ingest_public_scan(job_id=job_id, service_id=row.service_key, request=None, db=db, auth=InternalAuth())
+                receipt = main.ingest_public_scan(job_id=job_id, service_id=row.service_key, request=None, db=db, auth=InternalAuth())
+                if payload.get("pipeline_input_kind"):
+                    from .models import Execution
+                    execution = db.get(Execution, receipt.get("execution_id")) if receipt.get("accepted") is True else None
+                    if (not execution or execution.execution_key != "public:" + job_id
+                            or execution.service_id != payload.get("ingest_service_db_id")
+                            or not execution.service_version or execution.service_version.version != row.service_version
+                            or execution.scan_scope != "evidence"):
+                        raise ValueError("Project evidence did not match the bound submission")
+                    payload["pipeline_execution_id"] = execution.id
+                    project_complete = execution.complete
                 # The existing ingest path commits its own transaction. Preserve
                 # a cancellation recorded after that commit rather than replacing it.
                 db.refresh(row, with_for_update=True)
                 if row.status == "cancelled":
                     return
-            status = "complete" if (payload.get("returncode") == 0
+            status = "complete" if (project_complete and payload.get("returncode") == 0
                                     and summary.get("status", "complete") == "complete"
                                     and not summary.get("skipped_images")
                                     and not summary.get("skipped_charts")) else "incomplete"

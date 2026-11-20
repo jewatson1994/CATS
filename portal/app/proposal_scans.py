@@ -70,11 +70,13 @@ def evidence_inputs_token(db, service_id):
                         'policy_id': policy.id if policy else None, 'assignment': assignment}})
 
 
-def require_assessment_dispatch(db, row, execution_key):
+def require_assessment_dispatch(db, row, execution_key, *, required_version=None):
     """Tie accepted evidence to the persisted scan of the latest request."""
     from .scan_coordination import ScanJob
     current = latest_dispatch(db, row.id)
     if current is None:
+        if required_version is not None:
+            raise ValueError('A dispatched proposal scan is required for project submissions')
         return  # Retained evidence predating automatic dispatch remains readable.
     require_current_dispatch(db, row.id, current.id)
     scan_id = execution_key.removeprefix('proposal:') if execution_key.startswith('proposal:') else None
@@ -84,6 +86,7 @@ def require_assessment_dispatch(db, row, execution_key):
     if (scan is None or scan.status in {'cancelled', 'error', 'incomplete'}
             or context.get('dispatch_id') != current.id
             or context.get('proposal_id') != row.id
+            or (required_version is not None and scan.service_version != required_version)
             or scan.service_key != db.get(assessments.Service, row.service_id).service_key
             or context.get('inputs') != inventory(db, row)):
         raise ValueError('Proposal assessment does not match the latest persisted scan request')

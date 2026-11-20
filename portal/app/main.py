@@ -27,7 +27,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Annotated, Any
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, available_timezones
 
@@ -97,13 +97,14 @@ from .models import (
 )
 from .security_data import (MAX_GRYPE_LISTING, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD,
                             DEFAULT_SOURCES, SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
-from . import announcements, daily_security_data, service_scan_schedule
+from . import announcements, artifact_submissions, daily_security_data, project_credentials, service_scan_schedule
 from .validator_client import validate as validate_remote_artifact, health as validator_health
 from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
 from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
-from .pipeline_api import AmendmentReceipt, PipelineReceipt, pipeline_openapi, router as pipeline_router
+from .pipeline_api import (AmendmentReceipt, PipelineReceipt, bound_project_payload, pipeline_openapi,
+                           require_pipeline, router as pipeline_router)
 from .policy_data import epss_scores, intelligence_status, kev_cves, observation_risk, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
@@ -508,6 +509,7 @@ from .account_management import router as account_router
 app.include_router(account_router)
 from . import access_requests
 app.include_router(access_requests.router)
+app.include_router(project_credentials.router)
 from .jobs_view import router as jobs_router
 from .export_jobs import router as export_jobs_router
 app.include_router(jobs_router)
@@ -3274,10 +3276,15 @@ def backfill_incomplete_scan_findings() -> None:
 
 
 @pipeline_router.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201,
-                      operation_id="submitAmendmentAssessment", response_model=AmendmentReceipt)
-def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db)):
+                      operation_id="submitAmendmentAssessment", response_model=AmendmentReceipt,
+                      openapi_extra={"x-required-project-scopes": ["evidence.write"]})
+def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db),
+                                project: Annotated[project_credentials.ProjectCredential | None, Depends(require_pipeline)] = None):
+    payload = bound_project_payload(payload, project)
     try:
-        row = proposal_assessments.retain(db, proposal_id, payload)
+        row = proposal_assessments.retain(db, proposal_id, payload, require_dispatched_version=project is not None)
+        if project is not None:
+            project_credentials.audit_project_use(db, project, "evidence.amendment", target_type="proposal_assessment", target_id=row.id)
         db.commit()
     except ValueError as exc:
         db.rollback()
@@ -3288,17 +3295,22 @@ def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db:
 
 @pipeline_router.post("/api/v1/pipeline-results", status_code=201,
                       operation_id="submitPipelineResults", response_model=PipelineReceipt,
-                      response_model_exclude_unset=True)
-def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
+                      response_model_exclude_unset=True, openapi_extra={"x-required-project-scopes": ["evidence.write"]})
+def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None,
+           project: Annotated[project_credentials.ProjectCredential | None, Depends(require_pipeline)] = None):
+    payload = bound_project_payload(payload, project)
+    if project is not None and payload.execution_id.startswith(("public:", "proposal:")):
+        raise HTTPException(409, "Use a producer execution ID outside the reserved CATS scan namespaces")
     if payload.scan_scope == "distribution":
         raise HTTPException(422, "Submit distribution results through the scan bound to the saved selection")
-    result = ingest_payload(payload, db)
+    result = ingest_payload(payload, db, project_credential=project)
     if background_tasks is not None and isinstance(result, dict) and result.get("accepted") and not result.get("duplicate"):
         queue_dependency_projection(db, background_tasks, result.get("execution_id"))
     return result
 
 
 app.include_router(pipeline_router)
+app.include_router(artifact_submissions.router)
 app.add_api_route("/api/v1/pipeline/openapi.json", pipeline_openapi, methods=["GET"],
                   tags=["API discovery"], summary="Download the pipeline integration contract")
 
@@ -3338,7 +3350,7 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
         return None
 
 
-def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True):
+def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None):
     from .imported_services import require_local_service
     target_id = db.scalar(select(Service.id).where(Service.service_key == payload.service.id))
     if target_id is not None:
@@ -3347,6 +3359,12 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
     if existing:
+        if project_credential is not None:
+            version = existing.service_version
+            expected_version = "Unversioned" if payload.service.version.lower() == "unknown" else payload.service.version
+            if (existing.service_id != project_credential.service_id or version is None
+                    or version.service_id != existing.service_id or version.version != expected_version):
+                raise HTTPException(409, "Execution ID is bound to another service or version")
         incoming_payload = payload.model_dump(mode="json")
         def evidence_identity(value: dict) -> dict:
             normalized = dict(value)
@@ -3357,9 +3375,15 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             # change during staged -> active promotion. The stable service key
             # remains part of the immutable execution identity.
             normalized["service"] = {"id": service_value.get("id")}
+            if project_credential is not None:
+                normalized["service"]["version"] = service_value.get("version")
             return normalized
         if evidence_identity(existing.raw_payload) != evidence_identity(incoming_payload):
             raise HTTPException(status_code=409, detail="Execution ID already exists with different evidence")
+        if project_credential is not None:
+            project_credentials.audit_project_use(db, project_credential, "evidence.replayed", target_type="execution", target_id=existing.id)
+            if commit:
+                db.commit()
         return {"accepted": True, "duplicate": True, "execution_id": existing.id}
 
     service = db.scalar(select(Service).where(Service.service_key == payload.service.id))
@@ -3561,6 +3585,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
                     "previous_name": staged_name_before_ingest, "name": service.name},
         ))
     record_reingestion_provenance(db, execution, payload.model_dump(mode="json"))
+    if project_credential is not None:
+        project_credentials.audit_project_use(db, project_credential, "evidence.submitted", target_type="execution", target_id=execution.id)
     should_record_validation = payload.artifact_type == "helm" and scan_scope == "service"
     service_id, execution_id = service.id, execution.id
     if not commit:
@@ -4182,6 +4208,76 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
+def _stage_scan_inputs(directory, job_id, lines, chart_archives, image_archive, compose_uploads,
+                       compose_variables, trusted_ca_certificates, definition_skipped, *, project_submission=False):
+    from .compose_ingestion import ComposeInputError
+    job_input = directory / "input"
+    job_input.mkdir(parents=True, exist_ok=True)
+    write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
+    skipped_charts: list[str] = list(definition_skipped or [])
+    for archive, filename in chart_archives:
+        try:
+            _stage_public_chart(job_input, archive, filename)
+        except Exception as exc:
+            if project_submission:
+                raise
+            skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
+    if skipped_charts:
+        (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
+    if image_archive:
+        image_dir = job_input / "image-archives"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        image_bytes, image_filename = image_archive
+        max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
+        safe_name = Path(image_filename or "images.tar").name
+        if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
+            raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
+        source = image_bytes if hasattr(image_bytes, "read") else __import__("io").BytesIO(image_bytes)
+        source.seek(0)
+        size = 0
+        with (image_dir / safe_name).open("wb") as target:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(413, "Docker image archive is too large")
+                if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
+                    raise HTTPException(507, "Insufficient scan staging capacity")
+                target.write(chunk)
+    if compose_uploads:
+        from .compose_ingestion import stage_uploads
+        try:
+            stage_uploads(job_input, compose_uploads)
+            if project_submission:
+                from .compose_ingestion import compose_candidates, default_compose_order, discover
+                compose_root = job_input / ".cats-compose"
+                selected = default_compose_order(compose_candidates(compose_root))
+                if not selected or not discover(compose_root, selected).get("services"):
+                    raise HTTPException(422, "Upload one Compose document or a conventional base/override bundle defining services")
+        except ComposeInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if compose_variables:
+            from .compose_scan import COMPOSE_VARIABLES_FILE
+            # Keep values in the private input envelope, never public job metadata.
+            (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    from .scan_artifacts import pack, digest
+    (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    envelope = job_input.parent / "input.tar.gz"
+    pack(job_input, envelope, {"job_id": job_id})
+    # The checked envelope now owns uploaded image and Compose bytes. Retain only small
+    # request metadata and immutable chart sources for subsequent ingestion.
+    if (job_input / "image-archives").exists():
+        shutil.rmtree(job_input / "image-archives")
+    compose_root = job_input / ".cats-compose"
+    if compose_root.exists():
+        # stage_uploads creates this fixed child inside the checked input directory.
+        if not compose_root.resolve().is_relative_to(job_input.resolve()):
+            raise HTTPException(422, "Invalid Compose staging directory")
+        shutil.rmtree(compose_root)
+    if compose_variables:
+        (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
+    return skipped_charts, digest(envelope)
+
+
 def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None, compose_variables: dict[str, str] | None = None) -> str:
     from .compose_ingestion import ComposeInputError, validate_variables
     try:
@@ -4248,62 +4344,9 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         PUBLIC_JOBS[job_id] = payload
     job_input = PUBLIC_JOB_ROOT / job_id / "input"
     try:
-        job_input.mkdir(parents=True, exist_ok=True)
-        write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
-        skipped_charts: list[str] = list(definition_skipped or [])
-        for archive, filename in chart_archives:
-            try:
-                _stage_public_chart(job_input, archive, filename)
-            except Exception as exc:
-                skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
-        if skipped_charts:
-            (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
-        if image_archive:
-            image_dir = job_input / "image-archives"
-            image_dir.mkdir(parents=True, exist_ok=True)
-            image_bytes, image_filename = image_archive
-            max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
-            safe_name = Path(image_filename or "images.tar").name
-            if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
-                raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
-            source = image_bytes if hasattr(image_bytes, "read") else __import__("io").BytesIO(image_bytes)
-            source.seek(0)
-            size = 0
-            with (image_dir / safe_name).open("wb") as target:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise HTTPException(413, "Docker image archive is too large")
-                    if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
-                        raise HTTPException(507, "Insufficient scan staging capacity")
-                    target.write(chunk)
-        if compose_uploads:
-            from .compose_ingestion import stage_uploads
-            try:
-                stage_uploads(job_input, compose_uploads)
-            except ComposeInputError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from None
-            if compose_variables:
-                from .compose_scan import COMPOSE_VARIABLES_FILE
-                # Keep values in the private input envelope, never public job metadata.
-                (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        from .scan_artifacts import pack, digest
-        (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-        envelope = job_input.parent / "input.tar.gz"
-        pack(job_input, envelope, {"job_id": job_id})
-        # The checked envelope now owns uploaded image and Compose bytes. Retain only small
-        # request metadata and immutable chart sources for subsequent ingestion.
-        if (job_input / "image-archives").exists():
-            shutil.rmtree(job_input / "image-archives")
-        compose_root = job_input / ".cats-compose"
-        if compose_root.exists():
-            # stage_uploads creates this fixed child inside the checked input directory.
-            if not compose_root.resolve().is_relative_to(job_input.resolve()):
-                raise HTTPException(422, "Invalid Compose staging directory")
-            shutil.rmtree(compose_root)
-        if compose_variables:
-            (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
-        _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=digest(envelope))
+        skipped_charts, input_digest = _stage_scan_inputs(job_input.parent, job_id, lines, chart_archives,
+            image_archive, compose_uploads, compose_variables, trusted_ca_certificates, definition_skipped)
+        _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=input_digest)
     except BaseException:
         if job_input.parent.exists(): shutil.rmtree(job_input.parent)
         _public_job_update(job_id, status="error", phase="prepare", error="Submission preparation failed", finished_at=utcnow().isoformat())
@@ -4982,6 +5025,9 @@ def ingest_public_scan(
         job = PUBLIC_JOBS[job_id]
     if job.get("proposal_context"):
         raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
+    project_job = bool(job.get("pipeline_input_kind"))
+    if project_job and (request is not None or job.get("ingest_service_id") != service_id or service_version is not None or scan_scope is not None):
+        raise HTTPException(409, "Project scans are automatically ingested into their bound service and version")
     if job.get("schedule_context") and job.get("ingest_service_id") != service_id:
         raise HTTPException(409, "A scheduled scan belongs to its configured service")
     if job.get("compose_preview"):
@@ -4991,9 +5037,15 @@ def ingest_public_scan(
         raise HTTPException(status_code=409, detail="A required scanner phase failed; this scan cannot be ingested. Review the retained scan logs.")
     if not result_path.exists():
         raise HTTPException(status_code=409, detail="The scan has not produced a portal result")
-    service = db.scalar(select(Service).where(Service.service_key == service_id))
+    service_query = select(Service).where(Service.service_key == service_id)
+    service = db.scalar(service_query.with_for_update() if project_job else service_query)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+    if project_job:
+        from .pipeline_scan_dispatch import active_owner_id
+        if (service.id != job.get("ingest_service_db_id") or not job.get("pipeline_owning_group_id")
+                or active_owner_id(db, service.id, lock=True) != job["pipeline_owning_group_id"]):
+            raise HTTPException(409, "The bound project service or its owning group changed")
     if not auth.has("scan.ingest", service.id):
         raise HTTPException(status_code=403, detail="The service is outside your scope")
     selected_scope = scan_scope or str(job.get("ingest_scope") or "auto")
@@ -5007,7 +5059,7 @@ def ingest_public_scan(
         context = job.get("definition_context") or {}
         if not selection or (selection.id, selection.selection_digest) != (context.get("distribution_id"), context.get("selection_digest")):
             raise HTTPException(409, "Distribution scan does not match its saved selection")
-    if selected_scope not in {"auto", "service"} and not distribution_job:
+    if selected_scope not in {"auto", "service"} and not distribution_job and not (project_job and selected_scope == "evidence"):
         raise HTTPException(422, "Choose automatic scope or a full service assessment")
     if service_version is not None:
         service_version = service_version.strip()
@@ -5085,8 +5137,18 @@ def ingest_public_scan(
             # findings without resolving unseen CVEs or configuration findings.
             data["scan_scope"], data["complete"] = "evidence", False
             data.pop("scope_image", None)
+        if project_job:
+            # Each build submits one artifact. Completeness describes that artifact only.
+            # Evidence scope adds observations without resolving absent service/image findings.
+            data["scan_scope"] = "evidence"
+            data.pop("scope_image", None)
+            summary = json.loads((result_path.parent / "scan-summary.json").read_text(encoding="utf-8"))
+            data["complete"] = (data.get("complete") is True and job.get("returncode") == 0
+                                and summary.get("status") == "complete" and not summary.get("skipped_images")
+                                and not summary.get("skipped_charts") and not data.get("skipped_images")
+                                and not data.get("skipped_charts"))
         data["service"] = {
-            **data.get("service", {}),
+            **({"description": service.description} if project_job else data.get("service", {})),
             "id": service.service_key,
             "name": service.name,
             "version": (
@@ -5138,7 +5200,10 @@ def ingest_public_scan(
         raise HTTPException(status_code=422, detail=detail) from exc
     ingest_stage = "database_ingest"; stage_started = time.perf_counter()
     try:
-        response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
+        if project_job:
+            response = ingest_payload(payload, db, commit=False)
+        else:
+            response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
     except Exception as exc:
         db.rollback()
         code = f"HTTP_{exc.status_code}" if isinstance(exc, HTTPException) else "PUBLIC_INGEST_DATABASE_ERROR"
@@ -10662,7 +10727,7 @@ def delete_service(
     auth: AuthContext = Depends(require_permission("service.delete", scoped=True)),
 ):
     check_csrf(auth, csrf_token)
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(
+    service = db.scalar(select(Service).where(Service.service_key == service_key).with_for_update().options(
         selectinload(Service.archive_events)
     ))
     if not service:
@@ -10681,6 +10746,7 @@ def delete_service(
         raise HTTPException(409, detail="Wait for active patch, remediation and delivery jobs to finish before deleting this service")
     if db.scalar(select(DeploymentValidationRun.id).where(DeploymentValidationRun.service_id == service.id, DeploymentValidationRun.status.in_(["QUEUED", "RUNNING"]))) or db.scalar(select(ServiceImage.id).where(ServiceImage.service_id == service.id, ServiceImage.scan_status.in_(["queued", "scanning"]))):
         raise HTTPException(409, detail="Wait for active service scans and validation to finish before deletion")
+    artifact_submissions.clear_service_submissions(db, service.id)
     job_directories = [(PATCH_JOB_ROOT, job.job_key) for job in patch_jobs] + [(REMEDIATION_JOB_ROOT, job.job_key) for job in remediation_jobs]
     for root, key in job_directories:
         target = (root / key).resolve()
@@ -10710,6 +10776,7 @@ def delete_service(
         db.execute(delete(PolicyExceptionRecord).where(PolicyExceptionRecord.policy_finding_id.in_(policy_finding_ids)))
         db.execute(delete(PolicyFinding).where(PolicyFinding.id.in_(policy_finding_ids)))
     db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.service_id == service.id))
+    db.execute(delete(project_credentials.ProjectCredential).where(project_credentials.ProjectCredential.service_id == service.id))
     db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.service_id == service.id))
     db.execute(delete(RemediationExecution).where(RemediationExecution.service_id == service.id))
     db.execute(delete(PatchExecution).where(PatchExecution.service_id == service.id))
@@ -12652,6 +12719,10 @@ def delete_user_account(
         raise HTTPException(409, detail="This account has retained Cyber approval records. Disable it to preserve approval history.")
     username, display_name = user.username, user.display_name
     db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.user_id == user.id))
+    # Keep credential attribution for retained jobs. A deleted issuer cannot be reused.
+    db.execute(update(project_credentials.ProjectCredential).where(
+        project_credentials.ProjectCredential.created_by_id == user.id).values(
+            created_by_id=None, revoked_at=func.coalesce(project_credentials.ProjectCredential.revoked_at, utcnow())))
     db.execute(delete(announcements.AnnouncementRead).where(announcements.AnnouncementRead.user_id == user.id))
     for background_job in db.scalars(select(DurableJob).where(DurableJob.requested_by_id == user.id)):
         background_job.requested_by_id = None

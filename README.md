@@ -74,6 +74,8 @@ Connected and disconnected operation are supported when the required tools, imag
 
 ## Development
 
+To connect a build pipeline, see [Project CI and API integration](docs/api-integration.md) for service-scoped credentials, registry image and Helm submissions, and scan status.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for backend setup, frontend commands, targeted checks, repository layout, and branch/review guidance. Docker builds compile frontend assets automatically; direct Python development requires a frontend build and the workers needed for queued operations. Build metadata and image publication are defined in the [GitHub workflow](.github/workflows/build-cats-tool.yml).
 
 Operational guides live in [docs/](docs/README.md). Historical implementation handoffs and qualification evidence are retained for traceability; use the [archive index](docs/archive/README.md) to distinguish older handoffs from current operating instructions.

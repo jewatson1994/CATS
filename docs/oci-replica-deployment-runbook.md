@@ -51,7 +51,8 @@ Start from the full deployment's existing [templates/local.env.example](../templ
 | `CATS_MODE` | `full` (the default); keep System A authoritative |
 | `POSTGRES_PASSWORD`, `CATS_BOOTSTRAP_PASSWORD` | Required by full Compose; supply real secrets through the existing deployment secret process |
 | `CATS_CONFIG_ENCRYPTION_KEY` | Required persistent Fernet key protecting saved registry credentials and signing configuration; preserve the existing value |
-| `CATS_PATCH_WORKER_TOKEN`, `CATS_SCAN_WORKER_TOKEN`, `PIPELINE_API_TOKEN` | Required by full Compose; preserve the deployment's authenticated worker/integration configuration |
+| `CATS_PATCH_WORKER_TOKEN`, `CATS_SCAN_WORKER_TOKEN` | Required by full Compose for worker authentication |
+| `PIPELINE_API_TOKEN` | Optional on the full portal for existing deployment-wide evidence producers. New project integrations use credentials issued for a service. |
 | `CATS_RELEASE_DOC_MAX_BYTES` | `268435456`; generated documentation archive and expanded content limit |
 | `CATS_BUNDLE_MAX_BYTES` | `104857600`; portable service/evidence bundle limit |
 | `CATS_OCI_TOKEN_REALMS` | Empty by default; allow only independently approved HTTPS token-service origins when the registry uses another origin |

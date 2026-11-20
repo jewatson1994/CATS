@@ -14,8 +14,11 @@ from app.auth import AuthContext
 from app.models import Execution, Finding, Group, Role, Service, ServiceImage, User, UserRoleAssignment
 
 
-@pytest.mark.parametrize("scheduled", [False, True])
-def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, monkeypatch, tmp_path, scheduled):
+@pytest.mark.parametrize("source", ["portal", "scheduled", "project", "project-partial", "project-transferred"])
+def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, monkeypatch, tmp_path, source):
+    scheduled = source == "scheduled"
+    project = source.startswith("project")
+    partial = source == "project-partial"
     monkeypatch.setattr(main, 'SessionLocal', database)
     monkeypatch.setattr(scan_protocol, 'SessionLocal', database)
     monkeypatch.setattr(main, 'PUBLIC_JOB_ROOT', tmp_path / 'portal')
@@ -55,6 +58,21 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
         service_scan_schedule.dispatch_due(clock=clock)
         with database() as db:
             job_id = db.get(service_scan_schedule.ServiceScanSchedule, service_id).last_job_id
+    elif project:
+        from app.pipeline_scan_dispatch import prepare_scan
+        job_id = "b" * 32
+        with database() as db:
+            service = db.get(Service, service_id)
+            service.owner, service.poc, service.description = "Owner", "Point of contact", "Service description"
+            instant = datetime.now(timezone.utc)
+            for sid in (1, service.id):
+                db.add(ServiceImage(service_id=sid, image_reference="example.org/another:1"))
+                db.add(Finding(service_id=sid, cve="CVE-OTHER", severity="High",
+                               first_seen=instant, last_seen=instant, episode_started=instant, active=True))
+            job = prepare_scan(db, service, job_id, main.PUBLIC_JOB_ROOT / job_id,
+                               kind="auto", reference="registry.invalid/app:1", version="v2")
+            job.payload = {**job.payload, "project_credential_id": 123}
+            db.commit()
     else:
         job_id = main._start_public_scan('registry.invalid/app:1', ingest_service_id='http-worker-service', owner_user_id=17)
     headers = {'Authorization': 'Bearer ' + token, 'X-Worker-ID': 'integration-worker'}
@@ -64,17 +82,26 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
     assert claim_response.status_code == 200
     claim = claim_response.json()
     assert claim['job_id'] == job_id
+    if project:
+        assert claim['service_version'] == "v2"
+        assert claim['job']['credential_policy'] == "public"
+        assert 'project_credential_id' not in claim['job']
 
     class ScannerStandIn:
         returncode = 0
         def __init__(self, command, **kwargs):
             output = Path(command[-1])
-            (output / 'scan-summary.json').write_text(json.dumps({'status': 'complete', 'images': 1, 'findings': 1}), encoding='utf-8')
+            (output / 'scan-summary.json').write_text(json.dumps({'status': 'incomplete' if partial else 'complete',
+                'images': 1, 'findings': 1}), encoding='utf-8')
             result = {'schema_version': '1.0', 'execution_id': 'scanner-placeholder',
                 'scanned_at': datetime.now(timezone.utc).isoformat(), 'complete': True,
                 'service': {'id': 'http-worker-service', 'name': 'HTTP Worker Service', 'version': 'v1'},
                 'findings': [{'cve': 'CVE-2026-1212', 'severity': 'High', 'image': 'registry.invalid/app:1',
                               'package': 'openssl', 'fixed_version': '9.9', 'evidence': {'description': 'Scanner stand-in evidence'}}]}
+            if project:
+                result['service'] = {'id': 'service', 'name': 'Other', 'owner': '', 'poc': '',
+                                     'description': 'Wrong', 'version': 'v100', 'groups': ['Incorrect']}
+                result['scan_scope'] = 'service'
             (output / 'portal-result.json').write_text(json.dumps(result), encoding='utf-8')
         def poll(self): return 0
     monkeypatch.setattr(scan_worker.subprocess, 'Popen', ScannerStandIn)
@@ -96,6 +123,19 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
         return ResponseAdapter(response)
     worker.request = request
     worker._execute(claim, None)
+    if source == 'project-transferred':
+        with database() as db:
+            db.get(Service, service_id).groups = [Group(name='New owning group')]
+            db.commit()
+        scan_protocol.ingest_one()
+        with database() as db:
+            job = db.get(scan_coordination.ScanJob, job_id)
+            assert job.status == 'error' and 'pipeline_execution_id' not in job.payload
+            assert db.scalar(select(Execution).where(Execution.execution_key == 'public:' + job_id)) is None
+            assert all(f.active for f in db.scalars(select(Finding)))
+        browser.close()
+        control.close()
+        return
     scan_protocol.ingest_one()
     with database() as db:
         execution = db.scalar(select(Execution).where(Execution.execution_key == 'public:' + job_id))
@@ -103,6 +143,16 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
         assert execution.service_id == service_id
         if scheduled:
             assert execution.scan_scope == "evidence" and not execution.complete
+        if project:
+            assert execution.scan_scope == "evidence" and execution.service_version.version == "v2"
+            assert execution.complete is (not partial)
+            assert execution.service.service_key == 'http-worker-service'
+            assert (execution.service.owner, execution.service.poc, execution.service.description) == (
+                'Owner', 'Point of contact', 'Service description')
+            assert all(f.active for f in db.scalars(select(Finding).where(Finding.cve == "CVE-OTHER")))
+            assert {i.service_id for i in db.scalars(select(ServiceImage).where(
+                ServiceImage.image_reference == 'example.org/another:1'))} == {1, service_id}
+            assert db.scalar(select(Finding).where(Finding.service_id == 1, Finding.cve == 'CVE-2026-1212')) is None
         assert db.scalar(select(Finding).where(Finding.service_id == service_id, Finding.cve == 'CVE-2026-1212')) is not None
         first_execution_id = execution.id
     # A coordinator replay cannot duplicate the real service execution.
@@ -111,14 +161,19 @@ def test_http_claim_transfer_worker_execution_and_real_service_ingest(database, 
         executions = list(db.scalars(select(Execution).where(Execution.execution_key == 'public:' + job_id)))
         assert [execution.id for execution in executions] == [first_execution_id]
     job = main.PUBLIC_JOBS[job_id]
-    assert job['status'] == 'complete' and job['ingested'] is True
+    assert job['status'] == ('incomplete' if partial else 'complete') and job['ingested'] is True
+    if project:
+        assert job['pipeline_execution_id'] == first_execution_id
     assert (main.PUBLIC_JOB_ROOT / job_id / 'output' / 'worker-provenance.json').exists()
     main.app.dependency_overrides[main.optional_user] = lambda: SimpleNamespace(user=SimpleNamespace(id=17), has=lambda permission, service: False)
     try:
         status = browser.get('/api/public/jobs/' + job_id)
-        assert status.status_code == 200
-        assert 'owner_user_id' not in status.json()
-        assert status.json()['status'] == 'complete'
+        if project:
+            assert status.status_code == 403
+        else:
+            assert status.status_code == 200
+            assert 'owner_user_id' not in status.json()
+            assert status.json()['status'] == 'complete'
     finally:
         main.app.dependency_overrides.clear()
         browser.close()

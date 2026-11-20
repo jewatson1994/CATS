@@ -17,6 +17,7 @@ Usage:
   cats evaluate --source PREPARED_DIR --output RESULTS_DIR
   cats patch --input EVALUATION_DIR --output PATCH_DIR [--config PATCH_CONFIG]
   cats push assessment --input PORTAL_RESULT_JSON
+  cats submit (--reference REGISTRY_REFERENCE | --file ARTIFACT) --key SUBMISSION_KEY [--version SERVICE_VERSION]
   cats push patch --input PATCH_RESULT_JSON
 EOF
 }
@@ -150,32 +151,10 @@ patch() {
 }
 
 push_result() {
-  local kind="$1" input="$2" endpoint ca_args=()
-  local portal_url="${CATS_PORTAL_URL:-}"
-  local portal_token="${CATS_PORTAL_TOKEN:-}"
-  local portal_ca_file="${CATS_PORTAL_CA_FILE:-${CATS_PORTAL_CA_CERT:-}}"
+  local kind="$1" input="$2"
   [ -f "$input" ] || { echo "${kind^} result not found: $input" >&2; exit 1; }
   jq -e 'type == "object"' "$input" >/dev/null || { echo "Invalid result JSON: $input" >&2; exit 1; }
-  if [ "$kind" = patch ] && [ -z "${CATS_PATCH_PUSH_URL:-}" ]; then
-    echo "Patch result push skipped: set CATS_PATCH_PUSH_URL to enable delivery."
-    return 0
-  fi
-  : "${portal_url:?CATS_PORTAL_URL is required}"
-  : "${portal_token:?CATS_PORTAL_TOKEN is required}"
-  if [ -n "$portal_ca_file" ]; then
-    ca_args=(--cacert "$portal_ca_file")
-  fi
-  if [ "$kind" = assessment ]; then
-    endpoint="${CATS_ASSESSMENT_PUSH_URL:-${portal_url%/}/api/v1/pipeline-results}"
-  else
-    endpoint="${CATS_PATCH_PUSH_URL:-${portal_url%/}/api/v1/patch-results}"
-  fi
-  curl --fail-with-body --silent --show-error "${ca_args[@]}" \
-    --connect-timeout 5 --max-time 30 \
-    -X POST "$endpoint" \
-    -H "Authorization: Bearer ${portal_token}" \
-    -H "Content-Type: application/json" \
-    --data-binary "@$input"
+  exec python3 "$SCRIPT_DIR/push_result.py" "$kind" "$input"
 }
 
 command="${1:-}"
@@ -184,6 +163,7 @@ case "$command" in
   version) [ "$#" -eq 0 ] || { usage; exit 2; }; version ;;
   prepare) prepare "$@" ;;
   evaluate) evaluate "$@" ;;
+  submit) exec python3 "$SCRIPT_DIR/submit-artifact.py" "$@" ;;
   patch) patch "$@" ;;
   push)
     kind="${1:-}"; input_flag="${2:-}"; input="${3:-}"

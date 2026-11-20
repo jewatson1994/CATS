@@ -15,7 +15,7 @@ Start with the [project README](../README.md) for an overview. The guides below 
 
 ## Use CATS
 
-- [API integration guide](api-integration.md) covers the portal route inventory, CI evidence submission, authentication, retries, and OCI consumers.
+- [Project CI and API integration](api-integration.md) covers project credentials, registry images, Helm uploads, scan status and retries, external scan evidence, and the portal's route inventory.
 - [Role training](training/README.md): administrator, assessor, service-manager, and cybersecurity walkthroughs.
 - [Discovery workflow](discovery-workflow.md) and [universal deployment discovery](universal-deployment-discovery.md): approved GitLab sources, deployment archives, review, and offline inputs.
 - [Docker Compose ingestion](compose-ingestion.md): ordered inputs, profiles, previews, and image associations.

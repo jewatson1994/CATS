@@ -27,6 +27,15 @@
 .service-control-history { margin-top: .6rem; font-size: .8rem; color: var(--text-muted, #a9bbcc); }
 .service-control-history summary { cursor: pointer; }
 .service-control-history p { overflow-wrap: anywhere; }
+.project-integrations { grid-column: 1 / -1; }
+.project-integrations > div[id] { margin-top: 1rem; }
+.project-integrations .table-wrap { margin-block: 1rem; }
+.project-integrations .service-control-editor { max-width: 50rem; }
+.project-integrations .service-control-editor :is(h3, p) { margin: 0; }
+.project-integrations .project-credential-scope { display: flex; align-items: center; gap: .55rem; margin-block: .4rem; }
+.project-credential-scope input { width: auto; }
+.project-integration-secret { display: block; overflow-wrap: anywhere; user-select: all; }
+.project-integrations pre { overflow-x: auto; }
 @media (max-width: 520px) {
   .service-control-card { padding: 1rem; }
   .service-control-heading { align-items: flex-start; }

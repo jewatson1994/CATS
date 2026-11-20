@@ -4,14 +4,15 @@ import hmac
 from fastapi import APIRouter, Depends, Form, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .account_models import AccountAccessRequest, AccountRetirement, ServiceAccessRequest
 from .auth import APPLICATION_PERMISSIONS, PERMISSIONS, SYSTEM_ROLES, AuthContext, record_audit, require_csrf, require_user
 from .database import get_db
-from .models import Group, Role, Service, ServiceArchiveEvent, ServiceGroup, User, UserRoleAssignment, utcnow
+from .models import Group, Role, Service, ServiceGroup, User, UserRoleAssignment, utcnow
+from .service_ownership import active_service_predicate
 
 router = APIRouter()
 
@@ -60,17 +61,10 @@ def uses_service_directory(user: User) -> bool:
     return user.auth_source == "oidc" or bool(user.external_subject)
 
 
-def _active_service():
-    latest_action = (select(ServiceArchiveEvent.action).where(ServiceArchiveEvent.service_id == Service.id)
-                     .order_by(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc()).limit(1)
-                     .correlate(Service).scalar_subquery())
-    return (Service.lifecycle_status == "active") & (func.coalesce(latest_action, "") != "archive")
-
-
 def service_directory(db: Session, user_id: int):
     pending = select(ServiceAccessRequest.user_id).where(
         ServiceAccessRequest.service_id == Service.id, ServiceAccessRequest.user_id == user_id).exists()
-    return db.execute(select(Service.id, Service.name, pending.label("pending")).where(_active_service())
+    return db.execute(select(Service.id, Service.name, pending.label("pending")).where(active_service_predicate())
                       .order_by(Service.name, Service.id)).all()
 
 
@@ -83,7 +77,7 @@ def request_service(service_id: int = Form(gt=0), db: Session = Depends(get_db),
     if (not auth.user.enabled or db.get(AccountRetirement, auth.user.id)
             or not uses_service_directory(auth.user) or has_effective_access(auth)):
         raise HTTPException(403, "Service requests are available during organizational sign-in onboarding")
-    if db.scalar(select(Service.id).where(Service.id == service_id, _active_service()).with_for_update()) is None:
+    if db.scalar(select(Service.id).where(Service.id == service_id, active_service_predicate()).with_for_update()) is None:
         raise HTTPException(404, "Service is unavailable")
     key = (auth.user.id, service_id)
     if not db.get(ServiceAccessRequest, key):
@@ -147,7 +141,7 @@ def list_pending_requests(db: Session, auth: AuthContext) -> list[dict]:
     requests = db.execute(select(User.id, User.username, User.display_name, Service.id, Service.name, ServiceAccessRequest.created_at)
         .select_from(ServiceAccessRequest).join(Service, ServiceAccessRequest.service_id == Service.id)
         .join(User, ServiceAccessRequest.user_id == User.id)
-        .where(_active_service(), _service_claim_scope(auth), User.enabled.is_(True), User.id != auth.user.id,
+        .where(active_service_predicate(), _service_claim_scope(auth), User.enabled.is_(True), User.id != auth.user.id,
                ~select(AccountRetirement.user_id).where(AccountRetirement.user_id == User.id).exists())
         .order_by(ServiceAccessRequest.created_at, User.id, Service.id)).all()
     return legacy + [{"user_id": uid, "username": username, "display_name": display_name,
@@ -158,7 +152,7 @@ def list_pending_requests(db: Session, auth: AuthContext) -> list[dict]:
 def _claim_service(db: Session, reviewer: AuthContext, target: User, service_id: int, role: Role):
     if target.id == reviewer.user.id:
         raise HTTPException(403, "Another Cybersecurity reviewer must approve this request")
-    available = select(Service.id).where(Service.id == service_id, _active_service(), _service_claim_scope(reviewer))
+    available = select(Service.id).where(Service.id == service_id, active_service_predicate(), _service_claim_scope(reviewer))
     if db.scalar(available.with_for_update()) is None:
         raise HTTPException(403, "Service unavailable or outside your Cybersecurity scope")
     consumed = db.execute(delete(ServiceAccessRequest).where(
