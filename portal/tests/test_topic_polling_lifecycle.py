@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
 from zipfile import ZipFile
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
@@ -140,7 +141,8 @@ def add_group_manager(db, username, group):
     db.add(UserRoleAssignment(user_id=user.id, role_id=role.id, group_id=group.id))
 
 
-def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monkeypatch, tmp_path):
+@pytest.mark.parametrize("cross_group", [False, True], ids=["group", "instance"])
+def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monkeypatch, tmp_path, cross_group):
     from app import topic_intake_processing
     from app.topic_intake_models import TopicProject, TopicRevision
 
@@ -170,11 +172,31 @@ def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monk
     other = new_client("other-manager", "fixture-password")
     directory_user = new_client("directory-user", "fixture-password")
     control = TestClient(scan_control.app)
-    source = post_json(admin, "/api/admin/topic-polling/sources", {
-        "name": "Topic source", "origin": ORIGIN, "namespace": "team", "topic": TOPIC, "claim_group_id": group_id, "enabled": True,
-    })
+    scope = {"namespace": "team", "claim_group_id": group_id}
+    if cross_group:
+        scope = {"scope_mode": "instance", "namespace_routes": [
+            {"namespace": "other", "claim_group_id": foreign_id}, {"namespace": "team", "claim_group_id": group_id},
+        ]}
+    source_path = "/api/admin/topic-polling/sources"
+    config = {"name": "Topic source", "origin": ORIGIN, "topic": TOPIC, "enabled": not cross_group, **scope}
+    source = post_json(admin, source_path, config)
     assert source.status_code == 201, source.text
     source_id = source.json()["id"]
+    if cross_group:
+        from app import gitlab_topic_poll
+
+        saved = f"{source_path}/{source_id}"
+        preview = post_json(admin, saved + "/preview")
+        assert preview.status_code == 202, preview.text
+        run_queued(gitlab_topic_poll.PREVIEW_KIND, gitlab_topic_poll.poll)
+        results = admin.get(saved + "/results").json()
+        assert results["latest_job"] is None
+        [match] = results["latest_preview"]["details"]
+        assert (match["project_path"], match["claim_group_id"], match["commit_sha"]) == (PROJECT, group_id, SHA1)
+        assert gitlab.archives == [] and admin.get(saved + "/projects").json()["total"] == 0
+        assert durable_jobs.claim(("topic_intake_process", "discovery"), "preview-only") is None
+        enabled = admin.put(saved, json={**config, "enabled": True}, headers={"X-CSRF-Token": csrf(admin)})
+        assert enabled.status_code == 200, enabled.text
 
     def poll():
         poll_source(admin, source_id)
@@ -300,7 +322,7 @@ def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monk
 
 
 
-def test_overlapping_gitlab_namespace_cannot_capture_an_existing_project(monkeypatch):
+def test_conflicting_namespace_routes_hold_new_intake_until_resolved(monkeypatch):
     from app.topic_intake_models import TopicProject, TopicRevision
 
     gitlab = GitLab()
@@ -315,26 +337,26 @@ def test_overlapping_gitlab_namespace_cannot_capture_an_existing_project(monkeyp
     admin = new_client()
     sources = []
     for namespace, group_id in [("team", owners_id), ("team/apps", other_id)]:
-        source = post_json(admin, "/api/admin/topic-polling/sources", {
+        config = {
             "name": namespace, "origin": ORIGIN, "namespace": namespace, "topic": TOPIC, "claim_group_id": group_id, "enabled": True,
-        })
+        }
+        source = post_json(admin, "/api/admin/topic-polling/sources", config)
         assert source.status_code == 201, source.text
         sources.append(source.json()["id"])
 
+    for source_id in sources:
+        poll_source(admin, source_id)
+    with SessionLocal() as db:
+        assert not db.scalars(select(TopicProject)).first()
+        assert not db.scalars(select(TopicRevision)).first()
+    disabled = admin.put(f"/api/admin/topic-polling/sources/{sources[1]}", json={**config, "enabled": False},
+                         headers={"X-CSRF-Token": csrf(admin)})
+    assert disabled.status_code == 200, disabled.text
     poll_source(admin, sources[0])
-    gitlab.sha = SHA2
-    poll_source(admin, sources[1])
     with SessionLocal() as db:
         project = db.scalars(select(TopicProject)).one()
         assert project.source_id == sources[0]
         assert db.scalars(select(TopicRevision.commit_sha)).all() == [SHA1]
-    assert admin.get(f"/api/admin/topic-polling/sources/{sources[1]}/projects").json()["total"] == 0
-    poll_source(admin, sources[0])
-    with SessionLocal() as db:
-        project = db.scalars(select(TopicProject)).one()
-        assert project.source_id == sources[0]
-        assert db.get(TopicRevision, project.latest_revision_id).commit_sha == SHA2
-        assert set(db.scalars(select(TopicRevision.commit_sha))) == {SHA1, SHA2}
 
 def test_portal_navigation_returns_while_gitlab_worker_is_waiting(monkeypatch):
     from app import gitlab_topic_poll

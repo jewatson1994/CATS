@@ -2,14 +2,15 @@
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, true
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 from .models import TopicIntakeGroup, utcnow
 
 
 class GitLabTopicSource(Base):
+    """An empty namespace selects instance search; its routes assign claim groups."""
     __tablename__ = "gitlab_topic_sources"
     __table_args__ = (UniqueConstraint("origin", "namespace", "topic"),)
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -24,9 +25,32 @@ class GitLabTopicSource(Base):
     poll_seconds: Mapped[int] = mapped_column(Integer, default=300)
     config_revision: Mapped[str] = mapped_column(String(32), default=lambda: uuid4().hex)
     latest_job_id: Mapped[str | None] = mapped_column(ForeignKey("durable_jobs.id"))
+    latest_preview_job_id: Mapped[str | None] = mapped_column(ForeignKey("durable_jobs.id"))
     last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    routes: Mapped[list["GitLabTopicRoute"]] = relationship(
+        cascade="all, delete-orphan", order_by="GitLabTopicRoute.namespace, GitLabTopicRoute.claim_group_id")
+
+    @property
+    def namespace_routes(self):
+        if self.namespace:
+            return []
+        return [{"namespace": route.namespace, "claim_group_id": route.claim_group_id} for route in self.routes]
+
+    @namespace_routes.setter
+    def namespace_routes(self, values):
+        existing = {(r.namespace, r.claim_group_id): r for r in self.routes}
+        self.routes = [existing.get((row["namespace"], row["claim_group_id"]))
+                       or GitLabTopicRoute(namespace=row["namespace"], claim_group_id=row["claim_group_id"])
+                       for row in values]
+
+
+class GitLabTopicRoute(Base):
+    __tablename__ = "gitlab_topic_routes"
+    source_id: Mapped[int] = mapped_column(ForeignKey("gitlab_topic_sources.id"), primary_key=True)
+    namespace: Mapped[str] = mapped_column(String(255), primary_key=True)
+    claim_group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), primary_key=True)
 
 
 class TopicProject(Base):
@@ -38,6 +62,8 @@ class TopicProject(Base):
     gitlab_project_id: Mapped[int] = mapped_column(BigInteger)
     eligible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     last_seen_poll_id: Mapped[str | None] = mapped_column(String(32))
+    claim_group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+    observed_topics: Mapped[list[str] | None] = mapped_column(JSON)
     project_path: Mapped[str] = mapped_column(String(1024))
     web_url: Mapped[str] = mapped_column(Text)
     default_branch: Mapped[str] = mapped_column(String(1024))

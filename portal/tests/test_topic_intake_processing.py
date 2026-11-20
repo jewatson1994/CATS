@@ -97,6 +97,58 @@ def test_overlapping_scopes_cannot_rebind_and_failed_revision_retry_is_explicit(
             intake.retry_revision(db, first)
 
 
+def test_archive_rechecks_instance_route_when_gitlab_metadata_changes(monkeypatch, tmp_path):
+    import json
+    from io import BytesIO
+    from cryptography.fernet import Fernet
+    from app import discovery_gitlab
+
+    origin = "https://gitlab.example"
+    monkeypatch.setenv("CATS_DISCOVERY_GITLAB_SOURCES", origin)
+    monkeypatch.setenv("CATS_CONFIG_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    monkeypatch.setenv("CATS_DISCOVERY_UPLOAD_ROOT", str(tmp_path))
+    with SessionLocal.begin() as db:
+        source = add_source(db, namespace="")
+        source.namespace_routes = [{"namespace": "team", "claim_group_id": source.claim_group_id}]
+        peer = add_source(db, name="release publishing")
+        peer.topic = "release"
+        intake.observe_project(db, source, gitlab_project_id=42, project_path="team/test",
+            web_url=origin + "/team/test", default_branch="main", commit_sha=SHA,
+            claim_group_id=source.claim_group_id, observed_topics=["cats"])
+    requests = []
+
+    def open_request(request, timeout):
+        requests.append(request.full_url)
+        metadata = dict(id=42, path_with_namespace="team/test", web_url=origin + "/team/test",
+                        archived=False, default_branch="main", topics=["cats", "release"])
+        response = BytesIO(json.dumps(metadata).encode())
+        response.headers, response.status = {}, 200
+        return response
+
+    monkeypatch.setattr(discovery_gitlab.request, "build_opener", lambda *args: SimpleNamespace(open=open_request))
+    job = durable_jobs.claim((intake.KIND,), "fetcher")
+    durable_jobs.execute(job, intake.handler)
+    assert requests == [origin + "/api/v4/projects/42"]
+    with SessionLocal() as db:
+        stopped = db.get(durable_jobs.DurableJob, job.id)
+        assert stopped.status == "failed" and stopped.error.startswith(intake._ROUTE_CHANGED)
+        assert not db.scalar(select(durable_jobs.DurableJob.id).where(durable_jobs.DurableJob.kind == "discovery"))
+    assert not list(tmp_path.rglob("repository.zip"))
+    intake.advance_ready()
+    with SessionLocal.begin() as db:
+        # A stale observation cannot repeatedly admit a failed archive job. Once a
+        # poll sees the changed topics and an administrator resolves the conflict,
+        # the same SHA can continue with fresh evidence.
+        revision = db.scalar(select(TopicRevision))
+        assert revision.status == "failed" and revision.processing_job_id == job.id
+        source = db.scalar(select(GitLabTopicSource).where(GitLabTopicSource.namespace == ""))
+        db.scalar(select(GitLabTopicSource).where(GitLabTopicSource.name == "release publishing")).enabled = False
+        repeated = intake.observe_project(db, source, gitlab_project_id=42, project_path="team/test",
+            web_url=origin + "/team/test", default_branch="main", commit_sha=SHA,
+            claim_group_id=source.claim_group_id, observed_topics=["cats", "release"])
+        assert repeated.id == revision.id and repeated.status == "pending" and repeated.processing_job_id is None
+
+
 def test_lost_administrator_and_archived_service_are_fenced():
     with SessionLocal.begin() as db:
         source = add_source(db)
@@ -195,6 +247,30 @@ def test_one_slot_queue_preserves_pending_project_and_encrypted_archive(tmp_path
         assert body not in staged.read_bytes()
         with decrypted_source(staged, job.payload["source_id"], job.payload["source_hash"]) as path:
             assert path.read_bytes() == body
+
+
+def test_deferred_admission_preserves_outbox_and_deduplicates_when_queue_fills(monkeypatch):
+    monkeypatch.setenv("CATS_JOB_QUEUE_CAPACITY", "1")
+    with SessionLocal.begin() as db:
+        source = add_source(db)
+        revisions = []
+        for git_id in (41, 42):
+            path = f"team/app-{git_id}"
+            revisions.append(intake.observe_project(db, source, gitlab_project_id=git_id, project_path=path,
+                web_url=source.origin + "/" + path, default_branch="main", commit_sha=SHA, defer_queue=True))
+        assert not db.scalar(select(durable_jobs.DurableJob.id))
+        first, second = revisions
+        assert intake.queue_observed(db, source, first)
+        initial_job = first.processing_job_id
+        assert intake.queue_observed(db, source, first) and first.processing_job_id == initial_job
+        assert not intake.queue_observed(db, source, second)
+        assert second.status == "pending" and second.processing_job_id is None
+        pending_id = second.id
+    with SessionLocal.begin() as db:
+        db.get(durable_jobs.DurableJob, initial_job).status = "failed"
+    intake.advance_ready()
+    with SessionLocal() as db:
+        assert db.get(TopicRevision, pending_id).processing_job_id not in (None, initial_job)
 
 
 def test_retention_cleans_abandoned_encrypted_archive_and_keeps_waiting_handoff(monkeypatch, tmp_path):

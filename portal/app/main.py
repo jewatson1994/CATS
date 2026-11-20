@@ -157,6 +157,8 @@ from .preview_cleanup import preview_cleanup_lifespan
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection, tables=portal_tables())
+    from .schema_migrations import upgrade_topic_scopes
+    upgrade_topic_scopes(connection)
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)

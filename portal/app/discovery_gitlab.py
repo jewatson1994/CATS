@@ -177,14 +177,18 @@ def _metadata(opener, url, token, deadline, check=lambda: None, *, pagination=No
         raise GitLabSourceError('GitLab returned invalid repository metadata.') from None
 
 
-def validate_topic_scope(origin, namespace, topic):
+def validate_topic_scope(origin, namespace, topic, *, namespaces=()):
     origin = _location(origin, allow_origin=True)
     if urlsplit(origin).path:
         raise GitLabSourceError('Enter the HTTPS GitLab origin without a project path.', 422)
     if origin not in _approved_locations():
         raise GitLabSourceError('GitLab topic polling requires an approved GitLab origin.', 403)
-    if (not isinstance(namespace, str) or len(namespace) > 255 or
-            not all(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*', part) for part in namespace.split('/'))):
+    roots = (namespace,) if namespace else namespaces
+    if (not isinstance(namespace, str) or (namespace and namespaces)
+            or not isinstance(roots, (tuple, list)) or not roots
+            or any(not isinstance(root, str) or len(root) > 255 or
+                   not all(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*', part) for part in root.split('/'))
+                   for root in roots)):
         raise GitLabSourceError('Enter a GitLab group or subgroup path.', 422)
     if (not isinstance(topic, str) or not 1 <= len(topic) <= 128 or topic != topic.strip()
             or not topic.isprintable() or ',' in topic):
@@ -192,12 +196,12 @@ def validate_topic_scope(origin, namespace, topic):
     return origin, namespace, topic
 
 
-def gitlab_api_client(origin, namespace, topic, token=None, trusted_ca_certificates=()):
-    origin, _, _ = validate_topic_scope(origin, namespace, topic)
+def gitlab_api_client(origin, namespace, topic, token=None, trusted_ca_certificates=(), *, namespaces=()):
+    origin, _, _ = validate_topic_scope(origin, namespace, topic, namespaces=namespaces)
     return _opener(token, trusted_ca_certificates), origin + '/api/v4'
 
 
-def topic_project(row, origin, namespace, topic):
+def topic_project(row, origin, namespace, topic, *, namespaces=(), on_excluded=None):
     """Recheck explicit opt-in and ownership even when the API filters its list."""
     if not isinstance(row, dict):
         raise GitLabSourceError('GitLab returned invalid project metadata.')
@@ -206,14 +210,18 @@ def topic_project(row, origin, namespace, topic):
         raise GitLabSourceError('GitLab returned invalid project topics.')
     if topic not in topics:
         return None
-    if type(row.get('archived')) is not bool or 'default_branch' not in row:
-        raise GitLabSourceError('GitLab returned incomplete project status metadata.')
-    if row['archived'] or not row['default_branch']:
-        return None
     path = row.get('path_with_namespace')
     if not isinstance(path, str):
         raise GitLabSourceError('GitLab returned an invalid project path.')
-    if not path.startswith(namespace + '/'):
+    if not any(path.startswith(root + '/') for root in ((namespace,) if namespace else namespaces)):
+        if on_excluded:
+            on_excluded('outside_namespace')
+        return None
+    if type(row.get('archived')) is not bool or 'default_branch' not in row:
+        raise GitLabSourceError('GitLab returned incomplete project status metadata.')
+    if row['archived'] or not row['default_branch']:
+        if on_excluded:
+            on_excluded('archived' if row['archived'] else 'no_default_branch')
         return None
     if len(path) > 1024:
         raise GitLabSourceError('GitLab returned a project path that is too long.')
@@ -224,19 +232,28 @@ def topic_project(row, origin, namespace, topic):
     if canonical != origin + '/' + path or row.get('web_url') != canonical:
         raise GitLabSourceError('GitLab returned an inconsistent project URL.')
     branch = validate_gitlab_ref(row['default_branch'])
-    return dict(project_id=project_id, path_with_namespace=path, web_url=canonical, default_branch=branch)
+    return dict(project_id=project_id, path_with_namespace=path, web_url=canonical, default_branch=branch,
+                topics=sorted(set(topics)))
 
 
 def iter_topic_projects(origin, namespace, topic, *, token=None, trusted_ca_certificates=(), check=lambda: None,
-                        on_project_error=None):
-    """Yield immutable branch tips from an approved namespace, paginating by stable ID order."""
-    opener, api = gitlab_api_client(origin, namespace, topic, token, trusted_ca_certificates)
+                        on_project_error=None, namespaces=(), on_excluded=None):
+    """List topic matches and resolve heads only for projects under approved namespace roots."""
+    opener, api = gitlab_api_client(origin, namespace, topic, token, trusted_ca_certificates, namespaces=namespaces)
     origin = api.removesuffix('/api/v4')
-    endpoint = api + '/groups/' + quote(namespace, safe='') + '/projects'
+    endpoint = api + ('/groups/' + quote(namespace, safe='') if namespace else '') + '/projects'
     previous, page = 0, 1
     while True:
-        query = urlencode(dict(topic=topic, include_subgroups='true', with_shared='false', archived='false',
-                               order_by='id', sort='asc', per_page=REF_PAGE_SIZE, page=page))
+        filters = dict(topic=topic, archived='false', order_by='id', sort='asc', per_page=REF_PAGE_SIZE)
+        if namespace:
+            filters.update(include_subgroups='true', with_shared='false', page=page)
+        else:
+            # Global projects supports keyset pagination. Rebuild the cursor locally
+            # so a large instance cannot exhaust GitLab's offset pagination limit.
+            filters['pagination'] = 'keyset'
+            if previous:
+                filters['id_after'] = previous
+        query = urlencode(filters)
         pagination = {}
         rows = _metadata(opener, endpoint + '?' + query, token, time.monotonic() + 45, check,
                          pagination=pagination)
@@ -248,7 +265,7 @@ def iter_topic_projects(origin, namespace, topic, *, token=None, trusted_ca_cert
                 raise GitLabSourceError('GitLab project pagination did not advance in ID order.')
             previous = project_id
             try:
-                project = topic_project(row, origin, namespace, topic)
+                project = topic_project(row, origin, namespace, topic, namespaces=namespaces, on_excluded=on_excluded)
                 if project is None:
                     continue
                 branch = quote(project['default_branch'], safe='')
@@ -267,6 +284,16 @@ def iter_topic_projects(origin, namespace, topic, *, token=None, trusted_ca_cert
             yield {**project, 'commit_sha': sha}
         next_page = pagination.get('next_page')
         more = pagination.get('more', False)
+        if not namespace:
+            if next_page not in (None, ''):
+                if not next_page.isdigit():
+                    raise GitLabSourceError('GitLab returned inconsistent pagination metadata.')
+                more = True
+            if more and not rows:
+                raise GitLabSourceError('GitLab returned inconsistent pagination metadata.')
+            if not more and len(rows) < REF_PAGE_SIZE:
+                return
+            continue
         if next_page not in (None, '', str(page + 1)) or (not rows and (next_page or more)) or (next_page == '' and more):
             raise GitLabSourceError('GitLab returned inconsistent pagination metadata.')
         if not rows or next_page == '' or (next_page is None and not more and len(rows) < REF_PAGE_SIZE):

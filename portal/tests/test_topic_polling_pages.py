@@ -50,3 +50,19 @@ def test_cyber_and_group_service_manager_see_their_permitted_intake_actions():
     assert data["may_view_unclaimed"] and not data["may_manage_topic_sources"]
     assert [g["id"] for g in manager.get("/api/unclaimed-services").json()["groups"]] == [own_id]
     assert manager.get("/admin/topic-polling", headers=headers).status_code == 403
+
+
+def test_preview_job_is_visible_only_to_global_configuration_managers():
+    from app import durable_jobs
+
+    admin = new_client()
+    add_user("preview-reader", "Service Manager")
+    reader = new_client("preview-reader")
+    with SessionLocal.begin() as db:
+        job = durable_jobs.submit(db, kind="gitlab_topic_preview", payload={"source_id": 1}, commit=False)
+        job_id = job.id
+    path = "/api/v1/jobs"
+    assert admin.get(f"{path}/{job_id}").status_code == 200
+    assert job_id in {row["id"] for row in admin.get(path).json()["jobs"]}
+    assert reader.get(f"{path}/{job_id}").status_code == 404
+    assert job_id not in {row["id"] for row in reader.get(path).json()["jobs"]}

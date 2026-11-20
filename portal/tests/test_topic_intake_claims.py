@@ -167,6 +167,50 @@ def test_polling_opt_out_and_disabled_source_remove_claim_authority():
     assert client.post(f"/api/unclaimed-services/{pid}/claim", json=payload).status_code == 200
 
 
+def test_instance_claim_uses_project_route_and_holds_conflicts_until_resolved():
+    with SessionLocal.begin() as db:
+        pid, first, mission, service_id, _, execution_id = intake(db)
+        project = db.get(TopicProject, pid)
+        source = db.get(GitLabTopicSource, project.source_id)
+        source.namespace = ""
+        source.namespace_routes = [{"namespace": "platform", "claim_group_id": first},
+                                   {"namespace": "mission", "claim_group_id": mission}]
+        project.claim_group_id, project.observed_topics = mission, ["cats", "also-track"]
+        manager(db, "platform-owner", first)
+        manager(db, "mission-owner", mission)
+
+    platform, owner = new_client("platform-owner"), new_client("mission-owner")
+    assert platform.get("/api/unclaimed-services").json()["items"] == []
+    row = owner.get("/api/unclaimed-services").json()["items"][0]
+    assert row["claim_group_ids"] == [mission]
+    claim = {"group_id": mission, "execution_id": execution_id, "csrf_token": csrf(owner)}
+    with SessionLocal.begin() as db:
+        source = db.get(GitLabTopicSource, db.get(TopicProject, pid).source_id)
+        overlap = GitLabTopicSource(name="second rule", enabled=True, origin=source.origin,
+            namespace="mission", topic="also-track", claim_group_id=first, authorized_by_id=source.authorized_by_id)
+        db.add(overlap)
+        db.flush()
+        overlap_id = overlap.id
+    path = f"/api/unclaimed-services/{pid}/claim"
+    assert owner.post(path, json=claim).status_code == 404
+    with SessionLocal.begin() as db:
+        db.get(GitLabTopicSource, overlap_id).enabled = False
+    assert owner.post(path, json=claim).status_code == 200
+    # Later administrative routing changes affect discovery eligibility. Only the
+    # completed claim or normal service ownership management can move this service.
+    from app.topic_intake_processing import observe_project
+    with SessionLocal.begin() as db:
+        project = db.get(TopicProject, pid)
+        source = db.get(GitLabTopicSource, project.source_id)
+        source.namespace_routes = [{"namespace": "mission", "claim_group_id": first}]
+        new_revision = observe_project(db, source, gitlab_project_id=project.gitlab_project_id,
+            project_path=project.project_path, web_url=project.web_url, default_branch="main",
+            commit_sha="f" * 40, claim_group_id=first, observed_topics=["cats"])
+        assert new_revision.project_id == pid
+        assert project.claim_group_id == first
+        assert [g.id for g in db.get(Service, service_id).groups] == [mission]
+
+
 def test_competing_claims_across_independent_sqlite_connections(tmp_path):
     from types import SimpleNamespace
     engine = create_engine("sqlite:///" + (tmp_path / "claims.db").as_posix())

@@ -2,7 +2,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 
 from app import durable_jobs as jobs, gitlab_topic_poll as polling, polling_worker, topic_intake_processing
@@ -158,9 +158,144 @@ def test_full_worker_always_consumes_topic_work_on_its_own_slot(monkeypatch, oci
         if polling.KIND in kinds:
             monkeypatch.setattr(polling, 'poll', lambda ctx, payload: 'poll')
             monkeypatch.setattr(topic_intake_processing, 'handler', lambda ctx, payload: 'process')
-            for kind, result in [(polling.KIND, 'poll'), (topic_intake_processing.KIND, 'process')]:
+            for kind, result in [(polling.KIND, 'poll'), (polling.PREVIEW_KIND, 'poll'),
+                                 (topic_intake_processing.KIND, 'process')]:
                 assert handler(SimpleNamespace(job=SimpleNamespace(kind=kind)), {}) == result
     monkeypatch.setattr(jobs, 'run_worker', observe)
     polling_worker._run()
-    assert (polling.KIND, topic_intake_processing.KIND) in roles
+    assert (polling.KIND, polling.PREVIEW_KIND, topic_intake_processing.KIND) in roles
     assert (('replica_sync',) in roles) == oci_enabled
+
+
+def _run_poll(sessions, source_id, *, preview=False):
+    kind = polling.PREVIEW_KIND if preview else polling.KIND
+    with sessions.begin() as db:
+        source = db.get(GitLabTopicSource, source_id)
+        job_id = polling.enqueue(db, source, preview=preview).id
+        assert polling.enqueue(db, source, preview=preview).id == job_id
+    job = jobs.claim([kind], 'poll-worker', sessions)
+    assert job.id == job_id
+    jobs.execute(job, polling.poll, sessions)
+    with sessions() as db:
+        finished = db.get(jobs.DurableJob, job_id)
+        assert finished.status == 'completed', finished.error
+        return finished.result
+
+
+def _projects(origin, namespace, count):
+    for project_id in range(1, count + 1):
+        path = f'{namespace}/p{project_id}'
+        yield dict(project_id=project_id, path_with_namespace=path, web_url=f'{origin}/{path}',
+                   default_branch='main', commit_sha='a' * 40)
+
+
+def test_preview_disabled_source_keeps_conflicts_in_bounded_sample_without_intake(source_db, monkeypatch):
+    sessions, source_id = source_db
+    with sessions.begin() as db:
+        source = db.get(GitLabTopicSource, source_id)
+        source.enabled = False
+        other_group = Group(name='Ops')
+        db.add(other_group)
+        db.flush()
+        db.add(GitLabTopicSource(name='Production', origin=source.origin, namespace='group/p9', topic='cats',
+               authorized_by_id=source.authorized_by_id, claim_group_id=other_group.id, enabled=True))
+    def listing(origin, namespace, topic, **kwargs):
+        kwargs['on_excluded']('outside_namespace')
+        kwargs['on_excluded']('no_default_branch')
+        for item in _projects(origin, namespace, 9):
+            path = item['path_with_namespace'] + '/app'
+            yield {**item, 'path_with_namespace': path, 'web_url': origin + '/' + path}
+
+    monkeypatch.setattr(polling, 'DETAIL_LIMIT', 2)
+    monkeypatch.setattr(polling.gitlab, 'iter_topic_projects', listing)
+    result = _run_poll(sessions, source_id, preview=True)
+    assert (result['matched'], result['new_commits'], result['conflicts'], result['truncated']) == (9, 8, 1, True)
+    assert result['excluded'] == 2 and result['excluded_by_reason'] == {'outside_namespace': 1, 'no_default_branch': 1}
+    conflict = result['details'][1]
+    assert conflict['status'] == 'conflict' and 'Production' in conflict['reason']
+    assert conflict['claim_group_id'] is None and conflict['gitlab_project_id'] == 9
+    with sessions() as db:
+        source = db.get(GitLabTopicSource, source_id)
+        assert source.latest_preview_job_id and source.latest_job_id is None
+        assert source.last_attempt_at is None and source.last_success_at is None and source.last_error is None
+        assert db.scalar(select(TopicProject.id)) is None
+        assert db.scalar(select(TopicRevision.id)) is None
+        assert db.scalar(select(jobs.DurableJob.id).where(jobs.DurableJob.kind == topic_intake_processing.KIND)) is None
+
+
+def test_unchanged_batch_updates_membership_once_and_avoids_repeat_intake(source_db, monkeypatch):
+    sessions, source_id = source_db
+    monkeypatch.setattr(polling, 'BATCH_SIZE', 4)
+    monkeypatch.setattr(polling.gitlab, 'iter_topic_projects', lambda origin, namespace, *a, **kw: _projects(origin, namespace, 9))
+    initial = _run_poll(sessions, source_id)
+    assert initial['new_commits'] == 9
+    # Existing installs first see empty routing metadata after the additive migration.
+    with sessions.begin() as db:
+        legacy = db.scalar(select(TopicProject).where(TopicProject.gitlab_project_id == 1))
+        legacy.observed_topics = legacy.claim_group_id = None
+    monkeypatch.setattr(topic_intake_processing, 'observe_project', lambda *a, **kw: pytest.fail('Repeated stable intake'))
+    writes = []
+    def record_sql(conn, cursor, statement, params, context, executemany):
+        if statement.lower().startswith('update topic_projects set last_seen_poll_id'):
+            writes.append(statement)
+    engine = sessions.kw['bind']
+    event.listen(engine, 'before_cursor_execute', record_sql)
+    try:
+        seen = _run_poll(sessions, source_id)
+    finally:
+        event.remove(engine, 'before_cursor_execute', record_sql)
+    assert seen['unchanged_commits'] == seen['observed'] == 9
+    assert seen['new_commits'] == seen['conflicts'] == seen['no_longer_eligible'] == 0
+    assert len(writes) == 3
+    with sessions() as db:
+        refreshed = db.get(TopicProject, legacy.id)
+        assert refreshed.observed_topics == ['cats'] and refreshed.claim_group_id is not None
+
+
+def test_peer_polling_a_new_conflicting_topic_immediately_withdraws_claim(source_db, monkeypatch):
+    sessions, source_id = source_db
+    topics = ['cats']
+    def listing(origin, namespace, *a, **kwargs):
+        for item in _projects(origin, namespace, 1):
+            yield {**item, 'topics': list(topics)}
+    monkeypatch.setattr(polling.gitlab, 'iter_topic_projects', listing)
+    _run_poll(sessions, source_id)
+    with sessions.begin() as db:
+        source = db.get(GitLabTopicSource, source_id)
+        group = Group(name='Another group')
+        db.add(group)
+        db.flush()
+        peer = GitLabTopicSource(name='Peer', origin=source.origin, namespace=source.namespace, topic='shared',
+              authorized_by_id=source.authorized_by_id, claim_group_id=group.id, enabled=True)
+        db.add(peer)
+    topics.append('shared')
+    preview = _run_poll(sessions, peer.id, preview=True)
+    assert preview['conflicts'] == 1
+    with sessions() as db:
+        assert db.scalar(select(TopicProject)).eligible
+    polled = _run_poll(sessions, peer.id)
+    assert polled['conflicts'] == polled['no_longer_eligible'] == 1
+    with sessions.begin() as db:
+        project = db.scalar(select(TopicProject))
+        assert not project.eligible and project.source_id == source_id and project.observed_topics == topics
+        db.get(GitLabTopicSource, peer.id).claim_group_id = db.get(GitLabTopicSource, source_id).claim_group_id
+    _run_poll(sessions, source_id)
+    duplicate = _run_poll(sessions, peer.id)
+    assert duplicate['details'][0]['reason'] == 'Already tracked by GitLab team.'
+    with sessions() as db:
+        assert db.scalar(select(TopicProject)).eligible
+
+
+def test_batch_binds_and_marks_projects_before_queue_admission(source_db, monkeypatch):
+    sessions, source_id = source_db
+    monkeypatch.setattr(polling.gitlab, 'iter_topic_projects', lambda origin, namespace, *a, **kw: _projects(origin, namespace, 3))
+    admission = topic_intake_processing.queue_observed
+    observed = []
+    def check_order(db, source, revision):
+        seen = db.scalars(select(TopicProject.gitlab_project_id).where(
+            TopicProject.last_seen_poll_id.is_not(None)).order_by(TopicProject.gitlab_project_id)).all()
+        assert seen == [1, 2, 3]
+        observed.append(revision.id)
+        return admission(db, source, revision)
+    monkeypatch.setattr(topic_intake_processing, 'queue_observed', check_order)
+    assert _run_poll(sessions, source_id)['new_commits'] == len(observed) == 3

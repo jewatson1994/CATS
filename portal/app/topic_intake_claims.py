@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import and_, event, func, literal, select, text, update
+from sqlalchemy import and_, case, event, func, literal, select, text, update
 from sqlalchemy.orm import with_loader_criteria
 
 from .auth import AuthContext, record_audit, require_user
@@ -15,6 +15,7 @@ from .models import Execution, Group, Service, ServiceGroup, utcnow
 from .operating_mode import is_replica
 from .replica_models import reserve_sqlite_writer
 from .topic_intake_models import GitLabTopicSource, TopicIntakeGroup, TopicProject, TopicRevision
+from .topic_scope_rules import effective_project_claim_group, scope_sources
 
 router = APIRouter(prefix="/api/unclaimed-services", tags=["Unclaimed services"])
 INCLUDE_HELD = {"include_topic_intake": True}
@@ -59,6 +60,12 @@ def exact_execution():
     return and_(Execution.id == TopicRevision.execution_id, Execution.service_id == TopicProject.service_id,
                 Execution.execution_key == literal("public:") + TopicRevision.scan_job_id,
                 Execution.commit_sha == TopicRevision.commit_sha)
+
+
+def _project_claim_group():
+    # Only historical single-namespace sources have an implicit destination.
+    return func.coalesce(TopicProject.claim_group_id,
+                         case((GitLabTopicSource.namespace != "", GitLabTopicSource.claim_group_id)))
 
 
 def _claim_scope(auth):
@@ -125,8 +132,9 @@ def unclaimed_services(page: int = Query(1, ge=1), db=Depends(get_db),
     groups = claim_groups(db, auth)
     allowed = [g["id"] for g in groups]
     source, project, rev = GitLabTopicSource, TopicProject, TopicRevision
+    destination = _project_claim_group()
     query = (select(project.id, project.project_path, project.web_url, source.name.label("source_name"),
-                    source.claim_group_id, rev.commit_sha, rev.status, Execution.id.label("execution_id"),
+                    destination.label("claim_group_id"), rev.commit_sha, rev.status, Execution.id.label("execution_id"),
                     Execution.scanned_at, Execution.complete)
              .join(source, source.id == project.source_id)
              .join(rev, and_(rev.id == project.latest_revision_id, rev.project_id == project.id))
@@ -135,7 +143,7 @@ def unclaimed_services(page: int = Query(1, ge=1), db=Depends(get_db),
              .join(ServiceGroup, ServiceGroup.service_id == Service.id)
              .join(TopicIntakeGroup, TopicIntakeGroup.group_id == ServiceGroup.group_id)
              .where(project.claimed_at.is_(None), project.eligible.is_(True),
-                    source.enabled.is_(True), source.claim_group_id.in_(allowed),
+                    source.enabled.is_(True), destination.in_(allowed),
                     Service.lifecycle_status == "unclaimed", rev.status == "ready", Execution.complete.is_(True))
              .execution_options(**INCLUDE_HELD))
     total = db.scalar(query.with_only_columns(func.count(project.id))) or 0
@@ -168,7 +176,7 @@ def claim_service(project_id: int, body: ClaimInput, db=Depends(get_db), auth: A
     # The poller locks its source before it updates a project or advances its revision.
     source = db.scalar(select(GitLabTopicSource).join(TopicProject, TopicProject.source_id == GitLabTopicSource.id)
                        .where(TopicProject.id == project_id, GitLabTopicSource.enabled.is_(True),
-                              GitLabTopicSource.claim_group_id.in_(allowed))
+                              _project_claim_group().in_(allowed))
                        .with_for_update(of=GitLabTopicSource, read=True))
     if source is None:
         raise HTTPException(404, "Unclaimed service not found")
@@ -177,7 +185,10 @@ def claim_service(project_id: int, body: ClaimInput, db=Depends(get_db), auth: A
                         .with_for_update(of=TopicProject).execution_options(populate_existing=True))
     if project is None:
         raise HTTPException(404, "Unclaimed service not found")
-    if body.group_id not in allowed or (body.group_id != source.claim_group_id and not auth.can_manage_group(None)):
+    route_group = effective_project_claim_group(source, project, None, scope_sources(db, source))
+    if route_group not in allowed:
+        raise HTTPException(404, "Unclaimed service not found")
+    if body.group_id not in allowed or (body.group_id != route_group and not auth.can_manage_group(None)):
         raise HTTPException(403, "You cannot claim this service for the selected group")
     service = db.scalar(select(Service).where(Service.id == project.service_id).with_for_update()
                         .execution_options(**INCLUDE_HELD, populate_existing=True))

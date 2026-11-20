@@ -79,11 +79,11 @@ def _topic_worker(stop=None):
             topic_intake_processing.advance_ready()
 
     def handle(ctx, payload):
-        if ctx.job.kind == gitlab_topic_poll.KIND:
+        if ctx.job.kind in (gitlab_topic_poll.KIND, gitlab_topic_poll.PREVIEW_KIND):
             return gitlab_topic_poll.poll(ctx, payload)
         return topic_intake_processing.handler(ctx, payload)
 
-    durable_jobs.run_worker((gitlab_topic_poll.KIND, topic_intake_processing.KIND), handle,
+    durable_jobs.run_worker((gitlab_topic_poll.KIND, gitlab_topic_poll.PREVIEW_KIND, topic_intake_processing.KIND), handle,
                             maintenance=maintenance, maintenance_interval=5, stop_event=stop)
 
 

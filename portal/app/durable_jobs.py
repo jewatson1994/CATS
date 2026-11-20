@@ -17,7 +17,7 @@ import uuid
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, func, select, update, text, or_
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, aliased, mapped_column
 
 from .database import Base, SessionLocal
 from .imported_services import is_imported_service
@@ -159,7 +159,7 @@ def submit(db, *, kind, payload, service_id=None, requested_by_id=None,
     return row
 
 
-def recover(db, kinds):
+def recover(db, kinds, *, commit=True):
     """Expired owners are fenced; attempts are bounded even after process death."""
     diagnostics = []
     rows = db.scalars(select(DurableJob).where(DurableJob.kind.in_(kinds),
@@ -178,7 +178,10 @@ def recover(db, kinds):
         row.completed_at = now() if terminal else None
         row.available_at = now() + timedelta(seconds=min(300, 5 * 2 ** row.attempts))
         row.lease_token, row.lease_until = None, None
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return diagnostics
 
 
@@ -198,37 +201,64 @@ def job_diagnostic(row, error, **kwargs):
                                     int(os.getenv("CATS_JOB_MAX_RUNTIME_SECONDS", "0")) or None}, **kwargs)
 
 
+def _available_topic_origin():
+    """A running poll reserves the origin of its persisted source, including legacy jobs."""
+    from .topic_intake_models import GitLabTopicSource
+
+    active = aliased(DurableJob)
+    candidate_origin = (select(GitLabTopicSource.origin)
+        .where(GitLabTopicSource.id == DurableJob.payload["source_id"].as_integer())
+        .correlate(DurableJob).scalar_subquery())
+    occupied = (select(active.id)
+        .join(GitLabTopicSource, GitLabTopicSource.id == active.payload["source_id"].as_integer())
+        .where(active.kind == "gitlab_topic_poll", active.status == "running",
+               GitLabTopicSource.origin == candidate_origin).exists())
+    return or_(DurableJob.kind != "gitlab_topic_poll", ~occupied)
+
+
 def claim(kinds, worker_id, session_factory=SessionLocal):
+    topic_claim = "gitlab_topic_poll" in kinds
     with session_factory() as db:
-        diagnostics = recover(db, kinds)
-        for diagnostic in diagnostics:
-            if session_factory is SessionLocal:
-                enqueue_diagnostic(diagnostic)
+        if topic_claim:
+            # Serialize only the claim decision. The running job row holds the
+            # origin reservation through HTTP work; no transaction stays open.
+            if db.get_bind().dialect.name == "postgresql":
+                db.execute(text("SELECT pg_advisory_xact_lock(73488369)"))
             else:
-                record_diagnostic(diagnostic, session_factory=session_factory)
-        row = db.scalar(select(DurableJob).where(DurableJob.kind.in_(kinds),
+                from .replica_models import reserve_sqlite_writer
+                reserve_sqlite_writer(db)
+        diagnostics = recover(db, kinds, commit=not topic_claim)
+        candidates = select(DurableJob).where(DurableJob.kind.in_(kinds),
             DurableJob.status == "queued", DurableJob.available_at <= now(),
-            DurableJob.cancel_requested.is_(False)).order_by(DurableJob.created_at)
-            .with_for_update(skip_locked=True).limit(1))
-        if row is None:
-            return None
-        if imported_mutation(db, row.kind, row.service_id, row.payload):
+            DurableJob.cancel_requested.is_(False))
+        if topic_claim:
+            candidates = candidates.where(_available_topic_origin())
+        row = db.scalar(candidates.order_by(DurableJob.created_at).with_for_update(skip_locked=True).limit(1))
+        result = None
+        if row is not None and imported_mutation(db, row.kind, row.service_id, row.payload):
             row.status, row.completed_at = "cancelled", now()
             row.stage = row.error = "Imported service evidence is managed by its OCI publisher"
             db.commit()
-            return None
-        token = uuid.uuid4().hex
-        changed = db.execute(update(DurableJob).where(DurableJob.id == row.id,
-            DurableJob.status == "queued").values(status="running", stage="Starting",
-            lease_token=token, worker_id=worker_id, heartbeat_at=now(),
-            lease_until=now() + timedelta(seconds=setting("CATS_JOB_LEASE_SECONDS", 120)),
-            started_at=row.started_at or now(), attempts=DurableJob.attempts + 1))
-        db.commit()
-        if not changed.rowcount:
-            return None
-        db.refresh(row)
-        db.expunge(row)
-        return row
+        elif row is not None:
+            token = uuid.uuid4().hex
+            changed = db.execute(update(DurableJob).where(DurableJob.id == row.id,
+                DurableJob.status == "queued").values(status="running", stage="Starting",
+                lease_token=token, worker_id=worker_id, heartbeat_at=now(),
+                lease_until=now() + timedelta(seconds=setting("CATS_JOB_LEASE_SECONDS", 120)),
+                started_at=row.started_at or now(), attempts=DurableJob.attempts + 1))
+            db.commit()
+            if changed.rowcount:
+                db.refresh(row)
+                db.expunge(row)
+                result = row
+        elif topic_claim:
+            db.commit()  # Persist expiry recovery even if no job is ready.
+    for diagnostic in diagnostics:
+        if session_factory is SessionLocal:
+            enqueue_diagnostic(diagnostic)
+        else:
+            record_diagnostic(diagnostic, session_factory=session_factory)
+    return result
 
 
 class JobContext:

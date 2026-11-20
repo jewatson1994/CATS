@@ -26,11 +26,14 @@ from .models import Execution, Service, ServiceGroup, ServiceVersion, User
 from .scan_coordination import ScanJob, TERMINAL, enqueue_job
 from .replica_models import reserve_sqlite_writer
 from .topic_intake_models import GitLabTopicSource, TopicProject, TopicRevision
+from .topic_scope_rules import effective_project_claim_group, scope_sources
 
 KIND = "topic_intake_process"
 _FAILURE = ("failed", "cancelled")
 _PAGE = 16
 _OPTED_OUT = "The GitLab project is no longer opted in to this source."
+_ROUTE_CHANGED = "The GitLab project's claim routing changed. Review the namespace rules and poll again."
+_PROJECT_MOVED = "The GitLab project moved. Poll its new path before retrieving the archive."
 _SUPERSEDED = "A newer revision superseded this intake."
 logger = logging.getLogger(__name__)
 
@@ -47,9 +50,26 @@ def _queue(db, source, revision):
     return job
 
 
-def observe_project(db, source, *, gitlab_project_id, project_path, web_url, default_branch, commit_sha):
+def queue_observed(db, source, revision):
+    """Admit an observed revision while its project is locked, or leave it in the outbox."""
+    if revision.status != "pending" or revision.processing_job_id is not None:
+        return True
+    try:
+        _queue(db, source, revision)
+    except HTTPException as exc:
+        if exc.status_code != 429:
+            raise
+        # A committed pending revision survives queue saturation and worker restarts.
+        return False
+    return True
+
+
+def observe_project(db, source, *, gitlab_project_id, project_path, web_url, default_branch, commit_sha,
+                    claim_group_id=None, observed_topics=None, defer_queue=False):
     if not source.enabled:
         return None
+    if claim_group_id is None and not source.namespace:
+        raise IntakeError("The project has no resolved claim group in this GitLab source.")
     reserve_sqlite_writer(db)
     query = select(TopicProject).where(TopicProject.origin == source.origin,
                                       TopicProject.gitlab_project_id == gitlab_project_id).with_for_update()
@@ -68,15 +88,25 @@ def observe_project(db, source, *, gitlab_project_id, project_path, web_url, def
     if project.source_id != source.id:
         return None
     was_eligible = project.eligible
+    claim_group_id = claim_group_id if claim_group_id is not None else source.claim_group_id
+    observed_topics = observed_topics if observed_topics is not None else [source.topic]
+    routing_changed = (project.claim_group_id != claim_group_id or project.project_path != project_path
+                       or set(project.observed_topics or [source.topic]) != set(observed_topics))
     project.eligible = True
+    project.claim_group_id = claim_group_id
+    project.observed_topics = observed_topics
     project.project_path, project.web_url, project.default_branch = project_path, web_url, default_branch
     revision = db.scalar(select(TopicRevision).where(TopicRevision.project_id == project.id,
                                                      TopicRevision.commit_sha == commit_sha))
     if revision is not None:
         advanced = project.latest_revision_id != revision.id
         project.latest_revision_id = revision.id
-        if revision.status == "failed" and ((advanced and (revision.error or "").startswith(_SUPERSEDED))
-                                           or (not was_eligible and (revision.error or "").startswith(_OPTED_OUT))):
+        error = revision.error or ""
+        if revision.status == "failed" and (
+            (advanced and error.startswith(_SUPERSEDED))
+            or (not was_eligible and error.startswith(_OPTED_OUT))
+            or ((routing_changed or not was_eligible) and error.startswith((_ROUTE_CHANGED, _PROJECT_MOVED)))
+        ):
             revision.status, revision.error, revision.processing_job_id = "pending", None, None
             revision.discovery_job_id = revision.inventory_id = revision.scan_job_id = revision.execution_id = None
         return revision
@@ -84,17 +114,12 @@ def observe_project(db, source, *, gitlab_project_id, project_path, web_url, def
     db.add(revision)
     db.flush()
     project.latest_revision_id = revision.id
-    try:
-        _queue(db, source, revision)
-    except HTTPException as exc:
-        if exc.status_code != 429:
-            raise
-        # The committed pending revision is the outbox. A later worker tick admits
-        # it as soon as capacity is free, including when the poll itself used the last slot.
+    if not defer_queue:
+        queue_observed(db, source, revision)
     return revision
 
 
-def _binding(db, revision_id, *, read_only=False):
+def _binding(db, revision_id, *, read_only=False, project_metadata=None):
     if read_only:
         binding = db.execute(select(GitLabTopicSource, TopicProject, TopicRevision).select_from(TopicRevision)
             .join(TopicProject, TopicProject.id == TopicRevision.project_id)
@@ -115,6 +140,8 @@ def _binding(db, revision_id, *, read_only=False):
         raise IntakeError(_OPTED_OUT)
     if project.latest_revision_id != revision.id:
         raise IntakeError(_SUPERSEDED)
+    if effective_project_claim_group(source, project, project_metadata, scope_sources(db, source)) is None:
+        raise IntakeError(_ROUTE_CHANGED)
     user = db.get(User, source.authorized_by_id)
     if not user or not user.enabled or not AuthContext(user, None).can_manage_group(None):
         raise IntakeError("The source administrator no longer has global configuration access.")
@@ -147,7 +174,7 @@ def retry_revision(db, rev):
     return _queue(db, source, revision)
 
 
-def fetch_project_archive(source, project_id, sha, output, *, check):
+def fetch_project_archive(source, project_id, sha, output, *, check, check_project):
     """Download only the opted-in numeric project and exact commit, never a project-supplied URL."""
     if type(project_id) is not int or not 0 < project_id <= 2**63 - 1 or not re.fullmatch(
             r"(?:[0-9a-f]{40}|[0-9a-f]{64})", sha or ""):
@@ -155,14 +182,16 @@ def fetch_project_archive(source, project_id, sha, output, *, check):
     from .secrets import decrypt_secret
     token = decrypt_secret(source["token"]) if source["token"] else None
     origin, namespace, topic = source["origin"], source["namespace"], source["topic"]
+    namespaces = [route["namespace"] for route in source["namespace_routes"] or []]
     opener, api = discovery_gitlab.gitlab_api_client(origin, namespace, topic, token=token,
-                                                      trusted_ca_certificates=source["ca"])
+                                trusted_ca_certificates=source["ca"], namespaces=namespaces)
     endpoint = f"{api}/projects/{project_id}"
     deadline = time.monotonic() + 300
     metadata = discovery_gitlab._metadata(opener, endpoint, token, deadline, check)
-    current = discovery_gitlab.topic_project(metadata, origin, namespace, topic)
+    current = discovery_gitlab.topic_project(metadata, origin, namespace, topic, namespaces=namespaces)
     if not current or current["project_id"] != project_id:
         raise IntakeError("GitLab no longer reports the selected project with this namespace and topic.")
+    check_project(current)
     identity = discovery_gitlab._metadata(opener, f"{endpoint}/repository/commits/{sha}", token, deadline, check)
     if not isinstance(identity, dict) or identity.get("id") != sha:
         raise IntakeError("GitLab did not confirm the requested immutable commit.")
@@ -245,12 +274,15 @@ def handler(ctx, payload):
             if (ctx.job.result or {}).get("topic_archive"):
                 # A previous lease committed this archive. Reconciliation admits it.
                 return {"revision_id": revision_id}
-            settings = {key: getattr(source, key) for key in ("origin", "namespace", "topic", "token", "config_revision")}
+            settings = {key: getattr(source, key) for key in (
+                "origin", "namespace", "namespace_routes", "topic", "token", "config_revision")}
             settings["ca"] = configured_certificates(db)
             git_id, sha = project.gitlab_project_id, revision.commit_sha
 
+        fresh_project = None
+
         def current_binding(db, *, read_only):
-            source, project, revision = _binding(db, revision_id, read_only=read_only)
+            source, project, revision = _binding(db, revision_id, read_only=read_only, project_metadata=fresh_project)
             owner = ctx._owned(db)
             if owner.cancel_requested:
                 raise durable_jobs.JobCancelled()
@@ -259,22 +291,31 @@ def handler(ctx, payload):
             if (source.config_revision != settings["config_revision"]
                     or project.gitlab_project_id != git_id or revision.commit_sha != sha):
                 raise RuntimeError("Source configuration or commit binding changed during retrieval")
+            if fresh_project is not None and fresh_project["path_with_namespace"] != project.project_path:
+                raise IntakeError(_PROJECT_MOVED)
             return source, project, revision, owner
 
         def check_fetch():
             with ctx.session_factory() as db:
                 current_binding(db, read_only=True)
 
+        def check_project(metadata):
+            nonlocal fresh_project
+            fresh_project = metadata
+            check_fetch()
+
         ctx.stage("Fetching the GitLab commit archive", 10)
         with _archive_part(ctx.job.id, ctx.job.lease_token) as part:
             with encrypted_writer(part, ctx.job.id) as stream:
-                digest = fetch_project_archive(settings, git_id, sha, stream, check=check_fetch)
+                digest = fetch_project_archive(settings, git_id, sha, stream, check=check_fetch, check_project=check_project)
             if os.name == "posix":
                 os.chown(part, -1, int(os.getenv("CATS_DISCOVERY_GID", "10003")))
                 part.chmod(0o640)
             with ctx.session_factory.begin() as db:
                 reserve_sqlite_writer(db)
                 source, project, revision, owner = current_binding(db, read_only=False)
+                if fresh_project is not None:
+                    project.observed_topics = fresh_project["topics"]
                 os.replace(part, part.parent / "repository.zip")
                 owner.result = {**(owner.result or {}), "topic_archive": {"source_hash": digest,
                     "commit_sha": sha, "config_revision": source.config_revision}}

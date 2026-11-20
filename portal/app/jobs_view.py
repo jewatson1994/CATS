@@ -16,7 +16,7 @@ from .diagnostics import public_diagnostic
 
 router = APIRouter(tags=["jobs"])
 
-GLOBAL_CONFIG_JOBS = ("watchlist_refresh", "gitlab_topic_poll", "topic_intake_process")
+GLOBAL_CONFIG_JOBS = ("watchlist_refresh", "gitlab_topic_poll", "gitlab_topic_preview", "topic_intake_process")
 
 
 def _permission(kind):
