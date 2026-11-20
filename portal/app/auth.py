@@ -389,6 +389,8 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
 
 
 PERMISSIONS = {
+    "runtime.view": "View runtime environments and observed container compliance",
+    "runtime.manage": "Manage runtime environments and link or revoke agents",
     "replica.admin": "Administer local replica sources and trust",
     "replica.sync": "Synchronize approved releases from local registries",
     "evidence.view": "View imported authoritative release evidence",
@@ -465,7 +467,7 @@ SYSTEM_ROLES = {
 
 # These operate on shared application state, never one service. config.manage
 # has a separate can_manage_group boundary for explicitly group-owned settings.
-APPLICATION_PERMISSIONS = {"replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
+APPLICATION_PERMISSIONS = {"runtime.view", "runtime.manage", "replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
     permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
 # Imported signed evidence belongs to its publisher even in a full deployment.

@@ -133,6 +133,7 @@ from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
+from . import runtime_models, runtime_routes, runtime_report_pages
 from . import diagnostic_store, diagnostic_routes
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
@@ -155,6 +156,7 @@ from .preview_cleanup import preview_cleanup_lifespan
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection, tables=portal_tables())
+    runtime_models.upgrade_connection(connection)
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)
@@ -499,6 +501,8 @@ app.include_router(oci_service_access_router)
 from .oci_pull_instructions import router as oci_pull_router
 app.include_router(oci_pull_router)
 app.include_router(replica_routes.router)
+app.include_router(runtime_routes.router)
+app.include_router(runtime_report_pages.router)
 app.include_router(local_cyber_overrides.router)
 app.include_router(oci_lifecycle.router)
 app.include_router(artifact_catalog_routes.router)
@@ -2771,6 +2775,11 @@ def readiness():
         return JSONResponse({"status": "unavailable"}, status_code=503,
                             headers={"Cache-Control": "no-store"})
     return JSONResponse({"status": "ready"}, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/runtime", response_class=HTMLResponse)
+def runtime_page(request: Request, auth: AuthContext = Depends(require_permission("runtime.view"))):
+    return templates.TemplateResponse(request, "runtime.html", page_context(auth))
 
 
 @app.get("/admin/replica", response_class=HTMLResponse)
@@ -10777,6 +10786,7 @@ def delete_service(
         db.execute(delete(PolicyFinding).where(PolicyFinding.id.in_(policy_finding_ids)))
     db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.service_id == service.id))
     db.execute(delete(project_credentials.ProjectCredential).where(project_credentials.ProjectCredential.service_id == service.id))
+    runtime_models.forget_service(db, service.id)
     db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.service_id == service.id))
     db.execute(delete(RemediationExecution).where(RemediationExecution.service_id == service.id))
     db.execute(delete(PatchExecution).where(PatchExecution.service_id == service.id))

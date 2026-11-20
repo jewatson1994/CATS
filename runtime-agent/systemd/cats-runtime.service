@@ -1,0 +1,30 @@
+[Unit]
+Description=CATS read-only Docker inventory agent
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cats-runtime
+Group=cats-runtime
+SupplementaryGroups=docker
+WorkingDirectory=/opt/cats-runtime
+EnvironmentFile=/etc/cats-runtime/agent.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/python3 -m cats_runtime run --source docker --state-dir /var/lib/cats-runtime/state
+StateDirectory=cats-runtime
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

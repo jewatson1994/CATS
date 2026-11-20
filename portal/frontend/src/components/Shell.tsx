@@ -12,6 +12,7 @@ type NavSection = {label?: string; items: NavItem[]};
 const primaryNav: NavItem[] = [
   ['/', 'Services', path => path === '/' || path.startsWith('/services/')],
   ['/discovery', 'Discovery', path => path === '/discovery'],
+  ['/runtime', 'Clusters & agents', path => path === '/runtime'],
   ['/scan', 'Scan', path => path === '/scan' || path.startsWith('/api/public/jobs/')],
   ['/patch', 'Patch', path => path === '/patch' || path === '/patch-campaigns' || path.startsWith('/api/public/patch-jobs/')],
 ];
@@ -121,7 +122,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
       <img className="brand-icon" src={icon} alt=""/><span className="brand-name">CATS</span><span className="sr-only">, {PRODUCT_NAME}</span>
       {version && <small className="cats-version"><span className="sr-only">version </span>{version}</small>}</a>
     {user ? <nav className="account-nav" aria-label="Primary navigation">
-      {primaryNav.filter(([href]) => !replica || href === '/').map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
+      {primaryNav.filter(([href]) => (!replica || href === '/' || href === '/runtime') && (href !== '/runtime' || can(data, 'runtime.view'))).map(([href, label, matches]) => <a key={href} href={href} aria-current={matches(path) ? 'page' : undefined}>{label}</a>)}
       <NavigationGroup label="Cybersecurity" sections={replica ? cyberNav.map(section => ({...section, items: section.items.filter(([href]) => href !== '/cyber-approvals')})) : cyberNav} path={path}/>
       <NavigationGroup label="More" sections={replica ? operationNav.map(section => ({...section, items: section.items.filter(([href]) => !['/sbom', '/requests'].includes(href)).map(item => item[0] === '/remediations' ? [item[0], 'POA&Ms and mitigations', item[2], item[3], 'Imported governance evidence'] as NavItem : item)})).filter(section => section.items.length) : operationNav} path={path}/>
       <span className="header-utilities">

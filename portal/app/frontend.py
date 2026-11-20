@@ -30,7 +30,7 @@ MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.h
                             "admin.html", "staging.html", "configuration.html", "validators.html", "audit.html", "general_policy.html", "evidence_policy.html", "workflow_policy.html", "compliance.html", "compliance_frameworks.html", "dependency_watchlist.html"})
 
 
-MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html", "imported_releases.html"}
+MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html", "runtime.html", "imported_releases.html"}
 MIGRATED_PAGES |= {"diagnostics.html"}
 
 
@@ -176,7 +176,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},
         "permissions": {permission: bool(can(permission)) if callable(can) else False
-                        for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage", "replica.admin", "replica.sync")},
+                        for permission in ("runtime.view", "runtime.manage", "user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage", "replica.admin", "replica.sync")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
         "announcement": _fields(context["announcement"], ("id", "title", "message", "expires_at", "unread"))
                         if user is not None and context.get("announcement") else None,
