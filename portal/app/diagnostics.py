@@ -15,7 +15,7 @@ import traceback
 import uuid
 
 correlation = ContextVar("cats_diagnostic_correlation", default=None)
-_SECRET = re.compile(r"(?i)(?:password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?key|connection[_-]?string|dsn)")
+_SECRET = re.compile(r"(?i)(?:password|passwd|secret|token|authorization|cookie|credential|api[_-]?key|private[_-]?key|client[_-]?key|linking[_-]?key|connection[_-]?string|dsn)")
 _SAFE_KEYS = {"token_configured", "credentials_configured", "signature_status", "signature_verification", "signature_verified"}
 _PUBLIC_CONTEXT = {"stage", "failed_stage", "last_successful_stage", "worker_id", "job_id", "task_id", "attempts", "max_attempts", "exit_code", "tool", "timeout_seconds", "failure_category", "reason_category"}
 
@@ -27,6 +27,7 @@ def _text(value):
     value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", r"\1[REDACTED]@", value)
     value = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "[REDACTED AUTHORIZATION]", value)
     value = re.sub(r"cats_project_[A-Za-z0-9_.~-]+", "[REDACTED PROJECT TOKEN]", value)
+    value = re.sub(r"cats-(?:link|agent)-[A-Za-z0-9_-]+", "[REDACTED RUNTIME CREDENTIAL]", value)
     value = re.sub(r"(?i)([\"']?(?:password|passwd|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|client[_-]?secret|authorization|cookie|credential|x-amz-signature|x-amz-security-token)[\"']?\s*[=:]\s*)(?:\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|[^\s&,;\]}]+)", r"\1[REDACTED]", value)
     value = re.sub(r"(?i)(--(?:password|passwd|token|secret|api-key|client-secret|registry-password)\s+)(?:\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|\S+)", r"\1[REDACTED]", value)
     value = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?", "[REDACTED TOKEN]", value)

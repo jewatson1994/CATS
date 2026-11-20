@@ -67,6 +67,7 @@ Open [localhost:8080](http://localhost:8080), or the configured `CATS_PORT`, and
 | Remediation and validation | Plan and patch supported Linux images, rescan candidates, and validate retained Helm artifacts in a dedicated sandbox. |
 | Approved releases | Publish signed immutable artifacts and offline bundles; track publication, verification, expiry, and revocation. |
 | Distribution | Serve authorized artifacts through the OCI compliance proxy and synchronize retained evidence to a separate replica. |
+| Clusters & agents | [Connect a Kubernetes cluster or Docker host](docs/runtime-agents.md), inspect namespace findings and compare running images with current approved releases. |
 
 Scanning, runtime validation, Cyber approval, publication, and signing retain separate outcomes. Missing evidence remains visible; a completed patch or signature alone does not establish deployment readiness. The [training library](docs/training/README.md) provides workflows for administrators, assessors, service managers, and cybersecurity reviewers.
 

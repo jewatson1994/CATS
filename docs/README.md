@@ -21,6 +21,7 @@ Start with the [project README](../README.md) for an overview. The guides below 
 - [Docker Compose ingestion](compose-ingestion.md): ordered inputs, profiles, previews, and image associations.
 - [Remediation](remediation.md) and [remediation wizard](remediation-wizard.md): planning, patching, review, validation, and delivery.
 - [Cyber approvals and approved releases](cyber-approved-releases.md): review authority, publication, expiry, offline import, and revocation.
+- [Clusters & agents](runtime-agents.md) covers cluster enrollment, namespace findings, agent coverage and release compliance. The [collector runbook](../runtime-agent/README.md) includes connected and disconnected installation.
 - [Unified artifact lifecycle](unified-artifact-lifecycle.md): artifact catalogs, proposed adoption, campaigns, and governed revisions.
 - [Deployment validation](../portal/docs/deployment-validation.md) and [architecture layout](../portal/docs/architecture-layout.md): runtime evidence and service topology.
 - [Standalone scanner](../cats-image/STANDALONE-SCAN.md): scanner usage outside the portal.
