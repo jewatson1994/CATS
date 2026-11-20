@@ -1,14 +1,20 @@
 import {StatusBadge} from '../components/ui';
 import type {RuntimeOverview} from './runtime';
 
+type ScanAssessment = {status: 'compliant' | 'noncompliant' | 'unverified'; reason: string; execution_id?: number;
+  source?: 'local_scan' | 'publisher_capture'; scanned_at?: string};
+export type RuntimeCompliance = {status: 'approved' | 'excepted' | 'noncompliant' | 'unverified'; reason: string;
+  service_id?: number; release_id?: number; approval_id?: number; scan_assessment?: ScanAssessment};
+
 export type RuntimeIssue = {
   environment_id: number; agent_id?: string | null; namespace?: string; pod?: string; workload?: string;
   container?: string; uid?: string; image_ref?: string; image_id?: string; severity: string; code: string; reason: string;
-  service_id?: number; release_id?: number; approval_id?: number;
+  service_id?: number; release_id?: number; approval_id?: number; compliance?: RuntimeCompliance; codes?: string[];
 };
 export type IssueFilters = {environmentId: number | null; namespace: string; code: string};
 
 const reasons: Record<string, string> = {
+  approved: 'The observed digest matches a current Approved Release.',
   release_expired: 'The Cyber-approved release for this image has expired.',
   approval_window_elapsed: 'The approval window for this image has expired.',
   release_revoked: 'Cyber revoked the release for this image.',
@@ -23,7 +29,10 @@ const reasons: Record<string, string> = {
   ambiguous_service_membership: 'Several services match this image. CATS cannot establish which approval applies.',
   immutable_runtime_identity_unavailable: 'The report lacks a verified runtime image digest.',
   image_not_in_retained_release_evidence: 'CATS could not match this image to retained release evidence.',
-  no_approved_release_match: 'CATS found no matching Approved Release for this running image in the cluster’s service scope.',
+  no_approved_release_match: 'No Approved Release in this environment matches the reported repository and digest.',
+  scan_image_noncompliant: 'A finding in this assessment fails scan policy for the running image digest.',
+  scan_image_compliant: 'This assessment records a compliant service and covers the running image digest.',
+  scan_image_evidence_unavailable: 'CATS could not establish scan compliance for this service and running image digest.',
   repository_mapping_unavailable: 'CATS could not establish a repository mapping for this image.',
   requested_service_repository_mismatch: 'The reported repository does not belong to the identified service.',
   requested_digest_mismatch: 'The reference and runtime image report different digests.',
@@ -40,6 +49,22 @@ const reasons: Record<string, string> = {
   coverage_revoked: 'This agent has been revoked.',
 };
 export function issueReason(reason: string) {return reasons[reason] || reason.replaceAll('_', ' ');}
+
+const scanLabels = {compliant: 'Scan compliant', noncompliant: 'Scan noncompliant', unverified: 'Scan unverified'};
+const scanTones = {compliant: 'success', noncompliant: 'danger', unverified: 'neutral'} as const;
+const scanSources = {local_scan: 'Local scan', publisher_capture: 'Verified publisher capture'};
+const scanTime = new Intl.DateTimeFormat(undefined, {dateStyle: 'medium', timeStyle: 'long'});
+
+export function ScanCompliance({assessment, current}: {assessment?: ScanAssessment; current: boolean}) {
+  if (!assessment) return <span className="muted">Scan unverified</span>;
+  const scannedAt = Date.parse(assessment.scanned_at ?? '');
+  return <><StatusBadge value={assessment.status} label={current ? scanLabels[assessment.status] : 'Scan status unchecked'}
+    tone={current ? scanTones[assessment.status] : 'neutral'}/>
+    {current ? <span>{issueReason(assessment.reason)}</span> : <span>Last assessment was {assessment.status}.</span>}
+    {assessment.source && <span>{scanSources[assessment.source]}</span>}
+    {Number.isFinite(scannedAt) && <span>Scanned <time dateTime={assessment.scanned_at}>{scanTime.format(scannedAt)}</time></span>}
+    {assessment.execution_id != null && <span>Assessment execution {assessment.execution_id}</span>}</>;
+}
 
 export function RuntimeIssues({overview, currentCoverage, filters, selectFilters, currentRead}: {
   overview: RuntimeOverview; currentCoverage: (id: string) => boolean; currentRead: boolean;
@@ -69,7 +94,8 @@ export function RuntimeIssues({overview, currentCoverage, filters, selectFilters
       <label>Namespace<select value={namespace} onChange={event => selectFilters({...filters, namespace: event.target.value})}>
         <option value="">All namespaces</option>{[...namespaces].sort().map(name => <option key={name}>{name}</option>)}</select></label>
       <label>Issue type<select value={code} onChange={event => selectFilters({...filters, code: event.target.value})}>
-        <option value="">All issue types</option><option value="noncompliant">Reported policy failure</option>
+        <option value="">All issue types</option><option value="noncompliant">Release policy failure</option>
+        <option value="scan_noncompliant">Scan policy failure</option>
         <option value="unverified">Unverified observation</option><option value="coverage">Coverage gap</option></select></label>
     </div>
     {total > issues.length && <p className="runtime-notice">This page contains {issues.length} of {total} reported issues in this view.</p>}
@@ -78,6 +104,8 @@ export function RuntimeIssues({overview, currentCoverage, filters, selectFilters
       <thead><tr><th scope="col">Cluster / agent</th><th scope="col">Namespace / workload</th><th scope="col">Image / digest</th><th scope="col">Issue</th></tr></thead>
       <tbody>{rows.map((issue, index) => {
         const status = classification(issue);
+        const decision = issue.compliance;
+        const current = status !== 'Coverage unchecked';
         const workload = [issue.workload, issue.pod && issue.pod !== issue.workload ? 'Pod ' + issue.pod : '', issue.container && 'Container ' + issue.container].filter(Boolean);
         return <tr key={[issue.environment_id, issue.agent_id, issue.uid, issue.container, issue.code, index].join(':')}>
           <th scope="row">{names.get(issue.environment_id)}<span>{issue.agent_id && (agents.get(issue.agent_id) || issue.agent_id)}</span></th>
@@ -86,7 +114,10 @@ export function RuntimeIssues({overview, currentCoverage, filters, selectFilters
           <td>{issue.image_ref && <code>{issue.image_ref}</code>}{issue.image_id && <code>{issue.image_id}</code>}
             {!issue.image_ref && !issue.image_id && (issue.code === 'coverage' ? 'Environment coverage' : 'Unreported')}</td>
           <td><StatusBadge value={issue.code} label={status} tone={status === 'Confirmed policy failure' ? 'danger' : 'warning'}/>
-            <span>{issueReason(issue.reason)}</span>{issue.service_id != null && <span>{services.get(issue.service_id) || `Service ${issue.service_id}`}</span>}
+            {decision ? <><span>{current ? 'Release' : 'Last release status'} {decision.status}</span>
+              <span>{issueReason(decision.reason)}</span><ScanCompliance assessment={decision.scan_assessment} current={current}/></>
+              : <span>{issueReason(issue.reason)}</span>}
+            {issue.service_id != null && <span>{services.get(issue.service_id) || `Service ${issue.service_id}`}</span>}
             {issue.approval_id != null && <span>Approval {issue.approval_id}</span>}{issue.release_id != null && <span>Release {issue.release_id}</span>}
             {status === 'Coverage unchecked' && <small>Reason from retained evidence.</small>}</td>
         </tr>;

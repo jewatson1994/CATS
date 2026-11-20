@@ -2,7 +2,7 @@ import {useEffect, useState, type FormEvent} from 'react';
 import {ApiError, requestJson, type PageData} from '../api';
 import {PageHeader, StatusBadge, type Tone} from '../components/ui';
 import {visibleTimeout} from '../hooks/visibleTimer';
-import {RuntimeIssues, issueReason, type IssueFilters, type RuntimeIssue} from './RuntimeIssues';
+import {RuntimeIssues, ScanCompliance, issueReason, type IssueFilters, type RuntimeCompliance, type RuntimeIssue} from './RuntimeIssues';
 import './runtime.css';
 
 type Environment = {id: number; name: string; kind: 'kubernetes' | 'docker'; service_ids: number[]; service_scope?: 'all' | 'selected'; created_at: string; can_manage?: boolean};
@@ -13,7 +13,7 @@ type Agent = {id: string; environment_id: number; name: string; source_id: strin
   errors: string[]; coverage: Coverage; workload_count: number};
 type Workload = {pod?: string; workload_kind?: string; container_kind?: string; agent_id: string; environment_id: number; uid: string; namespace: string; workload: string; container: string;
   node: string; image_ref: string; image_id: string; state: string; chart_name: string; chart_version: string; helm_release: string; observed_at?: string | null;
-  compliance: {status: 'approved' | 'excepted' | 'noncompliant' | 'unverified'; reason: string; service_id?: number; release_id?: number; approval_id?: number}};
+  compliance: RuntimeCompliance};
 export type RuntimeOverview = {environments: Environment[]; agents: Agent[]; workloads: Workload[]; services: {id: number; name: string}[];
   permissions: {manage: boolean}; inventory_truncated?: boolean; total_workloads?: number; next_offset?: number | null; total_issues?: number; next_issue_offset?: number | null; issues?: RuntimeIssue[];
   namespaces?: {environment_id: number; name: string; workload_count: number; issue_count: number}[];
@@ -294,7 +294,7 @@ export function Page({data}: {data: PageData}) {
           <p>Approval compares the observed image identity with releases in this environment’s service scope. Helm labels describe agent-reported attribution; chart provenance is unverified.</p>
           {activePage?.inventory_truncated && <p className="runtime-notice" role="status">Showing {activePage.workloads.length} of {activePage.total_workloads ?? 'more'} observations on this inventory page.</p>}
           {!workloads.length ? (activePage && <p>No workload observations are available for this environment.</p>) : <div className="runtime-table"><table><caption>Retained workload observations for {selected.name}</caption>
-            <thead><tr><th scope="col">Workload</th><th scope="col">Image identity</th><th scope="col">Report coverage</th><th scope="col">Release match</th><th scope="col">Helm attribution</th></tr></thead>
+            <thead><tr><th scope="col">Workload</th><th scope="col">Image identity</th><th scope="col">Report coverage</th><th scope="col">Release match</th><th scope="col">Scan compliance</th><th scope="col">Helm attribution</th></tr></thead>
             <tbody>{workloads.map((workload, index) => {
               const agent = agentById.get(workload.agent_id);
               const coverage = agent && displayCoverage(agent);
@@ -307,6 +307,7 @@ export function Page({data}: {data: PageData}) {
                 <td><StatusBadge value={coverage || 'unavailable'} label={coverage ? coverageLabels[coverage] : 'Coverage unavailable'} tone={coverage ? coverageTones[coverage] : 'neutral'}/>
                   <span>{dateText(workload.observed_at ?? agent?.inventory_observed_at ?? agent?.observed_at)}</span></td>
                 <td><StatusBadge value={status} label={complianceLabels[status]} tone={tone}/>{!current && <span>Retained observation only</span>}<span>{issueReason(workload.compliance.reason)}</span></td>
+                <td><ScanCompliance assessment={workload.compliance.scan_assessment} current={current}/></td>
                 <td>{workload.chart_name || workload.helm_release ? <><span>{[workload.chart_name, workload.chart_version].filter(Boolean).join(' ') || 'Chart not reported'}</span><span>{workload.helm_release || 'Release not reported'}</span><span className="muted">Unverified provenance</span></> : <span>Not reported</span>}</td>
               </tr>;
             })}</tbody></table></div>}

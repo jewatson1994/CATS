@@ -116,12 +116,25 @@ def coverage(agent, timestamp):
     return 'fresh'
 
 
+def workload_issue_reasons(decision):
+    """Keep every applicable category on one issue, most severe first."""
+    reasons = {}
+    if decision['status'] == 'noncompliant':
+        reasons['noncompliant'] = decision['reason']
+    scan = decision.get('scan_assessment')
+    if scan and scan['status'] == 'noncompliant':
+        reasons['scan_noncompliant'] = scan['reason']
+    if decision['status'] == 'unverified':
+        reasons['unverified'] = decision['reason']
+    return reasons
+
+
 @router.get('')
 def overview(environment_id: int | None = Query(default=None, ge=1),
              offset: int = Query(default=0, ge=0), limit: int = Query(default=DISPLAY_LIMIT, ge=1, le=DISPLAY_LIMIT),
              issue_offset: int = Query(default=0, ge=0), issue_limit: int = Query(default=DISPLAY_LIMIT, ge=1, le=DISPLAY_LIMIT),
              issue_namespace: str | None = Query(default=None, min_length=1, max_length=255),
-             issue_code: Literal['coverage', 'noncompliant', 'unverified'] | None = None,
+             issue_code: Literal['coverage', 'noncompliant', 'scan_noncompliant', 'unverified'] | None = None,
              db: Session = Depends(get_db), auth: AuthContext = Depends(view)):
     from .runtime_policy import RuntimePolicyCache, evaluate_observation
     timestamp = now()
@@ -148,7 +161,7 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
     decision_cache = {row.id: {} for row in environments}
     coverage_rank = {'fresh': 0, 'never_reported': 1, 'incomplete': 2, 'stale': 3}
 
-    def add_issue(cluster, agent_id, code, reason, severity='warning', observation=None, decision=None):
+    def add_issue(cluster, agent_id, reasons, observation=None, decision=None):
         nonlocal total_issues
         cluster['issue_count'] += 1
         namespace = observation.get('namespace') if observation else None
@@ -156,13 +169,17 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
             namespaces[(cluster['id'], namespace)]['issue_count'] += 1
         if issue_namespace is not None and issue_namespace != namespace:
             return
-        if issue_code is not None and issue_code != code:
+        if issue_code is not None and issue_code not in reasons:
             return
         total_issues += 1
         if not issue_offset < total_issues <= issue_offset + issue_limit:
             return
-        issue = dict(environment_id=cluster['id'], agent_id=agent_id, severity=severity, code=code, reason=reason)
+        code, reason = next(iter(reasons.items()))
+        severity = 'error' if code in ('noncompliant', 'scan_noncompliant') else 'warning'
+        issue = dict(environment_id=cluster['id'], agent_id=agent_id, severity=severity,
+                     code=code, reason=reason, codes=list(reasons))
         if observation:
+            issue['compliance'] = decision
             issue.update({field: observation.get(field, '') for field in
                           ('uid', 'namespace', 'pod', 'workload', 'container', 'image_ref', 'image_id')})
             issue.update({field: decision[field] for field in ('service_id', 'approval_id', 'release_id', 'override_id')
@@ -188,7 +205,7 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
         if coverage_rank[status] > coverage_rank.get(cluster['coverage'], -1):
             cluster['coverage'] = status
         if status != 'fresh':
-            add_issue(cluster, row.id, 'coverage', 'coverage_' + status)
+            add_issue(cluster, row.id, {'coverage': 'coverage_' + status})
         if row.environment_id != previous_environment:
             seen_uids.clear()
             previous_environment = row.environment_id
@@ -215,9 +232,10 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
             else:
                 decision = evaluate_observation(db, by_id[row.environment_id], observation, now=timestamp, cache=policy_cache)
                 decisions[key] = decision
-            if status == 'fresh' and observation['state'] == 'running' and decision['status'] in ('noncompliant', 'unverified'):
-                add_issue(cluster, row.id, decision['status'], decision['reason'],
-                          'error' if decision['status'] == 'noncompliant' else 'warning', observation, decision)
+            if status == 'fresh' and observation['state'] == 'running':
+                reasons = workload_issue_reasons(decision)
+                if reasons:
+                    add_issue(cluster, row.id, reasons, observation, decision)
             if not offset <= position < offset + limit:
                 cluster['inventory_truncated'] = True
                 continue
@@ -225,7 +243,7 @@ def overview(environment_id: int | None = Query(default=None, ge=1),
                               'observed_at': iso(row.inventory_observed_at), 'compliance': decision})
     for cluster in clusters.values():
         if cluster['coverage'] in ('unlinked', 'revoked'):
-            add_issue(cluster, None, 'coverage', 'coverage_' + cluster['coverage'])
+            add_issue(cluster, None, {'coverage': 'coverage_' + cluster['coverage']})
     return reply({'environments': [environment_public(row) for row in environments], 'agents': agents,
                   'clusters': list(clusters.values()), 'namespaces': list(namespaces.values()), 'issues': issues,
                   'total_issues': total_issues, 'issue_offset': issue_offset,

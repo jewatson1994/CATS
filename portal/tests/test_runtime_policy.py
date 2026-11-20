@@ -10,7 +10,7 @@ import pytest
 from app import oci_authorization, oci_group_policy, release_revisions
 from app.cyber_approvals import CyberApproval, digest as snapshot_digest
 from app.execution_summaries import payload_digest
-from app.models import Execution, Service
+from app.models import Execution, Service, Finding, FindingObservation
 from app.oci_compliance import authorize_compliance
 from app.local_cyber_overrides import create_override, revoke_override
 from app.oci_models import OCIManifest, OCIObjectLink, OCIRepository, OCIUpstream
@@ -18,6 +18,7 @@ from app.replica_integrity import seal_record
 from app.replica_models import ReplicaRelease
 from app.runtime_policy import evaluate_observation, RuntimePolicyCache
 from test_oci_authorization import context, DIGEST, NOW
+from test_oci_compliance_imported import imported, PIN as IMPORT_PIN, CHILD as IMPORT_CHILD, NOW as IMPORT_NOW, capture
 from test_replica_authorization import replica
 
 
@@ -503,3 +504,102 @@ def test_imported_release_loses_runtime_approval_at_restriction(replica, restric
         result = evaluate_observation(db, {'service_scope': 'all'}, row, replica.now)
         assert result == dict(status='noncompliant', reason='release_' + restriction,
                               service_id=replica.service_id, release_id=replica.new_id)
+
+
+@pytest.mark.parametrize('case, expected', [
+    ('exact', 'noncompliant'), ('clean', 'compliant'), ('excepted', 'compliant'),
+    ('sibling', 'unverified'), ('tag_only', 'unverified'), ('missing_observation', 'unverified'),
+    ('corrupt', None), ('incomplete', None), ('different_pin', None),
+])
+def test_independent_current_scan_does_not_change_valid_release(runtime, monkeypatch, case, expected):
+    from app import main
+    from app.models import ExceptionRecord
+    monkeypatch.setattr(main, 'configuration_for_service',
+        lambda *_: dict(main.CONFIG_DEFAULTS, compliance_mode='raw', overdue_days='1', raw_due_rules='[]'))
+    db = runtime.db
+    reference = 'registry.example/team/image'
+    other = 'sha256:' + 'e' * 64
+    scanned = NOW + timedelta(hours=1)
+    started = NOW - timedelta(days=10)
+    pin = other if case in {'sibling', 'different_pin'} else DIGEST
+    evidence_pin = None if case == 'tag_only' else pin
+    finding_reference = reference + (':latest' if evidence_pin is None else '@' + pin)
+    cve = 'CVE-2026-12345'
+    finding = dict(cve=cve, severity='High', image=finding_reference, image_digest=evidence_pin)
+    raw = dict(complete=case != 'incomplete', scan_scope='service', fixable_only=True, findings=[] if case == 'clean' else [finding],
+        service={'id': 'oci'}, scanned_at=scanned.isoformat(), service_overview={
+            'images': [dict(image=reference + '@' + p, digest=p) for p in ({other} if case == 'different_pin' else {DIGEST, pin})]})
+    execution = Execution(service_id=runtime.approval.service_id, execution_key='updated-scan',
+        scanned_at=scanned, complete=raw['complete'], scan_scope='service', raw_payload=raw,
+        payload_digest=payload_digest(raw) if case != 'corrupt' else 'sha256:' + '0' * 64)
+    db.add(execution)
+    db.flush()
+    if case != 'clean':
+        result = Finding(service_id=execution.service_id, cve=cve, severity='High', first_seen=started,
+                         episode_started=started, last_seen=scanned, active=True)
+        db.add(result)
+        db.flush()
+        if case != 'missing_observation':
+            db.add(FindingObservation(finding_id=result.id, execution_id=execution.id, image=finding_reference,
+                                      image_digest=evidence_pin, evidence={}))
+        if case == 'excepted':
+            db.add(ExceptionRecord(finding_id=result.id, starts_at=started, expires_at=scanned + timedelta(days=1),
+                                   approved_by='Cyber', justification='Accepted'))
+    db.commit()
+    verdict = evaluate(runtime, now=scanned)
+    assert verdict['status'] == 'approved' and verdict['approval_id'] == runtime.approval.id
+    assessment = verdict.get('scan_assessment')
+    assert (assessment and assessment['status']) == expected
+    if expected:
+        assert assessment['execution_id'] == execution.id
+        assert assessment['scanned_at'] == scanned.isoformat() and assessment['source'] == 'local_scan'
+    if expected == 'noncompliant':
+        assert assessment['reason'] == 'scan_image_noncompliant'
+
+
+@pytest.mark.parametrize('condition,expected', [('exact', 'noncompliant'), ('clean', 'compliant'),
+    ('excepted', 'unverified'), ('observation_excluded', 'unverified'), ('unscanned_child', None), ('tampered', None)])
+def test_runtime_scan_posture_uses_sealed_image_specific_publisher_decisions(imported, condition, expected):
+    def change(evidence):
+        source = 'docker.io/library/nginx@' + IMPORT_PIN
+        raw = evidence['records']['executions'][0]['raw_payload']
+        raw['findings'] = [dict(cve='CVE-X', severity='High', image=source, image_digest=IMPORT_PIN)]
+        records = evidence['records']
+        records.update(findings=[dict(id=1, service_id=41, cve='CVE-X', active=True)],
+            finding_observations=[dict(id=2, finding_id=1, execution_id=42, image=source, image_digest=IMPORT_PIN)])
+        extension = evidence['extension']
+        extension['display']['services_row'].update(compliant=condition == 'clean', evidence_state='Complete')
+        extension['finding_decisions'] = [dict(finding_id=1, noncompliant=condition != 'clean',
+                                                  excepted=condition == 'excepted', vex_excluded=False)]
+        extension['observation_decisions'] = [dict(observation_id=2, excluded=True)] if condition == 'observation_excluded' else []
+    capture(imported, change, seal=condition != 'tampered')
+    pin = IMPORT_CHILD if condition == 'unscanned_child' else IMPORT_PIN
+    verdict = evaluate_observation(imported.db, {'service_scope': 'all'}, observed(pin, 'registry.example/published/nginx'), IMPORT_NOW)
+    assert verdict['status'] == 'approved'
+    assessment = verdict.get('scan_assessment')
+    assert (assessment and assessment['status']) == expected
+    assert not assessment or ('execution_id' not in assessment and assessment['source'] == 'publisher_capture'
+                              and assessment['scanned_at'] == IMPORT_NOW.isoformat())
+
+
+def test_local_scan_posture_reads_latest_scan_without_transferring_history(runtime):
+    from sqlalchemy import event
+    from app.runtime_scan_assessment import _latest_scan
+    db = runtime.db
+    for number in range(30):
+        raw = dict(complete=True, service={'id': 'oci'}, scan_scope='service',
+                   sbom_components=[{'image': 'registry.example/team/obsolete', 'digest': 'sha256:' + 'e' * 64}])
+        db.add(Execution(service_id=runtime.approval.service_id, execution_key=f'older-{number}',
+            scanned_at=NOW - timedelta(days=number + 1), complete=True, scan_scope='service',
+            raw_payload=raw, payload_digest=payload_digest(raw)))
+    db.commit()
+    statements = []
+    def record(_conn, _cursor, sql, *_args):
+        if 'FROM executions' in sql:
+            statements.append(sql)
+    event.listen(db.get_bind(), 'before_cursor_execute', record)
+    try:
+        assert _latest_scan(db, runtime.approval.service_id) is None  # The newest execution has no verifiable scan.
+    finally:
+        event.remove(db.get_bind(), 'before_cursor_execute', record)
+    assert len(statements) == 1 and 'LIMIT' in statements[0]

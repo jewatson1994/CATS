@@ -95,6 +95,55 @@ it('does not present retained denials as confirmed when reporting is stale', asy
   expect(issues.queryByText('Confirmed policy failure', {selector:'.badge'})).not.toBeInTheDocument();
 });
 
+it('shows an approved release alongside an exact scan failure in the workload and its issue', async () => {
+  const image = current.workloads[0];
+  const scannedAt = '2026-11-09T11:17:14Z';
+  image.compliance.scan_assessment = {status:'noncompliant', reason:'scan_image_noncompliant', execution_id:42, source:'local_scan', scanned_at:scannedAt};
+  current.workloads.push({...image, uid:'other-pod', workload:'No matched scan', compliance:{...image.compliance,
+    scan_assessment:{status:'unverified', reason:'scan_image_evidence_unavailable'}}});
+  current.issues = [{environment_id:1, agent_id:image.agent_id, uid:image.uid, workload:image.workload, namespace:image.namespace,
+    code:'scan_noncompliant', codes:['scan_noncompliant'], reason:'scan_image_noncompliant', severity:'error', compliance:image.compliance}];
+  await ready();
+  const table = within(screen.getByRole('region', {name:'Observed workloads'}));
+  const matched = within(table.getByText('Payments').closest('tr')!);
+  expect(matched.getByText('Approved').closest('.badge')).toHaveClass('badge-success');
+  expect(matched.getByText('Scan noncompliant').closest('.badge')).toHaveClass('badge-danger');
+  expect(matched.getByText('Assessment execution 42')).toBeVisible();
+  expect(matched.getByText('Local scan')).toBeVisible();
+  expect(matched.getByText('Scanned').querySelector('time')).toHaveAttribute('datetime', scannedAt);
+  const unknown = within(table.getByText('No matched scan').closest('tr')!);
+  expect(unknown.getByText('Scan unverified').closest('.badge')).toHaveClass('badge-neutral');
+  expect(unknown.queryByText('Scan noncompliant')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name:'Issues'}));
+  const issues = within(screen.getByRole('region', {name:'Runtime issues'}));
+  fireEvent.change(issues.getByLabelText('Issue type'), {target:{value:'scan_noncompliant'}});
+  const row = within((await issues.findByText('Release approved')).closest('tr')!);
+  expect(row.getByText('Scan noncompliant')).toBeVisible();
+  expect(row.getByText('Assessment execution 42')).toBeVisible();
+  expect(row.getByText('Local scan')).toBeVisible();
+  expect(row.getByText('Scanned').querySelector('time')).toHaveAttribute('datetime', scannedAt);
+  expect(issues.getAllByRole('row')).toHaveLength(2);
+  expect(requestJson).toHaveBeenCalledWith(expect.stringContaining('issue_code=scan_noncompliant'), expect.anything());
+});
+
+it('preserves the publisher scan timestamp and source when reporting a historical failure', async () => {
+  current.agents[0].coverage = 'stale';
+  const image = current.workloads[0];
+  const scannedAt = '2026-11-07T10:00:00Z';
+  image.compliance.scan_assessment = {status:'noncompliant', reason:'scan_image_noncompliant', source:'publisher_capture', scanned_at:scannedAt};
+  current.issues = [{environment_id:1, agent_id:image.agent_id, severity:'error', code:'scan_noncompliant',
+    reason:'scan_image_noncompliant', compliance:image.compliance}];
+  await ready();
+  expect(screen.getByText('Scan status unchecked').closest('.badge')).toHaveClass('badge-neutral');
+  fireEvent.click(screen.getByRole('button', {name:'Issues'}));
+  const issues = within(screen.getByRole('region', {name:'Runtime issues'}));
+  expect(issues.getByText('Last assessment was noncompliant.')).toBeVisible();
+  expect(issues.getByText('Verified publisher capture')).toBeVisible();
+  expect(issues.getByText('Scanned').querySelector('time')).toHaveAttribute('datetime', scannedAt);
+  expect(issues.queryByText('Scan noncompliant')).not.toBeInTheDocument();
+  expect(issues.queryByText('Confirmed policy failure')).not.toBeInTheDocument();
+});
+
 it('lists all linked agents across clusters and opens the selected host', async () => {
   current.environments.push({id: 2, name: 'Edge Docker', created_at:'2026-11-09', kind:'docker', service_ids:[8]});
   current.agents.push({...current.agents[0], id:'agent-2', name:'Edge collector', environment_id:2, enabled:false, coverage:'revoked'});

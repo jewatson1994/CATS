@@ -1,6 +1,6 @@
 # Monitor clusters and agents
 
-Open **Clusters & agents** (`/runtime`) on the CATS portal to see which clusters are reporting, which namespaces need attention, and which running images still have current Approved Release evidence. A Kubernetes collector reports Pod inventory to a CATS main or replica over HTTPS. A Linux Docker collector can report container inventory to the same view.
+Open **Clusters & agents** (`/runtime`) on the CATS portal to see which clusters are reporting and which namespaces need attention. Each running image has separate results for Approved Release membership and current scan compliance. Kubernetes and Linux Docker collectors send inventory to a CATS main or replica over HTTPS.
 
 ## Connect a cluster
 
@@ -13,9 +13,25 @@ Environment creation, scope changes, linking and revocation require application-
 
 ## Investigate a namespace
 
-In **Clusters and hosts**, open a cluster and choose **View issues for** that cluster. **All agents** shows reporting status and last contact across the installation. In **Issues**, filter by **Cluster or host** and **Namespace**. **Issue type** separates confirmed policy failures, unverified observations and coverage gaps. For example, to find images that need a release review in the `payments` namespace, select that namespace and **Confirmed policy failure**, then read the reason beside the affected Pod, container, repository and digest. Inspect **Unverified observation** separately to find containers that lack sufficient evidence for an approval decision.
+In **Clusters and hosts**, open a cluster and choose **View issues for** that cluster. **All agents** shows reporting status and last contact across the installation. In **Issues**, filter by **Cluster or host**, **Namespace** and **Issue type**. For example, select `payments` and **Scan policy failure** to find running containers with confirmed scan findings. Read the image digest and assessment execution ID, when available, to locate the scan behind the finding. A container with both a release failure and a scan failure counts once and appears under either applicable filter.
 
-Open the cluster detail to compare a container's state, requested image, runtime-reported identity and CATS decision. Kubernetes ownership metadata identifies the Pod's direct controller where available. Chart and Helm release labels provide attribution hints.
+The cluster detail shows both results for the same running container.
+
+| Column | How to interpret it |
+| --- | --- |
+| **Release match** | Compares the observed repository and immutable digest with the releases and applicable overrides for the cluster's service scope. An approved image can still fail current scan policy. |
+| **Scan compliance** | Shows **Scan compliant**, **Scan noncompliant** or **Scan unverified**. A verified result requires current, complete assessment evidence for the exact repository and digest. CATS applies the service's scan policy and applicable exceptions to local evidence. An imported service uses the publisher's verified assessment. A finding on another image or a mutable tag cannot establish a scan failure for this container. |
+
+Use the scan source and **Scanned** timestamp to trace the result. The timestamp (`scanned_at`) records when the source execution ran.
+
+| Scan source | Evidence behind the result |
+| --- | --- |
+| **Local scan** (`local_scan`) | **Assessment execution** identifies the scan on the receiving CATS instance. CATS uses the most recent service- or image-scoped scan of the service's current version. If that scan covers only a sibling image, the running digest stays unverified even when an older scan covered it. |
+| **Verified publisher capture** (`publisher_capture`) | CATS uses the assessment sealed into the active imported release. **Scanned** shows the publisher's original scan time, including when the replica imported the release later. Only local scans have a local assessment execution ID. |
+
+For example, if **Release match** shows **Approved** and **Scan compliance** shows **Scan noncompliant**, review the source assessment for that digest. A passing scan likewise leaves an expired release expired. Only fresh observations of running containers produce these workload issues. Stale or incomplete reporting produces an agent coverage warning. **Scan status unchecked** marks a retained result whose current state could not be verified. Waiting, terminated and stopped containers retain inventory context.
+
+Kubernetes ownership metadata identifies the Pod's direct controller where available. Chart and Helm release labels provide attribution hints.
 
 | What you see | What it means and what to check |
 | --- | --- |

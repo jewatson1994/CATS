@@ -599,6 +599,25 @@ def _evaluate_identity(cache, db, environment, observation, identity, timestamp)
                       _local_result(cache, db, mapping, digest, observed_repository, timestamp))
         except (ValueError, KeyError, TypeError, AttributeError):
             result = _result('unverified', 'current_release_evidence_unavailable', service_id)
-        results.append(result)
+        results.append((result, mapping))
     rank = {'approved': 0, 'excepted': 1, 'noncompliant': 2, 'unverified': 3}
-    return min(results, key=lambda item: rank[item['status']])
+    result, mapping = min(results, key=lambda item: rank[item[0]['status']])
+    known_member = result['status'] in {'approved', 'excepted'} or result['reason'] in {
+        'release_expired', 'release_revoked', 'release_suspended', 'release_superseded'}
+    if DIGEST.fullmatch(str(observation.get('image_id', ''))) and not known_member:
+        return result
+    try:
+        from .runtime_scan_assessment import assess
+        path = observed_repository or mapping.upstream_repository
+        if observed_repository is None and not imported:
+            revision = cache.get(release_revisions.active_revision, db, service_id, timestamp)
+            if revision:
+                path = release_revisions.distribution_location(mapping, revision, digest)
+        assessment = assess(cache, db, mapping, digest, path, timestamp, imported)
+        if assessment:
+            result['scan_assessment'] = assessment
+    except (ValueError, KeyError, TypeError, AttributeError, IndexError, OverflowError):
+        # Incomplete scan evidence can neither change a release decision nor
+        # mark a running container as violating service policy.
+        pass
+    return result

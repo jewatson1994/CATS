@@ -14,7 +14,7 @@ from app import main as portal_app  # Register the same complete schema as produ
 from app import runtime_routes as runtime
 from app import runtime_report_pages
 from app.auth import AuthContext, require_user
-from app.database import Base, get_db
+from app.database import Base, SessionLocal, get_db
 from app.models import AuditEvent, Service
 from app.operating_mode import ReplicaModeMiddleware
 from app.runtime_models import RuntimeAgent, RuntimeEnvironment, RuntimeLinkToken, now
@@ -25,7 +25,7 @@ def context(monkeypatch):
     monkeypatch.setenv('CATS_MODE', 'full')
     engine = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
-    with Session(engine) as db:
+    with SessionLocal(bind=engine, expire_on_commit=True) as db:
         db.add(Service(name='Application', service_key='application'))
         db.commit()
         assignment = SimpleNamespace(role=SimpleNamespace(name='Runtime administrator', permissions=['runtime.view', 'runtime.manage']),
@@ -492,3 +492,114 @@ def test_issue_filters_search_all_pages_and_preserve_namespace_counts(context, m
     assert empty["issues"] == [] and empty["total_issues"] == 0 and empty["next_issue_offset"] is None
     assert {row["name"]: row["issue_count"] for row in empty["namespaces"]} == {"default": 1, "backend": 1}
     assert client.get("/api/runtime", params={**query, "issue_code": "invalid"}).status_code == 422
+
+
+@pytest.mark.parametrize(("release_status", "codes"), [
+    ("approved", ["scan_noncompliant"]),
+    ("excepted", ["scan_noncompliant"]),
+    ("noncompliant", ["noncompliant", "scan_noncompliant"]),
+    ("unverified", ["scan_noncompliant", "unverified"]),
+])
+def test_exact_scan_violation_counted_once_with_current_release(context, monkeypatch, release_status, codes):
+    from app import runtime_policy
+    client, _, _ = context
+    linked, _ = enroll(client)
+    first = snapshot()["workloads"][0]
+    waiting = {**first, "uid": "other:waiting", "state": "waiting"}
+    assert report(client, linked, snapshot(workloads=[first, waiting])).is_success
+    decision = {"status": release_status, "reason": "release_result", "service_id": 1,
+                "scan_assessment": {"status": "noncompliant", "reason": "scan_image_noncompliant", "execution_id": 17}}
+    monkeypatch.setattr(runtime_policy, "evaluate_observation", lambda *args, **kwargs: decision)
+
+    for filters in [{}] + [{"issue_code": code} for code in codes]:
+        page = client.get("/api/runtime", params={**filters, "issue_namespace": "default", "issue_limit": 1}).json()
+        assert page["total_issues"] == page["unfiltered_total_issues"] == page["clusters"][0]["issue_count"] == 1
+        assert page["namespaces"][0]["issue_count"] == 1 and page["next_issue_offset"] is None
+        issue, = page["issues"]
+        assert issue["uid"] == first["uid"] and issue["codes"] == codes and issue["severity"] == "error"
+        assert issue["code"] == codes[0] and issue["compliance"] == page["workloads"][0]["compliance"] == decision
+        assert issue["reason"] == (decision["reason"] if codes[0] == "noncompliant" else "scan_image_noncompliant")
+
+    assert report(client, linked, snapshot(2, complete=False, errors=["scan_interrupted"], workloads=[])).is_success
+    page = client.get("/api/runtime", params={"issue_code": "scan_noncompliant"}).json()
+    assert page["issues"] == [] and page["unfiltered_total_issues"] == 1
+    assert all("scan_assessment" not in row["compliance"] for row in page["workloads"])
+
+
+@pytest.mark.parametrize("scan", [None, {"status": "unverified", "reason": "evidence_unavailable"},
+                                  {"status": "compliant", "reason": "scan_image_compliant"}])
+def test_unknown_or_compliant_scan_does_not_create_scan_violation(context, monkeypatch, scan):
+    from app import runtime_policy
+    client, _, _ = context
+    linked, _ = enroll(client)
+    assert report(client, linked, snapshot()).is_success
+    decision = {"status": "approved", "reason": "approved"}
+    if scan is not None:
+        decision["scan_assessment"] = scan
+    monkeypatch.setattr(runtime_policy, "evaluate_observation", lambda *args, **kwargs: decision)
+    page = client.get("/api/runtime", params={"issue_code": "scan_noncompliant"}).json()
+    assert page["issues"] == [] and page["total_issues"] == page["unfiltered_total_issues"] == 0
+
+
+def test_namespace_refresh_finds_later_pipeline_violation_without_new_report(context, monkeypatch):
+    from app.cyber_approvals import CyberApproval, digest as snapshot_digest
+    from app.models import Execution, Group, PortalSetting
+    from app.oci_models import OCIRepository, OCIUpstream
+    from app.release_validity import new_validity, utc
+
+    client, db, _ = context
+    client.app.include_router(portal_app.pipeline_router)
+    pipeline_token = secrets.token_urlsafe(32)
+    monkeypatch.setenv("PIPELINE_API_TOKEN", pipeline_token)
+    monkeypatch.setenv("CATS_DEPENDENCY_PROJECTION_ON_INGEST", "false")
+    service = db.get(Service, 1)
+    service.groups.append(Group(name="Core"))
+    db.add(PortalSetting(key="raw_due_rules", value='[{"severity":"High","days":1}]'))
+    upstream = OCIUpstream(name="upstream", endpoint="https://registry.example")
+    db.add(upstream)
+    db.flush()
+    db.add(OCIRepository(public_repository="approved/api", upstream_id=upstream.id,
+                         upstream_repository="project/api", service_id=1))
+    db.commit()
+    observation = {**snapshot()["workloads"][0], "namespace": "payments", "pod": "api-7"}
+    image_id = observation["image_id"]
+    digest = image_id.split("@")[1]
+    approved_at = now() - timedelta(days=5)
+
+    def ingest(key, stamp, findings):
+        data = dict(execution_id=key, scanned_at=stamp.isoformat(), complete=True, fixable_only=True,
+                    service={"id": "application", "name": "Application", "version": "1.2", "groups": ["Core"]},
+                    service_overview={"images": [{"image": image_id, "digest": digest}]}, findings=findings)
+        receipt = client.post("/api/v1/pipeline-results", json=data, headers={"Authorization": "Bearer " + pipeline_token})
+        assert receipt.status_code == 201, receipt.text
+        return db.get(Execution, receipt.json()["execution_id"])
+
+    scan = ingest("initial", approved_at, [])
+    evidence = dict(service_id=1, source_execution_id=scan.id, source_version_id=scan.service_version_id,
+                    source_payload_digest=scan.payload_digest, approval_validity=new_validity(approved_at),
+                    artifacts=[dict(kind="image", reference=image_id, digest=digest)])
+    approval = CyberApproval(service_id=1, source_execution_id=scan.id, variant="current", status="approved",
+                             snapshot=evidence, snapshot_digest=snapshot_digest(evidence), decided_at=approved_at)
+    db.add(approval)
+    db.commit()
+    linked, _ = enroll(client)
+    assert report(client, linked, snapshot(workloads=[observation])).is_success
+    filters = {"environment_id": linked["environment_id"], "issue_namespace": "payments", "issue_code": "scan_noncompliant"}
+    initial = client.get("/api/runtime", params=filters).json()
+    original = initial["workloads"][0]["compliance"]
+    assert original["status"] == "approved", original
+    assert initial["total_issues"] == 0
+
+    later = ingest("repeat", approved_at + timedelta(days=1), [{
+        "cve": "CVE-2026-1234", "severity": "High", "image": image_id, "image_digest": digest,
+        "package": "test-package", "fixed_version": "2.0"}])
+    refreshed = client.get("/api/runtime", params=filters).json()
+    assert refreshed["unfiltered_total_issues"] == refreshed["total_issues"] == refreshed["namespaces"][0]["issue_count"] == 1
+    issue, = refreshed["issues"]
+    assert (issue["namespace"], issue["pod"], issue["codes"]) == ("payments", "api-7", ["scan_noncompliant"])
+    decision = issue["compliance"]
+    assert decision == refreshed["workloads"][0]["compliance"]
+    assert decision["status"] == "approved" and decision["approval_id"] == approval.id
+    assert decision["scan_assessment"] == {"status": "noncompliant", "reason": "scan_image_noncompliant",
+                                           "execution_id": later.id, "source": "local_scan",
+                                           "scanned_at": utc(later.scanned_at).isoformat()}
