@@ -46,6 +46,110 @@ def network(monkeypatch):
     return calls, handlers, replies
 
 
+def _topic_row(project_id, path='group/subgroup/repo', **overrides):
+    return dict({'id': project_id, 'topics': ['cats'], 'archived': False, 'default_branch': 'release/v2',
+                 'path_with_namespace': path, 'web_url': HOST + '/' + path}, **overrides)
+
+
+def test_topic_poll_uses_exact_scope_topics_numeric_project_ids_and_all_pages(network, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+    calls, handlers, replies = network
+    monkeypatch.setenv('CATS_DISCOVERY_GITLAB_SOURCES', HOST)
+    first = [_topic_row(1, topics=['cats-dev']), _topic_row(2, 'groupx/foreign'),
+             _topic_row(3, archived=True), _topic_row(4)]
+    second = [_topic_row(5, 'group/other', web_url='https://foreign.example/project'), _topic_row(6, 'group/next')]
+    head = json.dumps({'name': 'release/v2', 'commit': {'id': SHA}}).encode()
+    replies.extend([Response(json.dumps(first).encode(), **{'X-Next-Page': '2'}), Response(head),
+                    Response(json.dumps(second).encode(), **{'X-Next-Page': ''}), Response(head)])
+    errors = []
+    projects = list(gitlab.iter_topic_projects(HOST, 'group', 'cats', token='private',
+                        on_project_error=lambda project_id, message: errors.append((project_id, message))))
+    assert [(p['project_id'], p['commit_sha']) for p in projects] == [(4, SHA), (6, SHA)]
+    assert len(errors) == 1 and errors[0][0] == 5
+    assert [urlsplit(req.full_url).path for req in calls] == [
+        '/api/v4/groups/group/projects', '/api/v4/projects/4/repository/branches/release%2Fv2',
+        '/api/v4/groups/group/projects', '/api/v4/projects/6/repository/branches/release%2Fv2']
+    query = parse_qs(urlsplit(calls[0].full_url).query)
+    assert {key: query[key] for key in ('topic', 'include_subgroups', 'with_shared', 'archived')} == {
+        'topic': ['cats'], 'include_subgroups': ['true'], 'with_shared': ['false'], 'archived': ['false']}
+    assert all(req.full_url.startswith(HOST + '/') and req.get_header('Private-token') == 'private' for req in calls)
+    assert all('Private-token' not in req.headers for req in calls)
+    assert next(h.proxies for h in handlers if isinstance(h, request.ProxyHandler)) == {}
+
+
+@pytest.mark.parametrize('origin,namespace,topic', [
+    (HOST, '', 'cats'), (HOST, 'a/../b', 'cats'), (HOST, 'group%2Fother', 'cats'),
+    (HOST, 'tenant', 'cats,other'), (HOST, 'tenant', ' cats'), (HOST + '/group/repo', 'group', 'cats'),
+    ('https://foreign.example', 'tenant', 'cats'),
+])
+def test_invalid_topic_scope_never_sends_a_request(network, monkeypatch, origin, namespace, topic):
+    monkeypatch.setenv('CATS_DISCOVERY_GITLAB_SOURCES', HOST)
+    with pytest.raises(gitlab.GitLabSourceError):
+        list(gitlab.iter_topic_projects(origin, namespace, topic, token='private'))
+    assert not network[0]
+
+
+def test_project_only_allowlist_does_not_authorize_group_enumeration(network):
+    with pytest.raises(gitlab.GitLabSourceError) as error:
+        list(gitlab.iter_topic_projects(HOST, 'group', 'cats'))
+    assert error.value.status_code == 403 and not network[0]
+
+
+def test_group_page_replay_cannot_loop_or_resubmit(network, monkeypatch):
+    monkeypatch.setenv('CATS_DISCOVERY_GITLAB_SOURCES', HOST)
+    calls, _, replies = network
+    page = json.dumps([_topic_row(7, topics=[])]).encode()
+    replies.extend([Response(page, **{'X-Next-Page': '2'}), Response(page)])
+    with pytest.raises(gitlab.GitLabSourceError, match='advance'):
+        list(gitlab.iter_topic_projects(HOST, 'group', 'cats'))
+    assert len(calls) == 2
+
+
+def test_link_only_pagination_rebuilds_url_at_approved_origin(network, monkeypatch):
+    calls, _, replies = network
+    monkeypatch.setenv('CATS_DISCOVERY_GITLAB_SOURCES', HOST)
+    replies.extend([Response(json.dumps([_topic_row(7, topics=[])]).encode(),
+                             Link='<https://external.example/collect>; rel="next"'), Response(b'[]')])
+    assert list(gitlab.iter_topic_projects(HOST, 'group', 'cats', token='private')) == []
+    assert len(calls) == 2 and calls[1].full_url.startswith(HOST + '/api/v4/groups/group/projects?')
+    assert 'page=2' in calls[1].full_url
+
+
+def test_large_response_checks_before_request_after_response_and_once_per_second(monkeypatch):
+    from types import SimpleNamespace
+    ticks, checked = [], []
+    class StreamingResponse(Response):
+        def read1(self, _size):
+            ticks.append(None)
+            return super().read1(1)
+    def clock():
+        return len(ticks) / 32
+    def opened(req, timeout):
+        assert checked == [0]
+        return StreamingResponse(b'a' * 128)
+    monkeypatch.setattr(gitlab, 'time', SimpleNamespace(monotonic=clock))
+    checked_at = lambda: checked.append(clock())
+    received = b''.join(gitlab._chunks(SimpleNamespace(open=opened), PROJECT, 'token', 128, metadata=False,
+                                       check=checked_at, deadline=8))
+    assert received == b'a' * 128
+    assert checked == [0, 1, 2, 3, 4, 129 / 32]
+
+
+def test_stream_deadline_is_checked_between_periodic_authorization_checks(monkeypatch):
+    from types import SimpleNamespace
+    current, checks = [0.0], []
+    class SlowResponse(Response):
+        def read1(self, _size):
+            current[0] += 0.2
+            return super().read1(1)
+    monkeypatch.setattr(gitlab, 'time', SimpleNamespace(monotonic=lambda: current[0]))
+    opener = SimpleNamespace(open=lambda *a, **kw: SlowResponse(b'abcde'))
+    with pytest.raises(gitlab.GitLabSourceError, match='timed out'):
+        list(gitlab._chunks(opener, PROJECT, '', 128, metadata=False,
+                            check=lambda: checks.append(current[0]), deadline=0.3))
+    assert current[0] == 0.4 and checks == [0]
+
+
 @pytest.mark.parametrize(('ref', 'commit_path'), [
     ('release/1.0', '/commits/release%2F1.0?stats=false'),
     ('v2.0', '/commits/v2.0?stats=false'),

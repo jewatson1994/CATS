@@ -72,7 +72,7 @@ docker compose --env-file C:/secure/cats.env -f templates/compose.main.yaml up -
 
 On Linux, use `cp templates/main.env.example /secure/cats.env`, `mkdir -p scan-registry-auth backups/postgres`, and the corresponding `--env-file` path. Protect that file with appropriate filesystem permissions.
 
-To enable GitLab Discovery, approve the project URLs or instance origins in `CATS_DISCOVERY_GITLAB_SOURCES`. The optional private CA override applies to the public portal. [GitLab Discovery configuration](../docs/discovery-workflow.md#allow-projects-in-compose)
+To enable GitLab Discovery, approve the project URLs or instance origins in `CATS_DISCOVERY_GITLAB_SOURCES`. For topic polling, approve the GitLab HTTPS origin and configure a namespace and topic in Administration. The optional CA override mounts the public certificate in the portal, polling worker and Discovery worker. [GitLab Discovery configuration](../docs/discovery-workflow.md#allow-projects-in-compose)
 
 Required values include the built `CATS_IMAGE`, unique database/bootstrap passwords, pipeline and worker tokens, and a stable Fernet encryption key. `CATS_MANAGED_VALIDATOR_RELEASE_SOURCE` is optional; leave it blank for automatic preparation when Provision is clicked. See [durable workers and on-demand provisioning](../docs/durable-workers.md) for upgrade commands, internal dependencies and resource defaults.
 

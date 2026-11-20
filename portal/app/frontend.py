@@ -31,7 +31,7 @@ MIGRATED_PAGES = frozenset({"artifact_catalog.html", "artifact_recommendations.h
 
 
 MIGRATED_PAGES |= {"replica.html", "cyber_overrides.html", "imported_releases.html"}
-MIGRATED_PAGES |= {"diagnostics.html"}
+MIGRATED_PAGES |= {"diagnostics.html", "topic_polling.html", "unclaimed_services.html"}
 
 
 def _field(value, name, default=None):
@@ -172,6 +172,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "may_claim_accounts": bool(context.get("may_claim_accounts")),
         "may_manage_accounts": bool(context.get("may_manage_accounts")),
         "may_view_diagnostics": bool(context.get("may_view_diagnostics")),
+        "may_manage_topic_sources": bool(context.get("may_manage_topic_sources")),
+        "may_view_unclaimed": bool(context.get("may_view_unclaimed")),
         "current_user": _fields(user, ("display_name", "theme")) if user is not None else None,
         "csrf_token": _scalar(context.get("csrf_token")),
         "themes": {str(key): _scalar(value) for key, value in context.get("themes", {}).items()},

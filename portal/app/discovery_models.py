@@ -59,17 +59,27 @@ class DiscoveryDistributionScan(Base):
 
 
 def confirmed_inventories(service_id):
+    claimed = (select(TopicRevision.id).join(TopicProject, TopicProject.id == TopicRevision.project_id)
+               .where(TopicRevision.inventory_id == DiscoveryInventory.id, TopicProject.claimed_at.is_not(None),
+                      TopicProject.service_id == DiscoveryConfirmation.service_id)
+               .correlate(DiscoveryInventory, DiscoveryConfirmation).exists())
     return (select(DiscoveryConfirmation, DiscoveryInventory)
             .join(DiscoveryInventory, DiscoveryInventory.id == DiscoveryConfirmation.inventory_id)
-            .join(ServiceGroup, (ServiceGroup.group_id == DiscoveryInventory.group_id)
-                  & (ServiceGroup.service_id == DiscoveryConfirmation.service_id))
-            .where(DiscoveryConfirmation.service_id == service_id))
+            .join(ServiceGroup, ServiceGroup.service_id == DiscoveryConfirmation.service_id)
+            .where(DiscoveryConfirmation.service_id == service_id,
+                   (ServiceGroup.group_id == DiscoveryInventory.group_id) | claimed))
 
 
 def service_distributions(service_id):
     visible = confirmed_inventories(service_id).with_only_columns(DiscoveryConfirmation.id)
     return select(DiscoveryDistribution).where(DiscoveryDistribution.service_id == service_id,
                                               DiscoveryDistribution.confirmation_id.in_(visible))
+
+
+# Register the tables used by the membership query for standalone Discovery consumers.
+from .topic_intake_models import TopicProject, TopicRevision
+from .scan_coordination import ScanJob
+from .durable_jobs import DurableJob
 
 
 # Immutable evidence is protected against ORM and direct SQL mutation.

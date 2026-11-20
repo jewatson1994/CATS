@@ -42,4 +42,34 @@ def cleanup_sources(session_factory, batch_size=100):
             for job in siblings:
                 job.result = {**job.result, 'source_expired': True}
             db.commit()
-        return removed
+    return removed + _cleanup_topic_staging(session_factory, cutoff, batch_size)
+
+
+def _cleanup_topic_staging(session_factory, cutoff, batch_size):
+    """Clean files from expired/terminated retrievals that never reached Discovery."""
+    from .topic_intake_models import TopicRevision
+    still_waiting = select(TopicRevision.id).where(TopicRevision.processing_job_id == DurableJob.id,
+        TopicRevision.status == "pending").exists()
+    removed = 0
+    with session_factory() as db:
+        jobs = db.scalars(select(DurableJob).where(DurableJob.kind == "topic_intake_process",
+            DurableJob.created_at < cutoff, DurableJob.status.in_(("completed", "failed", "cancelled")),
+            DurableJob.result["topic_staging_checked"].as_boolean().is_(None), ~still_waiting)
+            .order_by(DurableJob.created_at).limit(batch_size).with_for_update(skip_locked=True)).all()
+        for job in jobs:
+            if not re.fullmatch(r"[a-f0-9]{32}", job.id):
+                continue
+            folder = upload_root() / job.id
+            if folder.is_symlink() or folder.resolve().parent != upload_root().resolve():
+                continue
+            # Published sources use the existing Discovery sibling-aware retention path.
+            if folder.is_dir():
+                for path in folder.iterdir():
+                    abandoned = re.fullmatch(r"[a-f0-9]{32}\.part", path.name)
+                    unpublished = path.name == "repository.zip" and not (job.result or {}).get("discovery_job_id")
+                    if (abandoned or unpublished) and not path.is_symlink() and path.is_file():
+                        path.unlink()
+                        removed += 1
+            job.result = {**(job.result or {}), "topic_staging_checked": True}
+        db.commit()
+    return removed

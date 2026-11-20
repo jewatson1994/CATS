@@ -31,6 +31,10 @@ def ingest_owner(db, service, names):
         raise ValueError("A new service requires exactly one owning group.")
     name = next(iter(requested))
     group = db.scalar(select(Group).where(Group.name == name))
+    if group is not None:
+        from .models import TopicIntakeGroup
+        if db.scalar(select(TopicIntakeGroup.id).where(TopicIntakeGroup.group_id == group.id)) is not None:
+            raise ValueError("The internal Discovery intake group is reserved.")
     if group is None:
         group = Group(name=name)
         db.add(group)

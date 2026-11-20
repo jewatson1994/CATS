@@ -142,6 +142,7 @@ services:
       CATS_SCAN_LEASE_SECONDS: ${CATS_SCAN_LEASE_SECONDS:-90}
       CATS_SCAN_JOB_TIMEOUT: ${CATS_SCAN_JOB_TIMEOUT:-10800}
       CATS_SCAN_WORKER_CREDENTIALS: ${CATS_SCAN_WORKER_CREDENTIALS:-}
+      CATS_PUBLIC_MAX_IMAGES: ${CATS_PUBLIC_MAX_IMAGES:-50}
       CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
       CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY: ${CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY:-10}
       CATS_SCAN_PREPARATION_TTL_SECONDS: ${CATS_SCAN_PREPARATION_TTL_SECONDS:-900}
@@ -359,6 +360,7 @@ services:
 
     environment:
       <<: *portal_environment
+      CATS_DISCOVERY_UPLOAD_WRITER_GID: "10003"
       CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
       CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       SESSION_COOKIE_SECURE: "true"
@@ -640,6 +642,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
+      CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
       CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
       CATS_DISCOVERY_MAX_UPLOAD_BYTES: ${CATS_DISCOVERY_MAX_UPLOAD_BYTES:-0}
@@ -725,6 +729,7 @@ services:
       CATS_SCAN_DISK_BYTES: ${CATS_SCAN_DISK_BYTES:-21474836480}
       CATS_SCANNER_RUNNER: ${CATS_SCANNER_RUNNER:-/usr/local/bin/cats-scan}
       CATS_IMAGE_SOURCE: daemonless
+      CATS_TOPIC_SCAN_REGISTRY_PREFIXES: ${CATS_TOPIC_SCAN_REGISTRY_PREFIXES:-}
       DOCKER_CONFIG: /run/cats-scan-control/registry-auth
       GRYPE_DB_CACHE_DIR: /var/lib/cats-scan/cache/grype
       GRYPE_DB_METADATA: /var/lib/cats-scan/cache/grype/latest.json
@@ -917,8 +922,17 @@ services:
   polling-worker:
     <<: *background_worker
     command: ["python", "-m", "app.polling_worker"]
+    group_add: ["10003"]
     environment:
       <<: [*job_worker_environment, *intelligence_environment]
+      CATS_DB_BACKGROUND_POOL_SIZE: 4
+      CATS_DISCOVERY_UPLOAD_ROOT: /data/discovery-uploads
+      CATS_DISCOVERY_MAX_UPLOAD_BYTES: ${CATS_DISCOVERY_MAX_UPLOAD_BYTES:-0}
+      CATS_PUBLIC_JOB_ROOT: /tmp/cats-public-jobs
+      CATS_SCAN_QUEUE_CAPACITY: ${CATS_SCAN_QUEUE_CAPACITY:-100}
+      CATS_PUBLIC_MAX_IMAGES: ${CATS_PUBLIC_MAX_IMAGES:-50}
+      CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
+      CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY in .env}
       CATS_REPLICA_SYNC_ENABLED: ${CATS_REPLICA_SYNC_ENABLED:-true}
       CATS_POLLING_VERIFY_DIR: /var/cache/cats-polling/verify
@@ -935,6 +949,8 @@ services:
       INTELLIGENCE_DB_BACKGROUND_MAX_OVERFLOW: 0
     volumes:
       - remediation_jobs:/tmp/cats-remediation-jobs
+      - discovery_uploads:/data/discovery-uploads
+      - public_jobs:/tmp/cats-public-jobs
       - /var/cache/cats-polling
     extra_hosts:
       - "host.docker.internal:host-gateway"

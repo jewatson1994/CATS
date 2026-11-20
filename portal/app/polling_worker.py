@@ -1,4 +1,5 @@
-"""Poll configured OCI sources and consume manual or scheduled synchronization jobs."""
+"""Consume OCI synchronization and full-portal GitLab topic intake on independent slots."""
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import logging
 import os
@@ -10,6 +11,7 @@ import threading
 from . import dependency_queries, durable_jobs, replica_sync  # dependency queries registers write invalidations
 from .database import SessionLocal
 from .execution_summaries import install_execution_summary_hooks
+from .operating_mode import is_replica
 from .patch_ownership import execution_lock
 
 
@@ -36,17 +38,53 @@ def main():
 
 
 def _run():
-    if os.getenv('CATS_REPLICA_SYNC_ENABLED', 'true').strip().lower() in {'1', 'true', 'yes'}:
-        install_execution_summary_hooks(SessionLocal.class_)
-        durable_jobs.run_worker((replica_sync.KIND,), replica_sync.sync,
-                                maintenance=replica_sync.schedule_due, maintenance_interval=5)
+    oci = os.getenv('CATS_REPLICA_SYNC_ENABLED', 'true').strip().lower() in {'1', 'true', 'yes'}
+    install_execution_summary_hooks(SessionLocal.class_)
+    if is_replica() and oci:
+        _oci_worker()
         return
-    # A disabled service stays idle under Compose's restart policy.
-    logging.getLogger(__name__).info('OCI polling is disabled')
+    if not is_replica() and not oci:
+        _topic_worker()
+        return
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
-    stop.wait()
+    if is_replica():
+        logging.getLogger(__name__).info('OCI polling is disabled')
+        stop.wait()
+        return
+    # A large OCI download and a busy GitLab namespace each retain a slot.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix='gitlab-poll') as pool:
+        topic = pool.submit(_topic_worker, stop)
+        topic.add_done_callback(lambda _: stop.set())
+        try:
+            _oci_worker(stop)
+        finally:
+            stop.set()
+        topic.result()
+
+
+def _oci_worker(stop=None):
+    durable_jobs.run_worker((replica_sync.KIND,), replica_sync.sync,
+                            maintenance=replica_sync.schedule_due, maintenance_interval=5, stop_event=stop)
+
+
+def _topic_worker(stop=None):
+    from . import gitlab_topic_poll, topic_intake_processing
+
+    def maintenance():
+        try:
+            gitlab_topic_poll.schedule_due()
+        finally:
+            topic_intake_processing.advance_ready()
+
+    def handle(ctx, payload):
+        if ctx.job.kind == gitlab_topic_poll.KIND:
+            return gitlab_topic_poll.poll(ctx, payload)
+        return topic_intake_processing.handler(ctx, payload)
+
+    durable_jobs.run_worker((gitlab_topic_poll.KIND, topic_intake_processing.KIND), handle,
+                            maintenance=maintenance, maintenance_interval=5, stop_event=stop)
 
 
 if __name__ == '__main__':

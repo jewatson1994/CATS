@@ -648,8 +648,10 @@ def _load_available(db, kind, service_ids, configurations, now):
         # readers use the existing pending/refreshing view without competing
         # for the database writes or CPU required by a synchronous rebuild.
         from .durable_jobs import DurableJob
-        if background and (len(synchronous) > sync_limit() or
-                db.scalar(select(DurableJob.id).where(DurableJob.status == "running").limit(1)) is not None):
+        from .scan_coordination import ScanJob
+        running_job = select(DurableJob.id).where(DurableJob.status == "running").exists()
+        active_scan = select(ScanJob.id).where(ScanJob.status.in_(("claimed", "running", "evidence_ready"))).exists()
+        if background and (len(synchronous) > sync_limit() or db.scalar(select(running_job | active_scan))):
             synchronous, deferred = [], synchronous
             schedule(db.get_bind(), deferred, kinds=(kind,))
     if synchronous:

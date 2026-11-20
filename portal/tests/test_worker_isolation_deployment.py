@@ -46,8 +46,10 @@ def test_every_action_worker_has_setup_policy_and_runtime_probe(path):
 def test_portal_workers_have_independent_budgets_and_only_required_storage(path):
     services = yaml.safe_load((ROOT / path).read_text(encoding="utf-8"))["services"]
     replica = "replica" in path
-    expected = {"polling-worker": ["replica_evidence:/var/lib/cats" if replica else
-                                    "remediation_jobs:/tmp/cats-remediation-jobs", "/var/cache/cats-polling"]}
+    expected = {"polling-worker": ["replica_evidence:/var/lib/cats", "/var/cache/cats-polling"] if replica else [
+        "remediation_jobs:/tmp/cats-remediation-jobs", "discovery_uploads:/data/discovery-uploads",
+        "public_jobs:/tmp/cats-public-jobs", "/var/cache/cats-polling"
+    ]}
     if replica:
         assert "settings-worker" not in services
     else:
@@ -69,7 +71,8 @@ def test_portal_workers_have_independent_budgets_and_only_required_storage(path)
             assert env["CATS_POLLING_VERIFY_DIR"] == "/var/cache/cats-polling/verify"
             assert env["CATS_REPLICA_SYNC_ENABLED"] == "${CATS_REPLICA_SYNC_ENABLED:-true}"
         for pool in ("CATS_DB", "CATS_DB_BACKGROUND"):
-            assert env[pool + "_POOL_SIZE"] == 2
+            size = 4 if name == "polling-worker" and not replica and pool == "CATS_DB_BACKGROUND" else 2
+            assert env[pool + "_POOL_SIZE"] == size
             assert env[pool + "_MAX_OVERFLOW"] == 0
 
 

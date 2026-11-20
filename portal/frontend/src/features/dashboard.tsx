@@ -25,7 +25,9 @@ function Dashboard({data}: {data: any}) {
   const pending = preparing > 0 && !data.rows?.length && !Number(data.total_count || 0);
   return <>
     <PageHeader eyebrow="Production service cyber hygiene" title={labels.title} description={labels.description}
-      actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>{canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
+      actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>
+        {!replica && lifecycle === 'active' && data.may_view_unclaimed && <a className="secondary-button" href="/unclaimed-services">Unclaimed Services</a>}
+        {canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
     {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is still being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}; {preparing === 1 ? 'it is' : 'they are'} not listed yet and totals exclude {preparing === 1 ? 'it' : 'them'}. Refresh shortly.</p>
       : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is refreshing. Some rows may still show earlier results.</p>}
     {replica && <p role="note">These assessment results were captured by the publishing system. Release expiration, revocation and local Cyber overrides are evaluated separately. <a href="/approved-releases">Review current OCI enforcement and release history</a>.</p>}

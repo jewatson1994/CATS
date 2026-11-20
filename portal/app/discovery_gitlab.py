@@ -49,15 +49,19 @@ def _location(value, *, allow_origin=False):
     return origin + '/' + '/'.join(parts)
 
 
-def validate_gitlab_project(url):
-    """Return a canonical project identity only if current process policy permits it."""
-    project = _location(url)
+def _approved_locations():
     raw = os.getenv('CATS_DISCOVERY_GITLAB_SOURCES', '').strip()
     try:
         rows = json.loads(raw) if raw.startswith('[') else [row for row in re.split(r'[,\s]+', raw) if row]
-        allowed = {_location(row, allow_origin=True) for row in rows}
+        return {_location(row, allow_origin=True) for row in rows}
     except (ValueError, RecursionError):
         raise GitLabSourceError('The GitLab Discovery source configuration is invalid.', 503) from None
+
+
+def validate_gitlab_project(url):
+    """Return a canonical project identity only if current process policy permits it."""
+    project = _location(url)
+    allowed = _approved_locations()
     origin = 'https://' + urlsplit(project).netloc
     if project not in allowed and origin not in allowed:
         raise GitLabSourceError('This GitLab project is not approved for Discovery.', 403)
@@ -80,7 +84,7 @@ class _NoRedirect(request.HTTPRedirectHandler):
         return None
 
 
-def _chunks(opener, url, token, maximum, *, metadata, check, deadline):
+def _chunks(opener, url, token, maximum, *, metadata, check, deadline, pagination=None):
     headers = {'Accept-Encoding': 'identity'}
     req = request.Request(url, headers=headers)
     if token:
@@ -90,9 +94,16 @@ def _chunks(opener, url, token, maximum, *, metadata, check, deadline):
     size = 0
     try:
         check()
+        next_check = time.monotonic() + 1
         with opener.open(req, timeout=15) as response:
             if response.status != 200 or response.headers.get('Content-Encoding', 'identity') != 'identity':
                 raise GitLabSourceError('GitLab returned an unsupported response.')
+            if pagination is not None:
+                pagination['next_page'] = response.headers.get('X-Next-Page')
+                # Only use the relation; every subsequent URL is rebuilt from
+                # the approved origin, namespace and a local integer cursor.
+                pagination['more'] = bool(re.search(r'(?:^|;)\s*rel\s*=\s*"?next"?(?=[,;\s]|$)',
+                                                     response.headers.get('Link', ''), re.I))
             length = response.headers.get('Content-Length')
             if length is not None:
                 if not re.fullmatch(r'[0-9]{1,20}', length):
@@ -101,18 +112,22 @@ def _chunks(opener, url, token, maximum, *, metadata, check, deadline):
                 if maximum and length > maximum:
                     raise too_large
             while True:
-                check()
                 chunk = response.read1(65536)
-                if time.monotonic() > deadline:
+                current = time.monotonic()
+                if current > deadline:
                     raise GitLabSourceError('GitLab repository retrieval timed out.', 504)
                 if not chunk:
                     break
+                if current >= next_check:
+                    check()
+                    next_check = current + 1
                 size += len(chunk)
                 if maximum and size > maximum:
                     raise too_large
                 yield chunk
             if length is not None and size != length:
                 raise GitLabSourceError('GitLab returned an incomplete response.')
+        check()
     except error.HTTPError as exc:
         exc.close()
         if exc.code in {401, 403}:
@@ -128,8 +143,7 @@ def _chunks(opener, url, token, maximum, *, metadata, check, deadline):
         raise GitLabSourceError('GitLab repository retrieval failed. Check connectivity and HTTPS trust.') from None
 
 
-def _repository_client(url, token, trusted_ca_certificates):
-    project = urlsplit(validate_gitlab_project(url))
+def _opener(token, trusted_ca_certificates):
     if token is not None and (not isinstance(token, str) or len(token) > 4096
                               or any(not 33 <= ord(c) <= 126 for c in token)):
         raise GitLabSourceError('Invalid GitLab access token.', 422)
@@ -143,18 +157,121 @@ def _repository_client(url, token, trusted_ca_certificates):
             tls.load_verify_locations(cadata=pem)
     except (OSError, ValueError, TypeError, AttributeError):
         raise GitLabSourceError('The GitLab HTTPS trust configuration is invalid.', 503) from None
-    opener = request.build_opener(request.ProxyHandler({}), request.HTTPSHandler(context=tls), _NoRedirect())
+    return request.build_opener(request.ProxyHandler({}), request.HTTPSHandler(context=tls), _NoRedirect())
+
+
+def _repository_client(url, token, trusted_ca_certificates):
+    project = urlsplit(validate_gitlab_project(url))
+    opener = _opener(token, trusted_ca_certificates)
     api = f'https://{project.netloc}/api/v4/projects/{quote(project.path[1:], safe="")}/repository'
     return opener, api
 
 
-def _metadata(opener, url, token, deadline, check=lambda: None):
-    with closing(_chunks(opener, url, token, 1024 * 1024, metadata=True, check=check, deadline=deadline)) as chunks:
+def _metadata(opener, url, token, deadline, check=lambda: None, *, pagination=None):
+    with closing(_chunks(opener, url, token, 1024 * 1024, metadata=True, check=check, deadline=deadline,
+                         pagination=pagination)) as chunks:
         raw = b''.join(chunks)
     try:
         return json.loads(raw)
     except (ValueError, RecursionError):
         raise GitLabSourceError('GitLab returned invalid repository metadata.') from None
+
+
+def validate_topic_scope(origin, namespace, topic):
+    origin = _location(origin, allow_origin=True)
+    if urlsplit(origin).path:
+        raise GitLabSourceError('Enter the HTTPS GitLab origin without a project path.', 422)
+    if origin not in _approved_locations():
+        raise GitLabSourceError('GitLab topic polling requires an approved GitLab origin.', 403)
+    if (not isinstance(namespace, str) or len(namespace) > 255 or
+            not all(re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*', part) for part in namespace.split('/'))):
+        raise GitLabSourceError('Enter a GitLab group or subgroup path.', 422)
+    if (not isinstance(topic, str) or not 1 <= len(topic) <= 128 or topic != topic.strip()
+            or not topic.isprintable() or ',' in topic):
+        raise GitLabSourceError('Enter one GitLab topic of up to 128 characters.', 422)
+    return origin, namespace, topic
+
+
+def gitlab_api_client(origin, namespace, topic, token=None, trusted_ca_certificates=()):
+    origin, _, _ = validate_topic_scope(origin, namespace, topic)
+    return _opener(token, trusted_ca_certificates), origin + '/api/v4'
+
+
+def topic_project(row, origin, namespace, topic):
+    """Recheck explicit opt-in and ownership even when the API filters its list."""
+    if not isinstance(row, dict):
+        raise GitLabSourceError('GitLab returned invalid project metadata.')
+    topics = row.get('topics')
+    if not isinstance(topics, list) or not all(isinstance(value, str) for value in topics):
+        raise GitLabSourceError('GitLab returned invalid project topics.')
+    if topic not in topics:
+        return None
+    if type(row.get('archived')) is not bool or 'default_branch' not in row:
+        raise GitLabSourceError('GitLab returned incomplete project status metadata.')
+    if row['archived'] or not row['default_branch']:
+        return None
+    path = row.get('path_with_namespace')
+    if not isinstance(path, str):
+        raise GitLabSourceError('GitLab returned an invalid project path.')
+    if not path.startswith(namespace + '/'):
+        return None
+    if len(path) > 1024:
+        raise GitLabSourceError('GitLab returned a project path that is too long.')
+    project_id = row.get('id')
+    if type(project_id) is not int or not 0 < project_id <= 2**63 - 1:
+        raise GitLabSourceError('GitLab returned an invalid project ID.')
+    canonical = _location(origin + '/' + path)
+    if canonical != origin + '/' + path or row.get('web_url') != canonical:
+        raise GitLabSourceError('GitLab returned an inconsistent project URL.')
+    branch = validate_gitlab_ref(row['default_branch'])
+    return dict(project_id=project_id, path_with_namespace=path, web_url=canonical, default_branch=branch)
+
+
+def iter_topic_projects(origin, namespace, topic, *, token=None, trusted_ca_certificates=(), check=lambda: None,
+                        on_project_error=None):
+    """Yield immutable branch tips from an approved namespace, paginating by stable ID order."""
+    opener, api = gitlab_api_client(origin, namespace, topic, token, trusted_ca_certificates)
+    origin = api.removesuffix('/api/v4')
+    endpoint = api + '/groups/' + quote(namespace, safe='') + '/projects'
+    previous, page = 0, 1
+    while True:
+        query = urlencode(dict(topic=topic, include_subgroups='true', with_shared='false', archived='false',
+                               order_by='id', sort='asc', per_page=REF_PAGE_SIZE, page=page))
+        pagination = {}
+        rows = _metadata(opener, endpoint + '?' + query, token, time.monotonic() + 45, check,
+                         pagination=pagination)
+        if not isinstance(rows, list) or len(rows) > REF_PAGE_SIZE:
+            raise GitLabSourceError('GitLab returned an invalid project page.')
+        for row in rows:
+            project_id = row.get('id') if isinstance(row, dict) else None
+            if type(project_id) is not int or not previous < project_id <= 2**63 - 1:
+                raise GitLabSourceError('GitLab project pagination did not advance in ID order.')
+            previous = project_id
+            try:
+                project = topic_project(row, origin, namespace, topic)
+                if project is None:
+                    continue
+                branch = quote(project['default_branch'], safe='')
+                url = f'{api}/projects/{project_id}/repository/branches/{branch}'
+                head = _metadata(opener, url, token, time.monotonic() + 45, check)
+                commit = head.get('commit') if isinstance(head, dict) else None
+                sha = commit.get('id') if isinstance(commit, dict) else None
+                if (not isinstance(sha, str) or not re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)
+                        or head.get('name') != project['default_branch']):
+                    raise GitLabSourceError('GitLab returned an invalid default branch revision.')
+            except GitLabSourceError as exc:
+                if on_project_error is None or exc.status_code == 503:
+                    raise
+                on_project_error(project_id, str(exc))
+                continue
+            yield {**project, 'commit_sha': sha}
+        next_page = pagination.get('next_page')
+        more = pagination.get('more', False)
+        if next_page not in (None, '', str(page + 1)) or (not rows and (next_page or more)) or (next_page == '' and more):
+            raise GitLabSourceError('GitLab returned inconsistent pagination metadata.')
+        if not rows or next_page == '' or (next_page is None and not more and len(rows) < REF_PAGE_SIZE):
+            return
+        page += 1
 
 
 def list_gitlab_refs(url, *, token=None, trusted_ca_certificates=(), search=''):

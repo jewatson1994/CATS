@@ -20,7 +20,7 @@ from collections import OrderedDict
 import time
 import tarfile
 import uuid
-from contextlib import asynccontextmanager, ExitStack
+from contextlib import asynccontextmanager, ExitStack, nullcontext
 from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -36,6 +36,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .service_exports import (format_sheet, _service_mitigations_book,
                               _service_findings_book, _service_diagrams_bytes, _service_sbom_components,
@@ -134,6 +135,7 @@ from . import artifact_catalog, artifact_catalog_routes, release_revisions, patc
 from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
 from . import diagnostic_store, diagnostic_routes
+from . import topic_intake_models
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
 from .service_evidence import view_executions
@@ -443,6 +445,8 @@ async def app_lifespan(_app: FastAPI):
     if is_replica():
         yield
         return
+    from .discovery_sources import prepare_shared_upload_root
+    prepare_shared_upload_root()
     # Compose runs imports in a dedicated process. Legacy single-database
     # installations retain their startup behavior until configured to split.
     if not os.getenv('INTELLIGENCE_DATABASE_URL'):
@@ -489,6 +493,10 @@ app.include_router(service_oci.router)
 app.include_router(cyber_approvals.router)
 app.include_router(risk_routes.router)
 app.include_router(discovery_routes.router)
+from .topic_intake_admin import router as topic_admin_router
+from .topic_intake_claims import router as topic_claim_router
+app.include_router(topic_admin_router)
+app.include_router(topic_claim_router)
 app.include_router(discovery_distributions.router)
 app.include_router(oci_admin.router)
 from .oci_service_access import router as oci_service_access_router, service_pull_is_public
@@ -538,27 +546,33 @@ def access_pending_response(request, db, auth):
     }, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
+def _pending_access_response(request: Request):
+    path = request.url.path
+    with SessionLocal() as db:
+        auth = optional_user(request, db)
+        if not auth or access_requests.has_effective_access(auth):
+            return None
+        access_requests.register_pending_request(db, auth)
+        db.commit()
+        directory = access_requests.uses_service_directory(auth.user)
+        if path.startswith("/api/") or request.method != "GET":
+            detail = "Request service access at /account/access." if directory else ACCESS_PENDING_MESSAGE
+            return JSONResponse({"detail": detail}, status_code=403, headers={"Cache-Control": "no-store"})
+        if directory:
+            return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
+        return access_pending_response(request, db, auth)
+
+
 @app.middleware("http")
 async def pending_access_gate(request: Request, call_next):
-    # Authenticated accounts without effective access must not fall through to
-    # anonymous/public workflows or receive a navigation/data payload.
+    # Keep synchronous session lookups off the event loop shared by all page requests.
     path = request.url.path
     account_action = request.method == "POST" and (
         path in {"/logout", "/account/access/service"} or re.fullmatch(r"/account/announcements/\d+/read", path))
     if request.cookies.get(SESSION_COOKIE) and not account_action and not (request.method == "GET" and path == "/account/access"):
-        with SessionLocal() as db:
-            auth = optional_user(request, db)
-            if auth and not access_requests.has_effective_access(auth):
-                access_requests.register_pending_request(db, auth)
-                db.commit()
-                directory = access_requests.uses_service_directory(auth.user)
-                if path.startswith("/api/") or request.method != "GET":
-                    detail = "Request service access at /account/access." if directory else ACCESS_PENDING_MESSAGE
-                    return JSONResponse({"detail": detail}, status_code=403,
-                                        headers={"Cache-Control": "no-store"})
-                if directory:
-                    return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
-                return access_pending_response(request, db, auth)
+        response = await run_in_threadpool(_pending_access_response, request)
+        if response is not None:
+            return response
     return await call_next(request)
 
 
@@ -1424,6 +1438,7 @@ def excel_datetime(value):
 
 
 def page_context(auth: AuthContext, **values):
+    from .topic_intake_claims import may_view_unclaimed, scope_user_session
     from .imported_services import is_imported_service
     from sqlalchemy.orm import object_session
     view = values.get("view") or {}
@@ -1450,7 +1465,11 @@ def page_context(auth: AuthContext, **values):
     announcement = None
     try:
         allowed_services = auth.accessible_service_ids("service.view")
-        with SessionLocal() as nav_db:
+        # Navigation shares the request's scoped connection. Under load, taking
+        # a second connection here would make page readers wait on each other.
+        request_db = object_session(auth.user) if hasattr(auth.user, "_sa_instance_state") else None
+        with (nullcontext(request_db) if request_db is not None else SessionLocal()) as nav_db:
+            scope_user_session(nav_db)
             announcement = announcements.current(nav_db, auth.user.id)
             request_query = select(
                 WorkflowRequest.request_type, WorkflowRequest.service_id,
@@ -1500,6 +1519,8 @@ def page_context(auth: AuthContext, **values):
         cache_scope_value = f"uncached-{uuid.uuid4().hex}"
     return {
         "may_claim_accounts": access_requests.is_cybersecurity(auth),
+        "may_view_unclaimed": may_view_unclaimed(auth),
+        "may_manage_topic_sources": not is_replica() and auth.can_manage_group(None),
         "may_manage_accounts": auth.has("user.manage") or access_requests.is_cybersecurity(auth),
         "may_manage_risk_policy": any(a.service_id is None and "config.manage" in (a.role.permissions or []) for a in auth.effective_assignments),
         "current_user": auth.user,
@@ -1890,7 +1911,7 @@ def service_lifecycle(service: Service) -> str:
     if archive_state(service):
         return "archived"
     status = str(getattr(service, "lifecycle_status", "active") or "active").lower()
-    return status if status in {"active", "staged"} else "active"
+    return status if status in {"active", "staged", "unclaimed"} else "active"
 
 
 def workbook_response(workbook: Workbook, filename: str):
@@ -2393,6 +2414,8 @@ def _overview_services_and_configurations(db: Session, auth: AuthContext, config
     services = ([SimpleNamespace(**row._mapping) for row in db.execute(query)]
                 if projected else list(db.scalars(query)))
     service_ids = [service.id for service in services]
+    if db.info.get("topic_intake_filtered"):
+        db.info.setdefault("topic_visible_service_ids", set()).update(service_ids)
     groups_by_service: dict[int, list[int]] = {}
     group_ids: set[int] = set()
     if service_ids:
@@ -3347,11 +3370,19 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
         return None
 
 
-def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None):
+def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None, topic_revision_id=None):
     from .imported_services import require_local_service
-    target_id = db.scalar(select(Service.id).where(Service.service_key == payload.service.id))
-    if target_id is not None:
-        require_local_service(db, target_id)
+    target = db.execute(select(Service.id, Service.lifecycle_status).where(Service.service_key == payload.service.id)
+                        .execution_options(include_topic_intake=True)).first()
+    if target is not None:
+        require_local_service(db, target.id)
+        if target.lifecycle_status == "unclaimed" or topic_revision_id is not None:
+            from .topic_intake_models import TopicProject, TopicRevision
+            scan_id = db.scalar(select(TopicRevision.scan_job_id).join(TopicProject, TopicProject.id == TopicRevision.project_id)
+                .where(TopicRevision.id == topic_revision_id, TopicProject.latest_revision_id == TopicRevision.id,
+                       TopicProject.service_id == target.id, TopicRevision.commit_sha == payload.commit_sha))
+            if not scan_id or payload.execution_id != "public:" + scan_id:
+                raise HTTPException(409, "Unclaimed service ingestion requires the bound Discovery scan")
     if not payload.fixable_only:
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
@@ -5024,6 +5055,10 @@ def ingest_public_scan(
         job = PUBLIC_JOBS[job_id]
     if job.get("proposal_context"):
         raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
+    topic_job = bool(job.get("topic_intake"))
+    if topic_job and (request is not None or service_id != job.get("ingest_service_id")
+                      or service_version is not None or scan_scope is not None):
+        raise HTTPException(409, "GitLab topic scans are automatically ingested into their bound revision")
     project_job = bool(job.get("pipeline_input_kind"))
     if project_job and (request is not None or job.get("ingest_service_id") != service_id or service_version is not None or scan_scope is not None):
         raise HTTPException(409, "Project scans are automatically ingested into their bound service and version")
@@ -5040,6 +5075,9 @@ def ingest_public_scan(
     service = db.scalar(service_query.with_for_update() if project_job else service_query)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+    if topic_job:
+        from .topic_intake_processing import bind_result, verify_scan
+        topic_revision = verify_scan(db, job_id, job, service)
     if project_job:
         from .pipeline_scan_dispatch import active_owner_id
         if (service.id != job.get("ingest_service_db_id") or not job.get("pipeline_owning_group_id")
@@ -5146,8 +5184,11 @@ def ingest_public_scan(
                                 and summary.get("status") == "complete" and not summary.get("skipped_images")
                                 and not summary.get("skipped_charts") and not data.get("skipped_images")
                                 and not data.get("skipped_charts"))
+        if topic_job:
+            summary = json.loads((result_path.parent / "scan-summary.json").read_text(encoding="utf-8"))
+            bind_result(data, job, summary)
         data["service"] = {
-            **({"description": service.description} if project_job else data.get("service", {})),
+            **({"description": service.description} if topic_job or project_job else data.get("service", {})),
             "id": service.service_key,
             "name": service.name,
             "version": (
@@ -5199,7 +5240,9 @@ def ingest_public_scan(
         raise HTTPException(status_code=422, detail=detail) from exc
     ingest_stage = "database_ingest"; stage_started = time.perf_counter()
     try:
-        if project_job:
+        if topic_job:
+            response = ingest_payload(payload, db, commit=False, topic_revision_id=topic_revision.id)
+        elif project_job:
             response = ingest_payload(payload, db, commit=False)
         else:
             response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
@@ -10736,6 +10779,8 @@ def delete_service(
         raise HTTPException(409, detail="This service has retained Cyber approval records. Archive it to preserve its approval history.")
     if confirmation != f"delete {service.name}":
         raise HTTPException(422, detail="Type delete followed by the exact service name to confirm")
+    if db.scalar(select(topic_intake_models.TopicProject.id).where(topic_intake_models.TopicProject.service_id == service.id)):
+        raise HTTPException(409, detail="This service has a GitLab project binding and retained Discovery evidence. Archive it to preserve that history.")
     if db.scalar(select(DurableJob.id).where(DurableJob.service_id == service.id, DurableJob.status.in_(["queued", "running"]))):
         raise HTTPException(409, detail="Wait for active background jobs to finish or cancel queued plans/exports before deletion")
     patch_jobs = db.scalars(select(PatchExecution).where(PatchExecution.service_id == service.id)).all()
@@ -11539,6 +11584,15 @@ def workflow_policy_page(request: Request, group_id: str = "", db: Session = Dep
         saved=request.query_params.get("saved") == "1", groups=groups,
         selected_group_id=selected_group_id,
     ))
+
+
+@app.get("/unclaimed-services", response_class=HTMLResponse)
+def unclaimed_services_page(request: Request, auth: AuthContext = Depends(require_user)):
+    from .topic_intake_claims import may_view_unclaimed
+
+    if not may_view_unclaimed(auth):
+        raise HTTPException(403, detail="Access to the unclaimed service queue is required")
+    return templates.TemplateResponse(request, "unclaimed_services.html", page_context(auth))
 
 
 @app.get("/admin/dependency-watchlist", response_class=HTMLResponse)

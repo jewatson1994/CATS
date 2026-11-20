@@ -184,15 +184,23 @@ def test_portfolio_wide_invalidation_is_bounded_and_served_stale(shadow, monkeyp
     assert client.get("/api/dashboard/services").json()["posture_refreshing"] is False
 
 
-def test_one_stale_row_is_deferred_while_a_worker_runs(monkeypatch):
+@pytest.mark.parametrize("job_type,status", [
+    ("durable", "running"), ("scan", "claimed"), ("scan", "running"), ("scan", "evidence_ready"),
+])
+def test_one_stale_row_is_deferred_while_a_worker_runs(monkeypatch, job_type, status):
     from app.durable_jobs import DurableJob
+    from app.scan_coordination import ScanJob
 
     client = new_client()
     ingest(client, "during-refresh", ["CVE-2024-0190"])
     services(client)
     built = posture_row("during-refresh")
     with SessionLocal.begin() as db:
-        db.add(DurableJob(id="live-job", kind="watchlist_refresh", status="running"))
+        if job_type == "durable":
+            job = DurableJob(id="live-job", kind="watchlist_refresh", status=status)
+        else:
+            job = ScanJob(id="live-job", status=status, payload={}, available_at=utcnow())
+        db.add(job)
         service_posture.invalidate_services(db.connection(), [built.service_id])
 
     scheduled = []
@@ -205,7 +213,7 @@ def test_one_stale_row_is_deferred_while_a_worker_runs(monkeypatch):
     assert ([built.service_id], ("services",)) in scheduled
 
     with SessionLocal.begin() as db:
-        db.get(DurableJob, "live-job").status = "completed"
+        db.get(type(job), "live-job").status = "completed" if job_type == "durable" else "complete"
     assert client.get("/api/dashboard/services").json()["posture_refreshing"] is False
     refreshed = posture_row("during-refresh")
     assert refreshed.services_built_generation == refreshed.data_generation

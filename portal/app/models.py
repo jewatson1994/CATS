@@ -120,6 +120,13 @@ class Group(Base):
     services: Mapped[list[Service]] = relationship(secondary="service_groups", back_populates="groups")
 
 
+class TopicIntakeGroup(Base):
+    """The internally created group that owns unclaimed Discovery services."""
+    __tablename__ = "topic_intake_group"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), unique=True)
+
+
 class ServiceGroup(Base):
     __tablename__ = "service_groups"
     __table_args__ = (UniqueConstraint("service_id", name="uq_service_owning_group"),)

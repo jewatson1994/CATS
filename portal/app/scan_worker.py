@@ -25,7 +25,8 @@ from .scan_artifacts import digest, pack, unpack, validate_tree
 from .scan_acquisition import _download_public_chart
 from .helm_archives import extract_chart
 from .helm_downloads import close_downloads
-from .scan_registry_auth import RegistryConfigurationError, load_registry_credentials
+from .scan_registry_auth import (RegistryConfigurationError, load_registry_credentials, topic_auth_entries,
+                                 topic_credential_hosts, topic_registry_prefixes)
 
 STOP = threading.Event()
 _UID_LOCK = threading.Lock()
@@ -170,6 +171,7 @@ class Worker:
             archive.unlink()
             output.mkdir(parents=True)
             payload = job["job"]
+            topic_hosts = topic_credential_hosts(job, inputs) if payload.get("credential_policy") == "topic" else set()
             from .compose_scan import prepare_compose, finalize_compose
             if payload.get("compose_enabled"):
                 phase[0] = "compose_discovery"
@@ -215,6 +217,9 @@ class Worker:
                     scoped = {host: value for host, value in credentials.get("auths", {}).items()
                               if host in hosts or urllib.parse.urlsplit(host).netloc in hosts}
                     (auth_dir / "config.json").write_text(json.dumps({"auths": scoped}), encoding="utf-8")
+            elif topic_hosts:
+                scoped = topic_auth_entries(load_registry_credentials(), topic_hosts)
+                (auth_dir / "config.json").write_text(json.dumps({"auths": scoped}), encoding="utf-8")
             environment["DOCKER_CONFIG"] = str(auth_dir)
             environment["HELM_REGISTRY_CONFIG"] = str(auth_dir / "config.json")
             for key in ("CATS_SCAN_GRYPE_SOURCE", "CATS_SCAN_TRIVY_SOURCE"):
@@ -449,6 +454,7 @@ def initialize():
 def main():
     if "--check-registry-auth" in sys.argv:
         try:
+            topic_registry_prefixes()
             load_registry_credentials()
         except RegistryConfigurationError as exc:
             print(str(exc), file=sys.stderr)

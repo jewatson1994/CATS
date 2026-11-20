@@ -13,7 +13,7 @@ validator VM; image patching remains in the existing patch-worker.
 | remediation-worker | Plans, expensive previews, source resolution, candidate orchestration, validation coordination and delivery. Calls patch-worker for image patching. |
 | export-worker | Spreadsheet, diagram, evidence and ZIP generation. Uses existing export builders; does not assemble remediation candidates a second time. |
 | settings-worker | Rebuilds dependency watchlist matches after an administrator updates the list on a full deployment. |
-| polling-worker | Checks configured signed OCI sources and consumes scheduled and manually requested sync jobs in full and replica deployments. |
+| polling-worker | Synchronizes configured signed OCI sources in full and replica deployments. On full deployments a separate slot checks GitLab topic sources, stages encrypted snapshots for Discovery and admits eligible image scans. [GitLab topic setup](discovery-workflow.md#poll-projects-by-gitlab-topic) |
 | security-data-worker | Checks KEV, EPSS, Grype and Trivy once per UTC day. A failed update leaves the installed data available. |
 | provisioning-worker | Privileged SSH/Docker provisioning with the existing managed-validator operation and attempt records. Has the HQ Docker socket; exposes no HTTP port. |
 | scan-worker / portal-control | Dispatches service schedules, runs image scans within the configured worker limits and ingests the results. |
@@ -232,7 +232,7 @@ volume before replacing that container.
 | remediation-worker | `CATS_REMEDIATION_WORKERS` (default 1) | 1 | 2 GiB | 256 | 2 main + 2 background at one worker; otherwise `2*workers+2` background; no overflow |
 | export-worker | 1 shared export slot | 1 | 1 GiB | 128 | 2 main + 2 background; no overflow |
 | settings-worker | 1 watchlist job | 1 | 1 GiB | 128 | 2 main + 2 background, no overflow |
-| polling-worker | 1 signed OCI source sync | 1 | 4 GiB | 128 | 2 main + 2 background, no overflow |
+| polling-worker | 1 OCI sync plus 1 GitLab poll or intake on full deployments. Replicas run OCI only. | 1 | 4 GiB | 128 | 2 main + 4 background on full deployments, 2 + 2 on replicas, no overflow |
 | security-data-worker | 1 source update | 1 | 2 GiB | 128 | 2 main + 2 background, no overflow |
 | provisioning-worker | 1 per process; per-validator exclusion | 1 | 2 GiB | 256 | 2 main + 2 background; no overflow |
 

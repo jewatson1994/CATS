@@ -370,13 +370,15 @@ def execute(job, handler, session_factory=None):
         thread.join(timeout=2)
 
 
-def run_worker(kinds, handler, *, maintenance=None, max_workers=1, maintenance_interval=60):
+def run_worker(kinds, handler, *, maintenance=None, max_workers=1, maintenance_interval=60, stop_event=None):
     """Claim only available execution slots; active jobs keep their own leases."""
     if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 32:
         raise ValueError("max_workers must be an integer from 1 to 32")
-    stop = threading.Event()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
+    stop = stop_event
+    if stop is None:
+        stop = threading.Event()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: stop.set())
     worker_id = os.getenv("HOSTNAME", "worker") + "-" + uuid.uuid4().hex[:8]
     last_maintenance = float("-inf")
     # The single-worker path retains its main-thread database routing. Other
