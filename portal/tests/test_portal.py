@@ -360,6 +360,27 @@ def test_watchlist_warning_dashboard_and_authorization(monkeypatch):
     assert viewer.post("/admin/dependency-watchlist", data={"csrf_token": csrf(viewer), "name": "secret"}).status_code == 403
 
 
+def test_watchlist_pages_bound_rendered_rules_and_preserve_literal_search():
+    from app.models import DependencyWatchlistEntry
+
+    client = new_client()
+    with SessionLocal() as db:
+        db.add_all(DependencyWatchlistEntry(name=f"component-{i:02d}") for i in range(52))
+        db.add(DependencyWatchlistEntry(name="100%Match"))
+        db.commit()
+    accept = {"Accept": "application/vnd.cats.page+json"}
+    first = client.get("/admin/dependency-watchlist", headers=accept).json()["data"]
+    assert (len(first["entries"]), first["entry_page"], first["entry_total"]) == (50, 1, 53)
+    last = client.get("/admin/dependency-watchlist?page=999", headers=accept).json()["data"]
+    assert (len(last["entries"]), last["entry_page"]) == (3, 2)
+    assert first["entries"][-1]["id"] < last["entries"][0]["id"]
+    filtered = client.get("/admin/dependency-watchlist", params={"q": "%mAtCh"}, headers=accept).json()["data"]
+    assert [entry["name"] for entry in filtered["entries"]] == ["100%Match"]
+    assert client.get("/api/v1/settings/watchlist-refresh").json()["job"] is None
+    add_user("watchlist-viewer", "Assessor")
+    assert new_client("watchlist-viewer").get("/api/v1/settings/watchlist-refresh").status_code == 403
+
+
 def test_oidc_claim_mapping_preserves_scope_and_local_roles():
     from app.auth import provision_oidc_user
     from app.models import OidcClaimMapping

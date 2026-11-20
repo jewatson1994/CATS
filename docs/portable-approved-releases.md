@@ -105,7 +105,7 @@ The opt-in drivers use a dedicated private workspace and disposable Harbor proje
 | --- | --- |
 | `portal/tests/harbor_acceptance_stack.py` | Provision the isolated TLS Harbor pair and retain its ownership record; scoped cleanup retains volumes by default |
 | `portal/tests/harbor_replication_qualification.py` | Configure scoped robots and complete-subtree Harbor rules, seed source-only content, run and retain actual replication executions, and verify the recovered transfer graph |
-| `portal/tests/harbor_nginx_qualification.py` | Create a fresh three-service replica from the completed real nginx acceptance, verify disconnected pulls and override enforcement, and check persistence after restart |
+| `portal/tests/harbor_nginx_qualification.py` | Create a fresh replica with a database, portal, proxy and polling worker from the completed real nginx acceptance, verify disconnected pulls and override enforcement, and check persistence after restart |
 | `portal/tests/harbor_graph_qualification.py` | Publish clearly labeled synthetic multiarchitecture/Helm releases, verify signed evidence and monotonic events, and inject reversible omissions into the disposable target |
 
 Provision with `harbor_acceptance_stack.py --repo <repository> --workspace <private-workspace> --provision`, then run `harbor_replication_qualification.py setup --workspace <private-workspace>`. Preserve the completed nginx acceptance's Docker network and selected CATS image as well as its workspace: the fresh replica reads these from the retained Compose definition and joins that external network for publisher-disconnection probes. Current runs use the same full image for publisher and replica. The generated `harbor-stack.json` records the Harbor bridge network, Compose file and service names. Host-side controller commands use authenticated HTTPS and the generated CA. The registered destination uses the `harbor` adapter with TLS verification enabled. Projects are public for anonymous replica pulls; publishing and replication use one-day robots scoped to the two disposable projects. The rules preserve repository paths and include all tags, signatures and the release repository. Do not add image-only tag filters or retention that removes referenced objects.
@@ -230,16 +230,16 @@ Copy-NginxReceipt patched
 
 Import and completely pull the original approved graph before publishing the successor. The patch phase derives its immutable source from the original receipt; it requires delivered, signed output and actual vulnerability removal. The patched phase rediscovers the immutable patched destination, creates a new distribution, scans it, and approves a successor. Do not substitute a mutable tag, manually constructed receipt or synthetic scanner evidence. The target registry must contain both actual receipt graphs before System A is stopped, but do not pull the patched image through the replica proxy yet.
 
-Stop System A and its publisher registry while retaining System B's portal, proxy, database and target registry. The replica driver probes System A's login URL for connection failure before successor synchronization and verification; HTTP errors or TLS failures do not count as disconnection. Retain the Compose service status as evidence that the internal publisher registry is also stopped.
+Stop System A and its publisher registry while retaining System B's portal, polling worker, proxy, database and target registry. The replica driver probes System A's login URL for connection failure before successor synchronization and verification; HTTP errors or TLS failures do not count as disconnection. Retain the Compose service status as evidence that the internal publisher registry is also stopped.
 
 ```powershell
 $compose = Join-Path $testRoot 'compose.json'
 docker compose -p $project -f $compose stop portal portal-control scan-worker discovery-worker `
-    remediation-worker export-worker patch-worker patch-daemon intelligence-init intelligence-db db publisher-registry
+    remediation-worker export-worker polling-worker patch-worker patch-daemon intelligence-init intelligence-db db publisher-registry
 if ($LASTEXITCODE -ne 0) { throw 'System A shutdown failed.' }
 docker compose -p $project -f $compose ps --all --format json |
     Set-Content -Encoding utf8 (Join-Path $testRoot 'disconnected-services.json')
-# Only replica-db, replica-registry, replica-portal and replica-proxy should remain running.
+# Keep replica-db, replica-registry, replica-portal, replica-polling-worker and replica-proxy running.
 Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase sync-patched --workspace $testRoot
 Invoke-NginxStep portal/tests/nginx_replica_workflow.py --phase verify --workspace $testRoot
 ```

@@ -370,7 +370,7 @@ def execute(job, handler, session_factory=None):
         thread.join(timeout=2)
 
 
-def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
+def run_worker(kinds, handler, *, maintenance=None, max_workers=1, maintenance_interval=60):
     """Claim only available execution slots; active jobs keep their own leases."""
     if isinstance(max_workers, bool) or not isinstance(max_workers, int) or not 1 <= max_workers <= 32:
         raise ValueError("max_workers must be an integer from 1 to 32")
@@ -378,7 +378,7 @@ def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
     worker_id = os.getenv("HOSTNAME", "worker") + "-" + uuid.uuid4().hex[:8]
-    last_maintenance = 0
+    last_maintenance = float("-inf")
     # The single-worker path retains its main-thread database routing. Other
     # worker services keep that default and their existing connection budgets.
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="cats-job") as pool:
@@ -394,7 +394,7 @@ def run_worker(kinds, handler, *, maintenance=None, max_workers=1):
                         logging.getLogger(__name__).error("worker_job_failure exception_type=%s", type(exc).__name__)
                         enqueue_diagnostic(build_diagnostic(exc, component="worker", operation="job_dispatch",
                             context={"worker_id": worker_id, "kinds": list(kinds)}))
-                if maintenance and time.monotonic() - last_maintenance >= 60:
+                if maintenance and time.monotonic() - last_maintenance >= maintenance_interval:
                     # Failed reconciliation must neither busy-loop nor prevent
                     # already queued work from running until the next interval.
                     last_maintenance = time.monotonic()

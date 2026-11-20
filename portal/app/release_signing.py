@@ -60,27 +60,34 @@ def verify_release_archive(
                                 "archive_sha256", ARCHIVE_FILENAME)
 
 
+def verify_release_content(content: bytes, signature: bytes, public: bytes,
+                           expected_fingerprint: str | None, *, workspace=None) -> str:
+    """Verify immutable inputs offline with one private, exact snapshot for Cosign."""
+    cosign = shutil.which("cosign")
+    if not cosign:
+        raise ValueError("Cosign unavailable")
+    pem, fingerprint = signing.public_key(public)
+    if expected_fingerprint is not None and fingerprint != expected_fingerprint:
+        raise ValueError("Fingerprint mismatch")
+    with tempfile.TemporaryDirectory(prefix="cats-release-verify-", dir=workspace) as folder:
+        root = Path(folder)
+        (root / "content").write_bytes(content)
+        (root / "manifest.sig").write_bytes(signature)
+        (root / "public.pem").write_text(pem, encoding="utf-8")
+        _verify(cosign, root / "content", root / "manifest.sig", root / "public.pem")
+    return fingerprint
+
+
 def _verify_release_blob(
     source_path: str | Path, signature_path: str | Path, public_key_path: str | Path,
     expected_fingerprint: str | None, digest_name: str, signed_file: str,
 ) -> dict:
     try:
-        cosign = shutil.which("cosign")
-        if not cosign:
-            raise ValueError("Cosign unavailable")
-        manifest, signature, public = map(Path, (source_path, signature_path, public_key_path))
-        pem, fingerprint = signing.public_key(public.read_bytes())
-        if expected_fingerprint is not None and fingerprint != expected_fingerprint:
-            raise ValueError("Fingerprint mismatch")
-        # Snapshot all inputs so the digest and reported key identify exactly
-        # the bytes checked by Cosign, even if caller-owned files change.
-        with tempfile.TemporaryDirectory(prefix="cats-release-verify-") as folder:
-            root = Path(folder)
-            content = manifest.read_bytes()
-            (root / signed_file).write_bytes(content)
-            (root / "manifest.sig").write_bytes(signature.read_bytes())
-            (root / "public.pem").write_text(pem, encoding="utf-8")
-            _verify(cosign, root / signed_file, root / "manifest.sig", root / "public.pem")
+        # The returned digest and the Cosign verification see the same bytes even
+        # when a caller-owned path changes during verification.
+        content = Path(source_path).read_bytes()
+        fingerprint = verify_release_content(content, Path(signature_path).read_bytes(),
+                                             Path(public_key_path).read_bytes(), expected_fingerprint)
         return {"status": "verified", "key_fingerprint": fingerprint,
                 digest_name: hashlib.sha256(content).hexdigest(), "signed_file": signed_file,
                 "generator": "cosign", "transparency_log": False}

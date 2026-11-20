@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import sessionmaker
 
 from app import durable_jobs, replica_sync, replica_routes, replica_views
@@ -29,6 +29,26 @@ def worker(f, monkeypatch, incoming):
     monkeypatch.setattr(replica_sync.portable_release, 'discover_release_references', lambda *args: iter([incoming['reference']]))
     monkeypatch.setattr(replica_sync.portable_release, 'fetch_release', lambda *args: incoming)
     return sessions
+
+
+def test_scheduled_polling_admits_only_due_work_and_coalesces_manual_requests(replica_import):
+    f = replica_import
+    sessions = sessionmaker(f.db.get_bind(), expire_on_commit=False)
+    f.source.last_attempt_at = durable_jobs.now()
+    f.db.commit()
+    replica_sync.schedule_due(sessions)
+    assert not f.db.scalar(select(durable_jobs.DurableJob))
+    f.source.last_attempt_at -= timedelta(seconds=f.source.poll_seconds + 5)
+    f.db.commit()
+    replica_sync.schedule_due(sessions)
+    replica_sync.schedule_due(sessions)
+    scheduled = f.db.scalars(select(durable_jobs.DurableJob)).one()
+    assert replica_sync.enqueue(f.db, f.source, actor_id=f.user.id).id == scheduled.id
+    scheduled.status = 'completed'
+    f.source.enabled = False
+    f.db.commit()
+    replica_sync.schedule_due(sessions)
+    assert f.db.scalars(select(durable_jobs.DurableJob)).one().id == scheduled.id
 
 
 def test_durable_sync_restart_idempotence_and_disabled_source(replica_import, monkeypatch):
@@ -172,6 +192,13 @@ def test_known_release_sync_checks_retained_evidence_and_retries_recovery(replic
         release.integrity_seal = 'corrupted'
     f.db.commit()
     sessions = worker(f, monkeypatch, incoming)
+    verify_retained = replica_sync.retained_complete
+    checked = []
+    def check_detached(row):
+        assert inspect(row).detached
+        checked.append(row.id)
+        return verify_retained(row)
+    monkeypatch.setattr(replica_sync, 'retained_complete', check_detached)
     fetched = []
     def fetch(*args):
         fetched.append(args[0])
@@ -182,6 +209,7 @@ def test_known_release_sync_checks_retained_evidence_and_retries_recovery(replic
     durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'integrity-worker', sessions), replica_sync.sync, sessions)
     f.db.expire_all()
     completed = condition in {'healthy', 'missing_archive'}
+    assert checked == [imported['release_id']]
     assert f.db.get(durable_jobs.DurableJob, job.id).status == ('completed' if completed else 'queued')
     assert fetched == ([] if condition == 'healthy' else [incoming['reference']])
     assert f.db.get(ReplicaServiceState, imported['service_id']).active_release_id == imported['release_id']
@@ -189,6 +217,21 @@ def test_known_release_sync_checks_retained_evidence_and_retries_recovery(replic
         assert archive.read_bytes() == incoming['evidence']
     else:
         assert 'rejected or incomplete' in f.db.get(ReplicaSource, f.source.id).last_error
+
+
+def test_poll_does_not_read_archives_absent_from_registry_listing(replica_import, monkeypatch):
+    f = replica_import
+    incoming = verified(f)
+    reconcile(f.db, f.source, incoming, now=f.now)
+    f.db.commit()
+    sessions = worker(f, monkeypatch, incoming)
+    monkeypatch.setattr(replica_sync.portable_release, 'discover_release_references', lambda *args: iter(()))
+    monkeypatch.setattr(replica_sync, 'retained_complete', lambda *args: pytest.fail('Read an unrelated archive'))
+    job = replica_sync.enqueue(f.db, f.source)
+    f.db.commit()
+    durable_jobs.execute(durable_jobs.claim([replica_sync.KIND], 'worker', sessions), replica_sync.sync, sessions)
+    f.db.expire_all()
+    assert f.db.get(durable_jobs.DurableJob, job.id).status == 'completed'
 
 
 def test_captured_risk_and_exact_approved_scan_without_local_evaluation(replica_import, monkeypatch):

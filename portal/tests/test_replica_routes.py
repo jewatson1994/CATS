@@ -1,6 +1,8 @@
 """Actual local administration and evidence routes enforce scope and CSRF."""
 from types import SimpleNamespace
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
@@ -176,6 +178,33 @@ def test_original_evidence_routes_require_service_and_evidence_scope_and_integri
     assert client.get(path + '/context').status_code == 409
 
 
+def test_source_edit_waiting_on_import_leaves_read_routes_responsive(api, monkeypatch):
+    entered, resume = Event(), Event()
+    api.login({'replica.admin'})
+    headers = {'x-csrf-token': 'csrf'}
+    created = api.client.post('/api/replica/sources', headers=headers, json={
+        'name': 'edit while polling', 'upstream_id': 1, 'repository': 'approved/service/releases',
+        'trusted_publishers': ['sha256:' + 'a' * 64]})
+    assert created.status_code == 200
+    configure = replica_routes.configure
+    def wait_for_import(*args):
+        entered.set()
+        assert resume.wait(10)
+        return configure(*args)
+    monkeypatch.setattr(replica_routes, 'configure', wait_for_import)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        update = pool.submit(api.client.put, f"/api/replica/sources/{created.json()['id']}",
+                             headers=headers, json={'name': 'updated'})
+        try:
+            assert entered.wait(5)
+            page = pool.submit(api.client.get, '/api/replica/sources').result(timeout=3)
+            assert page.status_code == 200
+            assert not update.done()
+        finally:
+            resume.set()
+        assert update.result(timeout=5).status_code == 200
+
+
 def test_source_admin_can_discover_registries_without_credential_authority(api, monkeypatch):
     path = '/api/replica/registries'
     assert api.client.get(path).status_code == 401
@@ -197,7 +226,7 @@ def test_source_admin_can_discover_registries_without_credential_authority(api, 
     assert rows[0]['endpoint'] == 'https://registry.example'
     assert 'private' not in response.text
     monkeypatch.setenv('CATS_MODE', 'full')
-    assert api.client.get(path).status_code == 404
+    assert api.client.get(path).json() == rows
 
 
 def test_source_update_locks_and_refreshes_before_preserving_unspecified_fields(replica, monkeypatch):
@@ -215,13 +244,13 @@ def test_source_update_locks_and_refreshes_before_preserving_unspecified_fields(
             calls.append(statement)
             return scalar(statement, *args, **kwargs)
         monkeypatch.setattr(db, 'scalar', tracked)
-        result = replica_routes.configure(db, auth, {'name': 'renamed'}, stale)
+        result = replica_routes.configure(db, auth, {'name': 'renamed'}, stale.id)
         assert calls[0]._for_update_arg is not None
         assert calls[0].get_execution_options()['populate_existing'] is True
         assert result['repository'] == 'approved/service/releases'
         assert result['trusted_publishers'] == ['sha256:' + 'a' * 64]
         with pytest.raises(HTTPException) as error:
-            replica_routes.configure(db, auth, {'repository': 'other/releases'}, stale)
+            replica_routes.configure(db, auth, {'repository': 'other/releases'}, stale.id)
         assert error.value.status_code == 409
 
 

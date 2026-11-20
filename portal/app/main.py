@@ -42,7 +42,7 @@ from .service_exports import (format_sheet, _service_mitigations_book,
                               _service_raw_scanner_bytes, _service_sboms_bytes)
 from .frontend import FrontendTemplates as Jinja2Templates
 from starlette.middleware.gzip import GZipMiddleware
-from sqlalchemy import and_, case, delete, false, func, inspect, or_, select, text, true, update
+from sqlalchemy import and_, case, delete, false, func, insert, inspect, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session, defer, selectinload
 from pydantic import ValidationError
@@ -441,9 +441,7 @@ def _start_read_model_maintenance():
 async def app_lifespan(_app: FastAPI):
     from .operating_mode import is_replica
     if is_replica():
-        from .replica_sync import replica_lifespan
-        async with replica_lifespan():
-            yield
+        yield
         return
     # Compose runs imports in a dedicated process. Legacy single-database
     # installations retain their startup behavior until configured to split.
@@ -465,8 +463,7 @@ async def app_lifespan(_app: FastAPI):
     scan_monitor = asyncio.create_task(scan_protocol.maintenance())
     _start_read_model_maintenance()
     try:
-        from .replica_sync import replica_lifespan
-        async with preview_cleanup_lifespan(SessionLocal), replica_lifespan():
+        async with preview_cleanup_lifespan(SessionLocal):
             yield
     finally:
         scan_monitor.cancel()
@@ -670,7 +667,7 @@ PATCH_PROCESSES: dict[str, subprocess.Popen] = {}
 PATCH_JOB_LOCK = threading.Lock()
 PATCH_WORKER_URL = os.getenv("CATS_PATCH_WORKER_URL", "").rstrip("/")
 PATCH_WORKER_TOKEN = os.getenv("CATS_PATCH_WORKER_TOKEN", "")
-REMEDIATION_JOB_ROOT = Path(os.getenv("CATS_REMEDIATION_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-remediation-jobs"))
+REMEDIATION_JOB_ROOT = cyber_approvals.remediation_job_root()
 # Replicas never run assessment jobs and need no access to their working paths.
 if not is_replica():
     for job_root in (PUBLIC_JOB_ROOT, PATCH_JOB_ROOT, REMEDIATION_JOB_ROOT):
@@ -3501,6 +3498,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
     db.flush()
     from .sbom_components import retain_components
     retain_components(db, execution.id, payload.sbom_components)
+    from .settings_worker import fence_ingestion
+    fence_ingestion(db)
     reconcile_watchlist_matches(db, execution)
     observed = set()
     finding_by_cve: dict[str, Finding] = {}
@@ -11543,28 +11542,34 @@ def workflow_policy_page(request: Request, group_id: str = "", db: Session = Dep
 
 
 @app.get("/admin/dependency-watchlist", response_class=HTMLResponse)
-def dependency_watchlist_page(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
-    entries = db.scalars(select(DependencyWatchlistEntry).order_by(DependencyWatchlistEntry.id)).all()
+def dependency_watchlist_page(request: Request, q: str = "", page: int = 1,
+                             db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    from .remediation_list_queries import page_window
+    from .settings_worker import editable_watchlist_entry, latest_watchlist_refresh
+
+    model = DependencyWatchlistEntry
+    query = q.strip()
+    needle = query.lower()
+    filters = [editable_watchlist_entry()]
+    if needle:
+        filters.append(or_(*(func.lower(column).contains(needle, autoescape=True) for column in
+                             (model.purl, model.name, model.ecosystem, model.version_constraint))))
+    total = db.scalar(select(func.count(model.id)).where(*filters)) or 0
+    page_size = 50
+    page, pages, offset = page_window(total, page, page_size)
+    entries = db.scalars(select(model).where(*filters).order_by(model.id).offset(offset).limit(page_size)).all()
     return templates.TemplateResponse(request, "dependency_watchlist.html", page_context(
-        auth, entries=entries, saved=request.query_params.get("saved") == "1"))
+        auth, entries=entries, entry_page=page, entry_pages=pages, entry_page_size=page_size, entry_total=total,
+        entry_query=query, refresh_job=latest_watchlist_refresh(db), saved=request.query_params.get("saved") == "1"))
 
 
-def _refresh_watchlist_matches(db: Session) -> None:
-    # Re-evaluate persisted SBOM evidence when configuration changes. Old scan
-    # payloads without a component inventory simply produce no matches.
-    entries = db.scalars(select(DependencyWatchlistEntry).where(DependencyWatchlistEntry.enabled.is_(True))).all()
-    cursor = 0
-    while True:
-        executions = db.scalars(select(Execution).where(
-            Execution.id > cursor, Execution.raw_payload.is_not(None),
-        ).order_by(Execution.id).limit(32)).all()
-        if not executions:
-            break
-        for execution in executions:
-            reconcile_watchlist_matches(db, execution, entries=entries)
-        cursor = executions[-1].id
-        # Keep rebuilt matches bounded while preserving the caller's transaction.
-        db.flush()
+@app.get("/api/v1/settings/watchlist-refresh")
+def dependency_watchlist_refresh_status(db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    from .settings_worker import latest_watchlist_refresh
+
+    job = latest_watchlist_refresh(db)
+    revision = json.dumps([job.get(field) for field in ("id", "status", "progress", "stage")]) if job else ""
+    return {"job": job, "revision": revision}
 
 
 @app.post("/admin/dependency-watchlist")
@@ -11574,15 +11579,18 @@ def save_dependency_watchlist(
     version_constraint: str = Form(default=""), enabled: bool = Form(default=False),
     db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope),
 ):
+    from .models import PendingWatchlistDeletion
+    from .settings_worker import editable_watchlist_entry, queue_watchlist_refresh
     check_csrf(auth, csrf_token)
-    entry = db.get(DependencyWatchlistEntry, entry_id) if entry_id else None
+    entry = db.scalar(select(DependencyWatchlistEntry).where(
+        DependencyWatchlistEntry.id == entry_id, editable_watchlist_entry()).with_for_update(key_share=True)) if entry_id else None
     if entry_id and not entry:
         raise HTTPException(404, detail="Watchlist entry not found")
     if action == "delete":
         if not entry:
             raise HTTPException(404, detail="Watchlist entry not found")
-        db.execute(delete(DependencyWatchlistMatch).where(DependencyWatchlistMatch.entry_id == entry.id))
-        db.delete(entry)
+        entry.enabled = False
+        db.add(PendingWatchlistDeletion(entry_id=entry.id))
         record_audit(db, auth, "watchlist.deleted", "watchlist_entry", entry_id)
     elif action == "save":
         try:
@@ -11603,27 +11611,38 @@ def save_dependency_watchlist(
     else:
         raise HTTPException(422, detail="Unknown watchlist action")
     db.flush()
-    _refresh_watchlist_matches(db)
+    queue_watchlist_refresh(db, auth.user.id)
     db.commit()
     return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)
 
 
+@app.post("/admin/dependency-watchlist/refresh")
+def retry_dependency_watchlist_refresh(csrf_token: str = Form(), db: Session = Depends(get_db),
+                                      auth: AuthContext = Depends(require_global_config_scope)):
+    from .settings_worker import queue_watchlist_refresh
+    check_csrf(auth, csrf_token)
+    job = queue_watchlist_refresh(db, auth.user.id, rules_changed=False)
+    record_audit(db, auth, "watchlist.refresh_requested", "job", job.id)
+    db.commit()
+    return RedirectResponse("/admin/dependency-watchlist", status_code=303)
+
+
 @app.post("/admin/dependency-watchlist/import")
-async def import_dependency_watchlist(
+def import_dependency_watchlist(
     csrf_token: str = Form(), file: UploadFile = File(), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_global_config_scope),
 ):
+    from .settings_worker import queue_watchlist_refresh
     check_csrf(auth, csrf_token)
     suffix = Path(file.filename or "").suffix.lower().lstrip(".")
-    content = await file.read(1024 * 1024 + 1)
+    content = file.file.read(1024 * 1024 + 1)
     try:
         entries = parse_watchlist_entries(content.decode("utf-8-sig"), suffix)
     except (ValueError, UnicodeError, yaml.YAMLError) as exc:
         raise HTTPException(422, detail=str(exc)) from exc
-    for item in entries:
-        db.add(DependencyWatchlistEntry(**item, enabled=True))
-    db.flush()
-    _refresh_watchlist_matches(db)
+    if entries:
+        db.execute(insert(DependencyWatchlistEntry), [{**item, "enabled": True} for item in entries])
+    queue_watchlist_refresh(db, auth.user.id)
     record_audit(db, auth, "watchlist.imported", "watchlist", "global", count=len(entries), format=suffix)
     db.commit()
     return RedirectResponse("/admin/dependency-watchlist?saved=1", status_code=303)

@@ -8,13 +8,17 @@ from app.database import Base
 from app.models import Execution, Finding, FindingObservation, Service, ServiceImage, utcnow
 
 
-def test_watchlist_refresh_batches_evidence_and_retains_transaction(monkeypatch):
-    from sqlalchemy import select, func
+def test_watchlist_worker_projects_one_inventory_and_commits_checkpoints(monkeypatch):
+    from sqlalchemy import func, select
+    from sqlalchemy.orm import sessionmaker
+    from app import settings_worker as worker
+    from app.durable_jobs import DurableJob, JobContext, claim
     from app.models import DependencyWatchlistEntry, DependencyWatchlistMatch
 
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
-    with Session(engine) as db:
+    sessions = sessionmaker(engine)
+    with sessions.begin() as db:
         service = Service(service_key="watchlist-batches", name="Watchlist")
         db.add(service)
         db.flush()
@@ -23,26 +27,31 @@ def test_watchlist_refresh_batches_evidence_and_retains_transaction(monkeypatch)
             "scanned_at": utcnow(), "complete": True, "raw_payload": {
                 "sbom_components": [{"name": "library", "version": "1.0"}],
                 "retained_evidence": "x" * 10000,
-            }} for index in range(100)])
-        db.commit()
-        statements = []
-        event.listen(engine, "before_cursor_execute", lambda conn, cursor, sql, parameters, context, many: statements.append(sql))
-        original = main.reconcile_watchlist_matches
-        resident = []
+            }} for index in range(35)])
+        worker.queue_watchlist_refresh(db, None)
+    claimed = claim((worker.KIND,), "settings-test", sessions)
+    snapshots = []
+    original = worker.match_rows
 
-        def observe(db, execution, **kwargs):
-            resident.append(sum(isinstance(item, Execution) for item in db.identity_map.values()))
-            return original(db, execution, **kwargs)
+    def observe(components, *args):
+        # Calculation happens outside the publishing transaction. Previous
+        # evidence and its resume cursor have become visible together.
+        with sessions() as db:
+            snapshots.append((db.get(DurableJob, claimed.id).result.get("execution_cursor", 0),
+                              db.scalar(select(func.count()).select_from(DependencyWatchlistMatch))))
+        return original(components, *args)
 
-        monkeypatch.setattr(main, "reconcile_watchlist_matches", observe)
-        main._refresh_watchlist_matches(db)
-        assert max(resident) <= 33
-        assert len(resident) == 100
-        assert sum("FROM dependency_watchlist_entries" in sql for sql in statements) == 1
-        assert all("LIMIT" in sql for sql in statements if "FROM executions" in sql)
-        assert db.scalar(select(func.count()).select_from(DependencyWatchlistMatch)) == 100
-        db.rollback()
-        assert db.scalar(select(func.count()).select_from(DependencyWatchlistMatch)) == 0
+    monkeypatch.setattr(worker, "match_rows", observe)
+    statements = []
+    event.listen(engine, "before_cursor_execute", lambda conn, cursor, sql, parameters, context, many: statements.append(sql))
+    worker.handler(JobContext(claimed, sessions), {})
+    assert snapshots == [(i, i) for i in range(35)]
+    assert sum("FROM dependency_watchlist_entries" in sql for sql in statements) == 1
+    assert sum("JSON_EXTRACT(executions.raw_payload" in sql for sql in statements) == 35
+    assert not any("executions.raw_payload AS executions_raw_payload" in sql for sql in statements)
+    # A restarted handler uses its checkpoint instead of rereading every SBOM.
+    worker.handler(JobContext(claimed, sessions), {})
+    assert len(snapshots) == 35
 
 
 def test_image_reconciliation_uses_exists_without_loading_observation_history():

@@ -22,6 +22,8 @@ def _permission(kind):
 
 
 def authorized(job, auth, db):
+    if job.kind == "watchlist_refresh":
+        return auth.can_manage_group(None)
     if job.kind.startswith("export"):
         scopes = (job.payload or {}).get("scopes")
         return (job.requested_by_id == auth.user.id and isinstance(scopes, dict)
@@ -81,6 +83,8 @@ def dto(db, job, auth, list_result=None):
 
 def _durable_filter(auth):
     expressions = []
+    if auth.can_manage_group(None):
+        expressions.append(DurableJob.kind == "watchlist_refresh")
     for prefix, permission in (("remediation", "remediation.execute"),):
         ids = auth.accessible_service_ids(permission)
         scope = DurableJob.service_id.is_not(None) if ids is None else DurableJob.service_id.in_(ids)

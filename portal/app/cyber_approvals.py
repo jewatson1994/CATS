@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -65,9 +66,12 @@ class CyberApproval(Base):
     revocation_reason: Mapped[str] = mapped_column(Text, default='')
 
 
+def remediation_job_root():
+    return Path(os.getenv('CATS_REMEDIATION_JOB_ROOT', Path(tempfile.gettempdir()) / 'cats-remediation-jobs'))
+
+
 def root():
-    from . import main
-    return Path(os.getenv('CATS_APPROVED_RELEASE_ROOT', str(main.REMEDIATION_JOB_ROOT / 'approved-releases')))
+    return Path(os.getenv('CATS_APPROVED_RELEASE_ROOT', remediation_job_root() / 'approved-releases'))
 
 
 def digest(value):

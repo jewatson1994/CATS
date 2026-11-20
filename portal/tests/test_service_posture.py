@@ -184,6 +184,33 @@ def test_portfolio_wide_invalidation_is_bounded_and_served_stale(shadow, monkeyp
     assert client.get("/api/dashboard/services").json()["posture_refreshing"] is False
 
 
+def test_one_stale_row_is_deferred_while_a_worker_runs(monkeypatch):
+    from app.durable_jobs import DurableJob
+
+    client = new_client()
+    ingest(client, "during-refresh", ["CVE-2024-0190"])
+    services(client)
+    built = posture_row("during-refresh")
+    with SessionLocal.begin() as db:
+        db.add(DurableJob(id="live-job", kind="watchlist_refresh", status="running"))
+        service_posture.invalidate_services(db.connection(), [built.service_id])
+
+    scheduled = []
+    monkeypatch.setattr(service_posture, "background_enabled", lambda bind: True)
+    monkeypatch.setattr(service_posture, "schedule", lambda bind, ids, kinds: scheduled.append((list(ids), kinds)))
+    body = client.get("/api/dashboard/services").json()
+    assert body["posture_refreshing"] is True
+    assert body["views"][0]["service"]["service_key"] == "during-refresh"
+    assert posture_row("during-refresh").services_built_generation == built.services_built_generation
+    assert ([built.service_id], ("services",)) in scheduled
+
+    with SessionLocal.begin() as db:
+        db.get(DurableJob, "live-job").status = "completed"
+    assert client.get("/api/dashboard/services").json()["posture_refreshing"] is False
+    refreshed = posture_row("during-refresh")
+    assert refreshed.services_built_generation == refreshed.data_generation
+
+
 def test_new_services_get_posture_rows_in_the_creating_transaction():
     with SessionLocal() as db:
         service = Service(service_key="born", name="Born", lifecycle_status="active")
