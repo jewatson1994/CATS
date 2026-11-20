@@ -202,11 +202,79 @@ def test_verified_publication_follows_original_identity_into_release_repository(
     result = pull(local)
     assert result['status'] == 'available'
     assert result['routes'][0]['digest'] == target_digest
+    assert release_pull(local)['routes'] == result['routes']
     receipt = deepcopy(local.approval.publication)
     receipt['artifacts'][0]['source_digest'] = 'sha256:' + 'e' * 64
     local.approval.publication = receipt
     local.db.commit()
     assert pull(local)['status'] == 'unavailable'
+    assert release_pull(local)['routes'] == []
+
+
+def release_pull(local, index=0):
+    response = Response()
+    result = instructions.release_pull_instructions(local.approval.id, index, response, local.db, local.auth)
+    assert response.headers['Cache-Control'] == 'private, no-store'
+    return result
+
+
+def test_release_command_keeps_frozen_digest_across_inventory_rescans(local):
+    local.image.image_digest = 'sha256:' + 'c' * 64
+    local.db.commit()
+    assert pull(local)['routes'] == []
+    expected = f'docker pull cats.example/cyber-approved/{local.service.id}/nginx@{DIGEST}'
+    result = release_pull(local)
+    assert result['routes'][0]['command'] == expected
+    assert result['release_id'] == local.approval.id and result['artifact_index'] == 0
+    local.db.delete(local.image)
+    local.db.commit()
+    assert release_pull(local)['routes'][0]['command'] == expected
+    local.approval.revoked_at = datetime.now(timezone.utc)
+    local.db.commit()
+    assert release_pull(local)['routes'] == []
+
+
+def test_release_only_resolves_frozen_image_slots_and_enforces_scope(local):
+    snapshot = deepcopy(local.approval.snapshot)
+    snapshot['artifacts'].insert(0, dict(kind='chart', reference='chart'))
+    snapshot['artifacts'].append(dict(kind='image', reference='registry.example/team/nginx:latest', resolve_at_publication=True))
+    local.approval.snapshot, local.approval.snapshot_digest = snapshot, snapshot_digest(snapshot)
+    local.db.commit()
+    for index in [-1, 0, 3]:
+        with pytest.raises(HTTPException) as denied:
+            release_pull(local, index)
+        assert denied.value.status_code == 404
+    assert release_pull(local, 1)['status'] == 'available'
+    assert release_pull(local, 2)['routes'] == []
+    other = Service(service_key='unrelated', name='Unrelated')
+    local.db.add(other)
+    local.db.flush()
+    local.auth.user.role_assignments[0].service_id = other.id
+    local.db.commit()
+    with pytest.raises(HTTPException) as denied:
+        release_pull(local, 1)
+    assert denied.value.status_code == 404
+
+
+def test_release_uses_current_service_policy_and_checks_snapshot_integrity(local):
+    local.mapping.suspended = True
+    local.db.commit()
+    assert release_pull(local)['routes'] == []
+    local.approval.snapshot_digest = 'sha256:' + '0' * 64
+    local.db.commit()
+    with pytest.raises(HTTPException) as error:
+        release_pull(local)
+    assert error.value.status_code == 409
+
+
+def test_imported_release_command_uses_its_trusted_local_inventory(replica, monkeypatch):
+    monkeypatch.setenv('CATS_OCI_HOSTNAME', 'cats.example')
+    with replica.sessions() as db:
+        auth = viewer(db, replica.service_id)
+        active = instructions.replica_pull_instructions(replica.new_id, 0, Response(), db, auth)
+        assert active['routes'][0]['command'] == f'docker pull cats.example/replica/{replica.service_id}/nginx@{replica.new}'
+        superseded = instructions.replica_pull_instructions(replica.old_id, 0, Response(), db, auth)
+        assert superseded['routes'] == [] and 'superseded' in superseded['reason']
 
 
 def test_signed_revision_location_uses_original_mapping_identity(local, monkeypatch):

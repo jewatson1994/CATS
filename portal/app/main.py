@@ -27,11 +27,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Annotated, Any
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo, available_timezones
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
@@ -97,12 +97,14 @@ from .models import (
 )
 from .security_data import (MAX_GRYPE_LISTING, MAX_UPLOAD as MAX_SECURITY_DATA_UPLOAD,
                             DEFAULT_SOURCES, SOURCE_KEYS as SECURITY_DATA_KEYS, refresh as refresh_security_data)
-from . import daily_security_data, service_scan_schedule
+from . import announcements, artifact_submissions, daily_security_data, project_credentials, service_scan_schedule
 from .validator_client import validate as validate_remote_artifact, health as validator_health
 from .validator_protocol import SCHEMA_VERSION as VALIDATION_PACKAGE_VERSION
 from . import managed_validators as validator_management
 from .watchlist import parse_entries as parse_watchlist_entries, reconcile_matches as reconcile_watchlist_matches
 from .schemas import ExecutionPayload
+from .pipeline_api import (AmendmentReceipt, PipelineReceipt, bound_project_payload, pipeline_openapi,
+                           require_pipeline, router as pipeline_router)
 from .policy_data import epss_scores, intelligence_status, kev_cves, observation_risk, risk_metadata
 from .overview import normalize_overview
 from .service_export import build_service_workbook, service_export_filename
@@ -507,6 +509,7 @@ from .account_management import router as account_router
 app.include_router(account_router)
 from . import access_requests
 app.include_router(access_requests.router)
+app.include_router(project_credentials.router)
 from .jobs_view import router as jobs_router
 from .export_jobs import router as export_jobs_router
 app.include_router(jobs_router)
@@ -528,36 +531,49 @@ PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_
 ACCESS_PENDING_MESSAGE = "Contact your cybersecurity POC for access."
 
 
-def access_pending_response():
-    return HTMLResponse("<!doctype html><html><head><title>CATS</title></head>"
-        '<body style="margin:0;min-height:100vh;display:grid;place-items:center;'
-        'background:#081411;color:#e4efeb;font:18px system-ui">'
-        '<p>Contact your cybersecurity POC for access.</p></body></html>',
-        headers={"Cache-Control": "no-store"})
+def access_pending_response(request, db, auth):
+    from . import announcements
+    directory = access_requests.uses_service_directory(auth.user)
+    return templates.TemplateResponse(request, "access_directory.html", {
+        "services": access_requests.service_directory(db, auth.user.id) if directory else None,
+        "notice": announcements.current(db, auth.user.id), "csrf_token": auth.csrf_token,
+        "contact_message": ACCESS_PENDING_MESSAGE,
+    }, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
 @app.middleware("http")
 async def pending_access_gate(request: Request, call_next):
     # Authenticated accounts without effective access must not fall through to
     # anonymous/public workflows or receive a navigation/data payload.
-    if request.cookies.get(SESSION_COOKIE) and request.url.path not in {"/logout"}:
+    path = request.url.path
+    account_action = request.method == "POST" and (
+        path in {"/logout", "/account/access/service"} or re.fullmatch(r"/account/announcements/\d+/read", path))
+    if request.cookies.get(SESSION_COOKIE) and not account_action and not (request.method == "GET" and path == "/account/access"):
         with SessionLocal() as db:
             auth = optional_user(request, db)
             if auth and not access_requests.has_effective_access(auth):
                 access_requests.register_pending_request(db, auth)
                 db.commit()
-                if request.url.path.startswith("/api/") or request.method != "GET":
-                    return JSONResponse({"detail": ACCESS_PENDING_MESSAGE}, status_code=403,
+                directory = access_requests.uses_service_directory(auth.user)
+                if path.startswith("/api/") or request.method != "GET":
+                    detail = "Request service access at /account/access." if directory else ACCESS_PENDING_MESSAGE
+                    return JSONResponse({"detail": detail}, status_code=403,
                                         headers={"Cache-Control": "no-store"})
-                return access_pending_response()
+                if directory:
+                    return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
+                return access_pending_response(request, db, auth)
     return await call_next(request)
 
 
 @app.middleware("http")
 async def pipeline_request_size_middleware(request: Request, call_next):
-    if request.url.path == "/api/v1/pipeline-results":
+    path = request.url.path.removesuffix("/")
+    if request.method == "POST" and (path == "/api/v1/pipeline-results"
+            or re.fullmatch(r"/api/v1/amendment-assessments/[^/]+", path)):
         try:
             content_length = int(request.headers.get("content-length", "0"))
+            if content_length < 0:
+                raise ValueError()
         except ValueError:
             return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
         if content_length > PIPELINE_MAX_REQUEST_BYTES:
@@ -1434,9 +1450,11 @@ def page_context(auth: AuthContext, **values):
     pending_request_count = 0
     pending_poam_count = 0
     actionable_notifications = []
+    announcement = None
     try:
         allowed_services = auth.accessible_service_ids("service.view")
         with SessionLocal() as nav_db:
+            announcement = announcements.current(nav_db, auth.user.id)
             request_query = select(
                 WorkflowRequest.request_type, WorkflowRequest.service_id,
                 WorkflowRequest.requested_by_id, Service.name, WorkflowRequest.id,
@@ -1465,9 +1483,11 @@ def page_context(auth: AuthContext, **values):
                     notification["count"] += 1
                 else:
                     actionable_notifications.append({"label": item.request_type.replace("_", " ").title(), "service": item.name or "Service", "href": f"/requests#request-{item.id}"})
-            access_notifications = [{"label": "Access requested", "service": item["display_name"] or item["username"],
-                                     "href": "/admin#access-requests"}
-                                    for item in access_requests.list_pending_requests(nav_db, auth)]
+            access_notifications = []
+            for item in access_requests.list_pending_requests(nav_db, auth):
+                requester = item["display_name"] or item["username"]
+                name = f"{requester} · {item['service_name']}" if item.get("service_name") else requester
+                access_notifications.append({"label": "Access requested", "service": name, "href": "/admin#access-requests"})
             actionable_notifications = access_notifications + artifact_catalog_routes.replacement_notifications(nav_db, auth) + actionable_notifications
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
@@ -1495,6 +1515,7 @@ def page_context(auth: AuthContext, **values):
         "pending_request_count": pending_request_count,
         "pending_poam_count": pending_poam_count,
         "actionable_notifications": actionable_notifications[:8],
+        "announcement": announcement,
         **values,
     }
 
@@ -1704,6 +1725,17 @@ def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int) -> bool:
     return bool(permissions) and permissions <= PERMISSIONS.keys() and (permissions - APPLICATION_PERMISSIONS) <= available
 
 
+def may_remove_scoped_assignment(auth: AuthContext, assignment: UserRoleAssignment, group_ids: set[int]) -> bool:
+    group_id = assignment.group_id
+    if group_id is None and assignment.source == "local" and assignment.role.system and assignment.role.name == "Assessor":
+        # Onboarding grants are service-only. Resolve the current owner again
+        # so a group that lost ownership cannot revoke that service's grant.
+        groups = assignment.service.groups if assignment.service is not None else []
+        if len(groups) == 1:
+            group_id = groups[0].id
+    return group_id in group_ids and scoped_role_allowed(auth, assignment.role, group_id)
+
+
 def requested_group_scope(group_id: str | int | None, db: Session, auth: AuthContext) -> int | None:
     try:
         selected = int(group_id) if group_id not in (None, "", "global") else None
@@ -1845,13 +1877,6 @@ templates.env.globals["cats_datetime"] = lambda value, configuration=None: confi
 def check_csrf(auth: AuthContext, supplied: str):
     if not secrets.compare_digest(auth.csrf_token, supplied):
         raise HTTPException(403, detail="Invalid CSRF token")
-
-
-def require_pipeline(authorization: str | None = Header(default=None)):
-    expected = os.getenv("PIPELINE_API_TOKEN", "development-token")
-    supplied = authorization.removeprefix("Bearer ").strip() if authorization else ""
-    if not secrets.compare_digest(supplied.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Invalid pipeline token")
 
 
 def active_exception(finding: Finding, now: datetime):
@@ -2943,9 +2968,14 @@ def _oidc_failure_response(message, reference):
     return response
 
 
-@app.get("/account/access")
-def account_access(request: Request, auth: AuthContext = Depends(require_user)):
-    return RedirectResponse("/", status_code=303) if access_requests.has_effective_access(auth) else access_pending_response()
+@app.get("/account/access", response_class=HTMLResponse)
+def account_access(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    if access_requests.has_effective_access(auth):
+        return RedirectResponse("/", status_code=303)
+    if not access_requests.uses_service_directory(auth.user):
+        access_requests.register_pending_request(db, auth)
+        db.commit()
+    return access_pending_response(request, db, auth)
 
 
 @app.post("/login")
@@ -3245,10 +3275,16 @@ def backfill_incomplete_scan_findings() -> None:
 
 
 
-@app.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201, dependencies=[Depends(require_pipeline)])
-def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db)):
+@pipeline_router.post("/api/v1/amendment-assessments/{proposal_id}", status_code=201,
+                      operation_id="submitAmendmentAssessment", response_model=AmendmentReceipt,
+                      openapi_extra={"x-required-project-scopes": ["evidence.write"]})
+def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db: Session = Depends(get_db),
+                                project: Annotated[project_credentials.ProjectCredential | None, Depends(require_pipeline)] = None):
+    payload = bound_project_payload(payload, project)
     try:
-        row = proposal_assessments.retain(db, proposal_id, payload)
+        row = proposal_assessments.retain(db, proposal_id, payload, require_dispatched_version=project is not None)
+        if project is not None:
+            project_credentials.audit_project_use(db, project, "evidence.amendment", target_type="proposal_assessment", target_id=row.id)
         db.commit()
     except ValueError as exc:
         db.rollback()
@@ -3257,14 +3293,26 @@ def ingest_amendment_assessment(proposal_id: int, payload: ExecutionPayload, db:
             "active_release_changed": False}
 
 
-@app.post("/api/v1/pipeline-results", status_code=201, dependencies=[Depends(require_pipeline)])
-def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None):
+@pipeline_router.post("/api/v1/pipeline-results", status_code=201,
+                      operation_id="submitPipelineResults", response_model=PipelineReceipt,
+                      response_model_exclude_unset=True, openapi_extra={"x-required-project-scopes": ["evidence.write"]})
+def ingest(payload: ExecutionPayload, db: Session = Depends(get_db), background_tasks: BackgroundTasks = None,
+           project: Annotated[project_credentials.ProjectCredential | None, Depends(require_pipeline)] = None):
+    payload = bound_project_payload(payload, project)
+    if project is not None and payload.execution_id.startswith(("public:", "proposal:")):
+        raise HTTPException(409, "Use a producer execution ID outside the reserved CATS scan namespaces")
     if payload.scan_scope == "distribution":
         raise HTTPException(422, "Submit distribution results through the scan bound to the saved selection")
-    result = ingest_payload(payload, db)
+    result = ingest_payload(payload, db, project_credential=project)
     if background_tasks is not None and isinstance(result, dict) and result.get("accepted") and not result.get("duplicate"):
         queue_dependency_projection(db, background_tasks, result.get("execution_id"))
     return result
+
+
+app.include_router(pipeline_router)
+app.include_router(artifact_submissions.router)
+app.add_api_route("/api/v1/pipeline/openapi.json", pipeline_openapi, methods=["GET"],
+                  tags=["API discovery"], summary="Download the pipeline integration contract")
 
 
 def _ingest_projection_enabled() -> bool:
@@ -3302,7 +3350,7 @@ def queue_dependency_projection(db: Session, background_tasks: BackgroundTasks, 
         return None
 
 
-def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True):
+def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = True, project_credential=None):
     from .imported_services import require_local_service
     target_id = db.scalar(select(Service.id).where(Service.service_key == payload.service.id))
     if target_id is not None:
@@ -3311,6 +3359,12 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         raise HTTPException(status_code=422, detail="Portal accepts fixable-only assessments")
     existing = db.scalar(select(Execution).where(Execution.execution_key == payload.execution_id))
     if existing:
+        if project_credential is not None:
+            version = existing.service_version
+            expected_version = "Unversioned" if payload.service.version.lower() == "unknown" else payload.service.version
+            if (existing.service_id != project_credential.service_id or version is None
+                    or version.service_id != existing.service_id or version.version != expected_version):
+                raise HTTPException(409, "Execution ID is bound to another service or version")
         incoming_payload = payload.model_dump(mode="json")
         def evidence_identity(value: dict) -> dict:
             normalized = dict(value)
@@ -3321,9 +3375,15 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             # change during staged -> active promotion. The stable service key
             # remains part of the immutable execution identity.
             normalized["service"] = {"id": service_value.get("id")}
+            if project_credential is not None:
+                normalized["service"]["version"] = service_value.get("version")
             return normalized
         if evidence_identity(existing.raw_payload) != evidence_identity(incoming_payload):
             raise HTTPException(status_code=409, detail="Execution ID already exists with different evidence")
+        if project_credential is not None:
+            project_credentials.audit_project_use(db, project_credential, "evidence.replayed", target_type="execution", target_id=existing.id)
+            if commit:
+                db.commit()
         return {"accepted": True, "duplicate": True, "execution_id": existing.id}
 
     service = db.scalar(select(Service).where(Service.service_key == payload.service.id))
@@ -3497,13 +3557,16 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         if scan_scope == "image":
             ensure_ingest_image(scope_image)
             _reconcile_image_scope(db, service, scope_image or "", observed, payload.scanned_at)
-        else:
+        elif scan_scope == "service":
             for finding in db.scalars(select(Finding).where(Finding.service_id == service.id, Finding.active.is_(True))):
                 if finding.cve not in observed:
                     finding.active = False
                     finding.resolved_at = payload.scanned_at
     if current_ingest:
-        sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at, effective_complete)
+        # Policy findings cover the service configuration. Only a whole-service
+        # scan can resolve an omitted policy finding by absence.
+        sync_policy_findings(db, service, payload.policy_findings, payload.scanned_at,
+                             complete=effective_complete and scan_scope == "service")
     for image in db.scalars(select(ServiceImage).where(ServiceImage.service_id == service.id)).all():
         if image.id not in known_service_image_ids:
             db.add(AuditEvent(
@@ -3522,6 +3585,8 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
                     "previous_name": staged_name_before_ingest, "name": service.name},
         ))
     record_reingestion_provenance(db, execution, payload.model_dump(mode="json"))
+    if project_credential is not None:
+        project_credentials.audit_project_use(db, project_credential, "evidence.submitted", target_type="execution", target_id=execution.id)
     should_record_validation = payload.artifact_type == "helm" and scan_scope == "service"
     service_id, execution_id = service.id, execution.id
     if not commit:
@@ -4143,6 +4208,76 @@ async def _prepare_public_scan(*args, **kwargs):
         _SCAN_PREPARATION_SLOTS.release()
 
 
+def _stage_scan_inputs(directory, job_id, lines, chart_archives, image_archive, compose_uploads,
+                       compose_variables, trusted_ca_certificates, definition_skipped, *, project_submission=False):
+    from .compose_ingestion import ComposeInputError
+    job_input = directory / "input"
+    job_input.mkdir(parents=True, exist_ok=True)
+    write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
+    skipped_charts: list[str] = list(definition_skipped or [])
+    for archive, filename in chart_archives:
+        try:
+            _stage_public_chart(job_input, archive, filename)
+        except Exception as exc:
+            if project_submission:
+                raise
+            skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
+    if skipped_charts:
+        (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
+    if image_archive:
+        image_dir = job_input / "image-archives"
+        image_dir.mkdir(parents=True, exist_ok=True)
+        image_bytes, image_filename = image_archive
+        max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
+        safe_name = Path(image_filename or "images.tar").name
+        if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
+            raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
+        source = image_bytes if hasattr(image_bytes, "read") else __import__("io").BytesIO(image_bytes)
+        source.seek(0)
+        size = 0
+        with (image_dir / safe_name).open("wb") as target:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                size += len(chunk)
+                if size > max_bytes:
+                    raise HTTPException(413, "Docker image archive is too large")
+                if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
+                    raise HTTPException(507, "Insufficient scan staging capacity")
+                target.write(chunk)
+    if compose_uploads:
+        from .compose_ingestion import stage_uploads
+        try:
+            stage_uploads(job_input, compose_uploads)
+            if project_submission:
+                from .compose_ingestion import compose_candidates, default_compose_order, discover
+                compose_root = job_input / ".cats-compose"
+                selected = default_compose_order(compose_candidates(compose_root))
+                if not selected or not discover(compose_root, selected).get("services"):
+                    raise HTTPException(422, "Upload one Compose document or a conventional base/override bundle defining services")
+        except ComposeInputError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        if compose_variables:
+            from .compose_scan import COMPOSE_VARIABLES_FILE
+            # Keep values in the private input envelope, never public job metadata.
+            (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    from .scan_artifacts import pack, digest
+    (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    envelope = job_input.parent / "input.tar.gz"
+    pack(job_input, envelope, {"job_id": job_id})
+    # The checked envelope now owns uploaded image and Compose bytes. Retain only small
+    # request metadata and immutable chart sources for subsequent ingestion.
+    if (job_input / "image-archives").exists():
+        shutil.rmtree(job_input / "image-archives")
+    compose_root = job_input / ".cats-compose"
+    if compose_root.exists():
+        # stage_uploads creates this fixed child inside the checked input directory.
+        if not compose_root.resolve().is_relative_to(job_input.resolve()):
+            raise HTTPException(422, "Invalid Compose staging directory")
+        shutil.rmtree(compose_root)
+    if compose_variables:
+        (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
+    return skipped_charts, digest(envelope)
+
+
 def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None, compose_variables: dict[str, str] | None = None) -> str:
     from .compose_ingestion import ComposeInputError, validate_variables
     try:
@@ -4209,62 +4344,9 @@ def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] 
         PUBLIC_JOBS[job_id] = payload
     job_input = PUBLIC_JOB_ROOT / job_id / "input"
     try:
-        job_input.mkdir(parents=True, exist_ok=True)
-        write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
-        skipped_charts: list[str] = list(definition_skipped or [])
-        for archive, filename in chart_archives:
-            try:
-                _stage_public_chart(job_input, archive, filename)
-            except Exception as exc:
-                skipped_charts.append(_public_chart_skip_entry(filename or "uploaded chart", exc))
-        if skipped_charts:
-            (job_input / "skipped_charts.txt").write_text("\n".join(skipped_charts) + "\n", encoding="utf-8")
-        if image_archive:
-            image_dir = job_input / "image-archives"
-            image_dir.mkdir(parents=True, exist_ok=True)
-            image_bytes, image_filename = image_archive
-            max_bytes = int(os.getenv("CATS_PUBLIC_MAX_IMAGE_ARCHIVE_BYTES", str(2 * 1024 * 1024 * 1024)))
-            safe_name = Path(image_filename or "images.tar").name
-            if not safe_name.lower().endswith((".tar", ".tar.gz", ".tgz")):
-                raise HTTPException(status_code=400, detail="Docker image upload must be a .tar, .tar.gz, or .tgz archive")
-            source = image_bytes if hasattr(image_bytes, "read") else __import__("io").BytesIO(image_bytes)
-            source.seek(0)
-            size = 0
-            with (image_dir / safe_name).open("wb") as target:
-                for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                    size += len(chunk)
-                    if size > max_bytes:
-                        raise HTTPException(413, "Docker image archive is too large")
-                    if shutil.disk_usage(job_input).free < len(chunk) + 64 * 1024**2:
-                        raise HTTPException(507, "Insufficient scan staging capacity")
-                    target.write(chunk)
-        if compose_uploads:
-            from .compose_ingestion import stage_uploads
-            try:
-                stage_uploads(job_input, compose_uploads)
-            except ComposeInputError as exc:
-                raise HTTPException(status_code=422, detail=str(exc)) from None
-            if compose_variables:
-                from .compose_scan import COMPOSE_VARIABLES_FILE
-                # Keep values in the private input envelope, never public job metadata.
-                (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        from .scan_artifacts import pack, digest
-        (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-        envelope = job_input.parent / "input.tar.gz"
-        pack(job_input, envelope, {"job_id": job_id})
-        # The checked envelope now owns uploaded image and Compose bytes. Retain only small
-        # request metadata and immutable chart sources for subsequent ingestion.
-        if (job_input / "image-archives").exists():
-            shutil.rmtree(job_input / "image-archives")
-        compose_root = job_input / ".cats-compose"
-        if compose_root.exists():
-            # stage_uploads creates this fixed child inside the checked input directory.
-            if not compose_root.resolve().is_relative_to(job_input.resolve()):
-                raise HTTPException(422, "Invalid Compose staging directory")
-            shutil.rmtree(compose_root)
-        if compose_variables:
-            (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
-        _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=digest(envelope))
+        skipped_charts, input_digest = _stage_scan_inputs(job_input.parent, job_id, lines, chart_archives,
+            image_archive, compose_uploads, compose_variables, trusted_ca_certificates, definition_skipped)
+        _public_job_update(job_id, status="queued", phase="queued", skipped_charts=skipped_charts, input_digest=input_digest)
     except BaseException:
         if job_input.parent.exists(): shutil.rmtree(job_input.parent)
         _public_job_update(job_id, status="error", phase="prepare", error="Submission preparation failed", finished_at=utcnow().isoformat())
@@ -4943,6 +5025,9 @@ def ingest_public_scan(
         job = PUBLIC_JOBS[job_id]
     if job.get("proposal_context"):
         raise HTTPException(409, "Proposed inventory scans cannot be ingested into active service evidence")
+    project_job = bool(job.get("pipeline_input_kind"))
+    if project_job and (request is not None or job.get("ingest_service_id") != service_id or service_version is not None or scan_scope is not None):
+        raise HTTPException(409, "Project scans are automatically ingested into their bound service and version")
     if job.get("schedule_context") and job.get("ingest_service_id") != service_id:
         raise HTTPException(409, "A scheduled scan belongs to its configured service")
     if job.get("compose_preview"):
@@ -4952,9 +5037,15 @@ def ingest_public_scan(
         raise HTTPException(status_code=409, detail="A required scanner phase failed; this scan cannot be ingested. Review the retained scan logs.")
     if not result_path.exists():
         raise HTTPException(status_code=409, detail="The scan has not produced a portal result")
-    service = db.scalar(select(Service).where(Service.service_key == service_id))
+    service_query = select(Service).where(Service.service_key == service_id)
+    service = db.scalar(service_query.with_for_update() if project_job else service_query)
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+    if project_job:
+        from .pipeline_scan_dispatch import active_owner_id
+        if (service.id != job.get("ingest_service_db_id") or not job.get("pipeline_owning_group_id")
+                or active_owner_id(db, service.id, lock=True) != job["pipeline_owning_group_id"]):
+            raise HTTPException(409, "The bound project service or its owning group changed")
     if not auth.has("scan.ingest", service.id):
         raise HTTPException(status_code=403, detail="The service is outside your scope")
     selected_scope = scan_scope or str(job.get("ingest_scope") or "auto")
@@ -4968,7 +5059,7 @@ def ingest_public_scan(
         context = job.get("definition_context") or {}
         if not selection or (selection.id, selection.selection_digest) != (context.get("distribution_id"), context.get("selection_digest")):
             raise HTTPException(409, "Distribution scan does not match its saved selection")
-    if selected_scope not in {"auto", "service"} and not distribution_job:
+    if selected_scope not in {"auto", "service"} and not distribution_job and not (project_job and selected_scope == "evidence"):
         raise HTTPException(422, "Choose automatic scope or a full service assessment")
     if service_version is not None:
         service_version = service_version.strip()
@@ -5046,8 +5137,18 @@ def ingest_public_scan(
             # findings without resolving unseen CVEs or configuration findings.
             data["scan_scope"], data["complete"] = "evidence", False
             data.pop("scope_image", None)
+        if project_job:
+            # Each build submits one artifact. Completeness describes that artifact only.
+            # Evidence scope adds observations without resolving absent service/image findings.
+            data["scan_scope"] = "evidence"
+            data.pop("scope_image", None)
+            summary = json.loads((result_path.parent / "scan-summary.json").read_text(encoding="utf-8"))
+            data["complete"] = (data.get("complete") is True and job.get("returncode") == 0
+                                and summary.get("status") == "complete" and not summary.get("skipped_images")
+                                and not summary.get("skipped_charts") and not data.get("skipped_images")
+                                and not data.get("skipped_charts"))
         data["service"] = {
-            **data.get("service", {}),
+            **({"description": service.description} if project_job else data.get("service", {})),
             "id": service.service_key,
             "name": service.name,
             "version": (
@@ -5099,7 +5200,10 @@ def ingest_public_scan(
         raise HTTPException(status_code=422, detail=detail) from exc
     ingest_stage = "database_ingest"; stage_started = time.perf_counter()
     try:
-        response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
+        if project_job:
+            response = ingest_payload(payload, db, commit=False)
+        else:
+            response = ingest_payload(payload, db) if distribution_job else ingest(payload, db)
     except Exception as exc:
         db.rollback()
         code = f"HTTP_{exc.status_code}" if isinstance(exc, HTTPException) else "PUBLIC_INGEST_DATABASE_ERROR"
@@ -10623,7 +10727,7 @@ def delete_service(
     auth: AuthContext = Depends(require_permission("service.delete", scoped=True)),
 ):
     check_csrf(auth, csrf_token)
-    service = db.scalar(select(Service).where(Service.service_key == service_key).options(
+    service = db.scalar(select(Service).where(Service.service_key == service_key).with_for_update().options(
         selectinload(Service.archive_events)
     ))
     if not service:
@@ -10642,6 +10746,7 @@ def delete_service(
         raise HTTPException(409, detail="Wait for active patch, remediation and delivery jobs to finish before deleting this service")
     if db.scalar(select(DeploymentValidationRun.id).where(DeploymentValidationRun.service_id == service.id, DeploymentValidationRun.status.in_(["QUEUED", "RUNNING"]))) or db.scalar(select(ServiceImage.id).where(ServiceImage.service_id == service.id, ServiceImage.scan_status.in_(["queued", "scanning"]))):
         raise HTTPException(409, detail="Wait for active service scans and validation to finish before deletion")
+    artifact_submissions.clear_service_submissions(db, service.id)
     job_directories = [(PATCH_JOB_ROOT, job.job_key) for job in patch_jobs] + [(REMEDIATION_JOB_ROOT, job.job_key) for job in remediation_jobs]
     for root, key in job_directories:
         target = (root / key).resolve()
@@ -10670,6 +10775,8 @@ def delete_service(
     if policy_finding_ids:
         db.execute(delete(PolicyExceptionRecord).where(PolicyExceptionRecord.policy_finding_id.in_(policy_finding_ids)))
         db.execute(delete(PolicyFinding).where(PolicyFinding.id.in_(policy_finding_ids)))
+    db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.service_id == service.id))
+    db.execute(delete(project_credentials.ProjectCredential).where(project_credentials.ProjectCredential.service_id == service.id))
     db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.service_id == service.id))
     db.execute(delete(RemediationExecution).where(RemediationExecution.service_id == service.id))
     db.execute(delete(PatchExecution).where(PatchExecution.service_id == service.id))
@@ -11065,8 +11172,7 @@ def admin_page(request: Request, db: Session = Depends(get_db), auth: AuthContex
                 ),
                 "id": assignment.id,
                 "source": assignment.source,
-                "may_remove": (auth.has("role.manage") or (scoped and assignment.group_id in group_ids
-                               and scoped_role_allowed(auth, assignment.role, assignment.group_id)))
+                "may_remove": (auth.has("role.manage") or (scoped and may_remove_scoped_assignment(auth, assignment, group_ids)))
                               and assignment.source != "oidc" and not assignment.oidc_mapping_id,
                 "active": active,
                 "permissions": assignment_permissions if active else [],
@@ -11223,12 +11329,6 @@ def create_group(
     record_audit(db, auth, "group.created", "group", group.id, name=name)
     db.commit()
     return RedirectResponse("/admin?saved=1", status_code=303)
-
-
-@app.get("/admin/validators", response_class=HTMLResponse)
-def managed_validators_page(request: Request, auth: AuthContext = Depends(require_permission('validator.view'))):
-    return templates.TemplateResponse(request, 'validators.html', page_context(auth,
-        can_manage_validators=True))
 
 
 @app.get("/admin/configuration", response_class=HTMLResponse)
@@ -11561,6 +11661,61 @@ def save_configuration(
     record_audit(db, auth, "configuration.updated", "portal", "global", changed=list(values))
     db.commit()
     return RedirectResponse("/admin/configuration?saved=1", status_code=303)
+
+
+@app.get("/api/announcements/current", tags=["Announcements"])
+def current_announcement(response: Response, db: Session = Depends(get_db),
+                         auth: AuthContext = Depends(require_user)) -> announcements.Notice | None:
+    response.headers["Cache-Control"] = "private, no-store"
+    return announcements.current(db, auth.user.id)
+
+
+@app.post("/account/announcements/{notice_id}/read")
+def read_announcement(request: Request, notice_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
+                      auth: AuthContext = Depends(require_user)):
+    check_csrf(auth, csrf_token)
+    notice = announcements.current(db, auth.user.id)
+    if notice and notice["id"] == notice_id and notice["unread"]:
+        announcements.mark_read(db, notice_id, auth.user.id)
+        db.commit()
+        notice["unread"] = False
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse(notice, headers={"Cache-Control": "private, no-store"})
+    return RedirectResponse("/account/access", status_code=303)
+
+
+@app.post("/admin/configuration/announcements")
+def publish_announcement(title: str = Form(max_length=120), message: str = Form(max_length=2000),
+                         expires_at: str = Form(""), csrf_token: str = Form(),
+                         db: Session = Depends(get_db), auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    title, message = title.strip(), message.strip()
+    if not title or not message:
+        raise HTTPException(422, detail="Enter a title and message for the announcement")
+    expiry = optional_form_datetime(expires_at, "Announcement expiry")
+    if expiry and expiry <= utcnow():
+        raise HTTPException(422, detail="Announcement expiry must be in the future")
+    notice = announcements.PortalAnnouncement(title=title, message=message,
+                                              expires_at=expiry.astimezone(timezone.utc) if expiry else None)
+    db.add(notice)
+    db.flush()
+    record_audit(db, auth, "announcement.published", "portal_announcement", notice.id, title=title)
+    db.commit()
+    return RedirectResponse("/admin/configuration?saved=1#general", status_code=303)
+
+
+@app.post("/admin/configuration/announcements/{notice_id}/withdraw")
+def withdraw_announcement(notice_id: int, csrf_token: str = Form(), db: Session = Depends(get_db),
+                          auth: AuthContext = Depends(require_global_config_scope)):
+    check_csrf(auth, csrf_token)
+    notice = db.get(announcements.PortalAnnouncement, notice_id)
+    if notice is None:
+        raise HTTPException(404, detail="Announcement not found")
+    if not notice.withdrawn:
+        notice.withdrawn = True
+        record_audit(db, auth, "announcement.withdrawn", "portal_announcement", notice.id)
+        db.commit()
+    return RedirectResponse("/admin/configuration?saved=1#general", status_code=303)
 
 
 @app.post("/admin/configuration/remediation")
@@ -12469,8 +12624,7 @@ def remove_assignment(
     if not auth.has("role.manage"):
         from .access_requests import is_cybersecurity
         group_ids = {group.id for group in manageable_groups(db, auth)}
-        if (not is_cybersecurity(auth) or assignment.group_id not in group_ids
-                or not scoped_role_allowed(auth, assignment.role, assignment.group_id)):
+        if not is_cybersecurity(auth) or not may_remove_scoped_assignment(auth, assignment, group_ids):
             raise HTTPException(403, detail="Assignment is outside your delegation authority")
     if assignment.user_id == auth.user.id and assignment.role.name == "Administrator":
         raise HTTPException(409, detail="You cannot remove your own Administrator role")
@@ -12564,6 +12718,12 @@ def delete_user_account(
         cyber_approvals.CyberApproval.decided_by_id == user.id)).limit(1)):
         raise HTTPException(409, detail="This account has retained Cyber approval records. Disable it to preserve approval history.")
     username, display_name = user.username, user.display_name
+    db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.user_id == user.id))
+    # Keep credential attribution for retained jobs. A deleted issuer cannot be reused.
+    db.execute(update(project_credentials.ProjectCredential).where(
+        project_credentials.ProjectCredential.created_by_id == user.id).values(
+            created_by_id=None, revoked_at=func.coalesce(project_credentials.ProjectCredential.revoked_at, utcnow())))
+    db.execute(delete(announcements.AnnouncementRead).where(announcements.AnnouncementRead.user_id == user.id))
     for background_job in db.scalars(select(DurableJob).where(DurableJob.requested_by_id == user.id)):
         background_job.requested_by_id = None
         if background_job.status in {"queued", "running"}:

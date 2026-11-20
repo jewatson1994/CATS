@@ -8,7 +8,16 @@ Open a service and choose **Request Cyber Approval**, or use its **Approvals** t
 
 Submission is gated on retained evidence completeness, not a clean vulnerability result. Missing scanner/SBOM evidence, skipped artifacts recorded as missing evidence, lost declared chart sources or dependencies, and corrupt retained files must be corrected. Remaining vulnerabilities, failed or skipped deployment verification, and absent configuration scans or Helm charts are presented for Cyber review. **CATS Remediated** identifies remediation provenance; it does not assert that every check passed or that deployment was verified.
 
-CATS selects the eligible default OCI destination automatically (or the first eligible destination if no default exists). Destination and signing setup do not block submission. If no destination exists yet, Cyber selects an eligible destination after an administrator configures it, before approving. Submission retains the artifact and evidence snapshot, variant, version, scan date, and any available destination for review. Later scans or service edits do not rewrite the evidence.
+Under **Release destinations**, review the registry and namespace shown for the **Cyber destination**. If the service has no eligible destination, you can still submit the evidence. Cyber must select a configured destination and have signing available before approving.
+
+To send an additional copy, select **Additional service destination (optional)** when requesting approval. Leave **Cyber destination only** selected to send one copy. The selector lists registries saved for this service. To add one, follow **Manage OCI destinations in Service remediation**, open **OCI destinations**, save the registry, then return to the request. Choose a different registry or namespace from the Cyber destination. For a destination with a blank namespace, approved releases use `cyber-approved`.
+
+| Destination | Who configures it | What the choice applies to |
+| --- | --- | --- |
+| Cyber destination | An administrator under **Administration → Release Destinations** | The portal uses the designated default when it is enabled and the service meets its group restrictions. Otherwise it selects the eligible destination with the lowest ID. |
+| Additional service destination | A service manager under **Service remediation → OCI destinations** | One optional recipient for this approval request. Selecting it sends the approved artifacts and their signed body of evidence. Each new request starts with **Cyber destination only**. |
+
+Open **Requested release destinations** on the review page to confirm the recorded registry and namespace before deciding. The approval retains the artifact and evidence snapshot, variant, version, and scan date. Later service edits and scheduled scans preserve this record.
 
 Container tags are accepted without requiring a manually supplied digest. When the scan did not retain an image digest, Cyber sees that the tag will be resolved at publication and could identify different content from the scanned image. Publication records the resolved digest before copying, reuses it on retries, and signs the exact published content. Retained remediation image archives are copied from their checked snapshot bytes. Approved Releases and offline bundles record the final immutable references and signatures.
 
@@ -26,11 +35,29 @@ For OCI pulls, each owning group chooses approved releases, compliance rules, or
 
 The **Approved Releases** catalog separates the Cyber decision from publication status. Open a release to inspect the decision record, destination, immutable artifact references, signature evidence, and available evidence or offline downloads. Pull and deployment instructions are shown with the release. Deploy the immutable references recorded there instead of a mutable tag.
 
+### Pull the approved containers through CATS
+
+1. Open the release and find **Pull release images from CATS**. The list comes from the approved snapshot, so a scheduled scan can replace a container in the current service inventory without changing this list.
+2. Choose **Pull from CATS** beside the image. For a private route, run the displayed login command using a CATS machine account with access to the repository. Public routes allow anonymous pulls.
+3. Copy and run the displayed digest-pinned pull command. Use its image reference in your deployment configuration. Repeat for each container the deployment uses.
+
+CATS evaluates the service ID, repository mapping, artifact digest, and owning group's current pull policy when it generates a command and again at pull time. A missing scan-time image digest or mapping, inactive governed revision, or policy denial can make an image unavailable. The dialog reports the reason. Gateway mappings are configured separately from additional delivery destinations. On a replica, open **Imported approved releases**, find the active release, and expand **Approved artifact inventory** for pull commands through that installation's gateway.
+
 **Supporting evidence → Artifacts** shows the original sources reviewed by Cyber. For a service with ID `demo` and destination namespace `cyber-approved`, publishing `docker.io/library/node` writes `cyber-approved/demo/node` in the destination registry. Each image and chart receives an `approval-<approval-id>-<artifact-number>` tag. The signed receipt maps each source to its exact destination digest, including when two sources share the same image name. Charts live under `demo/charts/<chart-name>` within the project, and release documents under `demo/releases` with immutable sequence discovery tags. Service IDs and chart names that cannot be used literally in a repository get a deterministic encoded name. [Portable approved releases](portable-approved-releases.md) describes replication and disconnected verification.
 
 For Docker Hub sources the worker contacts Docker's registry and token service, and follows Docker's content-delivery redirect for image layers. A Harbor destination that serves its own layers needs no blob redirect setting for this workflow. A disconnected worker needs an accessible source or mirror containing the approved image. [Docker network endpoints](https://docs.docker.com/desktop/enterprise/allow-list/)
 
-For a failed publication, authorized reviewers can choose **Retry publication**. Refresh the release to view publication progress and errors. A retry publishes the same approved snapshot; it does not approve new service changes.
+### Check publication and additional delivery
+
+**Publication** shows the Cyber destination's receipt. After Cyber publication succeeds, CATS queues the optional copy on the remediation worker. **Additional service delivery** shows the selected service registry, its delivery status, and the immutable release reference after verification. The worker verifies the copied artifacts, signatures, and evidence against the signed manifest. A failed second copy leaves the primary Cyber publication available.
+
+Use **Refresh publication** to see the latest status and error. Choose the retry action for the affected destination.
+
+- **Retry publication** retries the approved snapshot at the Cyber destination.
+- **Retry additional release delivery** retries the service copy after the Cyber release has published. The approval must still be valid.
+- On revocation, CATS also queues a copy of the signed revocation event for the selected service destination once the primary revocation publishes. **Retry additional revocation delivery** retries that event.
+
+Cyber reviewers or authorized service managers can retry the additional delivery. If an endpoint, namespace, or destination CA changed, restore the settings recorded for review before retrying. A different recipient requires a new approval request. The original approval and expiry apply to both copies.
 
 Revoked releases and their retained artifacts remain available for audit history only and are no longer authorized for deployment. Revocation does not remove already imported artifacts or automatically enforce a policy in running clusters. Registry access controls and deployment admission policies must enforce who can retrieve or deploy those artifacts.
 

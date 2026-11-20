@@ -113,6 +113,34 @@ def _reserve_distribution(db, key, payload):
     db.add(DiscoveryDistributionScan(distribution_id=distribution.id, scan_job_id=key))
 
 
+def enqueue_job(db, key, payload):
+    """Reserve normal worker capacity and stage a job in the caller's transaction."""
+    payload = {**payload, "correlation_id": payload.get("correlation_id") or correlation.get() or key}
+    if imported_scan_target(db, payload.get("ingest_service_id")):
+        raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(73488292)"))
+    elif payload.get("ingest_scope") == "distribution" and db.get_bind().dialect.name == "sqlite":
+        db.execute(text("BEGIN IMMEDIATE"))
+    if payload.get("ingest_scope") == "distribution":
+        _reserve_distribution(db, key, payload)
+    count = db.scalar(select(func.count()).select_from(ScanJob).where(ScanJob.status.not_in(TERMINAL)))
+    if count >= setting("CATS_SCAN_QUEUE_CAPACITY", 100):
+        raise HTTPException(429, "Scan queue is full")
+    anonymous = not (payload.get("owner_user_id") or payload.get("ingest_service_id") or payload.get("definition_context"))
+    if anonymous:
+        anonymous_count = db.scalar(select(func.count()).select_from(ScanJob).where(ScanJob.status.not_in(TERMINAL), ScanJob.anonymous.is_(True)))
+        if anonymous_count >= min(setting("CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY", 10), setting("CATS_SCAN_QUEUE_CAPACITY", 100) - 1):
+            raise HTTPException(429, "Anonymous scan queue is full")
+    row = ScanJob(id=key, status=payload["status"], payload=dict(payload),
+                   anonymous=anonymous, definition_pending=bool(payload.get("definition_context")),
+                   service_key=payload.get("ingest_service_id", ""),
+                   service_version=payload.get("ingest_service_version", ""),
+                   input_digest=payload.get("input_digest", ""), available_at=now())
+    db.add(row)
+    return row
+
+
 class DurableJobs(MutableMapping):
     """Compatibility read interface for the existing public job endpoints."""
     def __getitem__(self, key):
@@ -123,29 +151,8 @@ class DurableJobs(MutableMapping):
             return dict(row.payload)
 
     def __setitem__(self, key, payload):
-        payload = {**payload, "correlation_id": payload.get("correlation_id") or correlation.get() or key}
         with SessionLocal() as db:
-            if imported_scan_target(db, payload.get("ingest_service_id")):
-                raise HTTPException(409, "Imported service evidence is managed by its OCI publisher")
-            if db.get_bind().dialect.name == "postgresql":
-                db.execute(text("SELECT pg_advisory_xact_lock(73488292)"))
-            elif payload.get("ingest_scope") == "distribution" and db.get_bind().dialect.name == "sqlite":
-                db.execute(text("BEGIN IMMEDIATE"))
-            if payload.get("ingest_scope") == "distribution":
-                _reserve_distribution(db, key, payload)
-            count = db.scalar(select(func.count()).select_from(ScanJob).where(ScanJob.status.not_in(TERMINAL)))
-            if count >= setting("CATS_SCAN_QUEUE_CAPACITY", 100):
-                raise HTTPException(429, "Scan queue is full")
-            anonymous = not (payload.get("owner_user_id") or payload.get("ingest_service_id") or payload.get("definition_context"))
-            if anonymous:
-                anonymous_count = db.scalar(select(func.count()).select_from(ScanJob).where(ScanJob.status.not_in(TERMINAL), ScanJob.anonymous.is_(True)))
-                if anonymous_count >= min(setting("CATS_SCAN_ANONYMOUS_QUEUE_CAPACITY", 10), setting("CATS_SCAN_QUEUE_CAPACITY", 100) - 1):
-                    raise HTTPException(429, "Anonymous scan queue is full")
-            db.add(ScanJob(id=key, status=payload["status"], payload=dict(payload),
-                           anonymous=anonymous, definition_pending=bool(payload.get("definition_context")),
-                           service_key=payload.get("ingest_service_id", ""),
-                           service_version=payload.get("ingest_service_version", ""),
-                           input_digest=payload.get("input_digest", ""), available_at=now()))
+            enqueue_job(db, key, payload)
             db.commit()
 
     def reserve(self, key, payload):
@@ -251,6 +258,19 @@ def claim(worker_id):
                 "error": "Imported service evidence is managed by its OCI publisher"}
             db.commit()
             return None
+        if row.payload.get("pipeline_input_kind"):
+            from .pipeline_scan_dispatch import active_owner_id
+            from .models import Service
+            target = db.get(Service, row.payload.get("ingest_service_db_id"))
+            if (not target or target.service_key != row.service_key or target.lifecycle_status != "active"
+                    or row.payload.get("ingest_service_version") != row.service_version
+                    or not row.payload.get("pipeline_owning_group_id")
+                    or active_owner_id(db, target.id) != row.payload["pipeline_owning_group_id"]):
+                row.status, row.finished_at = "error", now()
+                row.payload = {**row.payload, "status": "error", "phase": "prepare",
+                               "error": "The bound project service or version is unavailable"}
+                db.commit()
+                return None
         if row.payload.get("schedule_context"):
             from .service_scan_schedule import claim_error
             reason = claim_error(db, row, now())

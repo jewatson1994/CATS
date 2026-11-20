@@ -384,6 +384,10 @@ For role changes, update Keycloak roles/groups and have the user sign in again. 
 
 ### The user signs in but sees no services
 
+An OIDC user who signs in successfully with no effective CATS role lands on **Request service access**. The page lists active service names. Select the service you need and submit its access request. You can request several services while awaiting your first grant. A Cybersecurity reviewer with authority over the service can approve an **Assessor** assignment scoped to that service. Refresh the page after approval to enter the portal. Existing OIDC role mappings still take effect at sign-in.
+
+If you expected access through a Keycloak mapping, check the following.
+
 - Confirm the `groups` claim is present.
 - Confirm the Keycloak group name matches an existing CATS group.
 - Confirm that CATS group is assigned to the service.

@@ -3,6 +3,7 @@ import {can, type PageData} from '../api';
 import {Icon, type IconName} from './ui';
 import {OperatingMode, ServiceReadOnly} from '../operatingMode';
 import {ErrorNotifications} from './ErrorDetails';
+import {NotificationBell} from './NotificationBell';
 
 export const PRODUCT_NAME = 'Continuous Assessment & Tracking System';
 
@@ -112,7 +113,6 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
   const path = window.location.pathname;
   const icon = ['blue', 'red', 'gray', 'light'].includes(theme) ? `/static/cats-icon-${theme}.png` : '/static/cats-icon.png';
   const version = data.cats_deployed_version;
-  const pending = Number(data.pending_request_count || 0);
   const adminHref = replica && (can(data, 'replica.admin') || can(data, 'replica.sync')) ? '/admin/replica' : data.may_manage_accounts || can(data, 'user.manage') ? '/admin' : can(data, 'config.manage') ? '/admin/configuration'
     : can(data, 'audit.view') ? '/admin/general-policy' : data.may_manage_risk_policy ? '/admin/risk-policy' : data.may_view_diagnostics === true ? '/admin/diagnostics' : '/admin/approved-release-destinations';
   const mayAdminister = data.may_view_diagnostics === true || can(data, 'replica.admin') || can(data, 'replica.sync') || data.may_manage_accounts || can(data, 'user.manage') || can(data, 'config.manage') || can(data, 'audit.view') || can(data, 'release.destination.manage') || data.may_manage_risk_policy;
@@ -125,13 +125,7 @@ export function Shell({data, children}: {data: PageData; children: ReactNode}) {
       <NavigationGroup label="Cybersecurity" sections={replica ? cyberNav.map(section => ({...section, items: section.items.filter(([href]) => href !== '/cyber-approvals')})) : cyberNav} path={path}/>
       <NavigationGroup label="More" sections={replica ? operationNav.map(section => ({...section, items: section.items.filter(([href]) => !['/sbom', '/requests'].includes(href)).map(item => item[0] === '/remediations' ? [item[0], 'POA&Ms and mitigations', item[2], item[3], 'Imported governance evidence'] as NavItem : item)})).filter(section => section.items.length) : operationNav} path={path}/>
       <span className="header-utilities">
-        <details className="notification-menu"><summary aria-label={pending ? `Notifications (${pending} pending)` : 'Notifications'} title="Notifications"><Icon name="bell"/>
-          {!!pending && <span className="notification-badge" aria-hidden="true">{pending > 99 ? '99+' : pending}</span>}
-        </summary><div className="notification-popover"><div className="notification-head"><strong>Notifications</strong>{!!pending && <span className="count-pill">{pending} pending</span>}</div>
-          {data.actionable_notifications?.length ? <>{data.actionable_notifications.map((item, index) =>
-            <a key={index} className="notification-item" href={item.href || "/requests"}><span className="notification-dot" aria-hidden="true"/><span className="notification-text"><span>{item.label}</span><small>{item.service}</small></span></a>)}
-            <a className="notification-all" href="/requests">View all requests</a></> : <span className="muted notification-empty">No action required.</span>}
-        </div></details>
+        <NotificationBell key={`${data.csrf_token || ''}/${data.announcement?.id || 0}/${data.announcement?.unread || false}`} data={data}/>
         {mayAdminister && <a className="admin-entry" aria-label="Administration" title="Administration" href={adminHref} aria-current={path.startsWith('/admin') ? 'page' : undefined}><Icon name="gear"/></a>}
         <details className="user-menu"><summary title={user.display_name}><span className="user-avatar" aria-hidden="true">{initials(user.display_name)}</span><span className="user-name">{user.display_name}</span><Icon name="chevron"/></summary><div className="menu-popover">
           <div className="user-menu-identity"><strong>{user.display_name}</strong>{version && <small>CATS {version}</small>}</div>

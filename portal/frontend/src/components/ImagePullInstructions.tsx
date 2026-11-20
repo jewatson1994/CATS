@@ -13,8 +13,6 @@ interface PullRoute {
 }
 interface PullInstructions {
   service_id: number;
-  image_id: number;
-  image_reference: string;
   registry: string | null;
   status: 'available' | 'unavailable';
   reason: string | null;
@@ -22,6 +20,18 @@ interface PullInstructions {
 }
 
 export function ImagePullInstructions({image, serviceKey}: {image: PatchableImage; serviceKey: string}) {
+  return <PullDialog reference={image.image_reference}
+    url={`/api/services/${encodeURIComponent(serviceKey)}/artifacts/images/${image.id}/pull`}/>;
+}
+
+export function ReleaseImagePullInstructions({releaseId, index, reference, imported = false}: {
+  releaseId: number; index: number; reference: string; imported?: boolean;
+}) {
+  const base = imported ? '/api/replica/releases' : '/api/approved-releases';
+  return <PullDialog reference={reference} url={`${base}/${releaseId}/artifacts/${index}/pull`}/>;
+}
+
+function PullDialog({reference, url}: {reference: string; url: string}) {
   const [open, setOpen] = useState(false), [attempt, setAttempt] = useState(0);
   const [result, setResult] = useState<PullInstructions | null>(null);
   const [error, setError] = useState(''), [copyNotice, setCopyNotice] = useState('');
@@ -36,11 +46,11 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
     }
     const controller = new AbortController();
     setResult(null); setError(''); setCopyNotice('');
-    requestJson<PullInstructions>(`/api/services/${encodeURIComponent(serviceKey)}/artifacts/images/${image.id}/pull`, {signal: controller.signal})
+    requestJson<PullInstructions>(url, {signal: controller.signal})
       .then(value => {if (!controller.signal.aborted) setResult(value);})
       .catch(cause => {if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not load pull instructions.');});
     return () => controller.abort();
-  }, [open, attempt, serviceKey, image.id]);
+  }, [open, attempt, url]);
   function close() {
     if (typeof dialog.current?.close === 'function') dialog.current.close();
     setOpen(false); trigger.current?.focus();
@@ -50,9 +60,9 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
     catch {setCopyNotice('Could not copy automatically. Select and copy the command below.');}
   }
   const routes = result?.status === 'available' ? result.routes : [];
-  return <><button ref={trigger} type="button" className="secondary-button" aria-label={`Pull ${image.image_reference} from CATS`} onClick={() => setOpen(true)}>Pull from CATS</button>
+  return <><button ref={trigger} type="button" className="secondary-button" aria-label={`Pull ${reference} from CATS`} onClick={() => setOpen(true)}>Pull from CATS</button>
     {open && <dialog ref={dialog} className="review-dialog modal" aria-labelledby={titleId} onCancel={() => setOpen(false)} onClose={() => setOpen(false)}>
-      <h3 id={titleId}>Pull image from CATS</h3><p><code className="image-ref">{image.image_reference}</code></p>
+      <h3 id={titleId}>Pull image from CATS</h3><p><code className="image-ref">{reference}</code></p>
       {!result && !error && <p role="status">Checking this service's image, group pull policy and pull route…</p>}
       {error && <div role="alert"><p>{error}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>Retry</button></div>}
       {result && <><p>Service ID: <strong>{result.service_id}</strong>{result.registry && <> · Registry: <code>{result.registry}</code></>}</p>
@@ -66,6 +76,7 @@ export function ImagePullInstructions({image, serviceKey}: {image: PatchableImag
                 {login && <><pre><code>{login}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(login, 'Login command')}>{routes.length > 1 ? `Copy login command ${index + 1}` : 'Copy login command'}</button></>}
               </div> : <p>No sign-in required. This service allows anonymous pulls.</p>}
               <pre><code>{route.command}</code></pre><button type="button" className="secondary-button" onClick={() => void copy(route.command, 'Pull command')}>{routes.length > 1 ? `Copy pull command ${index + 1}` : 'Copy pull command'}</button>
+              <button type="button" className="secondary-button" onClick={() => void copy(route.reference, 'Deployment image reference')}>{routes.length > 1 ? `Copy deployment image reference ${index + 1}` : 'Copy deployment image reference'}</button>
             </section>;
           })}
           <p>CATS checks this service's group pull policy again when the image is pulled.</p>

@@ -282,9 +282,17 @@ def gather(mode, existing, manifest):
     required_secret(values, "CATS_BOOTSTRAP_PASSWORD", "Initial administrator password", minimum=12)
     required_secret(values, "CATS_CONFIG_ENCRYPTION_KEY", "Fernet encryption key", fernet=True)
     if mode == "main":
-        for key in ("PIPELINE_API_TOKEN", "CATS_PATCH_WORKER_TOKEN", "CATS_SCAN_WORKER_TOKEN"):
+        token_keys = ["CATS_PATCH_WORKER_TOKEN", "CATS_SCAN_WORKER_TOKEN"]
+        for key in token_keys:
             required_secret(values, key, key, minimum=32)
-        if len({values[k] for k in ("PIPELINE_API_TOKEN", "CATS_PATCH_WORKER_TOKEN", "CATS_SCAN_WORKER_TOKEN")}) != 3:
+        legacy_token = values.get("PIPELINE_API_TOKEN", "")
+        if legacy_token in {"replace-with-a-long-random-pipeline-token", "replace-with-a-long-random-token"}:
+            values["PIPELINE_API_TOKEN"] = ""
+        elif legacy_token:
+            if len(legacy_token) < 32:
+                raise SetupError("PIPELINE_API_TOKEN must contain at least 32 characters when configured.")
+            token_keys.append("PIPELINE_API_TOKEN")
+        if len({values[k] for k in token_keys}) != len(token_keys):
             raise SetupError("Use distinct pipeline, patch and scan tokens.")
         values["CATS_KIND_NODE_IMAGE"] = ask("Kind node image tag or digest (optional Deployment Validation)", values["CATS_KIND_NODE_IMAGE"])
         if not values["CATS_KIND_NODE_IMAGE"] or any(c.isspace() for c in values["CATS_KIND_NODE_IMAGE"]) or values["CATS_KIND_NODE_IMAGE"].startswith("-"):

@@ -1,6 +1,7 @@
 import {useServiceReadOnly} from '../operatingMode';
 import {ImagePullInstructions} from '../components/ImagePullInstructions';
 import {ServicePullAccess} from '../components/ServicePullAccess';
+import {ProjectIntegrations} from './ProjectIntegrations';
 import {ServiceRisk} from './risk_intelligence';
 import {ServiceScanSchedule} from './ServiceScanSchedule';
 
@@ -82,6 +83,7 @@ export function Page({data}: {data: PageData}) {
     <div className="service-controls-grid" role="group" aria-label="Service controls">
       <ServiceScanSchedule key={`schedule-${service.id}`} data={data} root={root}/>
       <ServicePullAccess key={`pull-${service.id}`} data={data} serviceId={service.id}/>
+      {!readOnly && can(data, 'service.edit', service.id) && <ProjectIntegrations key={service.id} data={data}/>}
     </div>
     <section className="normalized-overview" aria-labelledby="overview-title"><div className="section-title-row"><h2 id="overview-title">Declared configuration</h2><p className="overview-provenance">Source: {overview.source}{validation.execution_key && <> · Helm evidence execution: <code>{validation.execution_key}</code></>} · Runtime-observed traffic is not inferred.</p></div>{overview.description && <p className="overview-description">{overview.description}</p>}{overview.warnings?.length > 0 && <Callout tone="warning" title="Static-analysis warning" className="overview-render-warning">{overview.warnings.map((warning: any, index: number) => <div key={index}><p>{warning.message}{warning.chart && <> Chart: <code>{warning.chart}</code>.</>}{warning.source && warning.source !== '—' && <> Source: <code>{warning.source}</code>.</>}{warning.unrecognized_images?.length > 0 && <> Unrecognized image(s): {warning.unrecognized_images.join(', ')}</>}</p>{warning.original_error && <details><summary>Helm diagnostic</summary><code>{warning.original_error}</code></details>}</div>)}</Callout>}
       {overview.compose && <ComposeInventory model={overview.compose}/>}

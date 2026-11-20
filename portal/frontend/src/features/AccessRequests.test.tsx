@@ -4,6 +4,19 @@ import {AccessRequests} from './AccessRequests';
 import {requestJson} from '../api';
 vi.mock('../api', () => ({requestJson: vi.fn()}));
 afterEach(() => {cleanup(); vi.resetAllMocks();});
+it('approves only the selected service and keeps the other request for the same account', async () => {
+  vi.mocked(requestJson).mockResolvedValueOnce({requests: [
+    {user_id: 3, username: 'new-user', service_id: 20, service_name: 'Alpha'},
+    {user_id: 3, username: 'new-user', service_id: 21, service_name: 'Beta'},
+  ], groups: []}).mockResolvedValueOnce({status: 'claimed'});
+  render(<AccessRequests data={{csrf_token: 'csrf'}}/>);
+  const form = (await screen.findByText('Alpha')).closest('form')!;
+  expect(form.querySelector('select')).toBeNull();
+  fireEvent.submit(form);
+  await waitFor(() => expect(screen.queryByText('Alpha')).toBeNull());
+  expect(JSON.parse(vi.mocked(requestJson).mock.calls[1][1]?.body as string)).toEqual({csrf_token: 'csrf', service_id: 20});
+  expect(screen.getByText('Beta')).toBeInTheDocument();
+});
 it('requires a group and claims the exact pending account with CSRF', async () => {
   vi.mocked(requestJson).mockResolvedValueOnce({requests: [{user_id: 3, username: 'new-user', display_name: 'New user'}], groups: [{id: 4, name: 'Finance'}, {id: 5, name: 'Operations'}]}).mockResolvedValueOnce({status: 'claimed'});
   render(<AccessRequests data={{csrf_token: 'csrf'}}/>);

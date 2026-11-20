@@ -93,11 +93,11 @@ def _response_date_formatters(formatters):
 def _service_data(data, context, can, formatters):
     view = context.get("view", {})
     service = _field(view, "service")
-    service_data = _fields(service, ("id", "service_key", "name", "owner", "poc", "description", "manual_version", "assessment_status"))
+    service_data = _fields(service, ("id", "service_key", "name", "owner", "poc", "description", "manual_version", "assessment_status", "lifecycle_status"))
     service_data["groups"] = [_fields(group, ("id", "name")) for group in _field(service, "groups", [])]
     service_id = _field(service, "id")
     for permission in ("service.edit", "service.delete", "archive.request", "exception.request",
-                       "exception.revoke", "poam.request", "remediation.execute", "service.export", "bundle.export", "approval.request", "approval.decide"):
+                       "exception.revoke", "poam.request", "remediation.execute", "scan.ingest", "service.export", "bundle.export", "approval.request", "approval.decide"):
         data["can"][permission] = {str(service_id): bool(can(permission, service_id)) if callable(can) else False}
     data["view"] = _fields(view, ("version", "compliant", "archive"))
     data["view"]["service"] = service_data
@@ -178,6 +178,8 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         "permissions": {permission: bool(can(permission)) if callable(can) else False
                         for permission in ("user.manage", "config.manage", "audit.view", "approval.request", "approval.decide", "release.destination.manage", "replica.admin", "replica.sync")},
         "pending_request_count": _scalar(context.get("pending_request_count", 0)),
+        "announcement": _fields(context["announcement"], ("id", "title", "message", "expires_at", "unread"))
+                        if user is not None and context.get("announcement") else None,
         "pending_poam_count": _scalar(context.get("pending_poam_count", 0)),
         "actionable_notifications": [_fields(item, ("label", "service", "href"))
                                      for item in context.get("actionable_notifications", [])],

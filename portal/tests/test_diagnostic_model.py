@@ -63,6 +63,7 @@ def test_redaction_covers_headers_nested_fields_cli_urls_and_tokens():
             "cookie": "hidden9", "raw": 'eyJabc.def.ghi', "bytes": b"hidden10"}
     result = json.dumps(sanitize(item))
     assert all(f"hidden{number}" not in result for number in range(1, 11))
+    assert sanitize("invalid cats_project_example_secret.abc-123") == "invalid [REDACTED PROJECT TOKEN]"
     assert "eyJabc" not in result
 
 

@@ -1,6 +1,13 @@
 """Single owning-group rules, retaining legacy conflicts for explicit repair."""
-from sqlalchemy import select
-from .models import Group
+from sqlalchemy import func, select
+from .models import Group, Service, ServiceArchiveEvent
+
+
+def active_service_predicate():
+    latest_action = (select(ServiceArchiveEvent.action).where(ServiceArchiveEvent.service_id == Service.id)
+                     .order_by(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc()).limit(1)
+                     .correlate(Service).scalar_subquery())
+    return (Service.lifecycle_status == "active") & (func.coalesce(latest_action, "") != "archive")
 
 
 def require_owner(service):

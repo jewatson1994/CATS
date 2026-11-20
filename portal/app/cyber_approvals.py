@@ -18,7 +18,7 @@ from .auth import AuthContext, require_user, record_audit
 from .durable_jobs import DurableJob, submit, JobError
 from .service_oci import validate_destination, _csrf
 from .secrets import encrypt_secret, decrypt_secret
-from . import signing, release_validity
+from . import signing, release_validity, additional_release_delivery as additional
 from .imported_services import imported_service_predicate, is_imported_service
 
 router = APIRouter()
@@ -102,6 +102,17 @@ def _eligible(destination, service):
     return destination.enabled and (not destination.group_ids or bool(set(destination.group_ids) & {group.id for group in service.groups}))
 
 
+def _eligible_destinations(db, service):
+    rows = db.scalars(select(ApprovedReleaseDestination).order_by(
+        ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id))
+    return [row for row in rows if _eligible(row, service)]
+
+
+def _require_cyber_default(eligible, selected):
+    if eligible and eligible[0].is_default and eligible[0].id != selected.id:
+        raise HTTPException(422, 'The configured Cyber default is required as the primary release destination')
+
+
 def _settings(db):
     return {row.key: row.value for row in db.scalars(select(PortalSetting))}
 
@@ -117,7 +128,7 @@ def _signing_ready(db):
 def _readiness(db, service, variant, remediation_id, distribution_id=None):
     from .cyber_approval_evidence import readiness
     result = readiness(db, service, variant, remediation_id, distribution_id=distribution_id)
-    destinations = [public_destination(row) for row in db.scalars(select(ApprovedReleaseDestination)) if _eligible(row, service)]
+    destinations = [public_destination(row) for row in _eligible_destinations(db, service)]
     notes = list(result.get('review_notes', []))
     if not destinations:
         notes.append('An administrator must configure an approved-release OCI destination before Cyber approves publication.')
@@ -134,7 +145,10 @@ def readiness_api(key: str, variant: str = 'current_service', remediation_id: in
     service = _service(db, auth, key)
     result = _readiness(db, service, variant, remediation_id, distribution_id)
     execution = result.get('execution')
+    can_select = additional.selectable(auth, service.id)
     return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant', 'review_notes', 'distribution')} | {
+        'service_id': service.id, 'can_select_additional_destination': can_select,
+        'additional_destinations': additional.options(db, service.id) if can_select else [],
         'source_execution_id': execution.id if execution else None,
         'executions': [{'id': execution.id, 'scanned_at': execution.scanned_at.isoformat()}] if execution else [],
         'remediations': [{'id': row.id, 'label': row.job_key} for row in db.scalars(select(RemediationExecution).where(
@@ -179,9 +193,12 @@ def dto(db, row, auth, detail=False):
                 and auth.has('approval.decide', row.service_id)))
     if detail:
         result['snapshot'] = _public(row.snapshot)
+        result['additional_destination'] = row.snapshot.get('additional_destination')
+        result['additional_deliveries'] = additional.details(db, auth, row)
         if row.status == 'pending' and not row.destination_id:
-            result['destinations'] = [public_destination(item) for item in db.scalars(select(ApprovedReleaseDestination).order_by(
-                ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id)) if _eligible(item, service)]
+            eligible = _eligible_destinations(db, service)
+            choices = eligible[:1] if eligible and eligible[0].is_default else eligible
+            result['destinations'] = [public_destination(item) for item in choices]
         if auth.has('service.export', row.service_id):
             result['evidence_url'] = f'/api/cyber-approvals/{row.id}/download/evidence'
             if row.publish_status == 'published':
@@ -229,13 +246,15 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         raise HTTPException(409, {'message': 'Resolve all missing evidence before requesting approval', 'blockers': result['blockers']})
     if distribution_id is not None and result['execution'].id != data.get('expected_source_execution_id'):
         raise HTTPException(409, 'Distribution scan changed. Review its current evidence before submitting.')
-    eligible = [row for row in db.scalars(select(ApprovedReleaseDestination).order_by(
-        ApprovedReleaseDestination.is_default.desc(), ApprovedReleaseDestination.id)) if _eligible(row, service)]
+    eligible = _eligible_destinations(db, service)
     destination = eligible[0] if eligible else None
     if data.get('destination_id') is not None:
         destination = next((row for row in eligible if str(row.id) == str(data['destination_id'])), None)
         if destination is None:
             raise HTTPException(422, 'Select an available approved-release destination')
+        _require_cyber_default(eligible, destination)
+    extra = additional.freeze_target(db, auth, service.id, data.get('additional_destination_id'),
+                                     public_destination(destination) if destination else None)
     renewal = None
     event = None
     if data.get('renews_approval_id') is not None:
@@ -279,6 +298,8 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     except ValueError:
         fingerprint = None
     snapshot.update(variant=variant, destination=frozen_destination, signing_fingerprint=fingerprint)
+    if extra:
+        snapshot['additional_destination'] = extra
     if 'release_revision' in data:
         from . import release_revisions
         snapshot['release_revision'] = data['release_revision']
@@ -365,7 +386,9 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
             destination = db.get(ApprovedReleaseDestination, data.get('destination_id')) if data.get('destination_id') else None
             if not destination or not _eligible(destination, db.get(Service, row.service_id)):
                 raise HTTPException(409, 'Configure and select an approved-release OCI destination before approving publication')
+            _require_cyber_default(_eligible_destinations(db, db.get(Service, row.service_id)), destination)
             frozen = public_destination(destination)
+            additional.reject_duplicate(frozen, snapshot.get('additional_destination'))
             frozen['ca_digest'] = hashlib.sha256(destination.ca_pem.encode()).hexdigest()
             snapshot['destination'] = frozen
             bound.update(destination_id=destination.id, destination=frozen)
@@ -443,6 +466,27 @@ def retry(identity: int, request: Request, db: Session = Depends(get_db), auth: 
     db.refresh(row)
     _enqueue(db, row, auth.user.id)
     record_audit(db, auth, 'cyber_release.retry', 'cyber_approval', row.id)
+    db.commit()
+    return dto(db, row, auth, True)
+
+
+@router.post('/api/approved-releases/{identity}/additional-deliveries/{kind}/retry')
+def retry_additional(identity: int, kind: str, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+    _csrf(request, auth)
+    row = _record(db, auth, identity)
+    if not (auth.has('approval.decide', row.service_id) or additional.selectable(auth, row.service_id)):
+        raise HTTPException(403, 'Permission denied')
+    model = additional.AdditionalReleaseDelivery
+    if kind not in ('release', 'revocation') or not additional.can_retry(auth, row, kind):
+        raise HTTPException(409, 'Only failed, authorized additional deliveries can be retried')
+    changed = db.execute(update(model).where(model.approval_id == row.id, model.kind == kind,
+                                              model.status == 'failed').values(status='queued')).rowcount
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(409, 'Only failed, authorized additional deliveries can be retried')
+    delivery = db.get(model, (row.id, kind))
+    additional.enqueue(db, row, delivery, auth.user.id)
+    record_audit(db, auth, 'cyber_release.additional.retry', 'cyber_approval', row.id, delivery_kind=kind)
     db.commit()
     return dto(db, row, auth, True)
 
@@ -536,6 +580,8 @@ async def save_destination(request: Request, db: Session = Depends(get_db), auth
 def publish_job(ctx, payload):
     from .cyber_release_publication import publish, PublicationError, failure_diagnostic
     from .delivery_execution import delivery_lock
+    if payload.get('additional_delivery'):
+        return additional.run(ctx, payload)
     with delivery_lock(root() / '.locks', int(payload['approval_id'])) as owned:
         if not owned:
             raise JobError('Another publisher still owns this release. Retry after it finishes.')
@@ -595,6 +641,7 @@ def publish_job(ctx, payload):
                     raise JobError('Offline bundle integrity check failed')
                 check_owner()
                 row.publication, row.publish_status = receipt, 'published'
+                additional.schedule(db, row, 'release')
                 record_audit(db, None, 'cyber_release.published', 'cyber_approval', row.id, snapshot_digest=row.snapshot_digest)
                 db.commit()
                 return {'result_url': f'/approved-releases?id={row.id}', 'approval_id': row.id}
@@ -635,6 +682,8 @@ def _publish_revocation_job(ctx, payload):
                     raise JobError('Revocation publication authorization changed')
                 row.publication = {**(row.publication or {}), 'revocation': dict(receipt)}
                 row.publish_status = 'publishing' if receipt['status'] == 'publishing' else receipt['status']
+                if receipt['status'] == 'published' and receipt.get('verification_status') == 'verified' and receipt.get('signature_status') == 'verified':
+                    additional.schedule(db, row, 'revocation')
                 db.commit()
             ctx.stage('Publishing signed Cyber revocation', 10)
             private_destination = {**public_destination(destination), 'username': decrypt_secret(destination.username),
@@ -661,6 +710,7 @@ def _publish_revocation_job(ctx, payload):
 
 
 def reconcile_jobs(db):
+    additional.reconcile(db)
     for row in db.scalars(select(CyberApproval).where(CyberApproval.publish_status.in_(('queued', 'publishing')),
             ~imported_service_predicate(CyberApproval.service_id))):
         job = db.get(DurableJob, row.job_id) if row.job_id else None

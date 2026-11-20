@@ -10,6 +10,7 @@ import {ServiceTabs} from '../components/ServiceHeader';
 import {AdminTabs, Heading} from './admin_shared';
 import './cyber_approvals.css';
 import {ApprovalFindings} from './approval_findings';
+import {ReleaseImagePullInstructions} from '../components/ImagePullInstructions';
 
 type Row = Record<string, any>;
 const variantLabel = (variant: string) => variant === 'cats_remediated' ? 'CATS Remediated' : 'Current Service';
@@ -103,8 +104,18 @@ function ServiceAtAGlance({snapshot}: {snapshot: Row}) {
   </section>;
 }
 
+function destinationAddress(destination: Row) {
+  return destination.endpoint ? `${destination.endpoint}/${destination.namespace || 'cyber-approved'}` : '';
+}
+
+function RegistryAddress({destination, label}: {destination: Row; label: string}) {
+  return <p className="release-destination"><span className="approval-muted">{label}</span>
+    <strong>{destination.name}</strong><code>{destinationAddress(destination)}</code></p>;
+}
+
 export function RequestApproval({data, serviceKey, amendmentProposalId, distributionId}: {data: PageData; serviceKey: string; amendmentProposalId?: number; distributionId?: string}) {
   const [selection, setSelection] = useState('current_service'), [candidates, setCandidates] = useState<Row[]>([]);
+  const [additionalId, setAdditionalId] = useState('');
   const variant = selection === 'current_service' ? 'current_service' : 'cats_remediated';
   const remediation = variant === 'cats_remediated' ? selection.slice('cats_remediated:'.length) : '';
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [created, setCreated] = useState<Row | null>(null);
@@ -115,17 +126,37 @@ export function RequestApproval({data, serviceKey, amendmentProposalId, distribu
   const ready = readiness.value;
   useEffect(() => {if (ready) setCandidates(list(ready.remediations));}, [ready]);
   const allowed = ready?.can_request ?? data.can_request ?? can(data, 'approval.request', ready?.service_id ?? data.service?.id);
+  const cyberDestinations = list(ready?.destinations);
+  const primary = cyberDestinations.find(item => item.is_default) || [...cyberDestinations].sort((a, b) => Number(a.id) - Number(b.id))[0];
+  const additionalOptions = list(ready?.additional_destinations);
+  const selectedAdditional = ready?.can_select_additional_destination && additionalOptions.find(item => item.id === additionalId);
+  const destinationUnavailable = Boolean(ready && additionalId && !selectedAdditional);
   const selectionMatches = !distributionId || String(ready?.distribution?.id) === distributionId;
   const canSubmitEvidence = ready?.ready && selectionMatches && (!distributionId || Number.isInteger(ready.source_execution_id));
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); if (!canSubmitEvidence || !allowed || busy) return;
+    event.preventDefault(); if (!canSubmitEvidence || !allowed || busy || destinationUnavailable) return;
     setBusy(true); setError('');
-    try {setCreated(await mutate(data, '/api/cyber-approvals', {service_key: serviceKey, variant, remediation_id: remediation || undefined, ...(amendmentProposalId ? {amendment_proposal_id: amendmentProposalId} : {}), ...(distributionId ? {distribution_id: distributionId, expected_source_execution_id: ready.source_execution_id} : {})}));}
+    try {setCreated(await mutate(data, '/api/cyber-approvals', {service_key: serviceKey, variant, remediation_id: remediation || undefined, ...(selectedAdditional ? {additional_destination_id: selectedAdditional.id} : {}), ...(amendmentProposalId ? {amendment_proposal_id: amendmentProposalId} : {}), ...(distributionId ? {distribution_id: distributionId, expected_source_execution_id: ready.source_execution_id} : {})}));}
     catch (error) {setError(message(error)); readiness.refresh();} finally {setBusy(false);}
   };
   if (created) return <section className="panel padded"><h2>Cyber approval requested</h2><p role="status">The snapshot is ready for Cyber review.</p><a href={`/cyber-approvals?id=${encodeURIComponent(created.id)}`}>Review request #{created.id}</a></section>;
   return <section className="panel padded"><h2>Request Cyber Approval</h2>{amendmentProposalId && <p role="note">Amendment proposal #{amendmentProposalId} requires an actual fresh service assessment containing the replacement artifact. Selecting a proposal does not run an assessment or prove that its evidence is current. Retain the new assessment and service validation before submitting; the server verifies the evidence and current base revision.</p>}<p>Choose the release to submit. Cyber reviews vulnerabilities, configuration coverage, mitigations, exceptions and deployment verification.</p>{!amendmentProposalId && <p><a href={`/services/${encodeURIComponent(serviceKey)}?artifacts=true#service-distributions`}>Choose a saved service distribution</a></p>}
-    <form className="approval-form" onSubmit={submit}>{distributionId ? <div><h3>Distribution for review</h3>{ready?.distribution && selectionMatches ? <><strong>{ready.distribution.name}</strong><DistributionDetails selection={ready.distribution}/></> : <code>{distributionId}</code>}</div> : <label>Release variant<select disabled={busy} value={selection} onChange={event => setSelection(event.target.value)}><option value="current_service">Current Service</option>{candidates.map(row => <option key={row.id} value={`cats_remediated:${row.id}`}>CATS Remediated · {row.label || row.id}</option>)}</select></label>}<ResourceState error={readiness.error} pending={!ready && !readiness.error}/>{ready && <><div className="approval-readiness" role="status"><StatusBadge value={canSubmitEvidence ? 'ready' : 'blocked'} label={canSubmitEvidence ? 'Ready for Cyber review' : 'Evidence incomplete'}/><p>Version: {ready.version || 'Unknown'} · Scan date: {ready.scan_date || 'Not recorded'}</p>{distributionId && !canSubmitEvidence && !ready.blockers?.length && <p>A completed scan for this distribution is required.</p>}{!!ready.blockers?.length && <ul>{ready.blockers.map((reason: string, index: number) => <li key={index}>{reason}</li>)}</ul>}</div>{!allowed && <p>You do not have permission to request Cyber approval for this service.</p>}</>}<ResourceState error={error} pending={false}/><button disabled={busy || !canSubmitEvidence || !allowed}>{busy ? 'Submitting…' : 'Request Cyber Approval'}</button></form></section>;
+    <form className="approval-form" onSubmit={submit}>{distributionId ? <div><h3>Distribution for review</h3>{ready?.distribution && selectionMatches ? <><strong>{ready.distribution.name}</strong><DistributionDetails selection={ready.distribution}/></> : <code>{distributionId}</code>}</div> : <label>Release variant<select disabled={busy} value={selection} onChange={event => setSelection(event.target.value)}><option value="current_service">Current Service</option>{candidates.map(row => <option key={row.id} value={`cats_remediated:${row.id}`}>CATS Remediated · {row.label || row.id}</option>)}</select></label>}<ResourceState error={readiness.error} pending={!ready && !readiness.error}/>{ready && <><div className="approval-readiness" role="status"><StatusBadge value={canSubmitEvidence ? 'ready' : 'blocked'} label={canSubmitEvidence ? 'Ready for Cyber review' : 'Evidence incomplete'}/><p>Version: {ready.version || 'Unknown'} · Scan date: {ready.scan_date || 'Not recorded'}</p>{distributionId && !canSubmitEvidence && !ready.blockers?.length && <p>A completed scan for this distribution is required.</p>}{!!ready.blockers?.length && <ul>{ready.blockers.map((reason: string, index: number) => <li key={index}>{reason}</li>)}</ul>}</div>
+      <fieldset disabled={busy}><legend>Release destinations</legend>
+        {primary ? <RegistryAddress label="Cyber destination" destination={primary}/> : <p>Cyber must configure a registry before approving publication.</p>}
+        {allowed && ready.can_select_additional_destination && <>
+          {additionalOptions.length > 0 && <label>Additional service destination (optional)
+            <select value={selectedAdditional ? additionalId : ''} onChange={event => setAdditionalId(event.target.value)}>
+              <option value="">Cyber destination only</option>
+              {additionalOptions.map(item => <option key={item.id} value={item.id}>{item.name} ({destinationAddress(item)})</option>)}
+            </select></label>}
+          <p>{additionalOptions.length ? 'Selecting an additional destination sends the approved release and its body of evidence to both registries.' : 'To send the approved release and its body of evidence to a second registry, add a service OCI destination.'}</p>
+          <a href={`/services/${encodeURIComponent(serviceKey)}?remediations=true`}>Manage OCI destinations in Service remediation</a>
+        </>}
+        {destinationUnavailable && <p role="alert">The selected service destination is no longer available.{' '}
+          <button type="button" className="secondary-button" onClick={() => setAdditionalId('')}>Clear selection</button></p>}
+      </fieldset>
+      {!allowed && <p>You do not have permission to request Cyber approval for this service.</p>}</>}<ResourceState error={error} pending={false}/><button disabled={busy || !canSubmitEvidence || !allowed || destinationUnavailable}>{busy ? 'Submitting…' : 'Request Cyber Approval'}</button></form></section>;
 }
 
 function Decision({data, row, refresh}: {data: PageData; row: Row; refresh: () => void}) {
@@ -138,7 +169,7 @@ function Decision({data, row, refresh}: {data: PageData; row: Row; refresh: () =
     try {await mutate(data, `/api/cyber-approvals/${row.id}/decision`, {decision, rationale: rationale.trim(), ...(selectedDestination ? {destination_id:Number(selectedDestination)} : {})}); refresh();}
     catch (error) {setError(message(error));} finally {setBusy(false);}
   }
-  return <section className="panel padded"><h2>Cyber decision</h2><p>Review the retained snapshot above. An approval authorizes signed publication to the recorded destination. Review any tag-only image identity limitations before approving.</p><form className="approval-form" onSubmit={submit}><label>Decision<select value={decision} onChange={event => setDecision(event.target.value)}><option value="approved">Approve</option><option value="denied">Deny</option></select></label>{!row.destination?.id && !!row.destinations && <label>Approved release destination<select value={selectedDestination} onChange={event => setDestination(event.target.value)}><option value="">Configure a destination before approving</option>{list(row.destinations).map(item => <option key={item.id} value={item.id}>{item.name} · {item.endpoint}/{item.namespace}</option>)}</select></label>}<label>Decision rationale<textarea required minLength={3} maxLength={10000} value={rationale} onChange={event => setRationale(event.target.value)}/></label><ResourceState error={error} pending={false}/><button disabled={busy || rationale.trim().length < 3}>{busy ? 'Saving decision…' : decision === 'approved' ? 'Approve snapshot' : 'Deny snapshot'}</button></form></section>;
+  return <section className="panel padded"><h2>Cyber decision</h2><p>Review the retained snapshot above. An approval authorizes publication of the signed release and its body of evidence to the listed destinations. Review any tag-only image identity limitations before approving.</p><form className="approval-form" onSubmit={submit}><label>Decision<select value={decision} onChange={event => setDecision(event.target.value)}><option value="approved">Approve</option><option value="denied">Deny</option></select></label>{!row.destination?.id && !!row.destinations && <label>Approved release destination<select value={selectedDestination} onChange={event => setDestination(event.target.value)}><option value="">Configure a destination before approving</option>{list(row.destinations).map(item => <option key={item.id} value={item.id}>{item.name} · {destinationAddress(item)}</option>)}</select></label>}<label>Decision rationale<textarea required minLength={3} maxLength={10000} value={rationale} onChange={event => setRationale(event.target.value)}/></label><ResourceState error={error} pending={false}/><button disabled={busy || rationale.trim().length < 3}>{busy ? 'Saving decision…' : decision === 'approved' ? 'Approve snapshot' : 'Deny snapshot'}</button></form></section>;
 }
 
 export function Reassessment({data, row}: {data: PageData; row: Row}) {
@@ -216,6 +247,11 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <details className="approval-support-section"><summary>Request record</summary><dl className="approval-metadata">{[['Requested', dateLabel(row.requested_at)], ['Requested by', row.requested_by], ['Destination', row.destination?.name], ['Registry', row.destination?.endpoint], ['Namespace', row.destination?.namespace], ['Snapshot digest', row.snapshot_digest || snapshot.digest], ['Request context', row.rationale], ['Decision rationale', row.decision_rationale], ['Decided', dateLabel(row.decided_at)]].map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{label(value) || '—'}</dd></div>)}</dl></details>
         <SnapshotDetails snapshot={snapshot}/>
       </section>
+      {(row.destination?.id || row.additional_destination) && <section className="panel padded" aria-label="Requested release destinations">
+        <h2>Requested release destinations</h2>
+        {row.destination?.id && <RegistryAddress label="Cyber destination" destination={row.destination}/>}
+        {row.additional_destination && <RegistryAddress label="Additional service destination" destination={row.additional_destination}/>}
+      </section>}
       <Decision data={data} row={row} refresh={resource.refresh}/>
       {row.status === 'approved' && (snapshot.distribution ? <section className="panel padded">
         <h2>Reassess this distribution</h2>
@@ -318,13 +354,22 @@ export function ReleaseDetail({data, id}: {data: PageData; id: string}) {
 }
 function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
   const resource = useResource(`/api/approved-releases/${encodeURIComponent(id)}`), row = resource.value;
-  const [busy, setBusy] = useState<'retry' | 'revoke' | null>(null), [error, setError] = useState('');
+  const [busy, setBusy] = useState<'retry' | 'revoke' | 'additional-release' | 'additional-revocation' | null>(null), [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false), [rationale, setRationale] = useState(''), [notice, setNotice] = useState('');
   async function retry() {
     if (busy) return;
     setBusy('retry'); setError(''); setNotice('');
     try {await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/retry`, {}); resource.refresh();}
     catch (error) {setError(message(error));} finally {setBusy(null);}
+  }
+  async function retryAdditional(kind: 'release' | 'revocation') {
+    if (busy) return;
+    setBusy(`additional-${kind}`); setError(''); setNotice('');
+    try {
+      const result = await mutate(data, `/api/approved-releases/${encodeURIComponent(id)}/additional-deliveries/${kind}/retry`, {});
+      resource.update(result);
+      setNotice(`Additional ${kind} delivery queued.`);
+    } catch (cause) {setError(message(cause));} finally {setBusy(null);}
   }
   async function revoke(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -336,12 +381,13 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
     } catch (error) {setError(message(error));} finally {setBusy(null);}
   }
   const publication = row?.publication || {}, artifacts = list(row?.artifacts || publication.artifacts || []);
+  const images = list(row?.snapshot?.artifacts).map((artifact, index) => ({artifact, index}))
+    .filter(({artifact}) => artifact?.kind === 'image');
   const revocation = publication.revocation || {};
   const publishing = ['queued', 'publishing'].includes(row?.publish_status);
   const canRetry = row?.publish_status === 'failed' && (row.revoked
     ? row.can_retry === true && Boolean(revocation.portable)
     : currentApproval(row) && (row.can_retry ?? can(data, 'approval.decide', row.service_id)));
-  const destination = [row?.destination?.endpoint, row?.destination?.namespace].filter(Boolean).join('/');
   return <div className="release-detail">
     <a className="back" href="/approved-releases">All approved releases</a>
     <ResourceState error={resource.error} pending={!row && !resource.error}/>
@@ -376,7 +422,7 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
       <section className="panel padded release-publication" aria-label="Release publication">
         <div className="release-section-heading"><h2>Publication</h2><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></div>
         <p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p>
-        <p className="release-destination"><span className="approval-muted">Destination</span> <strong>{row.destination?.name || 'Not recorded'}</strong>{destination && <code>{destination}</code>}</p>
+        {row.destination?.name ? <RegistryAddress label="Cyber destination" destination={row.destination}/> : <p>Cyber destination not recorded.</p>}
         {publishing && !row.revoked && <p className="approval-muted">Revocation is available after publication completes or fails.</p>}
         {row.revoked && revocation.status && <p>Signed revocation: <StatusBadge value={revocation.status}/>{['queued', 'publishing'].includes(revocation.status) && ' Other CATS installations update after publication and synchronization.'}</p>}
         {(row.publish_error || publication.error || revocation.error) && <p className="error" role="alert">{row.publish_error || publication.error || revocation.error}</p>}
@@ -384,7 +430,30 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
         {!confirming && <ResourceState error={error} pending={false}/>}
         {canRetry && <button type="button" className="secondary-button" disabled={!!busy} onClick={retry}>{busy === 'retry' ? 'Queuing publication…' : row.revoked ? 'Retry revocation publication' : 'Retry publication'}</button>}
       </section>
+      {row.additional_destination && <section className="panel padded release-publication" aria-label="Additional service delivery">
+        <h2>Additional service delivery</h2>
+        <RegistryAddress label="Service destination" destination={row.additional_destination}/>
+        {list(row.additional_deliveries).length === 0 && <p>Delivery of the approved release and its body of evidence has not started.</p>}
+        {list(row.additional_deliveries).map(delivery => {
+          const kind: 'release' | 'revocation' = delivery.kind === 'revocation' ? 'revocation' : 'release';
+          return <div key={kind}>
+            <p>{kind === 'revocation' ? 'Signed revocation' : 'Approved release and body of evidence'} <StatusBadge value={delivery.status}/></p>
+            {delivery.reference && <ReleaseReference title={kind === 'revocation' ? 'Additional revocation reference' : 'Additional release reference'} value={delivery.reference}/>}
+            {delivery.error && <p role="alert">{delivery.error}</p>}
+            {delivery.can_retry && <button type="button" className="secondary-button" disabled={!!busy || confirming}
+              onClick={() => void retryAdditional(kind)}>Retry additional {kind} delivery</button>}
+          </div>;
+        })}
+      </section>}
       <FrozenDistribution selection={row.snapshot?.distribution}/>
+      {images.length > 0 && <section className="panel padded" aria-label="Pull release images from CATS">
+        <h2>Pull release images from CATS</h2>
+        <p>Use each image’s digest-pinned reference in your deployment. These images come from this release’s approved snapshot.</p>
+        <ul className="release-artifact-list">{images.map(({artifact, index}) =>
+          <li key={index}><code className="image-ref">{artifact.reference}</code>
+            {currentApproval(row) && !row.revoked && <ReleaseImagePullInstructions releaseId={row.id} index={index} reference={artifact.reference}/>}
+          </li>)}</ul>
+      </section>}
       <div className="release-content-grid">
         <section className="panel padded release-artifacts" aria-label="Immutable artifacts">
           <div className="release-section-heading"><h2>Immutable artifacts</h2><span className="approval-count">{artifacts.length} {artifacts.length === 1 ? 'artifact' : 'artifacts'}</span></div>
@@ -420,7 +489,7 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
 
 export function Destinations({data}: {data: PageData}) {
   const resource = useResource('/api/approved-release-destinations'), [editing, setEditing] = useState<Row | null>(null), [notice, setNotice] = useState('');
-  return <><Heading title="Approved Release Destinations" description="Configure the OCI registries used to publish Cyber-approved service snapshots."/><AdminTabs data={data} selected="release-destinations"/><section className="panel padded"><h2>Registry destinations</h2><ResourceState error={resource.error} pending={!resource.value && !resource.error}/>{notice && <p role="status">{notice}</p>}<div className="table-wrap"><table><thead><tr>{['Name', 'Endpoint / namespace', 'Group IDs', 'Credentials', 'Default', 'Actions'].map(name => <th key={name}>{name}</th>)}</tr></thead><tbody>{list(resource.value).map(row => <tr key={row.id}><td>{row.name}</td><td>{row.endpoint}/{row.namespace}</td><td>{(row.group_ids || []).join(', ') || 'All permitted groups'}</td><td>{(row.credentials_configured || row.has_credentials) ? 'Configured' : 'Not configured'}</td><td>{row.is_default ? 'Yes' : 'No'}</td><td><button className="secondary-button" type="button" onClick={() => {setEditing(row); setNotice('');}}>Edit {row.name}</button></td></tr>)}{!list(resource.value).length && <tr><td colSpan={6} className="empty table-empty">No registry destinations configured yet.</td></tr>}</tbody></table></div><button type="button" className="secondary-button" onClick={() => {setEditing({}); setNotice('');}}>Add destination</button></section>{editing && <DestinationForm key={editing.id || 'new'} data={data} row={editing} cancel={() => setEditing(null)} saved={() => {setEditing(null); setNotice('Destination saved.'); resource.refresh();}}/>}<section className="panel padded"><h2>Signing configuration</h2><p>Approved releases use the global signing configuration. Destination credentials are retained on the server and are never returned to this page.</p><a href="/admin/configuration">Manage global signing settings</a></section><OCIDistribution data={data}/></>;
+  return <><Heading title="Approved Release Destinations" description="Configure the Cyber registries that receive approved releases and their evidence. Service managers can select an additional service registry when requesting approval."/><AdminTabs data={data} selected="release-destinations"/><section className="panel padded"><h2>Registry destinations</h2><ResourceState error={resource.error} pending={!resource.value && !resource.error}/>{notice && <p role="status">{notice}</p>}<div className="table-wrap"><table><thead><tr>{['Name', 'Endpoint / namespace', 'Group IDs', 'Credentials', 'Default', 'Actions'].map(name => <th key={name}>{name}</th>)}</tr></thead><tbody>{list(resource.value).map(row => <tr key={row.id}><td>{row.name}</td><td>{destinationAddress(row)}</td><td>{(row.group_ids || []).join(', ') || 'All permitted groups'}</td><td>{(row.credentials_configured || row.has_credentials) ? 'Configured' : 'Not configured'}</td><td>{row.is_default ? 'Yes' : 'No'}</td><td><button className="secondary-button" type="button" onClick={() => {setEditing(row); setNotice('');}}>Edit {row.name}</button></td></tr>)}{!list(resource.value).length && <tr><td colSpan={6} className="empty table-empty">No registry destinations configured yet.</td></tr>}</tbody></table></div><button type="button" className="secondary-button" onClick={() => {setEditing({}); setNotice('');}}>Add destination</button></section>{editing && <DestinationForm key={editing.id || 'new'} data={data} row={editing} cancel={() => setEditing(null)} saved={() => {setEditing(null); setNotice('Destination saved.'); resource.refresh();}}/>}<section className="panel padded"><h2>Signing configuration</h2><p>Approved releases use the global signing configuration. Destination credentials are retained on the server and are never returned to this page.</p><a href="/admin/configuration">Manage global signing settings</a></section><OCIDistribution data={data}/></>;
 }
 function DestinationForm({data, row, cancel, saved}: {data: PageData; row: Row; cancel: () => void; saved: () => void}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -432,5 +501,5 @@ function DestinationForm({data, row, cancel, saved}: {data: PageData; row: Row; 
     if (form.get('ca_pem')) body.ca_pem = form.get('ca_pem');
     setBusy(true); setError(''); try {await mutate(data, '/api/approved-release-destinations', body); saved();} catch (error) {setError(message(error));} finally {setBusy(false);}
   }
-  return <section className="panel padded"><h2>{row.id ? 'Edit destination' : 'Add destination'}</h2><form className="approval-form" onSubmit={submit}><label>Registry name<input name="name" required defaultValue={row.name || ''}/></label><label>Registry endpoint<input name="endpoint" required defaultValue={row.endpoint || ''} type="url" placeholder="https://registry.example.com"/></label><label>Namespace<input name="namespace" required defaultValue={row.namespace || ''} placeholder="approved"/></label><label>Permitted group IDs<input name="group_ids" defaultValue={(row.group_ids || []).join(', ')} placeholder="1, 2"/></label><label>Registry username<input name="username" defaultValue={row.username || ''} autoComplete="off"/></label><label>Registry password / token<input type="password" name="password" autoComplete="new-password"/></label>{row.id && <p>Leave the password and custom CA blank to retain their current values.</p>}<label>Custom CA certificate (PEM)<textarea name="ca_pem"/></label><label className="approval-checkbox"><input type="checkbox" name="enabled" defaultChecked={row.enabled !== false}/>Available for new requests</label><label className="approval-checkbox"><input type="checkbox" name="is_default" defaultChecked={row.is_default || false}/>Default destination</label><label>Pull and deployment instructions<textarea name="pull_instructions" defaultValue={row.pull_instructions || ''}/></label><ResourceState error={error} pending={false}/><div className="dialog-actions"><button type="button" className="secondary-button" disabled={busy} onClick={cancel}>Cancel</button><button disabled={busy}>{busy ? 'Saving…' : 'Save destination'}</button></div></form></section>;
+  return <section className="panel padded"><h2>{row.id ? 'Edit destination' : 'Add destination'}</h2><form className="approval-form" onSubmit={submit}><label>Registry name<input name="name" required defaultValue={row.name || ''}/></label><label>Registry endpoint<input name="endpoint" required defaultValue={row.endpoint || ''} type="url" placeholder="https://registry.example.com"/></label><label>Namespace<input name="namespace" required defaultValue={row.namespace || ''} placeholder="approved"/></label><label>Permitted group IDs<input name="group_ids" defaultValue={(row.group_ids || []).join(', ')} placeholder="1, 2"/></label><label>Registry username<input name="username" defaultValue={row.username || ''} autoComplete="off"/></label><label>Registry password / token<input type="password" name="password" autoComplete="new-password"/></label>{row.id && <p>Leave the password and custom CA blank to retain their current values.</p>}<label>Custom CA certificate (PEM)<textarea name="ca_pem"/></label><label className="approval-checkbox"><input type="checkbox" name="enabled" defaultChecked={row.enabled !== false}/>Available for new requests</label><label className="approval-checkbox"><input type="checkbox" name="is_default" defaultChecked={row.is_default || false}/>Default Cyber destination</label><label>Pull and deployment instructions<textarea name="pull_instructions" defaultValue={row.pull_instructions || ''}/></label><ResourceState error={error} pending={false}/><div className="dialog-actions"><button type="button" className="secondary-button" disabled={busy} onClick={cancel}>Cancel</button><button disabled={busy}>{busy ? 'Saving…' : 'Save destination'}</button></div></form></section>;
 }

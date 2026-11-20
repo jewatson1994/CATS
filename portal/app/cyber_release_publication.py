@@ -742,7 +742,7 @@ def publish_revocation(db, approval, destination, metadata, checkpoint):
         with registry_environment(destination, certificates or []) as environment:
             env = signing.clean_environment(environment)
             host = destination['endpoint'].removeprefix('https://').rstrip('/')
-            repository = destination['namespace'].strip('/') + '/' + _repository_component(approval.snapshot['service_key']) + '/releases'
+            repository = (destination.get('namespace') or 'cyber-approved').strip('/') + '/' + _repository_component(approval.snapshot['service_key']) + '/releases'
             client = release_oci._Client(host, repository, env)
             stage = 'Publishing revocation event'
             digest = _publish_files(client, {name: output / name for name in

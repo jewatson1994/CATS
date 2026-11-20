@@ -63,9 +63,20 @@ class SetupTests(unittest.TestCase):
             self.assertEqual(certificate.call_args_list[0].args, ("/opt/cats/certs/portal", "portal.example"))
             self.assertEqual(certificate.call_args_list[1].args, ("/opt/cats/certs/oci-proxy", "registry.example"))
             if mode == "main":
+                self.assertEqual(values["PIPELINE_API_TOKEN"], "")
                 self.assertEqual(values["CATS_SCAN_JOB_TIMEOUT"], "10800")
                 self.assertRegex(values["CATS_KIND_NODE_IMAGE"], r"^kindest/node:[^@]+@sha256:[0-9a-f]{64}$")
                 self.assertNotIn("CATS_DEPLOYMENT_KIND_NODE_IMAGE", values)
+
+    def test_setup_preserves_explicit_legacy_pipeline_token(self):
+        token = "existing-deployment-token-for-legacy-producers"
+        existing = {"CATS_IMAGE": "cats:test", "CATS_PORTAL_HOSTNAME": "portal.example",
+                    "CATS_OCI_HOSTNAME": "registry.example", "PIPELINE_API_TOKEN": token}
+        with patch.object(setup, "ask", side_effect=lambda label, default="", secret=False: default), \
+             patch.object(setup, "certificate", side_effect=lambda directory, name: directory):
+            self.assertEqual(setup.gather("main", existing, {})["PIPELINE_API_TOKEN"], token)
+            existing["PIPELINE_API_TOKEN"] = "replace-with-a-long-random-pipeline-token"
+            self.assertEqual(setup.gather("main", existing, {})["PIPELINE_API_TOKEN"], "")
 
     def test_replica_setup_migrates_legacy_image_without_shadowing_shared_override(self):
         existing = {"CATS_REPLICA_IMAGE": "registry.example/cats:legacy",

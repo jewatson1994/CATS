@@ -276,6 +276,20 @@ function mockLegacyRelease(row: Record<string, any> = legacyRelease, mutation?: 
     return row;
   });
 }
+it('pulls the image by its frozen artifact slot before publication completes', async () => {
+  const image = 'registry.example/team/app@sha256:abc';
+  vi.mocked(requestJson).mockImplementation(async url => {
+    if (url.endsWith('/revision')) throw new ApiError('No governed revision', 404);
+    if (url.endsWith('/pull')) return {status:'unavailable', reason:'Mapping unavailable.', routes:[]};
+    return {...legacyRelease, publish_status:'queued', snapshot:{artifacts:[
+      {kind:'chart', reference:'chart'}, {kind:'image', reference:image}]}};
+  });
+  render(<ReleaseDetail data={data} id="5"/>);
+  fireEvent.click(await screen.findByRole('button', {name:`Pull ${image} from CATS`}));
+  expect(await screen.findByText('Mapping unavailable.')).toBeVisible();
+  expect(requestJson).toHaveBeenCalledWith('/api/approved-releases/5/artifacts/1/pull', expect.anything());
+});
+
 it('revokes a legacy release without a governed revision using the approval endpoint and CSRF', async () => {
   mockLegacyRelease();
   render(<ReleaseDetail data={data} id="5"/>);

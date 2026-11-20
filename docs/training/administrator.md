@@ -16,6 +16,8 @@ Configure external identity through Identity settings and the [OIDC guide](../KE
 
 ## Settings and policy
 
+To announce a scheduled outage, open **Administration → Settings → General → Portal announcement**. Enter the title, outage window and affected services in the message, then publish. An optional expiry removes the notice automatically. Signed-in users see it in the notification bell, including users waiting for service access. Marking a notice as read clears that user's unread indicator. Publishing a replacement makes it unread for everyone. You can also withdraw it. Each CATS installation manages its own notice.
+
 Settings categories include General, Identity, Access, Security, Integrations, and Data. Search settings to locate controls. General Policy contains workflow timing, exception limits, warning policy, evidence handling, audit configuration, and export templates. Hardening Policy, Vulnerability Policy, and Dependency Watchlist control their respective security decisions.
 
 Incomplete evidence is not proof of resolved findings. Test policy changes against a training service and review accessible audit activity. See [Cybersecurity training](cybersecurity.md).

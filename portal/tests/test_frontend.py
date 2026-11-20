@@ -14,6 +14,17 @@ def request(accept="text/html"):
                     "server": ("cats.test", 443)})
 
 
+def test_project_integration_controls_receive_scoped_permissions_without_credentials():
+    service = SimpleNamespace(id=71, service_key="payments", lifecycle_status="active", groups=[])
+    context = {"view": {"service": service}, "can": lambda action, scope=None: scope == 71 and action == "service.edit",
+               "project_credentials": [{"token": "never-in-page-data"}]}
+    data = page_data(request(), "service_overview.html", context)["data"]
+    assert data["view"]["service"]["lifecycle_status"] == "active"
+    assert data["can"]["service.edit"] == {"71": True}
+    assert data["can"]["scan.ingest"] == {"71": False}
+    assert "never-in-page-data" not in json.dumps(data)
+
+
 @pytest.fixture
 def templates(tmp_path):
     for name in ("login.html", "dashboard.html", "legacy.html"):

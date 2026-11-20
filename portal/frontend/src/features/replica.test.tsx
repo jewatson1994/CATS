@@ -72,6 +72,20 @@ it('uses immutable captured evidence and preserves release expiration', async ()
   expect(screen.getByText('replica/mission/image@sha256:abc')).toBeInTheDocument();
 });
 
+it('resolves the selected imported release image through its local CATS gateway', async () => {
+  request.mockImplementation(async url => {
+    if (url.includes('local-overrides')) return {overrides:[]};
+    if (url.endsWith('/pull')) return {status:'unavailable', reason:'Mapping unavailable.', routes:[]};
+    return {releases:[{id:3, sequence:4, service_key:'mission', status:'active',
+      artifacts:[{kind:'chart', repository:'charts'}, {kind:'image', repository:'team/api', digest:'sha256:abc'}]}]};
+  });
+  render(<Releases data={data}/>);
+  fireEvent.click(await screen.findByText('Approved artifact inventory (2)'));
+  fireEvent.click(screen.getByRole('button', {name:'Pull team/api from CATS'}));
+  expect(await screen.findByText('Mapping unavailable.')).toBeVisible();
+  expect(request).toHaveBeenCalledWith('/api/replica/releases/3/artifacts/1/pull', expect.anything());
+});
+
 it('queues synchronization with the existing CSRF boundary', async () => {
   request.mockImplementation(async url => String(url).includes('/upstreams') ? [] : {sources: [], services: [], jobs: []});
   render(<Page data={{...data, can: {'replica.sync': {'*': true}}}}/>);
