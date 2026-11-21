@@ -11,17 +11,24 @@ const fixture = (extra: Partial<PageData> = {}): PageData => ({
   architecture_verification: {state: 'VERIFIED', label: 'Verified'},
   can: {'service.export': {'1': true}}, ...extra,
 });
-it('lets a service manager choose a weekly overnight schedule and shows the saved local time', () => {
+it('updates a legacy overnight schedule to a weekly local time on multiple days', () => {
   render(<Page data={fixture({can_schedule_scans: true, csrf_token: 'token', scan_schedule: {
     cadence: 'daily', weekday: 4, timezone: 'America/New_York', next_run_at: '2026-11-07T02:00:00Z',
   }})}/>);
+  fireEvent.click(screen.getByRole('button', {name: /Scan schedule: Daily · 21:00–05:00/}));
   expect(screen.getByText(/Next scheduled start/)).toHaveTextContent(/9:00\s?PM/i);
-  fireEvent.click(screen.getByText('Edit scan schedule'));
   fireEvent.change(screen.getByLabelText('Frequency'), {target: {value: 'weekly'}});
-  expect(screen.getByLabelText('Night beginning on')).toHaveValue('4');
+  expect(screen.getByRole('checkbox', {name: 'Friday'})).toBeChecked();
+  fireEvent.click(screen.getByRole('checkbox', {name: 'Tuesday'}));
+  const start = screen.getByLabelText('Start time');
+  expect(start).toBeRequired();
+  expect(start).toHaveValue('');
+  fireEvent.change(start, {target: {value: '16:42'}});
   const form = screen.getByRole('button', {name: 'Save schedule'}).closest('form')!;
+  const posted = new FormData(form);
   expect(form).toHaveAttribute('action', '/services/sample/scan-schedule');
-  expect(Object.fromEntries(new FormData(form))).toMatchObject({timezone: 'America/New_York', weekday: '4', csrf_token: 'token'});
+  expect(posted.getAll('weekdays')).toEqual(['1', '4']);
+  expect(Object.fromEntries(posted)).toMatchObject({timezone: 'America/New_York', time_of_day: '16:42', csrf_token: 'token'});
 });
 it('renders separate static and runtime statuses, scoped exports and stale evidence notice', () => {
   render(<Page data={fixture({evidence_notice: 'stale'})}/>);
@@ -121,19 +128,20 @@ it('shows Risk Profile as a card without VEX evidence on Overview', () => {
 it('cancels an edited schedule without changing its saved summary or posting', () => {
   render(<Page data={fixture({can_schedule_scans: true, scan_schedule: {cadence: 'off', timezone: 'UTC'}})}/>);
   expect(screen.queryByLabelText('Frequency')).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', {name: 'Edit scan schedule'}));
+  fireEvent.click(screen.getByRole('button', {name: 'Scan schedule: Off'}));
   fireEvent.change(screen.getByLabelText('Frequency'), {target: {value: 'weekly'}});
   fireEvent.click(screen.getByRole('button', {name: 'Cancel'}));
   expect(screen.queryByLabelText('Frequency')).not.toBeInTheDocument();
-  expect(screen.getByText('Off')).toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', {name: 'Edit scan schedule'}));
+  expect(screen.getByRole('button', {name: 'Scan schedule: Off'})).toHaveFocus();
+  fireEvent.click(screen.getByRole('button', {name: 'Scan schedule: Off'}));
   expect(screen.getByLabelText('Frequency')).toHaveValue('off');
 });
 
 it('keeps disable-only scan permission without exposing the schedule editor', () => {
   render(<Page data={fixture({csrf_token: 'disable-token', can_disable_scan_schedule: true,
     scan_schedule: {cadence: 'daily', timezone: 'UTC'}})}/>);
-  expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', {name: /Scan schedule: Daily/}));
+  expect(screen.queryByLabelText('Frequency')).not.toBeInTheDocument();
   const form = screen.getByRole('button', {name: 'Turn off scheduled scans'}).closest('form')!;
   expect(form).toHaveAttribute('action', '/services/sample/scan-schedule');
   expect(Object.fromEntries(new FormData(form))).toEqual({csrf_token: 'disable-token', cadence: 'off'});

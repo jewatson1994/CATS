@@ -41,17 +41,16 @@ it('provides overview pull instructions to viewers while hiding imported mutatio
   render(<Shell data={data}><Overview data={data}/></Shell>);
   expect(screen.getByRole('button', {name: 'Pull registry/api:1 from CATS'})).toBeInTheDocument();
   expect(screen.queryByRole('link', {name: 'Patch registry/api:1'})).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', {name: 'Scan schedule'})).not.toBeInTheDocument();
 });
 
 it('keeps local pull access editable for imported services when distribution management is allowed', () => {
   mockReads();
   const managerData = {...data, can: {...data.can, 'release.destination.manage': {'*': true}}};
   render(<Shell data={managerData}><Overview data={managerData}/></Shell>);
-  fireEvent.click(screen.getByRole('button', {name: 'Edit pull access'}));
-  expect(screen.getByRole('combobox', {name: 'Pull access'})).toHaveValue('private');
+  expect(screen.getByRole('combobox', {name: 'Service pull access'})).toHaveValue('private');
   expect(screen.queryByRole('link', {name: 'Patch registry/api:1'})).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', {name: 'Edit scan schedule'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', {name: 'Scan schedule'})).not.toBeInTheDocument();
 });
 
 it('retains local service editing and patch actions in the same full deployment', () => {
@@ -79,4 +78,17 @@ it('does not advertise monitoring without source administration or synchronizati
   render(<Shell data={{...data, can: {}, imported_service: false, read_only: false}}>Local workspace</Shell>);
   fireEvent.click(screen.getByText('More', {selector: 'summary'}));
   expect(screen.queryByRole('link', {name: 'OCI monitoring'})).not.toBeInTheDocument();
+});
+
+it('opens imported service Releases in its read-only service workspace', async () => {
+  window.history.replaceState(null, '', '/imported-releases?service=imported');
+  mockReads();
+  render(<Releases data={data}/>);
+  expect(screen.getByRole('heading', {name: 'Releases'})).toBeVisible();
+  expect(screen.getByRole('link', {name: 'Service overview'})).toHaveAttribute('href', '/services/imported?overview=true');
+  const tabs = within(screen.getByRole('navigation', {name: 'Service views'}));
+  expect(tabs.getByRole('link', {name: 'Releases'})).toHaveAttribute('aria-current', 'page');
+  expect(screen.queryByRole('link', {name: 'Approval requests'})).toBeNull();
+  await screen.findByText('No verified releases have been imported.');
+  expect(requestJson).toHaveBeenCalledWith('/api/replica/releases?service_key=imported', expect.anything());
 });

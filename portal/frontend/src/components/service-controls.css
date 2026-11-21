@@ -40,3 +40,48 @@
   .service-control-card { padding: 1rem; }
   .service-control-heading { align-items: flex-start; }
 }
+
+.service-setting { padding: .7rem 1rem; }
+.service-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+}
+.service-setting-row h2 { margin: 0; font-size: .95rem; }
+.service-setting-row select, .service-setting-row .service-setting-trigger {
+  min-height: 2.4rem;
+  max-width: 100%;
+  width: auto;
+  text-align: start;
+}
+.service-setting-row .service-setting-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
+  padding: .45rem .7rem;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: .4rem;
+  font: inherit;
+}
+.service-setting-trigger::after {
+  content: '';
+  width: .45rem;
+  height: .45rem;
+  flex: none;
+  border: solid currentColor;
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-.1rem) rotate(45deg);
+}
+.service-setting-trigger[aria-expanded=true]::after { transform: translateY(.1rem) rotate(225deg); }
+.service-setting-row .service-setting-trigger:hover { border-color: currentColor; }
+.service-setting [id] > .service-control-help { margin-top: .6rem; }
+.schedule-weekdays { margin: 0; padding: 0; border: 0; min-width: 0; grid-column: 1 / -1; }
+.schedule-weekdays legend { margin-bottom: .35rem; }
+.schedule-weekdays > div { display: flex; flex-wrap: wrap; gap: .4rem .9rem; }
+.schedule-weekdays label { display: inline-flex; align-items: center; gap: .35rem; }
+.schedule-weekdays input { width: auto; margin: 0; }

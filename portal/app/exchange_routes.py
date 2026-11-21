@@ -5,6 +5,7 @@ from io import BytesIO
 import json
 import secrets
 from urllib.parse import quote
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -195,37 +196,42 @@ def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(Fa
 
 @router.get("/services/{service_key}/history")
 def history_page(service_key: str, request: Request, version: str = "", page: int = 1,
-                 imported_page: int = 1, page_size: int = 10, db=Depends(get_db), auth=Depends(require_user)):
+                 imported_page: int = 1, page_size: int = 10,
+                 tab: Literal["overview", "dependencies", "findings", "releases"] = "overview",
+                 scan: str = "", source: Literal["native", "imported"] = "native",
+                 db=Depends(get_db), auth=Depends(require_user)):
     service = service_for(db, auth, service_key, "service.view")
     if page_size not in {10, 25, 50}:
         raise HTTPException(422, detail="History page size must be 10, 25, or 50")
-    from .history_queries import history_page_evidence
+    from .history_queries import historical_releases, history_page_evidence
     try:
-        history = history_page_evidence(db, service, version, page=page, imported_page=imported_page, page_size=page_size)
+        history = history_page_evidence(db, service, version, page=page, imported_page=imported_page,
+                                       page_size=page_size, scan=scan, tab=tab, preferred_source=source)
     except ValueError as exc:
         raise HTTPException(404, detail=str(exc)) from exc
     selected, executions, imported = history["version"], history["executions"], history["imported"]
     from .main import templates, page_context
-    # Only immutable payloads belonging to this version are exposed. Mutable
-    # current workspaces, approvals and remediation state are deliberately absent.
-    snapshots = [{"key": e.execution_key, "at": e.scanned_at, "scope": e.scan_scope,
-        "complete": e.complete, "data": {k: e.raw_payload.get(k) for k in (
-            "service", "findings", "policy_findings", "service_overview", "sbom_images",
-            "sbom_components", "skipped_images", "skipped_charts")},
+    # Each snapshot contains only the retained evidence for its selected scan.
+    evidence_fields = ("service", "findings", "policy_findings", "service_overview",
+                       "sbom_images", "sbom_components", "skipped_images", "skipped_charts")
+    snapshots = [{"scan_id": f"scan-{e.id}", "key": e.execution_key, "at": e.scanned_at, "scope": e.scan_scope,
+        "complete": e.complete, "data": {k: e.raw_payload.get(k) for k in evidence_fields},
         "source_files": sorted((e.raw_payload.get("helm_source_files") or {}).keys())} for e in executions]
     imported_snapshots = []
-    for index, item in zip(history["imported_indices"], imported):
+    for index, scan_id, item in zip(history["imported_indices"], history["imported_scan_ids"], imported):
         raw = item.get("raw_payload", item)
         if str((raw.get("service") or {}).get("version") or "Unknown") != selected:
             continue
-        imported_snapshots.append({"key": item.get("execution_key", raw.get("execution_id", f"imported-{index}")),
+        imported_snapshots.append({"scan_id": scan_id, "key": item.get("execution_key", raw.get("execution_id", f"imported-{index}")),
             "at": item.get("scanned_at", raw.get("scanned_at")), "scope": item.get("scan_scope", raw.get("scan_scope", "service")),
             "complete": item.get("complete", raw.get("complete", False)),
-            "data": {key: raw.get(key) for key in ("service", "findings", "policy_findings", "service_overview", "sbom_images", "sbom_components")},
+            "data": {key: raw.get(key) for key in evidence_fields},
             "source_files": sorted((raw.get("helm_source_files") or {}).keys())})
     return templates.TemplateResponse(request, "service_history.html", page_context(auth,
         service=service, version=selected, versions=history["versions"], snapshots=snapshots,
-        imported_snapshots=imported_snapshots,
+        imported_snapshots=imported_snapshots, selected_scan=history["selected_scan"],
+        scan_options=history["scan_options"], history_tab=tab,
+        releases=historical_releases(db, service.id, selected) if tab == "releases" else [],
         **{key: history[key] for key in ("page", "page_size", "total_pages", "total_items",
            "imported_page", "imported_total_pages", "imported_total_items")}))
 

@@ -17,6 +17,23 @@ const variantLabel = (variant: string) => variant === 'cats_remediated' ? 'CATS 
 const message = (error: unknown) => error instanceof Error ? error.message : 'The request could not be completed.';
 const list = (value: any): Row[] => Array.isArray(value) ? value : value?.items || [];
 const label = (value: any): string => value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+function releaseHref(path: '/approved-releases' | '/cyber-approvals', serviceKey?: string, id?: string | number) {
+  const params = new URLSearchParams();
+  if (id != null) params.set('id', String(id));
+  if (serviceKey) params.set('service', serviceKey);
+  return params.size ? `${path}?${params}` : path;
+}
+
+function ServiceReleasesHeader({serviceKey, selected}: {serviceKey: string; selected: 'releases' | 'requests'}) {
+  return <>
+    <PageHeader title="Releases" eyebrow={serviceKey} back={{href: `/services/${encodeURIComponent(serviceKey)}?overview=true`, label: 'Service overview'}}/>
+    <ServiceTabs serviceKey={serviceKey} active="releases"/>
+    <nav className="release-sections" aria-label="Release views">
+      <a aria-current={selected === 'releases' ? 'page' : undefined} href={releaseHref('/approved-releases', serviceKey)}>Approved releases</a>
+      <a aria-current={selected === 'requests' ? 'page' : undefined} href={releaseHref('/cyber-approvals', serviceKey)}>Approval requests</a>
+    </nav>
+  </>;
+}
 function useResource(url: string) {
   const [value, setValue] = useState<Row | null>(null), [error, setError] = useState(''), [revision, setRevision] = useState(0);
   useEffect(() => {
@@ -139,7 +156,7 @@ export function RequestApproval({data, serviceKey, amendmentProposalId, distribu
     try {setCreated(await mutate(data, '/api/cyber-approvals', {service_key: serviceKey, variant, remediation_id: remediation || undefined, ...(selectedAdditional ? {additional_destination_id: selectedAdditional.id} : {}), ...(amendmentProposalId ? {amendment_proposal_id: amendmentProposalId} : {}), ...(distributionId ? {distribution_id: distributionId, expected_source_execution_id: ready.source_execution_id} : {})}));}
     catch (error) {setError(message(error)); readiness.refresh();} finally {setBusy(false);}
   };
-  if (created) return <section className="panel padded"><h2>Cyber approval requested</h2><p role="status">The snapshot is ready for Cyber review.</p><a href={`/cyber-approvals?id=${encodeURIComponent(created.id)}`}>Review request #{created.id}</a></section>;
+  if (created) return <section className="panel padded"><h2>Cyber approval requested</h2><p role="status">The snapshot is ready for Cyber review.</p><a href={releaseHref('/cyber-approvals', serviceKey, created.id)}>Review request #{created.id}</a></section>;
   return <section className="panel padded"><h2>Request Cyber Approval</h2>{amendmentProposalId && <p role="note">Amendment proposal #{amendmentProposalId} requires an actual fresh service assessment containing the replacement artifact. Selecting a proposal does not run an assessment or prove that its evidence is current. Retain the new assessment and service validation before submitting; the server verifies the evidence and current base revision.</p>}<p>Choose the release to submit. Cyber reviews vulnerabilities, configuration coverage, mitigations, exceptions and deployment verification.</p>{!amendmentProposalId && <p><a href={`/services/${encodeURIComponent(serviceKey)}?artifacts=true#service-distributions`}>Choose a saved service distribution</a></p>}
     <form className="approval-form" onSubmit={submit}>{distributionId ? <div><h3>Distribution for review</h3>{ready?.distribution && selectionMatches ? <><strong>{ready.distribution.name}</strong><DistributionDetails selection={ready.distribution}/></> : <code>{distributionId}</code>}</div> : <label>Release variant<select disabled={busy} value={selection} onChange={event => setSelection(event.target.value)}><option value="current_service">Current Service</option>{candidates.map(row => <option key={row.id} value={`cats_remediated:${row.id}`}>CATS Remediated · {row.label || row.id}</option>)}</select></label>}<ResourceState error={readiness.error} pending={!ready && !readiness.error}/>{ready && <><div className="approval-readiness" role="status"><StatusBadge value={canSubmitEvidence ? 'ready' : 'blocked'} label={canSubmitEvidence ? 'Ready for Cyber review' : 'Evidence incomplete'}/><p>Version: {ready.version || 'Unknown'} · Scan date: {ready.scan_date || 'Not recorded'}</p>{distributionId && !canSubmitEvidence && !ready.blockers?.length && <p>A completed scan for this distribution is required.</p>}{!!ready.blockers?.length && <ul>{ready.blockers.map((reason: string, index: number) => <li key={index}>{reason}</li>)}</ul>}</div>
       <fieldset disabled={busy}><legend>Release destinations</legend>
@@ -223,7 +240,8 @@ function ReviewTrack({row, snapshot}: {row: Row; snapshot: Row}) {
 export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
   const resource = useResource(`/api/cyber-approvals/${encodeURIComponent(id)}`), row = resource.value;
   const snapshot = row?.snapshot || {};
-  return <div className="approval-review"><a className="back" href="/cyber-approvals">← All approvals</a>
+  const serviceKey = new URLSearchParams(window.location.search).get('service') || '';
+  return <div className="approval-review"><a className="back" href={releaseHref('/cyber-approvals', serviceKey)}>{serviceKey ? 'Service approval requests' : '← All approvals'}</a>
     <ResourceState error={resource.error} pending={!row && !resource.error}/>
     {row && <>
       <section className="approval-review-header panel padded">
@@ -257,7 +275,7 @@ export function ApprovalDetail({data, id}: {data: PageData; id: string}) {
         <h2>Reassess this distribution</h2>
         <p>Open <a href={`/services/${encodeURIComponent(row.service_key)}?artifacts=true#service-distributions`}>Service distributions</a>, scan <strong>{snapshot.distribution.name}</strong>, and submit its new evidence for Cyber review.</p>
       </section> : <Reassessment data={data} row={row}/>)}
-      {row.status === 'approved' && <section className="panel padded"><h2>Approved release publication</h2><p>The Cyber decision is approved. Publication status: <StatusBadge value={row.publish_status || 'pending'}/></p><a href={`/approved-releases?id=${encodeURIComponent(row.release_id || row.publication?.release_id || row.id)}`}>Open approved release</a></section>}
+      {row.status === 'approved' && <section className="panel padded"><h2>Approved release publication</h2><p>The Cyber decision is approved. Publication status: <StatusBadge value={row.publish_status || 'pending'}/></p><a href={releaseHref('/approved-releases', serviceKey, row.release_id || row.publication?.release_id || row.id)}>Open approved release</a></section>}
     </>}
   </div>;
 }
@@ -274,7 +292,7 @@ function ApprovalList({data, serviceKey, distributionId}: {data: PageData; servi
   const total = resource.value?.total ?? rows.length;
   const columns: GridColumn<Row>[] = [
     {key: 'service', header: 'Service / snapshot', identifier: true, hideable: false, value: row => `${row.service_name || row.service_key} ${row.version || ''}`,
-      render: row => <a href={`/cyber-approvals?id=${row.id}`}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
+      render: row => <a href={releaseHref('/cyber-approvals', serviceKey, row.id)}>{row.service_name || row.service_key} · {row.version || row.label || `#${row.id}`}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
     {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
     {key: 'requested', header: 'Requested', type: 'date', value: row => row.requested_at, render: row => row.requested_at || '—'},
     {key: 'decision', header: 'Cyber decision', hideable: false, value: row => row.status, description: 'Human Cyber reviewer decision on the frozen snapshot',
@@ -282,9 +300,10 @@ function ApprovalList({data, serviceKey, distributionId}: {data: PageData; servi
     {key: 'publication', header: 'Publication', value: row => row.publish_status || 'not_started', description: 'Delivery of approved artifacts (separate from the decision)',
       render: row => <StatusBadge value={row.publish_status || 'not_started'} size="sm"/>},
   ];
-  return <><PageHeader eyebrow="Cyber review" title="Approvals" description="Review immutable service snapshots and track decisions independently of publication."
-    actions={<a className="secondary-button" href="/approved-releases">Approved Releases</a>}/>
-    {serviceKey && <><ServiceTabs serviceKey={serviceKey} active="approvals"/><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey + ':' + (distributionId || '')} data={data} serviceKey={serviceKey} distributionId={distributionId}/></>}
+  return <>{serviceKey ? <ServiceReleasesHeader serviceKey={serviceKey} selected="requests"/> :
+    <PageHeader eyebrow="Cyber review" title="Approvals" description="Review immutable service snapshots and track decisions independently of publication."
+      actions={<a className="secondary-button" href="/approved-releases">Approved Releases</a>}/>}
+    {serviceKey && <><VexEvidence serviceKey={serviceKey}/><RequestApproval key={serviceKey + ':' + (distributionId || '')} data={data} serviceKey={serviceKey} distributionId={distributionId}/></>}
     <section className="panel"><DataGrid<Row> id="cyber-approvals" label={serviceKey ? `${serviceKey} requests` : 'Approval queue'} title={serviceKey ? `${serviceKey} requests` : 'Approval queue'}
       description={resource.value ? `${total} ${total === 1 ? 'request' : 'requests'}` : undefined}
       toolbar={<label className="inline-field">Decision status<select value={status} onChange={event => setStatus(event.target.value)}><option value="">All decisions</option><option value="pending">Pending</option><option value="approved">Approved</option><option value="denied">Denied</option></select></label>}
@@ -307,7 +326,7 @@ function ReleaseList() {
   const rows = all.filter(row => (!variant || row.variant === variant) && `${row.service_name} ${row.service_key} ${row.version} ${row.distribution_name || ''} ${row.approved_by || ''}`.toLowerCase().includes(query.toLowerCase()));
   const columns: GridColumn<Row>[] = [
     {key: 'service', header: 'Service', identifier: true, hideable: false, value: row => row.service_name || row.service_key,
-      render: row => <a href={`/approved-releases?id=${row.id}`}>{row.service_name || row.service_key}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
+      render: row => <a href={releaseHref('/approved-releases', serviceKey, row.id)}>{row.service_name || row.service_key}{row.distribution_name && <> · {row.distribution_name}</>}</a>},
     {key: 'version', header: 'Version', value: row => row.version || row.label, render: row => row.version || row.label || '—'},
     {key: 'variant', header: 'Variant', value: row => variantLabel(row.variant), render: row => variantLabel(row.variant)},
     {key: 'authorization', header: 'Authorization', hideable: false, value: row => row.revoked ? 'revoked' : row.validity_status, description: 'Whether the approval currently authorizes deployment',
@@ -319,9 +338,9 @@ function ReleaseList() {
     {key: 'destination', header: 'Destination', value: row => row.destination?.name, render: row => row.destination?.name || 'Recorded in release'},
   ];
   const filtered = Boolean(query || variant);
-  return <><PageHeader eyebrow="Trusted delivery" title="Approved Releases" description="Cyber-approved snapshots, their publication progress, and immutable deployment artifacts."
-    actions={<><a className="secondary-button" href="/imported-releases">Imported approved releases</a><a className="secondary-button" href="/cyber-approvals">Approvals</a></>}/>
-    {serviceKey && <ServiceTabs serviceKey={serviceKey} active="releases"/>}
+  return <>{serviceKey ? <ServiceReleasesHeader serviceKey={serviceKey} selected="releases"/> :
+    <PageHeader eyebrow="Trusted delivery" title="Approved Releases" description="Cyber-approved snapshots, their publication progress, and immutable deployment artifacts."
+      actions={<><a className="secondary-button" href="/imported-releases">Imported approved releases</a><a className="secondary-button" href="/cyber-approvals">Approvals</a></>}/>}
     <section className="panel"><DataGrid<Row> id="approved-releases" label="Approved releases" title="Approved releases"
       description={resource.value ? `${rows.length} of ${all.length} releases` : undefined}
       toolbar={<div className="approval-filters inline-filters" role="search" aria-label="Find releases"><label className="inline-field">Find a release<input value={query} onChange={event => setQuery(event.target.value)} placeholder="Service, version, distribution or approver"/></label>
@@ -388,8 +407,9 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
   const canRetry = row?.publish_status === 'failed' && (row.revoked
     ? row.can_retry === true && Boolean(revocation.portable)
     : currentApproval(row) && (row.can_retry ?? can(data, 'approval.decide', row.service_id)));
+  const serviceKey = new URLSearchParams(window.location.search).get('service') || '';
   return <div className="release-detail">
-    <a className="back" href="/approved-releases">All approved releases</a>
+    <a className="back" href={releaseHref('/approved-releases', serviceKey)}>{serviceKey ? 'Service releases' : 'All approved releases'}</a>
     <ResourceState error={resource.error} pending={!row && !resource.error}/>
     {notice && <p className="release-notice" role="status">{notice}</p>}
     {row && <>
@@ -420,7 +440,7 @@ function ReleaseDetailView({data, id}: {data: PageData; id: string}) {
         </form>
       </section>}
       <section className="panel padded release-publication" aria-label="Release publication">
-        <div className="release-section-heading"><h2>Publication</h2><a href={`/cyber-approvals?id=${row.approval_id || row.id}`}>Review Cyber decision and snapshot</a></div>
+        <div className="release-section-heading"><h2>Publication</h2><a href={releaseHref('/cyber-approvals', serviceKey, row.approval_id || row.id)}>Review Cyber decision and snapshot</a></div>
         <p>{row.revoked ? 'Retained artifacts and evidence are shown for audit history.' : !currentApproval(row) ? 'This release needs a new Cyber approval before deployment. Retained downloads are available for audit history.' : row.publish_status === 'published' ? 'Published artifacts are ready to retrieve using their immutable references.' : 'This snapshot is Cyber approved. Artifact delivery is not complete until publication succeeds.'}</p>
         {row.destination?.name ? <RegistryAddress label="Cyber destination" destination={row.destination}/> : <p>Cyber destination not recorded.</p>}
         {publishing && !row.revoked && <p className="approval-muted">Revocation is available after publication completes or fails.</p>}

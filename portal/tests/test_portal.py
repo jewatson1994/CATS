@@ -502,6 +502,17 @@ def test_service_manager_can_schedule_only_scoped_scans():
     assert manager.post("/services/private-service/scan-schedule", data=form).status_code == 403
     assert manager.post(route, data={**form, "csrf_token": "invalid"}).status_code == 403
     assert manager.post(route, data={**form, "timezone": "not-a-timezone"}).status_code == 422
+    timed = {**form, "time_of_day": "14:25", "weekdays": ["4", "2", "2"]}
+    weekly = page_data(manager.post(route, data=timed))["scan_schedule"]
+    assert (weekly["weekdays"], weekly["time_of_day"]) == ([2, 4], "14:25")
+    monthly = {**form, "cadence": "monthly", "time_of_day": "08:15", "monthly_mode": "weekday",
+               "week_of_month": "3", "weekday": "5"}
+    saved = page_data(manager.post(route, data=monthly))["scan_schedule"]
+    assert (saved["cadence"], saved["week_of_month"], saved["weekday"], saved["time_of_day"]) == ("monthly", 3, 5, "08:15")
+    for invalid in ({**timed, "weekdays": ["8"]}, {**form, "time_of_day": "23:00"},
+                    {**monthly, "time_of_day": "24:00"}, {**monthly, "monthly_mode": "date", "day_of_month": "32"},
+                    {**monthly, "week_of_month": "6"}):
+        assert manager.post(route, data=invalid).status_code == 422
     # A global administrator can turn off the schedule even without scan ingestion rights.
     assert page_data(admin.post(route, data={"csrf_token": csrf(admin), "cadence": "off"}))["scan_schedule"]["cadence"] == "off"
 

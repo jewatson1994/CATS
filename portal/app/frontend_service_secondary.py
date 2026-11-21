@@ -37,7 +37,9 @@ def project_secondary(data, name, context, can=None, formatters=None):
         service_id = _field(service, "id")
         schedule = context.get("scan_schedule")
         if schedule is not None:
-            data["scan_schedule"] = _fields(schedule, ("cadence", "timezone", "weekday", "last_job_id", "last_result"))
+            data["scan_schedule"] = _fields(schedule, ("cadence", "timezone", "weekday", "time_of_day", "monthly_mode",
+                                                       "week_of_month", "day_of_month", "last_job_id", "last_result"))
+            data["scan_schedule"]["weekdays"] = strings(_field(schedule, "weekdays"))
             for field in ("next_run_at", "last_run_at"):
                 data["scan_schedule"][field] = _formatted(_field(schedule, field))
             can_edit = bool(callable(can) and can("service.edit", service_id))
@@ -104,15 +106,28 @@ def project_secondary(data, name, context, can=None, formatters=None):
                 "actor_name": _scalar(_field(_field(event, "actor"), "display_name", "System")),
                 "detail": projected_detail})
     elif name == "service_history.html":
-        data["service"] = _fields(context.get("service"), ("id", "service_key", "name"))
+        data["read_only"] = True
+        data["service"] = _fields(context.get("service"), ("id", "service_key"))
         data.update(_fields(context, ("page", "page_size", "total_pages", "total_items",
                                      "imported_page", "imported_total_pages", "imported_total_items")))
         data["version"] = _scalar(context.get("version"))
         data["versions"] = strings(context.get("versions", []))
+        data["selected_scan"] = _scalar(context.get("selected_scan"))
+        data["scan_options"] = []
+        for option in context.get("scan_options", []):
+            row = _fields(option, ("scan_id", "key", "name", "source"))
+            row["at"] = _formatted(_field(option, "at"), formatters.get("cats_datetime"))
+            data["scan_options"].append(row)
+        data["history_tab"] = context.get("history_tab", "overview")
+        data["releases"] = []
+        for release in context.get("releases", []):
+            row = _fields(release, ("release_key", "source", "digest", "scan"))
+            row["approved_at"] = _formatted(_field(release, "approved_at"), formatters.get("cats_datetime"))
+            data["releases"].append(row)
         for key in ("snapshots", "imported_snapshots"):
             data[key] = []
             for snapshot in context.get(key, []):
-                projected = _fields(snapshot, ("key", "scope", "complete"))
+                projected = _fields(snapshot, ("scan_id", "key", "scope", "complete"))
                 projected["at"] = _formatted(_field(snapshot, "at"), formatters.get("cats_datetime"))
                 projected["source_files"] = strings(_field(snapshot, "source_files", []))
                 raw = _field(snapshot, "data", {}) or {}
@@ -126,7 +141,20 @@ def project_secondary(data, name, context, can=None, formatters=None):
                 evidence["service"]["groups"] = strings(_field(source_service, "groups", []))
                 raw_overview = _field(raw, "service_overview", {}) or {}
                 from .overview import normalize_overview
-                evidence["service_overview"] = overview(normalize_overview(raw_overview, digest_resolver=None))
+                normalized = normalize_overview(raw_overview,
+                    skipped_images=raw.get("skipped_images") or [], skipped_charts=raw.get("skipped_charts") or [],
+                    findings_images=dict.fromkeys([r["image"] for r in evidence["findings"] if r["image"]] +
+                                                  [image for image in evidence["sbom_images"] if image]),
+                    digest_resolver=None)
+                # Captures can include arbitrary imported Compose configuration.
+                # Only the service inventory is needed in a historical overview.
+                captured_compose = normalized.pop("compose", None)
+                evidence["service_overview"] = overview(normalized)
+                if captured_compose:
+                    evidence["service_overview"]["compose"] = {
+                        "services": rows(captured_compose.get("services"), ("name", "image", "status"))}
+                evidence["service_overview"]["dependencies"] = rows(normalized["dependencies"],
+                    ("dependency", "used_by", "provides", "images"))
                 evidence["service_overview"]["images"] = rows(_field(raw_overview, "images", []),
                     ("image", "reference", "name", "digest", "image_digest", "registry", "repository", "tag", "version", "source_file", "discovered_from"))
                 evidence["service_overview"]["charts"] = rows(_field(raw_overview, "charts", []),

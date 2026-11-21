@@ -1,6 +1,6 @@
-import {useEffect, useId, useRef, useState, type FormEvent} from 'react';
+import {useEffect, useRef, useState, type FormEvent} from 'react';
 import {can, requestJson, type PageData} from '../api';
-import {StatusBadge} from './ui';
+
 import './service-controls.css';
 
 interface PullAccess {service_id: number; public: boolean}
@@ -20,8 +20,6 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
   const [selected, setSelected] = useState(seed?.public ? 'public' : 'private');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const [editing, setEditing] = useState(false);
-  const editorId = useId();
   const currentService = useRef<number | null>(serviceId);
   currentService.current = serviceId;
   const editable = can(data, 'release.destination.manage');
@@ -31,7 +29,7 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
 
   useEffect(() => {
     currentService.current = serviceId;
-    setError(''); setNotice(''); setBusy(false); setEditing(false);
+    setError(''); setNotice(''); setBusy(false);
     if (seededPublic !== undefined && attempt === 0) {
       setAccess({service_id: serviceId, public: seededPublic});
       setSelected(seededPublic ? 'public' : 'private');
@@ -61,38 +59,37 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
       const current = checkedAccess(result, serviceId);
       setAccess(current); setSelected(current.public ? 'public' : 'private');
       setNotice('Service pull access saved.');
-      setEditing(false);
     } catch (cause) {
       if (currentService.current === serviceId) setError(cause instanceof Error ? cause.message : 'Could not save pull access.');
     } finally {if (currentService.current === serviceId) setBusy(false);}
   }
 
-  function cancel() {
-    setSelected(visibleAccess?.public ? 'public' : 'private');
-    setEditing(false); setError('');
-  }
-
-  return <section className="panel service-control-card" aria-label="Service pull access">
-    <div className="service-control-heading">
-      <div className="service-control-title"><h2>Service pull access</h2>
-        {visibleAccess && <StatusBadge value={visibleAccess.public ? 'public' : 'private'} label={visibleAccess.public ? 'Public' : 'Private'} tone="neutral"/>}
+  const savedSelection = visibleAccess?.public ? 'public' : 'private';
+  const changed = Boolean(visibleAccess && selected !== savedSelection);
+  return <section className="panel service-control-card service-setting" aria-label="Service pull access">
+    <form onSubmit={save}>
+      <div className="service-setting-row">
+        <h2>Service pull access</h2>
+        {visibleAccess && (editable ?
+          <select aria-label="Service pull access" value={selected} disabled={busy} onChange={event => {
+            setSelected(event.target.value); setNotice(''); setError('');
+          }}>
+            <option value="private">Private · sign-in required</option>
+            <option value="public">Public · anonymous pulls</option>
+          </select> : <span>{visibleAccess.public ? 'Public · anonymous pulls' : 'Private · sign-in required'}</span>)}
       </div>
-      {editable && visibleAccess && <button type="button" className="secondary-button" disabled={busy} aria-expanded={editing} aria-controls={editorId}
-        onClick={() => {if (editing) cancel(); else {setEditing(true); setNotice('');}}}>Edit pull access</button>}
-    </div>
+      {changed && editable && <div className="service-control-editor">
+        <p className="service-control-help">{selected === 'public'
+          ? 'Anyone who can reach CATS can pull this service’s authorized artifacts without signing in.'
+          : 'Pulls require authorized CATS registry credentials.'} The owning group’s OCI pull policy determines which artifacts are authorized.</p>
+        <div className="service-control-actions">
+          <button disabled={busy}>{busy ? 'Saving pull access…' : 'Save pull access'}</button>
+          <button type="button" className="secondary-button" disabled={busy} onClick={() => {setSelected(savedSelection); setError('');}}>Cancel</button>
+        </div>
+      </div>}
+    </form>
     {!visibleAccess && !error && <p role="status">Loading pull access.</p>}
     {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => setAttempt(value => value + 1)}>Refresh pull access</button></div>}
-    {visibleAccess && <>
-      <p className="service-control-description">{visibleAccess.public ? 'Anyone who can reach CATS can pull authorized artifacts without signing in.' : 'Pulls require authorized CATS registry credentials.'} The owning group's OCI pull policy determines which artifacts are authorized.</p>
-      {editable && editing && <form id={editorId} className="service-control-editor" onSubmit={save}>
-        <label>Pull access<select value={selected} disabled={busy} onChange={event => setSelected(event.target.value)}>
-          <option value="private">Private — sign-in required</option><option value="public">Public — anonymous pulls</option>
-        </select></label>
-        <p className="service-control-help">{selected === 'public' ? 'Public access permits anonymous pulls of this service’s authorized artifacts.' : 'Private access requires a CATS machine account with permission to pull.'}</p>
-        <div className="service-control-actions"><button disabled={busy || selected === (visibleAccess.public ? 'public' : 'private')}>{busy ? 'Saving pull access…' : 'Save pull access'}</button>
-          <button type="button" className="secondary-button" disabled={busy} onClick={cancel}>Cancel</button></div>
-      </form>}
-    </>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

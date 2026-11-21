@@ -20,6 +20,13 @@ const fixture = (extra: Partial<PageData> = {}): PageData => ({
 });
 
 describe('native service finding pages', () => {
+  it('keeps retained versions accessible when the current version is unknown', () => {
+    const data = fixture({history_versions: ['Unknown', '1.2']});
+    data.view.version = 'Unknown';
+    render(<Page data={data}/>);
+    expect(screen.getByLabelText('View historical versions for Sample')).toHaveTextContent('Unknown');
+    expect(screen.getByRole('link', {name: '1.2'})).toHaveAttribute('href', '/services/sample/history?version=1.2');
+  });
   it('preserves CVE identity, CSRF and existing exception action when opening a request', () => {
     render(<Page data={fixture()} />);
     expect(screen.getByRole('link', { name: 'CVE-2026-42' })).toHaveAttribute('href', '/services/sample/findings/42');

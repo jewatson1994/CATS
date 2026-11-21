@@ -210,7 +210,7 @@ it('allows source administrators to select a registry without granting registry 
 it('does not display a captured scan schedule as executable on a replica', () => {
   render(<OperatingMode.Provider value="replica"><ServiceScanSchedule root="/services/mission" data={{...data,
     scan_schedule: {cadence: 'daily', timezone: 'UTC', next_run_at: '2026-11-07T22:00:00Z'}, can_schedule_scans: true, can_disable_scan_schedule: true}}/></OperatingMode.Provider>);
-  expect(screen.queryByRole('region', {name: 'Scheduled scans'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', {name: 'Scan schedule'})).not.toBeInTheDocument();
   expect(screen.queryByRole('button', {name: 'Save schedule'})).not.toBeInTheDocument();
 });
 

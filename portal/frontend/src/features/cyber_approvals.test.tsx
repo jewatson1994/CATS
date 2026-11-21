@@ -1,12 +1,37 @@
 import {cleanup, fireEvent, render, screen, waitFor, within} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
 import {ApiError, requestJson} from '../api';
-import {ApprovalDetail, Destinations, ReleaseDetail, Releases, RequestApproval, Reassessment} from './cyber_approvals';
+import {ApprovalDetail, Destinations, Page as Approvals, ReleaseDetail, Releases, RequestApproval, Reassessment} from './cyber_approvals';
 
 vi.mock('../api', async original => ({...await original<any>(), requestJson: vi.fn()}));
-afterEach(() => {cleanup(); vi.resetAllMocks();});
+afterEach(() => {cleanup(); vi.resetAllMocks(); window.history.replaceState({}, '', '/');});
 const data = {csrf_token:'csrf', can:{'approval.request':{'7':true},'release.destination.manage':{'*':true}}};
 const ready = {service_id:7, ready:true, blockers:[], version:'1.0', scan_date:'2026-10-14', destinations:[{id:2,name:'Approved registry',endpoint:'registry.test',namespace:'approved',is_default:true}],remediations:[{id:'rem-1',label:'Remediation 1'}]};
+
+it('keeps approval requests, approved releases, and detail navigation inside the selected service', async () => {
+  const serviceKey = 'gateway 1';
+  const query = new URLSearchParams({service: serviceKey});
+  window.history.replaceState({}, '', `/approved-releases?${query}`);
+  vi.mocked(requestJson).mockResolvedValue({items: [{id: 9, service_name: 'Gateway', service_key: serviceKey}]});
+  const releases = render(<Releases data={data}/>);
+  const top = within(screen.getByRole('navigation', {name: 'Service views'}));
+  expect(top.getByRole('link', {name: 'Releases'})).toHaveAttribute('aria-current', 'page');
+  expect(top.queryByRole('link', {name: 'Approvals'})).toBeNull();
+  const sections = within(screen.getByRole('navigation', {name: 'Release views'}));
+  const requests = sections.getByRole('link', {name: 'Approval requests'});
+  expect(requests).toHaveAttribute('href', `/cyber-approvals?${query}`);
+  expect(sections.getByRole('link', {name: 'Approved releases'})).toHaveAttribute('aria-current', 'page');
+  const detail = await screen.findByRole('link', {name: 'Gateway'});
+  expect(detail).toHaveAttribute('href', `/approved-releases?id=9&${query}`);
+  window.history.replaceState({}, '', detail.getAttribute('href')!);
+  releases.rerender(<Releases data={data}/>);
+  expect(screen.getByRole('link', {name: 'Service releases'})).toHaveAttribute('href', `/approved-releases?${query}`);
+  releases.unmount();
+  window.history.replaceState({}, '', `/cyber-approvals?${query}`);
+  render(<Approvals data={data}/>);
+  expect(within(screen.getByRole('navigation', {name: 'Release views'})).getByRole('link', {name: 'Approval requests'})).toHaveAttribute('aria-current', 'page');
+  expect(await screen.findByRole('link', {name: 'Gateway · #9'})).toHaveAttribute('href', `/cyber-approvals?id=9&${query}`);
+});
 const distribution = {id:'dist-1', name:'Regional gateway', inventory_id:'inv-2', selection_digest:'sha256:frozen',
   enabled_chart_ids:['cache'], disabled_chart_ids:['worker'], images:['registry/cache:1'],
   charts:[{id:'cache', label:'Cache', version:'1', reference:'oci://reg/cache',source_path:'charts/cache'},
@@ -104,7 +129,7 @@ it('submits only the selected variant and includes CSRF', async () => {
   await screen.findByText('Ready for Cyber review');
   expect(screen.getAllByRole('combobox')).toHaveLength(1);
   fireEvent.click(screen.getByRole('button', {name:'Request Cyber Approval'}));
-  expect(await screen.findByRole('link', {name:'Review request #12'})).toHaveAttribute('href','/cyber-approvals?id=12');
+  expect(await screen.findByRole('link', {name:'Review request #12'})).toHaveAttribute('href','/cyber-approvals?id=12&service=sample');
   const [url, options] = vi.mocked(requestJson).mock.calls[1];
   expect(url).toBe('/api/cyber-approvals');
   expect(options?.headers).toMatchObject({'X-CSRF-Token':'csrf'});
@@ -114,7 +139,7 @@ it('submits only the selected variant and includes CSRF', async () => {
 it('selects the retained candidate directly in the variant selector', async () => {
   vi.mocked(requestJson).mockResolvedValue(ready);
   render(<RequestApproval data={data} serviceKey="sample"/>);
-  await screen.findByText('Ready for Cyber review');
+  await screen.findByRole('option', {name: /Remediation 1/});
   fireEvent.change(screen.getByLabelText('Release variant'),{target:{value:'cats_remediated:rem-1'}});
   await waitFor(() => expect(requestJson).toHaveBeenLastCalledWith(expect.stringContaining('remediation_id=rem-1'),expect.anything()));
   await waitFor(() => expect(screen.getByRole('button',{name:'Request Cyber Approval'})).toBeEnabled());

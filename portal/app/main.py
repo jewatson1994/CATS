@@ -158,6 +158,7 @@ with migration_transaction(engine) as connection:
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)
+    service_scan_schedule.upgrade_connection(connection)
     upgrade_connection(connection)
     upgrade_validators(connection)
     from .cyber_approval_migrations import upgrade_connection as upgrade_approvals
@@ -10628,15 +10629,21 @@ def _service_image_for_action(db: Session, service_key: str, image_id: int) -> t
 
 @app.post("/services/{service_key}/scan-schedule")
 def save_service_scan_schedule(service_key: str, csrf_token: str = Form(), cadence: str = Form(),
-    timezone: str = Form("UTC"), weekday: int = Form(0), db: Session = Depends(get_db),
+    timezone: str = Form("UTC"), weekday: int = Form(0), time_of_day: str | None = Form(None),
+    weekdays: list[int] | None = Form(None), monthly_mode: str = Form("weekday"),
+    week_of_month: int = Form(1), day_of_month: int = Form(1), db: Session = Depends(get_db),
     auth: AuthContext = Depends(require_permission("service.edit", scoped=True))):
     check_csrf(auth, csrf_token)
     service = db.scalar(select(Service).where(Service.service_key == service_key))
     if not service:
         raise HTTPException(404, detail="Service was not found")
-    service_scan_schedule.configure_schedule(db, service, auth, cadence, timezone, weekday)
+    schedule = service_scan_schedule.configure_schedule(db, service, auth, cadence, timezone, weekday,
+        time_of_day=time_of_day, weekdays=weekdays, monthly_mode=monthly_mode,
+        week_of_month=week_of_month, day_of_month=day_of_month)
     record_audit(db, auth, "service.scan_schedule_changed", "service", service.id,
-                 service_id=service.id, cadence=cadence, timezone=timezone, weekday=weekday)
+                 service_id=service.id, cadence=cadence, timezone=timezone, weekday=schedule["weekday"],
+                 recurrence={key: schedule[key] for key in
+                             ("time_of_day", "weekdays", "monthly_mode", "week_of_month", "day_of_month")})
     db.commit()
     return RedirectResponse(f"/services/{service_key}?overview=true&schedule_saved=1#scan-schedule", status_code=303)
 

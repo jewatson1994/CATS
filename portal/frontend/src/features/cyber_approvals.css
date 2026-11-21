@@ -1,4 +1,7 @@
 .approval-form {display:grid;gap:1rem;max-width:52rem}
+.release-sections {display:flex;flex-wrap:wrap;gap:.25rem;margin:1rem 0}
+.release-sections a {padding:.5rem .85rem;border-radius:.35rem;text-decoration:none}
+.release-sections a[aria-current="page"] {font-weight:700;background:var(--surface-subtle);box-shadow:inset 0 -2px currentColor}
 .approval-form label,.approval-filters label {display:grid;gap:.4rem}
 .approval-form textarea {min-height:6rem}
 .approval-badges,.approval-filters {display:flex;gap:1rem;flex-wrap:wrap;align-items:center}

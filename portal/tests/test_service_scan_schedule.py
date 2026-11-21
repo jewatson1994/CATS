@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import create_engine, func, select
 
 from test_portal import SessionLocal, setup_function
 from app import main, scan_coordination as jobs, service_scan_schedule as schedules
@@ -142,3 +142,75 @@ def test_configuration_and_dispatch_require_current_scoped_permissions():
         dispatch(db, OPENING)
         assert schedules.schedule_view(db, service)["cadence"] == "off"
         assert not db.scalar(select(jobs.ScanJob))
+
+
+@pytest.mark.parametrize("clock,zone,cadence,fields,expected", [
+    ("2026-11-20T13:00", "UTC", "monthly", {"weekday": 5, "week_of_month": 3}, "2026-11-21T08:30"),
+    ("2026-11-21T08:31", "UTC", "monthly", {"weekday": 5, "week_of_month": 3}, "2026-12-19T08:30"),
+    ("2026-12-28T19:00", "UTC", "monthly", {"weekday": 6, "week_of_month": -1}, "2027-01-31T08:30"),
+    ("2027-02-01T00:00", "UTC", "monthly", {"weekday": 0, "week_of_month": 5}, "2027-03-29T08:30"),
+    ("2027-02-01T00:00", "UTC", "monthly", {"monthly_mode": "date", "day_of_month": 31}, "2027-03-31T08:30"),
+    ("2026-11-20T13:00", "UTC", "weekly", {"weekdays": [0, 4]}, "2026-11-23T08:30"),
+    # Missing local 02:30 becomes 03:30 EDT. The repeated local 01:30 runs on the first fold.
+    ("2026-03-08T00:00", "America/New_York", "daily", {"time_of_day": "02:30"}, "2026-03-08T07:30"),
+    ("2026-11-01T00:00", "America/New_York", "daily", {"time_of_day": "01:30"}, "2026-11-01T05:30"),
+    ("2026-11-01T05:31", "America/New_York", "daily", {"time_of_day": "01:30"}, "2026-11-02T06:30"),
+])
+def test_calendar_schedule_uses_next_local_occurrence(clock, zone, cadence, fields, expected):
+    with SessionLocal() as db:
+        service, auth = setup_schedule(db)
+        fields = {"time_of_day": "08:30", "weekday": 0, **fields}
+        view = schedules.configure_schedule(db, service, auth, cadence, zone, **fields,
+                                            clock=datetime.fromisoformat(clock).replace(tzinfo=timezone.utc))
+        assert view["next_run_at"] == datetime.fromisoformat(expected).replace(tzinfo=timezone.utc).isoformat()
+        assert view["time_of_day"] == fields["time_of_day"]
+
+
+def test_calendar_dispatch_retries_across_midnight_and_runs_once(monkeypatch, tmp_path):
+    opening = datetime(2026, 11, 21, 23, 58, tzinfo=timezone.utc)
+    monkeypatch.setattr(main, "PUBLIC_JOB_ROOT", tmp_path)
+    monkeypatch.setenv("CATS_SCAN_QUEUE_CAPACITY", "1")
+    main.PUBLIC_JOBS["busy"] = {"status": "queued", "owner_user_id": 1}
+    with SessionLocal() as db:
+        service, auth = setup_schedule(db)
+        schedules.configure_schedule(db, service, auth, "monthly", "UTC", 5, time_of_day="23:58",
+                                     week_of_month=3, clock=opening - timedelta(hours=2))
+        db.commit()
+        dispatch(db, opening - timedelta(seconds=1))
+        assert not schedules.schedule_view(db, service)["last_result"]
+        dispatch(db, opening)
+        assert schedules.schedule_view(db, service)["last_result"] == "Waiting for scan queue capacity"
+        main.PUBLIC_JOBS.update_job("busy", {"status": "complete"})
+        dispatch(db, opening + timedelta(minutes=5))
+        view = schedules.schedule_view(db, service)
+        job = db.get(jobs.ScanJob, view["last_job_id"])
+        assert job.payload["schedule_context"]["opening"] == opening.isoformat()
+        assert schedules.claim_error(db, job, opening + timedelta(minutes=6)) is None
+        assert schedules.claim_error(db, job, opening + timedelta(hours=1))
+        assert view["next_run_at"] == datetime(2026, 12, 19, 23, 58, tzinfo=timezone.utc).isoformat()
+        dispatch(db, opening + timedelta(minutes=6))
+        assert db.scalar(select(func.count()).select_from(jobs.ScanJob)) == 2
+
+
+def test_calendar_missed_window_advances_without_catchup():
+    with SessionLocal() as db:
+        service, auth = setup_schedule(db)
+        schedules.configure_schedule(db, service, auth, "weekly", "UTC", 0, time_of_day="10:12", weekdays=[0, 3],
+                                     clock=OPENING)
+        db.commit()
+        # The portal was offline through Thursday's entire window.
+        dispatch(db, datetime(2026, 11, 5, 11, 12, tzinfo=timezone.utc))
+        view = schedules.schedule_view(db, service)
+        assert not view["last_job_id"]
+        assert view["last_result"] == "Missed scan window"
+        assert view["next_run_at"] == "2026-11-09T10:12:00+00:00"
+
+
+def test_additive_upgrade_preserves_legacy_schedule():
+    engine = create_engine("sqlite://")
+    with engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE service_scan_schedules (service_id INTEGER, cadence TEXT, weekday INTEGER)")
+        connection.exec_driver_sql("INSERT INTO service_scan_schedules VALUES (1, 'weekly', 3)")
+        schedules.upgrade_connection(connection)
+        schedules.upgrade_connection(connection)
+        assert tuple(connection.exec_driver_sql("SELECT * FROM service_scan_schedules").one()) == (1, "weekly", 3, None)

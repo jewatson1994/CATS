@@ -6,7 +6,9 @@ Service Managers can view/export and edit assigned services, ingest scans, reque
 
 ## Maintain and scan a service
 
-Open an assigned service, select its version, and keep its information, owner, and contact details current. Review retained artifacts and findings before starting work.
+Open an assigned service to maintain its information, owner, and contact details. In the current workspace, **Releases** groups **Approved releases** and **Approval requests** for that service. Imported services open their publisher's captured releases.
+
+To inspect a previous version, choose it from the version menu. **Overview**, **Dependencies**, and **Findings** show retained evidence for the selected scan. Choose **Releases** for approvals linked to that version. Follow **Current service workspace** to return to the live controls.
 
 On **Scan**, supply supported image references, Docker image archives, Helm inputs, or service-definition YAML. For retained evidence, choose **Ingest completed scan into** and an authorized service/version before running the scan. Inspect skipped inputs and completeness afterward.
 
@@ -43,21 +45,22 @@ See [service remediation](../remediation.md) and [pipeline details](../../portal
 Select a training ingestion target, draft a justified exception request, and identify the independent reviewer. Explain what evidence is needed after remediation to establish successful deployment.
 
 
-### Schedule overnight image scans
+### Schedule recurring image scans
 
-For recurring image scans, open the service's **Overview → Scheduled scans →
-Edit scan schedule**. Choose **Nightly** or **Weekly**, select the opening night
-for a weekly schedule, then set the time zone and save. Scheduling requires
-service editing and scan ingestion permissions for that service. The initial
-time zone comes from the portal's display settings.
+Open the scan schedule on the service **Overview**. Choose **Daily**, **Weekly**,
+or **Monthly**, then set the local start time and time zone. For a weekly scan,
+select one or more weekdays. For a monthly scan, choose a date or an ordinal
+weekday such as the third Saturday or last Friday. Months without the chosen date
+or fifth weekday are skipped. Choose **Off** to stop future runs.
 
-CATS queues the service's active image references between 9 p.m. and 5 a.m.
-in the selected time zone, subject to the existing scan limits. For example,
-a Friday schedule includes early Saturday morning. A job still waiting at
-5 a.m. misses that window. A running job can finish afterward. The overview
-shows the next scheduled start and last scheduling activity. Choose **Off**
-to stop future runs. Scheduled image scans add findings to the service while
-preserving findings outside the scan's coverage.
+CATS queues the service's active images at the selected time. If another service
+scan is active or the queue is full, CATS retries for up to one hour. A running
+job can finish afterward. During a daylight-saving gap the start shifts forward
+by the clock change. A repeated hour runs once, at its first occurrence.
+
+Existing overnight schedules keep their 9 p.m. to 5 a.m. window until edited.
+The Overview shows the next start and latest scheduling result. Configuring
+scans requires service editing and scan ingestion permissions for the service.
 
 ### Choose assessment scope when ingesting a public scan
 
