@@ -89,10 +89,24 @@ endpoint validates widths and reuses the page's service-view authorization.
 Normalization/projection still runs for a resize request, while expensive local
 routing is cached; no layout request occurs on ordinary selection redraws.
 
-Initial view and Fit use 100% size, center graphs that fit, and align oversized
-graphs to their beginning. Existing zoom and drag-to-pan controls remain. The
-canvas no longer reserves an empty details column or forces a 720-pixel minimum
-SVG width. A large graph can extend beyond the visible canvas and be panned.
+The Architecture tab opens on **Focused resource**. It starts at the workload
+with the most recorded relationships and falls back to another resource when
+the evidence has no workloads. The picker includes isolated resources. The map
+shows one hop each way, with the recorded relationship type and classification.
+Choose a resource or relationship for its evidence. **Focus on this resource**
+follows a neighbor. Each neighbor appears once per direction, with each relationship
+available for inspection. More than three neighbors on either side can be expanded.
+**Connections with ports** counts graph relationships that carry at least one
+service, target, or container port. A connection with several ports counts once.
+
+**Diagram view → All Resources** opens the complete graph. Data Flow, Runtime
+Observed, Differences and the other specialist views use the existing graph
+geometry. Fit scales large graphs into the available canvas, while Reset restores
+100% scale. Only the complete and specialist views need width-based layout
+refreshes. Focused resource uses the selected version’s existing evidence and
+requires no extra requests. SVG exports retain the complete selected graph layer.
+
+[Focused Architecture view of the rendered Helm demo](../../docs/architecture-preview.png)
 
 ## Validation and fixtures
 

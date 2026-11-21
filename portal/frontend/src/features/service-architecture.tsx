@@ -2,20 +2,34 @@ import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {requestJson,type PageData} from '../api';
 import {ServiceHeader, ServiceTabs} from '../components/ServiceHeader';
 import { EmptyState, ExpandableEvidence, MetricCard, MetricGrid, SectionHeader } from '../components/ui';
+import {ArchitectureFocus} from './ArchitectureFocus';
 
-const layers = [['all','All Resources'],['declared','Declared'],['runtime','Runtime Observed'],['differences','Differences'],['configuration','Configuration'],['containers','Containers'],['flow','Data Flow'],['network','Network'],['storage','Storage']];
+const layers = [['focus','Focused resource'],['all','All Resources'],['declared','Declared'],['runtime','Runtime Observed'],['differences','Differences'],['configuration','Configuration'],['containers','Containers'],['flow','Data Flow'],['network','Network'],['storage','Storage']];
 export function Page({data}:{data:PageData}) {
   const service=data.view.service, root=`/services/${encodeURIComponent(service.service_key)}`;
   const selectedVersion=data.view_version || new URLSearchParams(window.location.search).get('view_version') || new URLSearchParams(window.location.search).get('version') || '';
   const evidenceUrl=`/api/v1/services/${encodeURIComponent(service.service_key)}/architecture-evidence${selectedVersion?`?view_version=${encodeURIComponent(selectedVersion)}`:''}`;
   const [graph,setGraph]=useState(data.architecture_graph || {}), [verification,setVerification]=useState(data.architecture_verification || {});
-  const [layer,setLayer]=useState('all'), [selection,setSelection]=useState<any>(null), [camera,setCamera]=useState({x:0,y:0,scale:1});
+  const [layer,setLayer]=useState('focus'), [focusId,setFocusId]=useState(''), [selection,setSelection]=useState<any>(null), [camera,setCamera]=useState({x:0,y:0,scale:1});
   const [size,setSize]=useState({width:1200,height:620}),[error,setError]=useState('');
   const svg=useRef<SVGSVGElement>(null),drag=useRef<any>(null);
-  const layout=graph.layouts?.[layer] || graph.layouts?.all || graph.layouts?.flow;
+  const focused = layer === 'focus';
+  const layout=focused ? undefined : (graph.layouts?.[layer] || graph.layouts?.all || graph.layouts?.flow);
   const nodes=useMemo(()=>new Map<string,any>((graph.nodes || []).map((node:any)=>[node.id,node])),[graph.nodes]);
   const relationshipsById=useMemo(()=>new Map<string,any>((graph.relationships || []).map((edge:any)=>[edge.id,edge])),[graph.relationships]);
-  const fit=useCallback(()=>setCamera({scale:1,x:Math.max(0,(size.width-(layout?.bounds?.width || 0))/2)-(layout?.bounds?.x || 0),y:Math.max(0,(size.height-(layout?.bounds?.height || 0))/2)-(layout?.bounds?.y || 0)}),[layout,size.width,size.height]);
+  const portConnections = useMemo(() => (graph.relationships || []).filter((edge: any) =>
+    edge.network?.ports?.some((port: any) => port && [port.servicePort, port.targetPort, port.containerPort].some(value =>
+      typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')))).length, [graph.relationships]);
+  const fit = useCallback(() => {
+    const bounds = layout?.bounds;
+    if (!bounds?.width || !bounds.height) return;
+    const scale = Math.min(1, size.width / bounds.width, size.height / bounds.height);
+    setCamera({
+      scale,
+      x: (size.width - bounds.width * scale) / 2 - (bounds.x || 0) * scale,
+      y: (size.height - bounds.height * scale) / 2 - (bounds.y || 0) * scale,
+    });
+  }, [layout, size.width, size.height]);
   useEffect(()=>{fit();},[fit]);
   // While a Deployment Validation runs, poll only the lightweight summary
   // (verification state + graph counts). When it reaches a terminal state the
@@ -28,7 +42,7 @@ export function Page({data}:{data:PageData}) {
   const applyGraph=useCallback((next:any)=>{
     // Full graphs arrive only at terminal transitions; no deep string comparison.
     setGraph((old:any)=>old===next?old:next);
-    setLayer(old=>next.layouts?.[old]?old:'all');
+    setLayer(old=>old==='focus' || next.layouts?.[old] ? old : 'focus');
     setSelection((old:any)=>old && [...(next.nodes || []),...(next.relationships || [])].find((item:any)=>item.id===old.id) || null);
   },[]);
   const applyVerification=useCallback((next:any)=>{runKey.current=next?.run_key || '';setVerification(next || {});},[]);
@@ -93,8 +107,8 @@ export function Page({data}:{data:PageData}) {
     let timer:ReturnType<typeof setTimeout>,width=0,sequence=0,controller:AbortController|undefined;
     const observer=new ResizeObserver(()=>{clearTimeout(timer);timer=setTimeout(async()=>{const box=svg.current?.getBoundingClientRect();if(!box?.width)return;setSize({width:box.width,height:box.height || 620});const next=Math.max(240,Math.min(10000,Math.floor(box.width/16)*16));if(next===width)return;width=next;controller?.abort();controller=new AbortController();const current=++sequence;try{const url=new URL(window.location.href);url.searchParams.set('architecture','true');if(selectedVersion)url.searchParams.set('view_version',selectedVersion);url.searchParams.set('layout_width',String(next));const layouts=await requestJson<any>(url.pathname+url.search,{signal:controller.signal});if(current===sequence){setGraph((old:any)=>({...old,layouts}));setError('');}}catch{if(current===sequence && !controller.signal.aborted){width=0;setError('Could not refresh the layout. Resize or reload to retry.');}}},180);});
     observer.observe(svg.current);return()=>{sequence++;clearTimeout(timer);controller?.abort();observer.disconnect();};
-  },[selectedVersion]);
-  const zoom=(delta:number,x=size.width/2,y=size.height/2)=>setCamera(old=>{const scale=Math.max(.25,Math.min(3,old.scale+delta));return {scale,x:x-(x-old.x)*scale/old.scale,y:y-(y-old.y)*scale/old.scale};});
+  },[selectedVersion,focused]);
+  const zoom=(delta:number,x=size.width/2,y=size.height/2)=>setCamera(old=>{const scale=Math.max(Math.min(.25,old.scale),Math.min(3,old.scale+delta));return {scale,x:x-(x-old.x)*scale/old.scale,y:y-(y-old.y)*scale/old.scale};});
   const related=useMemo(()=>{const ids=new Set<string>();if(selection){ids.add(selection.id);for(const edge of graph.relationships || [])if(edge.id===selection.id || edge.source===selection.id || edge.target===selection.id){ids.add(edge.id);ids.add(edge.source);ids.add(edge.target);}}return ids;},[selection,graph.relationships]);
   const select=useCallback((item:any)=>setSelection(item),[]);
   const keySelect=useCallback((event:React.KeyboardEvent,item:any)=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();setSelection(item);}},[]);
@@ -105,14 +119,35 @@ export function Page({data}:{data:PageData}) {
     // select/keySelect are stable; the camera is deliberately not a dependency.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [layout,relationshipsById,nodes,selection,related]);
+  const changeFocus = (id: string) => {
+    setFocusId(id);
+    setSelection(null);
+  };
   const state=data.architecture_state;
   return <><ServiceHeader data={data}/><ServiceTabs serviceKey={service.service_key} active="architecture" /><section className="section-intro"><div><h2>Architecture</h2><p>{graph.source || 'Normalized relationships from retained Helm, Kubernetes, or Compose evidence.'}</p></div><div className="section-intro-actions"><details className="architecture-verification"><summary className={`status ${verification.state==='VERIFIED'?'ok':'warning'}`}>{verification.state==='VERIFIED'?'✓ ':''}{verification.label || 'N/A'}</summary>{['VERIFIED','PARTIALLY_VERIFIED'].includes(verification.state)?<p>Observed {verification.observed} / {verification.expected}; Missing {verification.missing}; Failed {verification.failed}<br />{verification.completed_at} · {verification.engine}</p>:<p>{verification.reason}</p>}{verification.run_key?<a href={`${root}?validation=true&run=${encodeURIComponent(verification.run_key)}`}>View Deployment Validation</a>:verification.state==='DECLARED'&&verification.runtime_supported!==false&&<a href={`${root}?validation=true`}>Run Deployment Validation</a>}</details></div></section>{String(graph.source || '').includes('Compose')&&<p className="notice">Compose connections describe declared dependencies, network membership, and port mappings. They do not establish observed traffic or a running deployment.</p>}
     {state==='NO_SOURCE'?<section className="panel empty architecture-empty"><h2>No architecture source available</h2><p>Add a Compose deployment, Helm charts, or Kubernetes manifests to build the architecture.</p><a href={`${root}?artifacts=true`}>Manage artifacts</a></section>:state==='ANALYSIS_INCOMPLETE'?<section className="panel empty architecture-empty"><h2>Architecture analysis incomplete</h2><a href={`/scan?service=${encodeURIComponent(service.service_key)}`}>Run a scan</a></section>:<>
     {state==='NO_RELATIONSHIPS'&&<p className="notice">No relationships could be established from supplied evidence.</p>}{graph.incomplete&&<p className="notice warning">Architecture evidence is incomplete. Review warnings and unresolved resources below.</p>}
-    <section className="architecture-panel"><div className="architecture-toolbar"><label>Layer <select value={layer} onChange={event=>{setLayer(event.target.value);setSelection(null);}}>{layers.map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><span>Declared · Runtime Observed · Inferred</span><div className="architecture-controls" style={{position:'static'}}><button onClick={()=>zoom(-.25)} aria-label="Zoom out">−</button><output>{Math.round(camera.scale*100)}%</output><button onClick={()=>zoom(.25)} aria-label="Zoom in">+</button><button onClick={()=>setCamera({x:0,y:0,scale:1})}>Reset</button><button onClick={fit}>Fit</button></div></div>{error&&<p role="status">{error}</p>}
-    <div className="architecture-layout"><svg ref={svg} className={`architecture-svg${drag.current?' is-panning':''}`} viewBox={`0 0 ${size.width} ${size.height}`} aria-label="Service architecture graph" onWheel={event=>{event.preventDefault();const box=event.currentTarget.getBoundingClientRect();zoom(event.deltaY<0?.15:-.15,(event.clientX-box.left)*size.width/(box.width || size.width),(event.clientY-box.top)*size.height/(box.height || size.height));}} onPointerDown={event=>{if((event.target as Element).closest('[data-graph-item]'))return;drag.current={x:event.clientX,y:event.clientY};event.currentTarget.setPointerCapture?.(event.pointerId);}} onPointerMove={event=>{if(!drag.current)return;const delta={x:event.clientX-drag.current.x,y:event.clientY-drag.current.y};drag.current={x:event.clientX,y:event.clientY};setCamera(old=>({...old,x:old.x+delta.x,y:old.y+delta.y}));}} onPointerUp={()=>{drag.current=null;}} onPointerCancel={()=>{drag.current=null;}}><defs><marker id="architecture-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs><g transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale})`}>{graphContent}</g></svg>
-    {selection&&<aside className="architecture-details" aria-label="Selection details"><button aria-label="Close selection" onClick={()=>setSelection(null)}>×</button><h2>{selection.label || selection.id}</h2><dl>{[['ID',selection.id],['Classification',(selection.classifications || [selection.classification || selection.kind]).join(' + ')],['Source',nodes.get(selection.source)?.label || selection.source],['Destination',nodes.get(selection.target)?.label || selection.target],['Provenance',selection.provenance || 'DECLARED'],['Confidence',selection.confidence]].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{selection.ports?.map((port:any,index:number)=><p key={`port-${index}`}>{port.name}: {port.port}/{port.protocol}</p>)}{selection.network?.ports?.map((port:any,index:number)=><p key={index}>{port.servicePort} → {port.targetPort} / {port.protocol}</p>)}{selection.chart_provenance&&<><h3>Chart provenance</h3><dl>{Object.entries(selection.chart_provenance).filter(([,value])=>typeof value==='string'||typeof value==='number').map(([key,value])=><div key={key}><dt>{key.replaceAll('_',' ')}</dt><dd>{String(value)}</dd></div>)}</dl></>}{(selection.evidence || []).map((item:any,index:number)=><p key={index}>{item.detail}<br />{item.source}</p>)}</aside>}</div></section>
-    <MetricGrid className="architecture-metrics" label="Architecture summary">{[['nodes','Nodes'],['relationships','Relationships'],['unresolved','Unresolved'],['warnings','Warnings'],['ports','Ports']].map(([key,label])=><MetricCard key={key} label={label} value={graph.summary?.[key] || 0} tone={(key==='unresolved'||key==='warnings')&&graph.summary?.[key]>0?'warning':undefined} />)}</MetricGrid>
+    <section className="architecture-panel">
+      <div className="architecture-toolbar">
+        <label>Diagram view <select value={layer} onChange={event=>{setLayer(event.target.value);setSelection(null);}}>
+          {layers.map(([value,label])=><option key={value} value={value}>{label}</option>)}
+        </select></label>
+        {!focused && <div className="architecture-controls" style={{position:'static'}}>
+          <button onClick={()=>zoom(-.25)} aria-label="Zoom out">−</button>
+          <output>{Math.round(camera.scale*100)}%</output>
+          <button onClick={()=>zoom(.25)} aria-label="Zoom in">+</button>
+          <button onClick={()=>setCamera({x:0,y:0,scale:1})}>Reset</button><button onClick={fit}>Fit</button>
+        </div>}
+      </div>
+      {error&&<p role="status">{error}</p>}
+      <div className={focused ? 'architecture-layout arch-focus-layout' : 'architecture-layout'}>
+        {focused ? <ArchitectureFocus nodes={nodes} edges={graph.relationships || []} focusId={focusId} onFocus={changeFocus} onSelect={select}/> : <svg ref={svg} className={`architecture-svg${drag.current?' is-panning':''}`} viewBox={`0 0 ${size.width} ${size.height}`} aria-label="Service architecture graph" onWheel={event=>{event.preventDefault();const box=event.currentTarget.getBoundingClientRect();zoom(event.deltaY<0?.15:-.15,(event.clientX-box.left)*size.width/(box.width || size.width),(event.clientY-box.top)*size.height/(box.height || size.height));}} onPointerDown={event=>{if((event.target as Element).closest('[data-graph-item]'))return;drag.current={x:event.clientX,y:event.clientY};event.currentTarget.setPointerCapture?.(event.pointerId);}} onPointerMove={event=>{if(!drag.current)return;const delta={x:event.clientX-drag.current.x,y:event.clientY-drag.current.y};drag.current={x:event.clientX,y:event.clientY};setCamera(old=>({...old,x:old.x+delta.x,y:old.y+delta.y}));}} onPointerUp={()=>{drag.current=null;}} onPointerCancel={()=>{drag.current=null;}}><defs><marker id="architecture-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" /></marker></defs><g transform={`translate(${camera.x} ${camera.y}) scale(${camera.scale})`}>{graphContent}</g></svg>}
+    {selection&&<aside className="architecture-details" aria-label="Selection details"><button aria-label="Close selection" onClick={()=>setSelection(null)}>×</button><h2>{selection.label || selection.id}</h2>
+      {focused && nodes.has(selection.id) && <button type="button" className="arch-recenter" onClick={()=>changeFocus(selection.id)}>Focus on this resource</button>}
+      <dl>{[['ID',selection.id],['Classification',(selection.classifications || [selection.classification || selection.kind]).join(' + ')],['Source',nodes.get(selection.source)?.label || selection.source],['Destination',nodes.get(selection.target)?.label || selection.target],['Provenance',selection.provenance || 'DECLARED'],['Confidence',selection.confidence]].filter(([,value])=>value).map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>{selection.ports?.map((port:any,index:number)=><p key={`port-${index}`}>{port.name}: {port.port}/{port.protocol}</p>)}{selection.network?.ports?.map((port:any,index:number)=><p key={index}>{port.servicePort} → {port.targetPort} / {port.protocol}</p>)}{selection.chart_provenance&&<><h3>Chart provenance</h3><dl>{Object.entries(selection.chart_provenance).filter(([,value])=>typeof value==='string'||typeof value==='number').map(([key,value])=><div key={key}><dt>{key.replaceAll('_',' ')}</dt><dd>{String(value)}</dd></div>)}</dl></>}{(selection.evidence || []).map((item:any,index:number)=><p key={index}>{item.detail}<br />{item.source}</p>)}</aside>}</div></section>
+    <MetricGrid className="architecture-metrics" label="Architecture summary">{[['nodes','Nodes'],['relationships','Relationships'],['unresolved','Unresolved'],['warnings','Warnings']].map(([key,label])=><MetricCard key={key} label={label} value={graph.summary?.[key] || 0} tone={(key==='unresolved'||key==='warnings')&&graph.summary?.[key]>0?'warning':undefined} />)}
+      <MetricCard label="Connections with ports" value={portConnections}/>
+    </MetricGrid>
     <section className="panel architecture-evidence"><SectionHeader title="Evidence warnings" />{(graph.warnings || []).length?<ul className="evidence-list">{(graph.warnings || []).map((item:any,index:number)=><li key={index}>{typeof item==='string'?item:[item.item,item.reason || item.message].filter(Boolean).join(': ')}</li>)}</ul>:<EmptyState title="No warnings." />}</section>
     <section className="panel architecture-evidence"><SectionHeader title="Unresolved resources" description="Resources for which no relationship could be established from the supplied evidence." />{(graph.unresolved || []).length?<ExpandableEvidence summary="Unresolved resources" count={graph.unresolved.length} defaultOpen={graph.unresolved.length<=10}><ul className="evidence-list">{graph.unresolved.map((item:any,index:number)=><li key={index}><code>{item.node_id}</code>: {item.reason}</li>)}</ul></ExpandableEvidence>:<EmptyState title="No unresolved resources." />}</section></>}
   </>;

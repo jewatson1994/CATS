@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {act,cleanup,fireEvent,render,screen} from '@testing-library/react';
+import {act,cleanup,fireEvent,render,screen,within} from '@testing-library/react';
 import {Page} from './service-architecture';
 
 afterEach(()=>{cleanup();vi.useRealTimers();vi.unstubAllGlobals();});
@@ -7,6 +7,48 @@ const node={id:'pod',kind:'Pod',name:'Example',label:'Pod · Example',namespace:
 const layout={node_ids:['pod'],positions:{pod:{x:100,y:100}},edges:[],bounds:{x:0,y:0,width:200,height:200}};
 const data={view:{service:{service_key:'demo',name:'Demo'}},architecture_graph:{nodes:[node],relationships:[],layouts:{all:layout,declared:layout},summary:{nodes:1}},architecture_verification:{state:'DECLARED',label:'Declared'}};
 describe('native architecture',()=>{
+  it('shows a workload and its recorded neighbors, with direction, classifications and evidence',()=>{
+    const api = {...node, id:'api', kind:'Deployment', name:'api', label:'Deployment api'};
+    const service = {...node, id:'svc', kind:'Service', name:'gateway', label:'Service gateway'};
+    const image = {...node, id:'image', kind:'ContainerImage', name:'api-image', label:'Image api-image'};
+    const isolated = {...node, id:'other', kind:'Pod', name:'other', label:'Pod other'};
+    const relationships = [
+      {id:'in',source:'svc',target:'api',label:'selects',classification:'DERIVED',network:{ports:[{servicePort:8080,targetPort:'http'},{servicePort:8443}]},evidence:[{detail:'Selector matches app=api',source:'gateway.yaml'}]},
+      {id:'second',source:'svc',target:'api',label:'references',classification:'DECLARED',network:{ports:[{servicePort:null,targetPort:null}]}},
+      {id:'out',source:'api',target:'image',label:'runs',classification:'DECLARED'},
+    ];
+    render(<Page data={{...data,architecture_graph:{nodes:[isolated,service,image,api],relationships}}}/>);
+    expect(screen.getByLabelText('Diagram view')).toHaveValue('focus');
+    expect(screen.getByLabelText('Focus resource')).toHaveValue('api');
+    expect(screen.getByText('Connections with ports').closest('article')).toHaveTextContent('1');
+    const incoming = within(screen.getByRole('region',{name:'Incoming relationships'}));
+    const outgoing = within(screen.getByRole('region',{name:'Outgoing relationships'}));
+    expect(incoming.getByRole('button',{name:'Service gateway'})).toBeInTheDocument();
+    expect(incoming.getByRole('button',{name:/Relationship references/})).toBeInTheDocument();
+    expect(incoming.getByText('derived')).toBeInTheDocument();
+    expect(outgoing.getByRole('button',{name:'Image api-image'})).toBeInTheDocument();
+    fireEvent.click(incoming.getByRole('button',{name:/Relationship selects/}));
+    expect(screen.getByLabelText('Selection details')).toHaveTextContent('Selector matches app=api');
+    fireEvent.click(outgoing.getByRole('button',{name:'Image api-image'}));
+    fireEvent.click(screen.getByRole('button',{name:'Focus on this resource'}));
+    expect(screen.getByLabelText('Focus resource')).toHaveValue('image');
+    expect(within(screen.getByRole('region',{name:'Incoming relationships'})).getByRole('button',{name:'Deployment api'})).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Focus resource'),{target:{value:'other'}});
+    expect(screen.getAllByText('None recorded')).toHaveLength(2);
+  });
+
+  it('keeps a busy neighborhood readable and exposes all remaining relationships on request',()=>{
+    const targets = Array.from({length:6},(_,i)=>({...node,id:'cfg'+i,kind:'ConfigMap',name:'config-'+i,label:'Config '+i}));
+    const relationships = targets.map(target=>({id:'to-'+target.id,source:'pod',target:target.id,label:'reads',classification:'DECLARED'}));
+    render(<Page data={{...data,architecture_graph:{nodes:[...targets,node],relationships}}}/>);
+    expect(screen.getByLabelText('Focus resource')).toHaveValue('pod');
+    const outgoing = within(screen.getByRole('region',{name:'Outgoing relationships'}));
+    expect(outgoing.getAllByRole('button',{name:/Relationship reads/})).toHaveLength(3);
+    fireEvent.click(outgoing.getByRole('button',{name:'Show 3 more'}));
+    expect(outgoing.getAllByRole('button',{name:/Relationship reads/})).toHaveLength(6);
+    fireEvent.click(outgoing.getByRole('button',{name:'Show fewer'}));
+    expect(outgoing.getAllByRole('button',{name:/Relationship reads/})).toHaveLength(3);
+  });
   it('shows Compose declarations and port details without offering Kubernetes validation',()=>{
     const composeNode={...node,kind:'ComposeService',label:'Service · web',ports:[{name:'Internal only (expose)',port:'9000',protocol:'TCP'}]};
     render(<Page data={{...data,architecture_graph:{...data.architecture_graph,source:'Declared Compose configuration',nodes:[composeNode]},architecture_verification:{state:'DECLARED',label:'Declared',runtime_supported:false}}}/>);
@@ -18,11 +60,12 @@ describe('native architecture',()=>{
   });
   it('supports keyboard selection, layers and zoom/reset controls',()=>{
     render(<Page data={data}/>);
+    fireEvent.change(screen.getByLabelText('Diagram view'),{target:{value:'all'}});
     fireEvent.keyDown(screen.getByRole('button',{name:'Pod · Example'}),{key:'Enter'});
     expect(screen.getByRole('complementary',{name:'Selection details'})).toHaveTextContent('Rendered evidence');
     fireEvent.click(screen.getByRole('button',{name:'Zoom in'}));expect(screen.getByText('125%')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'Reset'}));expect(screen.getByText('100%')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Layer'),{target:{value:'declared'}});
+    fireEvent.change(screen.getByLabelText('Diagram view'),{target:{value:'declared'}});
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument();
   });
   const json=(body:any)=>({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>body});
@@ -100,6 +143,7 @@ describe('native architecture',()=>{
     vi.stubGlobal('ResizeObserver',class {constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}});
     const fetch=vi.fn().mockResolvedValue({ok:true,status:200,headers:new Headers({'content-type':'application/json'}),json:async()=>({all:layout})});vi.stubGlobal('fetch',fetch);
     render(<Page data={{...data,view_version:'historical'}}/>);
+    fireEvent.change(screen.getByLabelText('Diagram view'),{target:{value:'all'}});
     vi.spyOn(screen.getByLabelText('Service architecture graph'),'getBoundingClientRect').mockReturnValue({width:800,height:620} as DOMRect);
     resize();await act(async()=>{await vi.advanceTimersByTimeAsync(180);});
     const url=new URL(fetch.mock.calls[0][0]);expect(url.searchParams.get('view_version')).toBe('historical');expect(url.searchParams.get('layout_width')).toBe('800');
