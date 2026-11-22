@@ -120,6 +120,27 @@ def test_intelligence_restart_keeps_trigger_with_live_reader_and_fences_mutation
             previous = current
 
 
+def test_schema_only_restart_during_uncommitted_feed_import(postgres_engine, monkeypatch):
+    from app import intelligence_importer as worker
+    from app.vex_models import VexSource
+
+    monkeypatch.setattr(worker, 'intelligence_engine', postgres_engine)
+    assert worker.main(['--schema-only']) == 0
+    token = text('SELECT token FROM intelligence_generation WHERE id = 1')
+    with postgres_engine.begin() as importer:
+        original = importer.scalar(token)
+        importer.execute(VexSource.__table__.insert().values(name='uncommitted source'))
+        updated = importer.scalar(token)
+        assert updated != original
+        # The source trigger now holds the singleton row until this transaction commits.
+        # A repeat of the deployed init command must finish inside the migration lock timeout.
+        assert worker.main(['--schema-only']) == 0
+        with postgres_engine.connect() as observer:
+            assert observer.scalar(token) == original
+    with postgres_engine.connect() as observer:
+        assert observer.scalar(token) == updated
+
+
 def test_index_guard_follows_target_table_search_path_with_live_writer(postgres_engine):
     shadow = "startup_shadow_" + uuid.uuid4().hex
     created = False

@@ -35,7 +35,11 @@ def install_generation_triggers(connection):
     if "intelligence_generation" not in names:
         return
     dialect = connection.dialect.name
-    connection.execute(text("INSERT INTO intelligence_generation (id, token) VALUES (1, :token) ON CONFLICT (id) DO NOTHING"), {"token": str(uuid.uuid4())})
+    # A running import may hold the singleton for its whole transaction. A
+    # plain read sees the committed row without waiting on the unique index.
+    if connection.execute(text("SELECT 1 FROM intelligence_generation WHERE id = 1")).scalar_one_or_none() is None:
+        connection.execute(text("""INSERT INTO intelligence_generation (id, token)
+            VALUES (1, :token) ON CONFLICT (id) DO NOTHING"""), {"token": str(uuid.uuid4())})
     if dialect == "postgresql":
         connection.execute(text("""CREATE OR REPLACE FUNCTION cats_intelligence_generation_touch()
         RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
