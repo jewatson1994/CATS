@@ -195,6 +195,17 @@ def test_preexisting_group_access_is_checked_against_selected_service_role(setup
     assert not db.get(ServiceAccessRequest, (target.id, service.id))
 
 
+def test_claim_without_role_preserves_existing_service_access(setup):
+    db, auth, target, group, _, _ = setup
+    service = request_for_service(db, target, group)
+    manager = db.scalar(select(Role).where(Role.name == "Service Manager"))
+    db.add(UserRoleAssignment(user=target, role=manager, group=group))
+    db.commit()
+    result = claim(db, auth, target, service_id=service.id)
+    assert result["status"] == "already_granted"
+    assert [(a.role_id, a.group_id, a.service_id) for a in target.role_assignments] == [(manager.id, group.id, None)]
+
+
 def test_general_request_grants_selected_role_only_for_reviewers_group(setup):
     db, auth, target, group, _, _ = setup
     role = db.scalar(select(Role).where(Role.name == "Service Manager"))
