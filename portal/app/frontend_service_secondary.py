@@ -1,5 +1,6 @@
 """Read-only evidence projection and overview action metadata for React pages."""
 from collections.abc import Mapping
+from datetime import datetime
 from .frontend_compose import compose_data
 
 
@@ -140,12 +141,15 @@ def project_secondary(data, name, context, can=None, formatters=None):
                 source_service = _field(raw, "service", {})
                 evidence["service"]["groups"] = strings(_field(source_service, "groups", []))
                 raw_overview = _field(raw, "service_overview", {}) or {}
-                from .overview import normalize_overview
-                normalized = normalize_overview(raw_overview,
-                    skipped_images=raw.get("skipped_images") or [], skipped_charts=raw.get("skipped_charts") or [],
-                    findings_images=dict.fromkeys([r["image"] for r in evidence["findings"] if r["image"]] +
-                                                  [image for image in evidence["sbom_images"] if image]),
-                    digest_resolver=None)
+                from .history_metrics import historical_overview
+                normalized, projected["summary"] = historical_overview(raw, evidence, projected["complete"])
+                policy = _field(snapshot, "captured_policy") or {}
+                projected["summary"].update(_fields(policy, ("posture", "watchlist", "open_poams",
+                                                            "overdue_poams", "validation_failures")))
+                captured_at = policy.get("posture_captured_at")
+                if captured_at:
+                    projected["summary"]["posture_captured_at"] = _formatted(
+                        datetime.fromisoformat(captured_at), formatters.get("cats_datetime"))
                 # Captures can include arbitrary imported Compose configuration.
                 # Only the service inventory is needed in a historical overview.
                 captured_compose = normalized.pop("compose", None)

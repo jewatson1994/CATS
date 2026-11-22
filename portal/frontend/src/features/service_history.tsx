@@ -1,13 +1,25 @@
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import type {PageData} from '../api';
 import {EmptyState, Icon, MetricCard, MetricGrid, SeverityBadge, StatusBadge} from '../components/ui';
+import './cybersecurity.css';
+import './service_history.css';
 
 const tabs = ['Overview', 'Dependencies', 'Findings', 'Releases'] as const;
 type Row = Record<string, string | number | null | undefined>;
 type Column = [field: string, label: string];
 type ScanOption = {scan_id: string; key: string; at?: string; name?: string; source: 'native' | 'imported'};
+const levels = ['Critical', 'High', 'Medium', 'Low', 'Unknown'] as const;
+type Count = number | null;
+type Posture = 'compliant' | 'warning' | 'non_compliant';
+type SnapshotSummary = {
+  severity: Record<typeof levels[number], number> | null; posture: Posture | null; posture_captured_at?: string | null;
+  sbom_covered_images: Count; total_images: Count; kev: Count; watchlist: Count;
+  open_poams: Count; overdue_poams: Count; validation_failures: Count;
+  artifacts: Count; sbom_components: Count; vulnerability_findings: Count; policy_findings: Count;
+};
 type Snapshot = {
   scan_id: string; key: string; at?: string; scope?: string; complete?: boolean; source_files?: string[];
+  summary?: SnapshotSummary;
   data: {
     service: Row; service_overview: {description?: string; artifacts?: Row[]; ports?: Row[]; accounts?: Row[]; compose?: {services?: Row[]};
       helm_chart_graph?: {charts?: Row[]}; missing_evidence?: Row[]; dependencies?: Row[]; warnings?: Row[]};
@@ -15,8 +27,8 @@ type Snapshot = {
   };
 };
 
-function EvidenceTable({title, rows, columns, empty, heading: Heading = 'h3'}: {
-  title: string; rows: Row[]; columns: Column[]; empty: string; heading?: 'h2' | 'h3';
+function EvidenceTable({id, title, rows, columns, empty, heading: Heading = 'h3'}: {
+  id?: string; title: string; rows: Row[]; columns: Column[]; empty: string; heading?: 'h2' | 'h3';
 }) {
   const [page, setPage] = useState(0);
   const [query, setQuery] = useState('');
@@ -26,7 +38,8 @@ function EvidenceTable({title, rows, columns, empty, heading: Heading = 'h3'}: {
   const size = 25;
   const pages = Math.ceil(filtered.length / size);
   return <section className="panel padded">
-    <div className="panel-head"><Heading>{title}</Heading>{rows.length > size &&
+    <div className="panel-head"><Heading id={id} tabIndex={id ? -1 : undefined}
+      className={id ? 'historical-evidence-anchor' : undefined}>{title}</Heading>{rows.length > size &&
       <label>Search {title.toLowerCase()}<input type="search" value={query} onChange={event => {
         setQuery(event.target.value); setPage(0);
       }}/></label>}</div>
@@ -44,18 +57,71 @@ function EvidenceTable({title, rows, columns, empty, heading: Heading = 'h3'}: {
   </section>;
 }
 
-function Overview({snapshot}: {snapshot: Snapshot}) {
+const notRecorded = 'Not recorded';
+
+function pair(first?: Count, second?: Count) {
+  if (first == null && second == null) return notRecorded;
+  return (first?.toLocaleString() ?? notRecorded) + ' / ' + (second?.toLocaleString() ?? notRecorded);
+}
+
+function HistoricalCharts({summary}: {summary?: SnapshotSummary}) {
+  const severity = summary?.severity;
+  const max = Math.max(1, ...levels.map(level => severity?.[level] ?? 0));
+  const verdict = summary?.posture;
+  const verdictLabels = {compliant: 'Compliant', warning: 'Warnings', non_compliant: 'Non-compliant'} as const;
+  const colors = {compliant: 'var(--success)', warning: 'var(--warning)', non_compliant: 'var(--danger)'};
+  const coverage = [
+    ['SBOM coverage (images)', pair(summary?.sbom_covered_images, summary?.total_images)],
+    ['KEV / watchlist', pair(summary?.kev, summary?.watchlist)],
+    ['Open / overdue POA&M', pair(summary?.open_poams, summary?.overdue_poams)],
+    ['Validation failures', summary?.validation_failures?.toLocaleString() ?? notRecorded],
+  ];
+  return <div className="cyber-chart-grid historical-charts">
+    <section className="panel padded" aria-labelledby="history-severity">
+      <p className="eyebrow">Vulnerability distribution</p>
+      <h2 id="history-severity">Findings by severity</h2>
+      <p className="cyber-muted">Distinct CVEs in this scan, grouped by their highest reported severity.</p>
+      {severity ? <div className="cyber-bars">{levels.map(level => <div className="cyber-bar-row" key={level}>
+        <span>{level}</span><div className="cyber-bar-track" aria-hidden="true">
+          <div className={'cyber-bar cyber-' + level.toLowerCase()} style={{width: (100 * severity[level] / max) + '%'}}/>
+        </div><strong>{severity[level].toLocaleString()}</strong>
+      </div>)}</div> : <p className="cyber-muted">Vulnerability severity was not recorded for this scan.</p>}
+    </section>
+    <section className="panel padded" aria-labelledby="history-posture">
+      <p className="eyebrow">Policy &amp; coverage</p><h2 id="history-posture">Service posture</h2>
+      <div className="cyber-posture">
+        <div className="cyber-donut" role="img" aria-label={'Service posture: ' + (verdict ? verdictLabels[verdict] : notRecorded)}
+          style={verdict ? {background: colors[verdict]} : undefined}><div><strong>1</strong><span>service</span></div></div>
+        <dl className="cyber-coverage">
+          {Object.entries(verdictLabels).map(([key, label]) => <div key={key}><dt>{label}</dt>
+            <dd>{verdict ? Number(key === verdict) : notRecorded}</dd></div>)}
+          {coverage.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}
+        </dl>
+      </div>
+      {summary?.posture_captured_at && <p className="cyber-muted">Policy posture captured at approval · {summary.posture_captured_at}</p>}
+    </section>
+  </div>;
+}
+
+const evidenceLinks = [
+  ['artifacts', 'Artifacts', 'overview', 'artifact-inventory'],
+  ['sbom_components', 'SBOM components', 'dependencies', 'sbom-components'],
+  ['vulnerability_findings', 'Vulnerability findings', 'findings', 'vulnerability-findings'],
+  ['policy_findings', 'Policy findings', 'findings', 'policy-findings'],
+] as const;
+
+function Overview({snapshot, data}: {snapshot: Snapshot; data: PageData}) {
   const evidence = snapshot.data, inventory = evidence.service_overview || {};
   const artifacts = inventory.artifacts || [], files = snapshot.source_files || [];
   return <>
+    <HistoricalCharts summary={snapshot.summary}/>
     {(evidence.service?.description || inventory.description) && <p>{evidence.service?.description || inventory.description}</p>}
     <MetricGrid label="Captured inventory">
-      <MetricCard label="Artifacts" value={artifacts.length}/>
-      <MetricCard label="SBOM components" value={evidence.sbom_components?.length || 0}/>
-      <MetricCard label="Vulnerability findings" value={evidence.findings?.length || 0}/>
-      <MetricCard label="Policy findings" value={evidence.policy_findings?.length || 0}/>
+      {evidenceLinks.map(([field, label, tab, anchor]) => <MetricCard key={field} label={label}
+        value={snapshot.summary?.[field]?.toLocaleString()} unavailable={notRecorded}
+        href={pageLink(data, {scan: snapshot.scan_id, tab}) + '#' + anchor}/>)}
     </MetricGrid>
-    <EvidenceTable title="Artifact inventory" rows={artifacts}
+    <EvidenceTable id="artifact-inventory" title="Artifact inventory" rows={artifacts}
       columns={[['type','Type'],['artifact','Artifact'],['version','Version'],['registry','Registry'],
         ['repository','Repository'],['digest','Digest']]} empty="No artifacts were retained in this scan."/>
     {Boolean(inventory.compose?.services?.length) && <EvidenceTable title="Compose services" rows={inventory.compose!.services!}
@@ -77,25 +143,33 @@ function Overview({snapshot}: {snapshot: Snapshot}) {
   </>;
 }
 
-function SnapshotContent({snapshot, tab}: {snapshot: Snapshot; tab: string}) {
+function SnapshotContent({snapshot, tab, data}: {snapshot: Snapshot; tab: string; data: PageData}) {
+  useEffect(() => {
+    // The page chunk may mount after the browser first attempts to follow the fragment.
+    const anchor = window.location.hash.slice(1);
+    if (!evidenceLinks.some(([, , targetTab, id]) => targetTab === tab && id === anchor)) return;
+    const heading = document.getElementById(anchor);
+    heading?.focus({preventScroll: true});
+    heading?.scrollIntoView?.({block: 'start'});
+  }, [snapshot.scan_id, tab]);
   const evidence = snapshot.data;
   if (tab === 'dependencies') return <>
     {Boolean(evidence.service_overview?.dependencies?.length) && <EvidenceTable title="Deployment dependencies"
       rows={evidence.service_overview.dependencies!} columns={[['dependency','Dependency'],['used_by','Used by'],['provides','Provides'],['images','Images']]}
       empty="No deployment dependencies were retained."/>}
-    <EvidenceTable title="SBOM components" rows={evidence.sbom_components || []}
+    <EvidenceTable id="sbom-components" title="SBOM components" rows={evidence.sbom_components || []}
       columns={[['name','Component'],['version','Version'],['ecosystem','Ecosystem'],['purl','Package URL'],['image','Image'],['license_expression','License']]}
       empty="No SBOM components were retained in this scan."/>
   </>;
   if (tab === 'findings') return <>
-    <EvidenceTable title="Vulnerability findings" rows={evidence.findings || []}
+    <EvidenceTable id="vulnerability-findings" title="Vulnerability findings" rows={evidence.findings || []}
       columns={[['cve','Identifier'],['severity','Severity'],['package','Package'],['installed_version','Installed'],['fixed_version','Fixed in'],['image','Image']]}
       empty="No vulnerability findings were retained in this scan."/>
-    <EvidenceTable title="Policy findings" rows={evidence.policy_findings || []}
+    <EvidenceTable id="policy-findings" title="Policy findings" rows={evidence.policy_findings || []}
       columns={[['finding','Identifier'],['title','Finding'],['severity','Severity'],['target','Target'],['scanner','Scanner']]}
       empty="No policy findings were retained in this scan."/>
   </>;
-  return <Overview snapshot={snapshot}/>;
+  return <Overview snapshot={snapshot} data={data}/>;
 }
 
 function pageLink(data: PageData, replacements: Record<string, string>) {
@@ -164,7 +238,7 @@ export function Page({data}: {data: PageData}) {
           </select></label><button className="secondary-button">View scan</button>
         </form>}
         </section>
-        <SnapshotContent key={snapshot.scan_id + tab} snapshot={snapshot} tab={tab}/>
+        <SnapshotContent key={snapshot.scan_id + tab} snapshot={snapshot} tab={tab} data={data}/>
       </> : <EmptyState title="No retained scans">No scan evidence is available for version {data.version}.</EmptyState>}
       <Pagination data={data}/><Pagination data={data} imported/>
     </>}

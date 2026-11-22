@@ -41,7 +41,14 @@
   .service-control-heading { align-items: flex-start; }
 }
 
-.service-setting { padding: .7rem 1rem; }
+.service-meta.service-header-meta { position: relative; align-items: center; }
+.service-header-meta > .service-setting {
+  min-width: 0;
+  max-width: 100%;
+  border-inline-start: 1px solid var(--line);
+  padding-inline-start: .8rem;
+}
+.service-setting form { margin: 0; }
 .service-setting .service-control-fields > label > :is(input, select) {
   box-sizing: border-box;
   min-width: 0;
@@ -50,28 +57,30 @@
 .service-setting-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   flex-wrap: wrap;
-  gap: .5rem 1rem;
+  gap: .25rem;
+  line-height: 1.4;
 }
-.service-setting-row h2 { margin: 0; font-size: .95rem; }
+.service-header-meta .service-setting-row > span { border: 0; padding: 0; }
 .service-setting-row select, .service-setting-row .service-setting-trigger {
-  min-height: 2.4rem;
+  min-height: 1.5rem;
+  min-width: 0;
   max-width: 100%;
   width: auto;
+  padding: 0 .25rem;
   text-align: start;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: .25rem;
+  color: var(--accent, var(--green));
+  font: inherit;
+  cursor: pointer;
 }
+.service-setting-row select option { color: var(--text); background: var(--surface, var(--panel)); }
 .service-setting-row .service-setting-trigger {
   display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: .8rem;
-  padding: .45rem .7rem;
-  color: var(--text);
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: .4rem;
-  font: inherit;
+  gap: .35rem;
 }
 .service-setting-trigger::after {
   content: '';
@@ -83,8 +92,40 @@
   transform: translateY(-.1rem) rotate(45deg);
 }
 .service-setting-trigger[aria-expanded=true]::after { transform: translateY(.1rem) rotate(225deg); }
-.service-setting-row .service-setting-trigger:hover { border-color: currentColor; }
-.service-setting [id] > .service-control-help { margin-top: .6rem; }
+.service-setting-row :is(.service-setting-trigger, select):hover { border-color: var(--border-strong); }
+.service-setting-row .service-setting-saved { color: var(--success); }
+.service-setting-popover:not([hidden]) { display: grid; gap: .75rem; }
+.service-setting-popover {
+  position: absolute;
+  z-index: 30;
+  inset: calc(100% + .35rem) 0 auto auto;
+  width: min(26rem, 100%);
+  max-height: min(60vh, 32rem);
+  overflow: auto;
+  padding: 1rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface, var(--panel));
+  box-shadow: 0 10px 30px #0005;
+  color: var(--text);
+  font-size: var(--text-sm);
+}
+.service-setting-popover .service-control-editor { border: 0; padding: 0; margin: 0; }
+.service-setting-popover .service-control-help { margin: 0; color: var(--text-muted); }
+@media (min-width: 52rem) {
+  @supports (position-area: bottom span-right) and (anchor-scope: --service-setting) {
+    .service-setting { anchor-scope: --service-setting; anchor-name: --service-setting; }
+    .service-setting-popover {
+      position-anchor: --service-setting;
+      position-area: bottom span-right;
+      position-try-fallbacks: flip-inline;
+      inset: auto;
+      justify-self: start;
+      width: min(26rem, calc(100vw - 2rem));
+      margin-top: .35rem;
+    }
+  }
+}
 .schedule-weekdays { margin: 0; padding: 0; border: 0; min-width: 0; grid-column: 1 / -1; }
 .schedule-weekdays legend { margin-bottom: .35rem; }
 .schedule-weekdays > div { display: flex; flex-wrap: wrap; gap: .4rem .9rem; }

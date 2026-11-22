@@ -120,6 +120,12 @@ body > #root > header, header:has(> .brand) {
 .service-page-actions .latest-evidence { order: -1; width: 100%; text-align: right; font-size: var(--text-sm); }
 .service-page-actions > .status.large, .service-page-actions > .badge { order: -2; }
 .service-description { color: var(--text-muted); margin: var(--space-2) 0 0; max-width: 80ch; }
+.service-overview-heading { flex-wrap: wrap; }
+.service-overview-heading > div:first-child { min-width: 0; max-width: 100%; }
+@media (min-width: 761px) {
+  .service-overview-heading > div:first-child { flex: 1 1 52rem; }
+  .service-overview-heading > .service-page-actions { flex: 0 1 25rem; min-width: 0; margin-inline-start: auto; }
+}
 @media (max-width: 760px) { .service-page-actions { justify-content: flex-start; } .service-page-actions .latest-evidence { text-align: left; } .heading { align-items: flex-start; } }
 
 /* --------------------------------------------------------------- tabs */

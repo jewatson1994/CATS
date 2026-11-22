@@ -79,6 +79,67 @@ def test_imported_provenance_does_not_promote_newer_historical_version():
         assert [row.cve for row in db.scalars(select(Finding))] == ["CVE-CURRENT"]
 
 
+def test_history_cards_and_severity_match_only_the_selected_scan_and_original_validation():
+    from app.models import DeploymentValidationRun
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    for key, version, findings in [("selected", "1.0", ["CVE-DEMO", "CVE-DEMO", "CVE-SECOND"]),
+                                   ("other", "1.0", []), ("current", "2.0", ["CVE-NEW"])]:
+        body = payload(key, now + timedelta(seconds={"selected": 0, "other": 1, "current": 2}[key]), findings)
+        body["service"]["version"] = version
+        if key == "selected":
+            body["service_overview"] = {"images": [{"image": "alpine:3"}, {"image": "busybox:1"}]}
+            body["sbom_images"] = ["docker.io/library/alpine:3"]
+            body["sbom_components"] = [{"name": "lib", "version": "2", "image": "alpine:3"}]
+            body["skipped_images"] = ["redis:7 :: pull failed"]
+            for finding, severity in zip(body["findings"], ("low", "HIGH", "Undefined")):
+                finding.update(image="busybox:1", severity=severity, kev=severity == "HIGH")
+            body["policy_findings"] = [{"finding": "POL-1", "severity": "Critical"}]
+        response = client.post("/api/v1/pipeline-results", json=body, headers=pipeline_headers)
+        assert response.status_code == 201, response.text
+    with SessionLocal() as db:
+        old = db.scalar(select(Execution).where(Execution.execution_key == "selected"))
+        current = db.scalar(select(Execution).where(Execution.execution_key == "current"))
+        scan_id = old.id
+        for key, scan, artifact, status in [("original", old, "ORIGINAL", "FAILED"),
+                ("passing", old, "ORIGINAL", "VERIFIED"), ("patched", old, "REMEDIATED", "FAILED"),
+                ("different", current, "ORIGINAL", "FAILED")]:
+            db.add(DeploymentValidationRun(run_key=key, service_id=scan.service_id, execution_id=scan.id,
+                                          artifact_type=artifact, status=status))
+        db.commit()
+    url = f"/services/payments-service/history?version=1.0&scan=scan-{scan_id}"
+    snapshot = page_data(client.get(url))["snapshots"][0]
+    stats = snapshot["summary"]
+    assert {name: stats[name] for name in ("artifacts", "sbom_components", "vulnerability_findings", "policy_findings")} == {
+        "artifacts": 3, "sbom_components": 1, "vulnerability_findings": 3, "policy_findings": 1}
+    assert stats["severity"] == {"Critical": 0, "High": 1, "Medium": 0, "Low": 0, "Unknown": 1}
+    assert (stats["kev"], stats["sbom_covered_images"], stats["total_images"], stats["validation_failures"]) == (1, 1, 3, 1)
+    assert all(stats[field] is None for field in ("posture", "posture_captured_at", "watchlist", "open_poams", "overdue_poams"))
+    assert [item["cve"] for item in snapshot["data"]["findings"]] == ["CVE-DEMO", "CVE-DEMO", "CVE-SECOND"]
+
+
+def test_history_preserves_absent_vs_empty_evidence_for_legacy_imported_scans():
+    client = new_client()
+    now = datetime.now(timezone.utc)
+    current = payload("native-current", now, ["CVE-NEW"])
+    assert client.post("/api/v1/pipeline-results", json=current, headers=pipeline_headers).status_code == 201
+    with SessionLocal() as db:
+        service = db.scalar(select(Service))
+        empty = {"findings": [], "policy_findings": [], "sbom_components": [], "sbom_images": [],
+                 "service_overview": {"images": []}}
+        scans = [{"execution_id": key, "scanned_at": now.isoformat(),
+                  "service": {"id": "payments-service", "name": "Earlier service", "version": key}, **fields}
+                 for key, fields in (("missing", {}), ("empty", empty))]
+        db.add(ServiceTransferProvenance(service_id=service.id, detail={"historical_executions": scans}))
+        db.commit()
+    for version, value in (("missing", None), ("empty", 0)):
+        stats = page_data(client.get(f"/services/payments-service/history?version={version}"))["imported_snapshots"][0]["summary"]
+        assert all(stats[name] == value for name in ("kev", "artifacts", "total_images", "sbom_covered_images",
+                                                    "sbom_components", "vulnerability_findings", "policy_findings"))
+        assert stats["severity"] == (None if value is None else dict.fromkeys(("Critical", "High", "Medium", "Low", "Unknown"), 0))
+        assert stats["validation_failures"] is None
+
+
 @pytest.mark.parametrize("input_images,chart,expected_scope,selected_scope", [
     ("registry/payments:1.5", True, "service", "auto"),
     ("registry/payments:1.5", False, "image", "auto"),

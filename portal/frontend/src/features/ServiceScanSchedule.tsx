@@ -1,4 +1,4 @@
-import {useId, useRef, useState} from 'react';
+import {useEffect, useId, useRef, useState} from 'react';
 import type {PageData} from '../api';
 import {Csrf} from '../components/Form';
 import {useServiceReadOnly} from '../operatingMode';
@@ -105,6 +105,15 @@ export function ServiceScanSchedule({data, root}: {data: PageData; root: string}
   const [open, setOpen] = useState(false);
   const panelId = useId();
   const selector = useRef<HTMLButtonElement>(null);
+  const container = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    function outside(event: PointerEvent) {
+      if (event.target instanceof Node && !container.current?.contains(event.target)) setOpen(false);
+    }
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
+  }, [open]);
   if (replica || !schedule || (!data.can_schedule_scans && schedule.cadence === 'off')) return null;
   const timezone = schedule.timezone || 'UTC';
   const summary = scheduleLabel(schedule);
@@ -112,15 +121,24 @@ export function ServiceScanSchedule({data, root}: {data: PageData; root: string}
     setOpen(false);
     selector.current?.focus();
   }
-  return <section id="scan-schedule" className="panel service-control-card service-setting" aria-label="Scan schedule">
+  return <section ref={container} id="scan-schedule" className="service-setting" aria-label="Scan schedule"
+    onBlur={event => {
+      if (event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+    }}
+    onKeyDown={event => {
+      if (open && event.key === 'Escape') { event.preventDefault(); close(); }
+    }}>
     <div className="service-setting-row">
-      <h2>Scan schedule</h2>
+      <span>Scan schedule:</span>
       <button ref={selector} type="button" className="service-setting-trigger" aria-expanded={open} aria-controls={panelId}
-        aria-label={`Scan schedule: ${summary}`} onClick={() => setOpen(!open)}>{summary}</button>
+        title={summary} aria-label={`Scan schedule: ${summary}`} onClick={() => setOpen(!open)}>
+        {schedule.cadence[0].toUpperCase() + schedule.cadence.slice(1)}
+      </button>
+      {data.schedule_saved && <small role="status" className="service-setting-saved">Scan schedule saved.</small>}
     </div>
-    {data.schedule_saved && <p role="status">Scan schedule saved.</p>}
-    <div id={panelId} hidden={!open}>
+    <div id={panelId} className="service-setting-popover" hidden={!open}>
       {open && <>
+        <strong>{summary}</strong>
         {schedule.cadence !== 'off' && schedule.next_run_at && <p className="service-control-help">Next scheduled start · {localTime(schedule.next_run_at, timezone)}</p>}
         {schedule.last_result && <p className="service-control-help">Last scheduling activity · {schedule.last_run_at && <>{localTime(schedule.last_run_at, timezone)} · </>}{schedule.last_result}</p>}
         {data.can_schedule_scans && <ScheduleEditor data={data} root={root} schedule={schedule} cancel={close}/>}

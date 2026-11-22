@@ -561,9 +561,12 @@ def freeze(db, service, auth, readiness, folder: Path):
             workbook.save(stream)
             workbook.close()
             archive.writestr('candidate/evidence.xlsx', stream.getvalue())
-        archive.writestr('frozen-snapshot.json', _json(snapshot))
         from .portable_release_capture import encode_capture
-        archive.writestr('replica-service.json', encode_capture(db, service, snapshot))
+        encoded, history_posture = encode_capture(db, service, snapshot)
+        if history_posture is not None:
+            snapshot['history_posture'] = history_posture
+        archive.writestr('frozen-snapshot.json', _json(snapshot))
+        archive.writestr('replica-service.json', encoded)
         archive.writestr('source-scan.json', _json(readiness['payload']))
         archive.writestr('scan-values-files.json', _json(readiness['values_files']))
         archive.writestr('rendered.yaml', readiness['rendered'])

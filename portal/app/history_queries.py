@@ -3,6 +3,29 @@ from sqlalchemy import Integer, JSON, case, cast, func, select, true, tuple_, ty
 from .models import Execution, ServiceTransferProvenance
 
 
+def historical_approval_posture(db, execution, version):
+    """Read the capture-time assessment verified when Cyber approved this exact scan."""
+    from .cyber_approvals import CyberApproval
+    from .execution_summaries import payload_digest
+
+    snapshot = CyberApproval.snapshot
+    capture = snapshot['history_posture']
+    recorded = db.scalar(select(capture).where(
+        CyberApproval.service_id == execution.service_id,
+        CyberApproval.source_execution_id == execution.id, CyberApproval.status == 'approved',
+        CyberApproval.variant == 'current_service', snapshot['evidence_scope'].as_string() == 'current-service-scan',
+        snapshot['version'].as_string() == version,
+        snapshot['source_payload_digest'].as_string() == (execution.payload_digest or payload_digest(execution.raw_payload)),
+        capture['source_execution_id'].as_integer() == execution.id,
+    ).order_by(CyberApproval.requested_at.desc(), CyberApproval.id.desc()).limit(1))
+    if not isinstance(recorded, dict) or recorded.get('posture') not in ('compliant', 'warning', 'non_compliant'):
+        return {}
+    counts = ('watchlist', 'open_poams', 'overdue_poams')
+    if not recorded.get('posture_captured_at') or any(type(recorded.get(k)) is not int or recorded[k] < 0 for k in counts):
+        return {}
+    return {'posture_source': 'approval_capture', **{k: recorded[k] for k in ('posture', 'posture_captured_at', *counts)}}
+
+
 def historical_releases(db, service_id, version):
     """Release identities and approval dates captured for this service version."""
     from .cyber_approvals import CyberApproval

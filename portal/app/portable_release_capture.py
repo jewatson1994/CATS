@@ -18,10 +18,17 @@ POLICY_KEYS = frozenset(('overdue_days', 'hardening_overdue_days', 'hardening_no
 
 
 def capture(db, service, approval_snapshot):
+    from .finding_classification import latest_execution_id
     from .policy_data import risk_catalog_token
     from .cyber_release_publication import _public_snapshot
     intelligence_token = risk_catalog_token()
+    source_id = approval_snapshot.get('source_execution_id')
+    current_service_capture = (approval_snapshot.get('variant') == 'current_service'
+                               and approval_snapshot.get('evidence_scope') == 'current-service-scan'
+                               and source_id is not None and latest_execution_id(db, service.id) == source_id)
     display = _display(db, service)
+    if current_service_capture and latest_execution_id(db, service.id) == source_id:
+        display['source_execution_id'] = source_id
     records = transfer.snapshot(db, service, authoritative=False)
     actors, removed = {}, []
     for name, rows in records.items():
@@ -221,4 +228,13 @@ def _finding_decisions(db, service_id, configuration, captured_at, execution_id)
 
 
 def encode_capture(db, service, approval_snapshot):
-    return encode(capture(db, service, approval_snapshot))
+    state = capture(db, service, approval_snapshot)
+    display = state['extension']['display']
+    history_posture = None
+    if display.get('source_execution_id') is not None:
+        row = display['cyber_row']
+        history_posture = {'source_execution_id': display['source_execution_id'],
+                           'posture': {'GREEN': 'compliant', 'YELLOW': 'warning', 'RED': 'non_compliant'}[row['status']],
+                           'watchlist': row['watchlist'], 'open_poams': row['poam'],
+                           'overdue_poams': row['poam_overdue'], 'posture_captured_at': display['captured_at']}
+    return encode(state), history_posture

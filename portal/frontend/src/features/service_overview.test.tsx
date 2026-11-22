@@ -11,6 +11,19 @@ const fixture = (extra: Partial<PageData> = {}): PageData => ({
   architecture_verification: {state: 'VERIFIED', label: 'Verified'},
   can: {'service.export': {'1': true}}, ...extra,
 });
+it('places the schedule and pull access directly after the owning group in the overview header', () => {
+  render(<Page data={fixture({can_schedule_scans: true, scan_schedule: {cadence: 'off'},
+    can: {'release.destination.manage': {'*': true}}})}/>);
+  const group = screen.getByText(/Owning group:/);
+  const schedule = screen.getByRole('region', {name: 'Scan schedule'});
+  const access = screen.getByRole('region', {name: 'Service pull access'});
+  expect(group.nextElementSibling).toBe(schedule);
+  expect(schedule.nextElementSibling).toBe(access);
+  expect(group.closest('section')).toContainElement(screen.getByRole('heading', {name: 'Sample'}));
+  expect(schedule).toContainElement(screen.getByRole('button', {name: /Scan schedule: Off/}));
+  expect(access).toContainElement(screen.getByRole('combobox', {name: 'Service pull access'}));
+});
+
 it('updates a legacy overnight schedule to a weekly local time on multiple days', () => {
   render(<Page data={fixture({can_schedule_scans: true, csrf_token: 'token', scan_schedule: {
     cadence: 'daily', weekday: 4, timezone: 'America/New_York', next_run_at: '2026-11-07T02:00:00Z',

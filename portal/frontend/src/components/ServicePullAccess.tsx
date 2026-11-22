@@ -20,6 +20,7 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
   const [selected, setSelected] = useState(seed?.public ? 'public' : 'private');
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [attempt, setAttempt] = useState(0);
+  const selector = useRef<HTMLSelectElement>(null);
   const currentService = useRef<number | null>(serviceId);
   currentService.current = serviceId;
   const editable = can(data, 'release.destination.manage');
@@ -66,30 +67,46 @@ export function ServicePullAccess({data, serviceId}: {data: PageData; serviceId:
 
   const savedSelection = visibleAccess?.public ? 'public' : 'private';
   const changed = Boolean(visibleAccess && selected !== savedSelection);
-  return <section className="panel service-control-card service-setting" aria-label="Service pull access">
+  function cancelChange() {
+    setSelected(savedSelection);
+    setError('');
+    selector.current?.focus();
+  }
+  return <section className="service-setting" aria-label="Service pull access"
+    onBlur={event => {
+      if (changed && !busy && event.relatedTarget instanceof Node && !event.currentTarget.contains(event.relatedTarget)) {
+        setSelected(savedSelection);
+        setError('');
+      }
+    }}
+    onKeyDown={event => {
+      if (changed && !busy && event.key === 'Escape') { event.preventDefault(); cancelChange(); }
+    }}>
     <form onSubmit={save}>
       <div className="service-setting-row">
-        <h2>Service pull access</h2>
+        <span>Service pull access:</span>
         {visibleAccess && (editable ?
-          <select aria-label="Service pull access" value={selected} disabled={busy} onChange={event => {
+          <select ref={selector} aria-label="Service pull access" value={selected} disabled={busy} onChange={event => {
             setSelected(event.target.value); setNotice(''); setError('');
           }}>
-            <option value="private">Private · sign-in required</option>
-            <option value="public">Public · anonymous pulls</option>
+            <option value="private">Private</option>
+            <option value="public">Public</option>
           </select> : <span>{visibleAccess.public ? 'Public · anonymous pulls' : 'Private · sign-in required'}</span>)}
+        {!visibleAccess && !error && <small role="status">Loading…</small>}
+        {notice && <small role="status" className="service-setting-saved">{notice}</small>}
       </div>
-      {changed && editable && <div className="service-control-editor">
-        <p className="service-control-help">{selected === 'public'
-          ? 'Anyone who can reach CATS can pull this service’s authorized artifacts without signing in.'
-          : 'Pulls require authorized CATS registry credentials.'} The owning group’s OCI pull policy determines which artifacts are authorized.</p>
-        <div className="service-control-actions">
-          <button disabled={busy}>{busy ? 'Saving pull access…' : 'Save pull access'}</button>
-          <button type="button" className="secondary-button" disabled={busy} onClick={() => {setSelected(savedSelection); setError('');}}>Cancel</button>
-        </div>
+      {(changed || error) && <div className="service-setting-popover">
+        {changed && editable && <div className="service-control-editor">
+          <p className="service-control-help">{selected === 'public'
+            ? 'Anyone who can reach CATS can pull this service’s authorized artifacts without signing in.'
+            : 'Pulls require authorized CATS registry credentials.'} The owning group’s OCI pull policy determines which artifacts are authorized.</p>
+          <div className="service-control-actions">
+            <button disabled={busy}>{busy ? 'Saving pull access…' : 'Save pull access'}</button>
+            <button type="button" className="secondary-button" disabled={busy} onClick={cancelChange}>Cancel</button>
+          </div>
+        </div>}
+        {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => setAttempt(value => value + 1)}>Refresh pull access</button></div>}
       </div>}
     </form>
-    {!visibleAccess && !error && <p role="status">Loading pull access.</p>}
-    {error && <div role="alert"><p>{error}</p><button type="button" disabled={busy} onClick={() => setAttempt(value => value + 1)}>Refresh pull access</button></div>}
-    {notice && <p role="status">{notice}</p>}
   </section>;
 }

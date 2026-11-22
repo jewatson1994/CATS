@@ -212,11 +212,28 @@ def history_page(service_key: str, request: Request, version: str = "", page: in
     selected, executions, imported = history["version"], history["executions"], history["imported"]
     from .main import templates, page_context
     # Each snapshot contains only the retained evidence for its selected scan.
-    evidence_fields = ("service", "findings", "policy_findings", "service_overview",
+    evidence_fields = ("service", "findings", "policy_findings", "service_overview", "scope_image",
                        "sbom_images", "sbom_components", "skipped_images", "skipped_charts")
-    snapshots = [{"scan_id": f"scan-{e.id}", "key": e.execution_key, "at": e.scanned_at, "scope": e.scan_scope,
-        "complete": e.complete, "data": {k: e.raw_payload.get(k) for k in evidence_fields},
-        "source_files": sorted((e.raw_payload.get("helm_source_files") or {}).keys())} for e in executions]
+
+    def retained_fields(raw):
+        fields = {key: raw.get(key) for key in evidence_fields}
+        # Only image identities from retained documents belong in the page DTO.
+        fields["document_images"] = [doc["image"] for doc in raw.get("evidence_documents") or []
+                                     if isinstance(doc, dict) and doc.get("category") == "sbom" and doc.get("image")]
+        return fields
+
+    snapshots = []
+    for execution in executions:
+        policy = {}
+        if tab == "overview":
+            from .history_queries import historical_approval_posture
+            from .history_metrics import validation_failures
+            policy = historical_approval_posture(db, execution, selected)
+            policy["validation_failures"] = validation_failures(db, execution)
+        snapshots.append({"scan_id": f"scan-{execution.id}", "key": execution.execution_key,
+            "at": execution.scanned_at, "scope": execution.scan_scope, "complete": execution.complete,
+            "data": retained_fields(execution.raw_payload), "captured_policy": policy,
+            "source_files": sorted((execution.raw_payload.get("helm_source_files") or {}).keys())})
     imported_snapshots = []
     for index, scan_id, item in zip(history["imported_indices"], history["imported_scan_ids"], imported):
         raw = item.get("raw_payload", item)
@@ -224,8 +241,8 @@ def history_page(service_key: str, request: Request, version: str = "", page: in
             continue
         imported_snapshots.append({"scan_id": scan_id, "key": item.get("execution_key", raw.get("execution_id", f"imported-{index}")),
             "at": item.get("scanned_at", raw.get("scanned_at")), "scope": item.get("scan_scope", raw.get("scan_scope", "service")),
-            "complete": item.get("complete", raw.get("complete", False)),
-            "data": {key: raw.get(key) for key in evidence_fields},
+            "complete": item.get("complete", raw.get("complete")),
+            "data": retained_fields(raw),
             "source_files": sorted((raw.get("helm_source_files") or {}).keys())})
     return templates.TemplateResponse(request, "service_history.html", page_context(auth,
         service=service, version=selected, versions=history["versions"], snapshots=snapshots,
