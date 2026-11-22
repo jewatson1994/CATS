@@ -1719,13 +1719,15 @@ def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int) -> bool:
 
 def may_remove_scoped_assignment(auth: AuthContext, assignment: UserRoleAssignment, group_ids: set[int]) -> bool:
     group_id = assignment.group_id
-    if group_id is None and assignment.source == "local" and assignment.role.system and assignment.role.name == "Assessor":
-        # Onboarding grants are service-only. Resolve the current owner again
-        # so a group that lost ownership cannot revoke that service's grant.
-        groups = assignment.service.groups if assignment.service is not None else []
-        if len(groups) == 1:
-            group_id = groups[0].id
-    return group_id in group_ids and scoped_role_allowed(auth, assignment.role, group_id)
+    if group_id is not None:
+        return group_id in group_ids and scoped_role_allowed(auth, assignment.role, group_id)
+    if (assignment.source != "local" or assignment.service is None or not assignment.role.system
+            or assignment.role.name not in access_requests.CLAIM_ROLE_NAMES):
+        return False
+    # Recheck every current owner, using the same boundary as service approval.
+    owners = assignment.service.groups
+    return bool(owners) and all(group.id in group_ids and scoped_role_allowed(auth, assignment.role, group.id)
+                                for group in owners)
 
 
 def requested_group_scope(group_id: str | int | None, db: Session, auth: AuthContext) -> int | None:

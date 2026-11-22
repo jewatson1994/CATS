@@ -6,3 +6,7 @@
 .assignment-service-list input {width:auto}
 .account-method-tabs {display:flex; gap:.5rem; flex-wrap:wrap; margin:1rem 0}
 .account-method-tabs button[aria-pressed="true"] {outline:2px solid currentColor; outline-offset:2px}
+.access-request-form {display:flex; flex-wrap:wrap; align-items:flex-end; gap:.75rem 1rem; border-top:1px solid var(--border); padding-block:1rem}
+.access-request-form header {flex:1 1 16rem; min-width:0; align-self:center; overflow-wrap:anywhere}
+.access-request-form header :is(h3, p) {margin:0}
+.access-request-form label {min-width:min(12rem, 100%)}

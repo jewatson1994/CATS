@@ -15,6 +15,7 @@ from .models import Group, Role, Service, ServiceGroup, User, UserRoleAssignment
 from .service_ownership import active_service_predicate
 
 router = APIRouter()
+CLAIM_ROLE_NAMES = ("Assessor", "Service Manager", "Cybersecurity")
 
 
 def has_effective_access(auth: AuthContext) -> bool:
@@ -29,11 +30,23 @@ def has_effective_access(auth: AuthContext) -> bool:
 
 def cyber_assignments(auth: AuthContext):
     return [a for a in auth.effective_assignments
-            if a.role.system and a.role.name == "Cybersecurity"]
+            if a.service_id is None and a.role.system and a.role.name == "Cybersecurity"]
 
 
 def is_cybersecurity(auth: AuthContext) -> bool:
     return bool(cyber_assignments(auth))
+
+
+def claim_roles(db: Session, auth: AuthContext) -> list[Role]:
+    # The same system Cybersecurity role backs every authorized group. Check
+    # its current permissions so a modified reviewer role cannot delegate more.
+    available = {permission for assignment in cyber_assignments(auth)
+                 for permission in (assignment.role.permissions or [])}
+    roles = db.scalars(select(Role).where(Role.system.is_(True), Role.name.in_(CLAIM_ROLE_NAMES)))
+    canonical = {role.name: role for role in roles
+                 if set(role.permissions or []) == set(SYSTEM_ROLES[role.name])
+                 and set(role.permissions) - APPLICATION_PERMISSIONS <= available}
+    return [canonical[name] for name in CLAIM_ROLE_NAMES if name in canonical]
 
 
 def authorized_claim_groups(db: Session, auth: AuthContext) -> list[Group]:
@@ -150,18 +163,30 @@ def list_pending_requests(db: Session, auth: AuthContext) -> list[dict]:
                      for uid, username, display_name, sid, name, created in requests]
 
 
-def _claim_service(db: Session, reviewer: AuthContext, target: User, service_id: int, role: Role):
+def _claim_service(db: Session, reviewer: AuthContext, target: User, service_id: int, role: Role, *, explicit_role: bool):
     if target.id == reviewer.user.id:
         raise HTTPException(403, "Another Cybersecurity reviewer must approve this request")
-    available = select(Service.id).where(Service.id == service_id, active_service_predicate(), _service_claim_scope(reviewer))
-    if db.scalar(available.with_for_update()) is None:
+    available = select(Service).where(Service.id == service_id, active_service_predicate(), _service_claim_scope(reviewer))
+    service = db.scalar(available.with_for_update())
+    if service is None:
         raise HTTPException(403, "Service unavailable or outside your Cybersecurity scope")
     consumed = db.execute(delete(ServiceAccessRequest).where(
         ServiceAccessRequest.user_id == target.id, ServiceAccessRequest.service_id == service_id))
     if consumed.rowcount != 1:
         raise HTTPException(409, "Service request is no longer pending")
-    if AuthContext(target, reviewer.session).has("service.view", service_id):
-        record_audit(db, reviewer, "account.service_access_already_granted", "user", target.id, service_id=service_id)
+    target_auth = AuthContext(target, reviewer.session)
+    if explicit_role:
+        owner_ids = {group.id for group in service.groups}
+        already_granted = any(
+            assignment.role_id == role.id and (assignment.service_id == service_id or
+                (assignment.service_id is None and (assignment.group_id is None or assignment.group_id in owner_ids)))
+            for assignment in target_auth.effective_assignments)
+    else:
+        # Older clients request basic access and accept an existing view grant.
+        already_granted = target_auth.has("service.view", service_id)
+    if already_granted:
+        record_audit(db, reviewer, "account.service_access_already_granted", "user", target.id,
+                     service_id=service_id, role_id=role.id if explicit_role else None)
         return {"user_id": target.id, "service_id": service_id, "status": "already_granted"}
     db.add(UserRoleAssignment(user_id=target.id, role_id=role.id, service_id=service_id, source="local"))
     try:
@@ -172,7 +197,8 @@ def _claim_service(db: Session, reviewer: AuthContext, target: User, service_id:
     return {"user_id": target.id, "service_id": service_id, "role": role.name, "status": "claimed"}
 
 
-def claim_access_request(db: Session, auth: AuthContext, user_id: int, group_id: int | None = None, service_id: int | None = None):
+def claim_access_request(db: Session, auth: AuthContext, user_id: int, group_id: int | None = None,
+                         service_id: int | None = None, role_id: int | None = None):
     # Discard cached roles/eligibility so a revoked operator cannot use an old page.
     db.expire_all()
     actor = db.get(User, auth.user.id)
@@ -184,13 +210,19 @@ def claim_access_request(db: Session, auth: AuthContext, user_id: int, group_id:
     target = db.scalar(select(User).where(User.id == user_id).with_for_update())
     if not target or not target.enabled or db.get(AccountRetirement, user_id):
         raise HTTPException(409, "Account is unavailable")
-    role = db.scalar(select(Role).where(Role.name == "Assessor", Role.system.is_(True)))
-    if not role or set(role.permissions or []) != set(SYSTEM_ROLES["Assessor"]):
-        raise HTTPException(409, "Default access role is unavailable or has been modified")
+    roles = claim_roles(db, fresh)
+    if role_id is None:
+        role = next((option for option in roles if option.name == "Assessor"), None)
+        if role is None:
+            raise HTTPException(409, "Default access role is unavailable or has been modified")
+    else:
+        role = next((option for option in roles if option.id == role_id), None)
+        if role is None:
+            raise HTTPException(403, "The selected role is unavailable or exceeds your delegation authority")
     if service_id is not None:
         if group_id is not None:
             raise HTTPException(422, "Choose only the requested service")
-        return _claim_service(db, fresh, target, service_id, role)
+        return _claim_service(db, fresh, target, service_id, role, explicit_role=role_id is not None)
     if (not supports_group_request(target) or db.scalar(select(ServiceAccessRequest.user_id)
             .where(ServiceAccessRequest.user_id == user_id).limit(1)) is not None):
         raise HTTPException(409, "Select a pending service request for this account")
@@ -218,6 +250,7 @@ class ClaimInput(BaseModel):
     csrf_token: str
     group_id: int | None = None
     service_id: int | None = None
+    role_id: int | None = None
 
 
 @router.get("/api/accounts/access-requests")
@@ -225,6 +258,7 @@ def pending_route(db: Session = Depends(get_db), auth: AuthContext = Depends(req
     if not is_cybersecurity(auth):
         raise HTTPException(403, "Cybersecurity role required")
     return {"requests": list_pending_requests(db, auth),
+            "roles": [{"id": role.id, "name": role.name} for role in claim_roles(db, auth)],
             "groups": [{"id": group.id, "name": group.name} for group in authorized_claim_groups(db, auth)]}
 
 
@@ -233,7 +267,7 @@ def claim_route(user_id: int, payload: ClaimInput, db: Session = Depends(get_db)
     if not hmac.compare_digest(payload.csrf_token, auth.csrf_token):
         raise HTTPException(403, "Invalid CSRF token")
     try:
-        result = claim_access_request(db, auth, user_id, payload.group_id, payload.service_id)
+        result = claim_access_request(db, auth, user_id, payload.group_id, payload.service_id, payload.role_id)
         db.commit()
         return result
     except Exception:

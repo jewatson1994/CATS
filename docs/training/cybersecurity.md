@@ -42,10 +42,10 @@ Use **Administration → Risk Policy** for profiles and assessment review within
 
 ## Onboard accounts within your groups
 
-After organizational sign-in, an account without effective permissions sees a directory of active services. The user selects **Request access** for each service they need. The directory displays service names and the user's pending status. The user can refresh the page after approval to enter CATS using the same session.
+After a local or organizational sign-in, an account awaiting access sees a directory of active services. The user selects **Request access** for each service they need. The directory displays service names and the user's pending status. The user can refresh the page after approval to enter CATS using the same session.
 
-Open an access request in the notification bell to reach **Accounts & Roles**. Group-scoped Cybersecurity users can review requests for services in their authorized groups. Choose **Approve service access as Assessor** to grant the built-in Assessor role on the requested service. Each request has its own approval. The grant is a local CATS assignment and persists across OIDC logins until removed.
+Open an access request in the notification bell to reach **Accounts & Roles**. Group-scoped Cybersecurity users can review requests for services in their authorized groups. Select **Assessor**, **Service Manager**, or **Cybersecurity** from the available roles, then choose **Approve access**. The selected role applies to the service named on that request. Other requests from the same user can have different roles. The grant is a local CATS assignment and persists across OIDC logins until removed.
 
-For a local-only account awaiting its initial assignment, choose **Claim as Assessor** and select an authorized group. This grants Assessor access across that group.
+For a local account with a general access request, select an authorized group and a role, then choose **Approve access**. The role applies across the selected group.
 
 Use the **Local**, **OIDC**, and **Both** tabs to distinguish sign-in methods. Both means the account has a local password and a linked OIDC identity. Use the role assignment dialog to choose a role and its scope. Cybersecurity can grant only eligible roles within its groups and cannot grant global administration or alter externally managed OIDC grants. Global administrators manage identity linking and account lifecycle actions.

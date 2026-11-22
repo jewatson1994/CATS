@@ -46,10 +46,12 @@ def test_group_assignment_and_revocation(setup):
     assert remove_assignment(grant.id, 'csrf', db, auth).status_code == 303
 
 
-def test_service_assessor_revocation_uses_current_owner(setup):
-    db, auth, target, group, other, assessor, _ = setup
+@pytest.mark.parametrize('role_name', ['Assessor', 'Service Manager', 'Cybersecurity'])
+def test_service_role_revocation_uses_current_owner(setup, role_name):
+    db, auth, target, group, other, _, _ = setup
+    role = db.scalar(select(Role).where(Role.name == role_name))
     service = Service(name='Application', service_key='application', groups=[other])
-    grant = UserRoleAssignment(user=target, role=assessor, service=service, source='local')
+    grant = UserRoleAssignment(user=target, role=role, service=service, source='local')
     db.add(grant)
     db.commit()
     with pytest.raises(HTTPException) as denied:
