@@ -74,6 +74,14 @@ def test_imported_provenance_does_not_promote_newer_historical_version():
         db.commit()
     history = page_data(client.get("/services/payments-service/history?version=1.5"))
     assert [row["key"] for row in history["imported_snapshots"]] == ["retained-only"]
+    retained = history["imported_snapshots"][0]
+    view = "/services/payments-service/history?version=1.5&scan=" + retained["scan_id"]
+    compact = page_data(client.get(view + "&tab=overview"))["imported_snapshots"][0]
+    assert compact["summary"] == retained["summary"]
+    assert "findings" not in compact["data"]
+    details = page_data(client.get(view + "&tab=findings"))["imported_snapshots"][0]
+    assert [row["cve"] for row in details["data"]["findings"]] == ["CVE-IMPORTED"]
+    assert "sbom_components" not in details["data"]
     with SessionLocal() as db:
         assert db.scalar(select(Service)).current_version.version == "1.0"
         assert [row.cve for row in db.scalars(select(Finding))] == ["CVE-CURRENT"]
@@ -116,6 +124,20 @@ def test_history_cards_and_severity_match_only_the_selected_scan_and_original_va
     assert (stats["kev"], stats["sbom_covered_images"], stats["total_images"], stats["validation_failures"]) == (1, 1, 3, 1)
     assert all(stats[field] is None for field in ("posture", "posture_captured_at", "watchlist", "open_poams", "overdue_poams"))
     assert [item["cve"] for item in snapshot["data"]["findings"]] == ["CVE-DEMO", "CVE-DEMO", "CVE-SECOND"]
+    for tab_url, headers in ((url + "&tab=overview", {}), (url, {"Accept": "text/html"})):
+        overview = page_data(client.get(tab_url, headers=headers))["snapshots"][0]
+        assert overview["summary"] == stats
+        assert len(overview["data"]["service_overview"]["artifacts"]) == stats["artifacts"]
+        assert not {"findings", "policy_findings", "sbom_components"}.intersection(overview["data"])
+    dependencies = page_data(client.get(url + "&tab=dependencies"))["snapshots"][0]
+    assert dependencies["scan_id"] == snapshot["scan_id"] and "summary" not in dependencies
+    assert [row["name"] for row in dependencies["data"]["sbom_components"]] == ["lib"]
+    assert "findings" not in dependencies["data"] and "policy_findings" not in dependencies["data"]
+    findings = page_data(client.get(url + "&tab=findings"))["snapshots"][0]
+    assert findings["scan_id"] == snapshot["scan_id"] and "summary" not in findings
+    assert len(findings["data"]["findings"]) == stats["vulnerability_findings"]
+    assert [row["finding"] for row in findings["data"]["policy_findings"]] == ["POL-1"]
+    assert "sbom_components" not in findings["data"] and "service_overview" not in findings["data"]
 
 
 def test_history_preserves_absent_vs_empty_evidence_for_legacy_imported_scans():

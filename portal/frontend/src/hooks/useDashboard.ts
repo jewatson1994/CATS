@@ -1,5 +1,6 @@
 import {useEffect, useState} from 'react';
 import {requestJson, type PageData} from '../api';
+import {visibleTimeout} from './visibleTimer';
 
 /** Dashboard data is request scoped. Abort and identity checks prevent stale routes replacing newer data. */
 export function useDashboard(pageData: PageData, {pollPending = false} = {}) {
@@ -9,7 +10,7 @@ export function useDashboard(pageData: PageData, {pollPending = false} = {}) {
   useEffect(() => {
     if (!url) return;
     const controller = new AbortController();
-    let timer: number | undefined;
+    let cancelRetry: (() => void) | undefined;
     let delay = 3000;
     setResult(previous => previous?.url === url && previous.data ? {url, data: previous.data} : null);
     async function load(target: string) {
@@ -18,7 +19,7 @@ export function useDashboard(pageData: PageData, {pollPending = false} = {}) {
         if (controller.signal.aborted) return;
         setResult({url: target, data});
         if (pollPending && data.posture_preparing > 0) {
-          timer = window.setTimeout(() => void load(target), delay);
+          cancelRetry = visibleTimeout(() => void load(target), delay);
           delay = Math.min(delay * 2, 30000);
         }
       } catch (error) {
@@ -28,7 +29,7 @@ export function useDashboard(pageData: PageData, {pollPending = false} = {}) {
       }
     }
     void load(url);
-    return () => {controller.abort(); window.clearTimeout(timer);};
+    return () => {controller.abort(); cancelRetry?.();};
   }, [url, attempt, pollPending]);
   const current = result?.url === url ? result : null;
   return {data: url ? current?.data ? {...pageData, ...current.data} : null : pageData,

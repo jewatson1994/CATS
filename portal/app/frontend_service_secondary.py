@@ -119,7 +119,8 @@ def project_secondary(data, name, context, can=None, formatters=None):
             row = _fields(option, ("scan_id", "key", "name", "source"))
             row["at"] = _formatted(_field(option, "at"), formatters.get("cats_datetime"))
             data["scan_options"].append(row)
-        data["history_tab"] = context.get("history_tab", "overview")
+        tab = context.get("history_tab")
+        data["history_tab"] = tab or "overview"
         data["releases"] = []
         for release in context.get("releases", []):
             row = _fields(release, ("release_key", "source", "digest", "scan"))
@@ -130,19 +131,40 @@ def project_secondary(data, name, context, can=None, formatters=None):
             for snapshot in context.get(key, []):
                 projected = _fields(snapshot, ("scan_id", "key", "scope", "complete"))
                 projected["at"] = _formatted(_field(snapshot, "at"), formatters.get("cats_datetime"))
-                projected["source_files"] = strings(_field(snapshot, "source_files", []))
+                if tab in (None, "overview"):
+                    projected["source_files"] = strings(_field(snapshot, "source_files", []))
                 raw = _field(snapshot, "data", {}) or {}
-                evidence = {"service": _fields(_field(raw, "service", {}), ("id", "name", "version", "description", "owner", "poc")),
-                    "findings": rows(_field(raw, "findings", []), ("cve", "severity", "image", "image_digest", "package", "installed_version", "fixed_version", "kev", "epss")),
-                    "policy_findings": rows(_field(raw, "policy_findings", []), ("type", "finding", "severity", "scanner", "framework", "target", "namespace", "title", "description", "remediation", "fingerprint")),
-                    "sbom_components": rows(_field(raw, "sbom_components", []), ("name", "version", "ecosystem", "purl", "image", "image_digest", "cpe", "supplier", "author", "architecture", "hashes", "copyright", "license_declared", "license_detected", "license_expression", "license_source", "location", "sbom", "dependency_parents", "dependency_children"))}
-                for list_key in ("sbom_images", "skipped_images", "skipped_charts"):
-                    evidence[list_key] = strings(_field(raw, list_key, []))
-                source_service = _field(raw, "service", {})
+                source_service = _field(raw, "service", {}) or {}
+                evidence = {"service": _fields(source_service, ("id", "name", "version", "description", "owner", "poc"))}
                 evidence["service"]["groups"] = strings(_field(source_service, "groups", []))
-                raw_overview = _field(raw, "service_overview", {}) or {}
+                projected["data"] = evidence
+                data[key].append(projected)
+                # An older consumer can omit the tab to retrieve the complete scan DTO.
+                if tab in (None, "findings"):
+                    finding_fields = ("cve", "severity", "package", "installed_version", "fixed_version", "image")
+                    policy_fields = ("finding", "title", "severity", "target", "scanner")
+                    if tab is None:
+                        finding_fields += ("image_digest", "kev", "epss")
+                        policy_fields += ("type", "framework", "namespace", "description", "remediation", "fingerprint")
+                    evidence["findings"] = rows(raw.get("findings"), finding_fields)
+                    evidence["policy_findings"] = rows(raw.get("policy_findings"), policy_fields)
+                if tab == "findings":
+                    continue
+                if tab in (None, "dependencies"):
+                    component_fields = ("name", "version", "ecosystem", "purl", "image", "license_expression")
+                    if tab is None:
+                        component_fields += ("image_digest", "cpe", "supplier", "author", "architecture", "hashes",
+                            "copyright", "license_declared", "license_detected", "license_source", "location", "sbom",
+                            "dependency_parents", "dependency_children")
+                    evidence["sbom_components"] = rows(raw.get("sbom_components"), component_fields)
+                raw_overview = raw.get("service_overview") or {}
+                if tab == "dependencies":
+                    from .overview import normalize_overview
+                    dependencies = normalize_overview({"dependencies": _field(raw_overview, "dependencies")})["dependencies"]
+                    evidence["service_overview"] = {"dependencies": dependencies}
+                    continue
                 from .history_metrics import historical_overview
-                normalized, projected["summary"] = historical_overview(raw, evidence, projected["complete"])
+                normalized, projected["summary"] = historical_overview(raw, projected["complete"])
                 policy = _field(snapshot, "captured_policy") or {}
                 projected["summary"].update(_fields(policy, ("posture", "watchlist", "open_poams",
                                                             "overdue_poams", "validation_failures")))
@@ -157,13 +179,14 @@ def project_secondary(data, name, context, can=None, formatters=None):
                 if captured_compose:
                     evidence["service_overview"]["compose"] = {
                         "services": rows(captured_compose.get("services"), ("name", "image", "status"))}
-                evidence["service_overview"]["dependencies"] = rows(normalized["dependencies"],
-                    ("dependency", "used_by", "provides", "images"))
-                evidence["service_overview"]["images"] = rows(_field(raw_overview, "images", []),
-                    ("image", "reference", "name", "digest", "image_digest", "registry", "repository", "tag", "version", "source_file", "discovered_from"))
-                evidence["service_overview"]["charts"] = rows(_field(raw_overview, "charts", []),
-                    ("chart", "name", "version", "repository", "source", "source_file"))
+                if tab is None:
+                    for list_key in ("sbom_images", "skipped_images", "skipped_charts"):
+                        evidence[list_key] = strings(raw.get(list_key))
+                    evidence["service_overview"]["dependencies"] = rows(normalized["dependencies"],
+                        ("dependency", "used_by", "provides", "images"))
+                    evidence["service_overview"]["images"] = rows(_field(raw_overview, "images", []),
+                        ("image", "reference", "name", "digest", "image_digest", "registry", "repository", "tag", "version", "source_file", "discovered_from"))
+                    evidence["service_overview"]["charts"] = rows(_field(raw_overview, "charts", []),
+                        ("chart", "name", "version", "repository", "source", "source_file"))
                 evidence["service_overview"]["helm_chart_graph"] = chart_graph(_field(raw_overview, "helm_chart_graph", {}))
-                projected["data"] = evidence
-                data[key].append(projected)
     return data

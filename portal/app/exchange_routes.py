@@ -197,16 +197,20 @@ def bundle_confirm(token: str, csrf_token: str = Form(), confirm: bool = Form(Fa
 @router.get("/services/{service_key}/history")
 def history_page(service_key: str, request: Request, version: str = "", page: int = 1,
                  imported_page: int = 1, page_size: int = 10,
-                 tab: Literal["overview", "dependencies", "findings", "releases"] = "overview",
+                 tab: Literal["overview", "dependencies", "findings", "releases"] | None = None,
                  scan: str = "", source: Literal["native", "imported"] = "native",
                  db=Depends(get_db), auth=Depends(require_user)):
     service = service_for(db, auth, service_key, "service.view")
     if page_size not in {10, 25, 50}:
         raise HTTPException(422, detail="History page size must be 10, 25, or 50")
+    # Browser bookmarks without a tab land on the compact overview; existing
+    # programmatic consumers can still request the full unqualified history DTO.
+    if tab is None and "text/html" in request.headers.get("accept", ""):
+        tab = "overview"
     from .history_queries import historical_releases, history_page_evidence
     try:
         history = history_page_evidence(db, service, version, page=page, imported_page=imported_page,
-                                       page_size=page_size, scan=scan, tab=tab, preferred_source=source)
+                                       page_size=page_size, scan=scan, tab=tab or "overview", preferred_source=source)
     except ValueError as exc:
         raise HTTPException(404, detail=str(exc)) from exc
     selected, executions, imported = history["version"], history["executions"], history["imported"]
@@ -225,7 +229,7 @@ def history_page(service_key: str, request: Request, version: str = "", page: in
     snapshots = []
     for execution in executions:
         policy = {}
-        if tab == "overview":
+        if tab in (None, "overview"):
             from .history_queries import historical_approval_posture
             from .history_metrics import validation_failures
             policy = historical_approval_posture(db, execution, selected)

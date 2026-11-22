@@ -2,7 +2,7 @@ import {act, fireEvent, render, screen} from '@testing-library/react';
 import {afterEach, expect, it, vi} from 'vitest';
 import {Page} from './dashboard';
 
-afterEach(() => {vi.useRealTimers(); vi.unstubAllGlobals();});
+afterEach(() => {vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals();});
 const response = (body: object) => new Response(JSON.stringify(body), {headers: {'content-type': 'application/json'}});
 const pending = {posture_preparing: 1, posture_assessed: 0, total_count: 1,
   rows: [{service: {service_key: 'demo', name: 'Demo'}, posture_pending: true}]};
@@ -70,4 +70,51 @@ it('cancels the pending refresh when filters change or the dashboard unmounts', 
   expect(second.aborted).toBe(true);
   await act(async () => {await vi.advanceTimersByTimeAsync(60000);});
   expect(fetch).toHaveBeenCalledTimes(2);
+});
+
+it('waits for a visible tab before retrying and resumes only once with the existing backoff', async () => {
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  let finish!: (value: Response) => void;
+  const fetch = vi.fn()
+    .mockResolvedValueOnce(response(pending))
+    .mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }))
+    .mockResolvedValueOnce(response(loaded));
+  vi.stubGlobal('fetch', fetch);
+  await act(async () => {render(<Page data={shell}/>);});
+  visibility.mockReturnValue('hidden');
+  document.dispatchEvent(new Event('visibilitychange'));
+  await act(async () => {await vi.advanceTimersByTimeAsync(60000);});
+  expect(fetch).toHaveBeenCalledTimes(1);
+  visibility.mockReturnValue('visible');
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(30000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => {finish(response(pending));});
+  await act(async () => {await vi.advanceTimersByTimeAsync(5999);});
+  expect(fetch).toHaveBeenCalledTimes(2);
+  await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+it('removes the deferred visibility retry when the dashboard unmounts', async () => {
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+  const fetch = vi.fn().mockImplementation(async () => response(pending));
+  vi.stubGlobal('fetch', fetch);
+  const page = render(<Page data={shell}/>);
+  await act(async () => {});
+  visibility.mockReturnValue('hidden');
+  document.dispatchEvent(new Event('visibilitychange'));
+  await act(async () => {await vi.advanceTimersByTimeAsync(3000);});
+  page.unmount();
+  visibility.mockReturnValue('visible');
+  await act(async () => {
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(60000);
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });

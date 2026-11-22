@@ -8272,7 +8272,7 @@ def service_detail(
         raise HTTPException(404)
     now = utcnow()
     if version:
-        return RedirectResponse(f"/services/{service_key}/history?version={urllib.parse.quote(version, safe='')}", status_code=303)
+        return RedirectResponse(f"/services/{service_key}/history?version={urllib.parse.quote(version, safe='')}&tab=overview", status_code=303)
     # Canonical Findings selector; legacy ``overview=false`` and
     # ``simplified=true`` links remain valid for bookmarks and deep links.
     if findings and not findings_view:
