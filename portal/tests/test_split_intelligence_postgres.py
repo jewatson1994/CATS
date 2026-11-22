@@ -303,6 +303,44 @@ def test_split_cache_token_tracks_independent_generation(splitdb):
         importer.commit()
     assert nv.cache_token(splitdb) != before
 
+
+def test_disabled_posture_reads_committed_generation_during_import(splitdb, monkeypatch):
+    from sqlalchemy import update
+    from app import intelligence_generation, native_vex as nv
+    from app.models import ServicePosture
+    from app.vex_models import VexSource
+
+    service, finding, _, source = native_cases.setup(splitdb)
+    nv.evaluate_service(splitdb, service.id, now=vex_cases.NOW)
+    splitdb.commit()
+    assert not splitdb.scalar(select(nv.Policy.enabled).where(nv.Policy.id == 1))
+    before = service_posture._intelligence_token(splitdb)
+    splitdb.commit()
+    # The normal importer holds this generation row lock for its entire atomic install.
+    # Use a short timeout for the deliberately fenced preview and enabled-policy checks.
+    monkeypatch.setattr(intelligence_generation, '_configure',
+                        lambda connection: connection.execute(text("SET LOCAL lock_timeout = '200ms'")))
+    with database.intelligence_engine.begin() as writer:
+        writer.execute(update(VexSource).where(VexSource.id == source.id).values(trusted=False))
+        assert service_posture._intelligence_token(splitdb) == before
+        for kind in service_posture.KINDS:
+            assert service_posture.rebuild(database.engine, kind, [service.id], now=vex_cases.NOW) == 1
+        row = splitdb.get(ServicePosture, service.id)
+        assert row.services_row['active'] == 1
+        assert row.cyber_row['critical'] == 1
+        # Even a valid preview evaluation cannot exclude while its fence is busy.
+        assert not splitdb.scalar(select(nv.finding_excluded(finding.id, vex_cases.NOW, preview=True)))
+        native_cases.enable(splitdb)
+        with pytest.raises(intelligence_generation.GenerationUnavailable):
+            service_posture._intelligence_token(splitdb)
+        splitdb.rollback()
+        splitdb.get(nv.Policy, 1).enabled = False
+        splitdb.commit()
+        before_commit = service_posture._intelligence_token(splitdb)
+        splitdb.commit()
+    assert service_posture._intelligence_token(splitdb) != before_commit
+
+
 def test_explicit_operational_generation_routing(splitdb):
     from sqlalchemy.orm import Session
     from app.intelligence_generation import current_generation, guard_generation

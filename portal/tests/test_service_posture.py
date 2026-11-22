@@ -13,7 +13,7 @@ from sqlalchemy import delete, select, update
 from app import main, service_posture
 from app.database import SessionLocal
 from app.models import (DeploymentValidationRun, Execution, ExceptionRecord, Finding, Group, PortalSetting, Role, Service,
-                        ServicePosture, User, UserRoleAssignment, utcnow)
+                        ServiceArchiveEvent, ServicePosture, User, UserRoleAssignment, utcnow)
 from app.auth import hash_password
 from test_portal import new_client, payload, pipeline_headers, setup_function  # noqa: F401
 
@@ -49,6 +49,36 @@ def posture_row(key):
     with SessionLocal() as db:
         service_id = db.scalar(select(Service.id).where(Service.service_key == key))
         return db.get(ServicePosture, service_id)
+
+
+def test_posture_while_split_intelligence_generation_is_locked(monkeypatch):
+    from unittest.mock import Mock
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+    from app import database, intelligence_generation, native_vex as nv
+
+    intel = create_engine('sqlite://', poolclass=StaticPool, connect_args={'check_same_thread': False})
+    monkeypatch.setattr(database, 'INTELLIGENCE_SEPARATE', True)
+    monkeypatch.setattr(database, 'intelligence_engine', intel)
+    monkeypatch.setattr(database, 'intelligence_background_engine', intel)
+    try:
+        database.Base.metadata.create_all(intel, tables=database.intelligence_tables())
+        client = new_client()
+        ingest(client, "locked-feed", ["CVE-2025-1000"])
+        held = Mock(side_effect=intelligence_generation.GenerationUnavailable("Importer holds generation lock"))
+        monkeypatch.setattr(intelligence_generation, 'guard_generation', held)
+        assert services(client)["locked-feed"]["active_count"] == 1
+        assert cyber(client)["metrics"]["vulnerabilities"] == 1
+        held.assert_not_called()
+        with SessionLocal() as db:
+            assert ':split:unavailable' in nv.cache_token(db)
+            assert not db.scalar(select(nv.finding_excluded(1, utcnow(), preview=True)))
+            db.get(nv.Policy, 1).enabled = True
+            db.commit()
+            with pytest.raises(intelligence_generation.GenerationUnavailable):
+                service_posture._intelligence_token(db)
+    finally:
+        intel.dispose()
 
 
 def test_projection_matches_direct_computation_and_follows_ingest(shadow):
@@ -383,7 +413,15 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
     scheduled.clear()
     body = client.get("/api/dashboard/services?page_size=200").json()
     assert body["posture_preparing"] == 4 and body["posture_refreshing"] is True
-    assert len(body["views"]) == 0  # no invented rows while background work is pending
+    assert body["views"] == [] and body["posture_assessed"] == 0
+    assert body["total_count"] == body["lifecycle_counts"]["active"] == 4
+    assert body["compliant_count"] is body["noncompliant_count"] is body["poam_active_count"] is None
+    assert body["rows"] == [{"posture_pending": True, "service": {"service_key": f"prep-{i}", "name": f"Prep {i}"}}
+                             for i in range(4)]
+    page = client.get("/api/dashboard/services?q=prep&page=2&page_size=1&cve=2024-9400&severity=High&since=2000-01-01").json()
+    assert page["total_count"] == 4 and page["rows"] == body["rows"][1:2]
+    assert client.get("/api/dashboard/services?status=GREEN").json()["rows"] == []
+    assert client.get("/api/dashboard/services?attention=missing").json()["rows"] == []
     assert scheduled and len(scheduled[0]) == 4
     cyber_body = client.get("/api/dashboard/cybersecurity?page_size=200").json()
     # Repeated requests do not perform inline rebuilds above the threshold.
@@ -391,6 +429,39 @@ def test_services_without_posture_beyond_the_bound_are_reported_as_preparing(mon
     assert cyber_body["posture_refreshing"] is True
     assert len(cyber_body["rows"]) == 0
     assert len(scheduled[-1]) == 4
+
+
+def test_pending_services_preserve_legacy_archive_and_partial_totals(monkeypatch):
+    client = new_client()
+    for key in ("ready", "pending", "archived"):
+        ingest(client, key, [])
+    # Simulate an old archive event whose service lifecycle column is still active.
+    with SessionLocal() as db:
+        ids = dict(db.execute(select(Service.service_key, Service.id)).all())
+        db.add(ServiceArchiveEvent(service_id=ids["archived"], action="archive", reason="test", performed_by="admin"))
+        user = User(username="pending-viewer", display_name="Viewer", password_hash=hash_password("test-password-long"),
+                    must_change_password=False)
+        db.add(user)
+        db.flush()
+        assessor = db.scalar(select(Role).where(Role.name == "Assessor"))
+        db.add(UserRoleAssignment(user_id=user.id, role_id=assessor.id, service_id=ids["pending"]))
+        db.commit()
+    original = service_posture._load
+    def partial(db, kind, service_ids, configs, now):
+        available = [sid for sid in service_ids if sid == ids["ready"]]
+        stored, meta = original(db, kind, available, configs, now)
+        return stored, {**meta, "refreshing": True, "preparing": len(service_ids) - len(available)}
+    monkeypatch.setattr(service_posture, "_load", partial)
+    result = client.get("/api/dashboard/services").json()
+    assert result["posture_preparing"] == result["posture_assessed"] == 1
+    assert result["lifecycle_counts"] == {"active": 2, "staged": 0, "archived": 1}
+    assert result["total_count"] == 2 and result["compliant_count"] + result["noncompliant_count"] == 1
+    assert [row["service"]["service_key"] for row in result["rows"]] == ["pending", "ready"]
+    archived = client.get("/api/dashboard/services?archived=true").json()
+    assert archived["rows"] == [{"posture_pending": True, "service": {"service_key": "archived", "name": "Archived"}}]
+    scoped = new_client("pending-viewer").get("/api/dashboard/services").json()
+    assert scoped["lifecycle_counts"] == {"active": 1, "staged": 0, "archived": 0}
+    assert scoped["rows"] == result["rows"][:1] and scoped["posture_assessed"] == 0
 
 
 

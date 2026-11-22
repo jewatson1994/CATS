@@ -529,16 +529,11 @@ snapshot_logger = logging.getLogger("cats.snapshot")
 PIPELINE_MAX_REQUEST_BYTES = max(1024, int(os.getenv("CATS_PIPELINE_MAX_REQUEST_BYTES", str(16 * 1024 * 1024))))
 
 
-ACCESS_PENDING_MESSAGE = "Contact your cybersecurity POC for access."
-
-
 def access_pending_response(request, db, auth):
     from . import announcements
-    directory = access_requests.uses_service_directory(auth.user)
     return templates.TemplateResponse(request, "access_directory.html", {
-        "services": access_requests.service_directory(db, auth.user.id) if directory else None,
+        "services": access_requests.service_directory(db, auth.user.id),
         "notice": announcements.current(db, auth.user.id), "csrf_token": auth.csrf_token,
-        "contact_message": ACCESS_PENDING_MESSAGE,
     }, headers={"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"})
 
 
@@ -555,14 +550,10 @@ async def pending_access_gate(request: Request, call_next):
             if auth and not access_requests.has_effective_access(auth):
                 access_requests.register_pending_request(db, auth)
                 db.commit()
-                directory = access_requests.uses_service_directory(auth.user)
                 if path.startswith("/api/") or request.method != "GET":
-                    detail = "Request service access at /account/access." if directory else ACCESS_PENDING_MESSAGE
-                    return JSONResponse({"detail": detail}, status_code=403,
+                    return JSONResponse({"detail": "Request service access at /account/access."}, status_code=403,
                                         headers={"Cache-Control": "no-store"})
-                if directory:
-                    return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
-                return access_pending_response(request, db, auth)
+                return RedirectResponse("/account/access", status_code=303, headers={"Cache-Control": "no-store"})
     return await call_next(request)
 
 
@@ -2591,6 +2582,17 @@ def _risk_finding_expressions(
     return eligible_result, noncompliant_result, needs_observations
 
 
+def _archived_service_ids(db, service_ids):
+    from .sql_sets import member_of
+    if not service_ids:
+        return set()
+    latest = select(ServiceArchiveEvent.service_id, ServiceArchiveEvent.action,
+        func.row_number().over(partition_by=ServiceArchiveEvent.service_id,
+            order_by=(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc())).label("position")
+    ).where(member_of(ServiceArchiveEvent.service_id, service_ids, numeric=True)).subquery()
+    return set(db.scalars(select(latest.c.service_id).where(latest.c.position == 1, latest.c.action == "archive")))
+
+
 def service_overview_rows_aggregated(
     db: Session,
     auth: AuthContext,
@@ -2685,14 +2687,7 @@ def service_overview_rows_aggregated(
             func.min(PolicyFinding.episode_started).label("oldest"),
         ).where(member_of(PolicyFinding.service_id, service_ids, numeric=True), PolicyFinding.active.is_(True)).group_by(PolicyFinding.service_id))
     }
-    archive_by_service: dict[int, str] = {}
-    latest_archive = select(ServiceArchiveEvent.service_id, ServiceArchiveEvent.action,
-        func.row_number().over(partition_by=ServiceArchiveEvent.service_id,
-            order_by=(ServiceArchiveEvent.created_at.desc(), ServiceArchiveEvent.id.desc())).label("position")
-    ).where(member_of(ServiceArchiveEvent.service_id, service_ids, numeric=True)).subquery()
-    for row in db.execute(select(latest_archive.c.service_id, latest_archive.c.action)
-            .where(latest_archive.c.position == 1)):
-        archive_by_service[row.service_id] = row.action
+    archived_ids = _archived_service_ids(db, service_ids)
     poam_counts: dict[int, dict[str, int]] = {}
     for row in db.execute(select(
         PoamEntry.service_id, PoamEntry.status, func.count(PoamEntry.id),
@@ -2744,7 +2739,7 @@ def service_overview_rows_aggregated(
             "excepted": CountOnly(finding_excepted),
             "policy_excepted": CountOnly(policy_excepted),
             "oldest_age": oldest_age,
-            "archive": archive_by_service.get(service.id) == "archive",
+            "archive": service.id in archived_ids,
             "poam": poam_counts.get(service.id, {"active": 0, "pending": 0, "overdue": 0}),
             "overdue": CountOnly(finding_noncompliant),
         })
@@ -2973,7 +2968,7 @@ def _oidc_failure_response(message, reference):
 def account_access(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     if access_requests.has_effective_access(auth):
         return RedirectResponse("/", status_code=303)
-    if not access_requests.uses_service_directory(auth.user):
+    if access_requests.supports_group_request(auth.user):
         access_requests.register_pending_request(db, auth)
         db.commit()
     return access_pending_response(request, db, auth)
@@ -7966,26 +7961,34 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
         lifecycle = "archived"
     if lifecycle not in {"active", "staged", "archived"}:
         raise HTTPException(422, detail="Unknown service lifecycle")
-    def row_lifecycle(view):
-        return "archived" if view.get("archive") else view["service"].lifecycle_status or "active"
-    lifecycle_counts = {value: sum(row_lifecycle(view) == value for view in views)
-                        for value in ("active", "staged", "archived")}
-    visible_all = [view for view in views if row_lifecycle(view) == lifecycle]
+    by_id = {view["service"].id: view for view in views}
+    missing_ids = [service.id for service in services if service.id not in by_id]
+    archived_ids = _archived_service_ids(db, missing_ids)
+    archived_ids.update(sid for sid, view in by_id.items() if view.get("archive"))
+    lifecycle_counts = {"active": 0, "staged": 0, "archived": 0}
+    selected_services = []
+    for service in services:
+        state = "archived" if service.id in archived_ids else service.lifecycle_status or "active"
+        if state in lifecycle_counts:
+            lifecycle_counts[state] += 1
+        if state == lifecycle:
+            selected_services.append(service)
+    visible_all = [by_id[service.id] for service in selected_services if service.id in by_id]
     from .dashboard_portfolio import portfolio
-    selected_services = [view["service"] for view in visible_all]
     # Lifecycle selection has already used the archive projection, including legacy records.
     matrix = portfolio(db, auth, q=q, status=status, attention=attention, severity=severity,
                        component=component, cve=cve, since=since, page=page, page_size=page_size,
-                       lifecycle=None, source=(selected_services, configurations, configuration, now))
+                       lifecycle=None, source=(selected_services, configurations, configuration, now),
+                       pending_ids=set(missing_ids))
     pagination = matrix["pagination"]
     page, page_size, total_count, total_pages = (pagination[key] for key in ("page", "page_size", "total", "pages"))
     views_by_key = {view["service"].service_key: view for view in visible_all}
-    views = [views_by_key[row["service"]["service_key"]] for row in matrix["rows"]]
+    views = [views_by_key[key] for row in matrix["rows"] if (key := row["service"]["service_key"]) in views_by_key]
     dashboard_params = [("lifecycle", lifecycle), ("q", q), ("status", status), ("attention", attention),
                         ("severity", severity), ("component", component), ("cve", cve), ("since", since), ("page_size", page_size)]
     pagination_base = "/?" + urllib.parse.urlencode([(key, value) for key, value in dashboard_params if value not in (None, "")])
-    visible_ids = [view["service"].id for view in visible_all]
-    visible_poam = [poam_counts.get(service_id, {"active": 0, "pending": 0, "overdue": 0}) for service_id in visible_ids]
+    visible_poam = [poam_counts[view["service"].id] for view in visible_all]
+    has_totals = bool(visible_all) or not selected_services
     stage_timings["filter_sort_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_started = time.perf_counter()
     stage_groups = manageable_groups(db, auth) if auth.has("user.manage") else []
@@ -7994,18 +7997,18 @@ def _services_dashboard_context(request: Request, db: Session, auth: AuthContext
     context = page_context(auth,
         views=views, rows=matrix["rows"], q=q, status=status, attention=attention, severity=severity,
         component=component, cve=cve, since=since, now=now, now_display=now_display,
-        compliant_count=sum(v["compliant"] for v in visible_all),
-        noncompliant_count=sum(not v["compliant"] for v in visible_all),
+        compliant_count=sum(v["compliant"] for v in visible_all) if has_totals else None,
+        noncompliant_count=sum(not v["compliant"] for v in visible_all) if has_totals else None,
         showing_archived=lifecycle == "archived", lifecycle=lifecycle, lifecycle_counts=lifecycle_counts,
         query=q, sort=sort, page=page, page_size=page_size, total_count=total_count, total_pages=total_pages,
         pagination_base=pagination_base,
         overdue_days=int(configuration["overdue_days"]),
-        poam_active_count=sum(item["active"] for item in visible_poam),
-        poam_pending_count=sum(item["pending"] for item in visible_poam),
-        poam_overdue_count=sum(item["overdue"] for item in visible_poam),
+        poam_active_count=sum(item["active"] for item in visible_poam) if has_totals else None,
+        poam_pending_count=sum(item["pending"] for item in visible_poam) if has_totals else None,
+        poam_overdue_count=sum(item["overdue"] for item in visible_poam) if has_totals else None,
         stage_groups=stage_groups if lifecycle == "active" else [],
         posture_refreshing=posture_meta["refreshing"] or matrix["posture_refreshing"],
-        posture_preparing=max(posture_meta.get("preparing", 0), matrix["posture_preparing"]),
+        posture_preparing=matrix["posture_preparing"], posture_assessed=len(visible_all),
     )
     stage_timings["page_context_ms"] = round((time.perf_counter() - stage_started) * 1000, 2)
     stage_timings["route_ms"] = round((time.perf_counter() - request_started) * 1000, 2)

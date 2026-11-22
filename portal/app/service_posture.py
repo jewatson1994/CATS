@@ -305,7 +305,7 @@ def _intelligence_token(db=None) -> str:
         return risk_catalog_token()[:80]
     from .native_vex import cache_token
     import hashlib
-    token = cache_token(db)
+    token = cache_token(db, posture=True)
     if ":split:unavailable" in token:
         from .intelligence_generation import GenerationUnavailable
         raise GenerationUnavailable("Posture intelligence generation is unavailable")
@@ -477,7 +477,9 @@ def rebuild(bind, kind, service_ids, now=None) -> int:
     if not ids:
         return 0
     started = perf_counter()
-    with Session(bind=bind) as db:
+    # Only this short-lived projection session can omit native exclusions after
+    # its cache token records a disabled policy. User actions never use it.
+    with Session(bind=bind, info={'posture_without_native_exclusions': False}) as db:
         from .operating_mode import is_replica
         from .imported_services import imported_service_ids
         ids = [] if is_replica() else sorted(set(ids) - imported_service_ids(db, ids))

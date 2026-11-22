@@ -37,6 +37,20 @@ def claim(db, auth, target, **kwargs):
     return claim_route(target.id, ClaimInput(csrf_token="csrf", **kwargs), db, auth)
 
 
+@pytest.mark.parametrize("identity", ["oidc", "linked-local"])
+def test_generic_request_cannot_grant_group_access_after_identity_link(setup, identity):
+    db, auth, target, group, _, _ = setup
+    if identity == "oidc":
+        target.auth_source = "oidc"
+    target.external_subject = "linked-subject"
+    db.commit()
+    assert db.get(AccountAccessRequest, target.id).status == "pending"
+    assert list_pending_requests(db, auth) == []
+    with pytest.raises(HTTPException, match="Select a pending service request"):
+        claim(db, auth, target, group_id=group.id)
+    assert not db.scalars(select(UserRoleAssignment).where(UserRoleAssignment.user_id == target.id)).all()
+
+
 def test_deduplicated_request_bell_and_single_group_claim(setup):
     db, auth, target, group, _, _ = setup
     register_pending_request(db, AuthContext(target, auth.session)); db.commit()

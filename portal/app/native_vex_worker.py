@@ -1,6 +1,6 @@
 """Automatic, bounded native VEX work on the existing durable risk worker."""
 from datetime import timedelta
-from sqlalchemy import select, or_, and_, insert
+from sqlalchemy import select, or_, and_, func
 from .database import SessionLocal
 from .durable_jobs import DurableJob, submit
 from . import native_vex as nv
@@ -41,8 +41,16 @@ def maintenance(session_factory=SessionLocal):
                 return 0
             stored_token = Evaluation.summary['intelligence_token'].as_string()
             token_mismatch = [stored_token.is_(None), stored_token != token]
+        # Older workers marked catalog lock timeouts terminal. Admit a replacement
+        # for those jobs on upgrade, preserving the original diagnostic and all other cooldowns.
+        exceptions = DurableJob.result['diagnostic']['technical']['exceptions']
+        old_lock_failure = func.coalesce(and_(
+            exceptions[0]['type'].as_string() == 'GenerationUnavailable',
+            exceptions[0]['message'].as_string() == 'Intelligence generation fence is unavailable',
+            exceptions[2]['type'].as_string().in_(('QueryCanceled', 'LockNotAvailable'))), False)
         busy = select(DurableJob.id).where(DurableJob.kind == 'native_vex', DurableJob.service_id == State.service_id,
-            or_(DurableJob.status.in_(('queued', 'running')), and_(DurableJob.status.in_(('failed', 'cancelled')),
+            or_(DurableJob.status.in_(('queued', 'running')), and_(
+                or_(DurableJob.status == 'cancelled', and_(DurableJob.status == 'failed', ~old_lock_failure)),
                 DurableJob.completed_at > now - timedelta(hours=1)))).exists()
         pending = list(db.scalars(select(State.service_id).outerjoin(Evaluation, Evaluation.id == State.evaluation_id).where(
             ~imported_service_predicate(State.service_id), ~busy, or_(Evaluation.id.is_(None), Evaluation.service_generation != State.generation,
@@ -70,9 +78,14 @@ def maintenance(session_factory=SessionLocal):
 
 
 def handler(context, payload):
-    from .durable_jobs import JobCancelled
+    from .durable_jobs import JobCancelled, JobDeferred
+    from .intelligence_generation import GenerationFenceBusy
+    context.check()
     with SessionLocal() as db:
-        result = nv.evaluate_service(db, int(payload['service_id']), check=context.check)
+        try:
+            result = nv.evaluate_service(db, int(payload['service_id']), check=context.check)
+        except GenerationFenceBusy as exc:
+            raise JobDeferred("Waiting for the intelligence catalog lock") from exc
         job = context._owned(db)
         if job.cancel_requested:
             raise JobCancelled()

@@ -1,6 +1,5 @@
 """Exercise real login, cookies, middleware and claim transitions in a disposable DB."""
 from datetime import timedelta
-from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 
 import pytest
@@ -11,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 
 from app import main
 from app.access_requests import ClaimInput, claim_route
-from app.account_models import AccountAccessRequest, ServiceAccessRequest
+from app.account_models import AccountAccessRequest, AccountRetirement, ServiceAccessRequest
 from app.auth import AuthContext, SESSION_COOKIE, SYSTEM_ROLES, hash_password
 from app.database import Base
 from app.frontend import PAGE_MEDIA_TYPE
@@ -59,44 +58,25 @@ def login(client):
     return client.post("/login", data={"username": "new", "password": PASSWORD, "next": "/admin/accounts"})
 
 
-class BodyText(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.in_body = False
-        self.text = []
-        self.tags = []
-
-    def handle_starttag(self, tag, attrs):
-        self.tags.append(tag)
-        if tag == "body":
-            self.in_body = True
-
-    def handle_endtag(self, tag):
-        if tag == "body":
-            self.in_body = False
-
-    def handle_data(self, data):
-        if self.in_body:
-            self.text.append(data)
-
-
-def test_local_login_creates_pending_and_only_contact_message_is_visible(environment):
+def test_local_login_creates_pending_and_redirects_to_directory(environment):
     client, factory, ids = environment
     response = login(client)
     assert response.status_code == 303 and response.headers["location"] == "/account/access"
     assert client.cookies.get(SESSION_COOKIE)
     with factory() as db:
         assert db.get(AccountAccessRequest, ids[0]).status == "pending"
-    for path in ("/account/access", "/", "/admin/accounts", "/scan"):
+    landing = client.get("/account/access")
+    assert landing.status_code == 200
+    assert "Request service access" in landing.text and "No active services" in landing.text
+    assert "/admin/accounts" not in landing.text and "/services/" not in landing.text
+    for path in ("/", "/admin/accounts", "/scan"):
         response = client.get(path)
-        assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
-        parsed = BodyText(); parsed.feed(response.text)
-        assert "".join(parsed.text).strip() == main.ACCESS_PENDING_MESSAGE
-        assert not {"nav", "script", "form", "a", "table"} & set(parsed.tags)
+        assert response.status_code == 303 and response.headers["location"] == "/account/access"
+        assert response.headers["cache-control"] == "no-store"
     for method, path in (("GET", "/api/accounts/access-requests"), ("POST", "/scan"), ("POST", "/login")):
         response = client.request(method, path)
         assert response.status_code == 403
-        assert response.json()["detail"] == main.ACCESS_PENDING_MESSAGE
+        assert "/account/access" in response.json()["detail"]
 
 
 def test_claim_unlocks_existing_session_and_empty_group_counts_as_access(environment):
@@ -128,12 +108,17 @@ def sign_in_oidc(client, monkeypatch):
     assert response.status_code == 303 and response.headers["location"] == "/account/access"
 
 
-def test_oidc_directory_round_trip_scopes_and_retries(environment, monkeypatch):
+@pytest.mark.parametrize("identity", ["local", "oidc"])
+def test_directory_round_trip_scopes_and_retries(environment, monkeypatch, identity):
     client, factory, ids = environment
-    sign_in_oidc(client, monkeypatch)
+    if identity == "oidc":
+        sign_in_oidc(client, monkeypatch)
+    else:
+        assert login(client).headers["location"] == "/account/access"
     with factory() as db:
-        user = db.scalar(select(User).where(User.username == "oidc-new"))
-        assert user and user.role_assignments == [] and db.get(AccountAccessRequest, user.id) is None
+        user = db.scalar(select(User).where(User.username == ("oidc-new" if identity == "oidc" else "new")))
+        assert user and user.role_assignments == []
+        assert (db.get(AccountAccessRequest, user.id) is None) == (identity == "oidc")
         user_id = user.id
         csrf = db.scalar(select(UserSession.csrf_token).where(UserSession.user_id == user_id))
         group = db.get(Group, ids[2])
@@ -166,7 +151,8 @@ def test_oidc_directory_round_trip_scopes_and_retries(environment, monkeypatch):
     assert client.get("/account/access").text.count("Pending review") == 3
     with factory() as db:
         # A pre-upgrade general request cannot be used to grant a wider group.
-        db.add(AccountAccessRequest(user_id=user_id))
+        if identity == "oidc":
+            db.add(AccountAccessRequest(user_id=user_id))
         db.commit()
         cyber = AuthContext(db.get(User, ids[1]), db.scalar(select(UserSession).where(UserSession.user_id == ids[1])))
         assert [r["service_id"] for r in main.access_requests.list_pending_requests(db, cyber)] == [first, second]
@@ -187,6 +173,31 @@ def test_oidc_directory_round_trip_scopes_and_retries(environment, monkeypatch):
         assert [r.service_id for r in db.scalars(select(ServiceAccessRequest))] == [outside]
     assert client.cookies.get(SESSION_COOKIE) == cookie
     assert client.get("/account/access").headers["location"] == "/"
+    assert submit(first).status_code == 403
+
+
+@pytest.mark.parametrize("unavailable", ["disabled", "retired"])
+def test_unavailable_local_account_cannot_use_existing_session_to_request_access(environment, unavailable):
+    client, factory, ids = environment
+    login(client)
+    with factory() as db:
+        csrf = db.scalar(select(UserSession.csrf_token).where(UserSession.user_id == ids[0]))
+        service = Service(service_key="private", name="Private service name", lifecycle_status="active")
+        db.add(service)
+        if unavailable == "disabled":
+            db.get(User, ids[0]).enabled = False
+        else:
+            db.add(AccountRetirement(user_id=ids[0], survivor_id=ids[1], administrator_id=ids[1]))
+        db.commit()
+        service_id = service.id
+    landing = client.get("/account/access")
+    assert landing.status_code == 303 and landing.headers["location"].startswith("/login?")
+    assert "Private service name" not in landing.text
+    result = client.post("/account/access/service", data={"csrf_token": csrf, "service_id": service_id},
+                         headers={"accept": "application/json"})
+    assert result.status_code == 303 and result.headers["location"].startswith("/login?")
+    with factory() as db:
+        assert not db.get(ServiceAccessRequest, (ids[0], service_id))
 
 
 def test_pending_oidc_user_can_read_announcement_and_sign_out(environment, monkeypatch):

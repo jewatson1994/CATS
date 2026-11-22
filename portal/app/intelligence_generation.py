@@ -26,6 +26,10 @@ class GenerationChanged(GenerationUnavailable):
     pass
 
 
+class GenerationFenceBusy(GenerationUnavailable):
+    """PostgreSQL could not obtain the shared catalog lock within the deadline."""
+
+
 def install_generation_triggers(connection):
     names = set(inspect(connection).get_table_names())
     if "intelligence_generation" not in names:
@@ -125,7 +129,13 @@ def guard_generation(db, expected):
         connection = (_engine(db).connect() if owned else
                       db.connection(bind_arguments={"bind": _engine(db)}))
         _configure(connection)
-        actual = _read(connection, lock=True)
+        try:
+            actual = _read(connection, lock=True)
+        except Exception as exc:
+            code = getattr(getattr(exc, "orig", None), "sqlstate", None)
+            if code in {"55P03", "57014"}:
+                raise GenerationFenceBusy("Waiting for the intelligence catalog lock") from exc
+            raise
         if actual != expected:
             raise GenerationChanged("Intelligence generation changed")
         db.info["intelligence_generation_guard"] = (connection, actual, owned)
@@ -133,7 +143,7 @@ def guard_generation(db, expected):
     except Exception as exc:
         if connection is not None and owned:
             connection.close()
-        if isinstance(exc, GenerationChanged):
+        if isinstance(exc, GenerationUnavailable):
             raise
         raise GenerationUnavailable("Intelligence generation fence is unavailable") from exc
 

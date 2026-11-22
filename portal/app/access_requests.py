@@ -56,9 +56,9 @@ def can_manage_accounts(auth: AuthContext) -> bool:
     return auth.has("user.manage") or is_cybersecurity(auth)
 
 
-def uses_service_directory(user: User) -> bool:
-    # A local account explicitly linked to a validated OIDC identity also qualifies.
-    return user.auth_source == "oidc" or bool(user.external_subject)
+def supports_group_request(user: User) -> bool:
+    """Only standalone local accounts use the legacy general claim workflow."""
+    return user.auth_source == "local" and not user.external_subject
 
 
 def service_directory(db: Session, user_id: int):
@@ -75,8 +75,8 @@ def request_service(service_id: int = Form(gt=0), db: Session = Depends(get_db),
     db.scalar(select(User.id).where(User.id == auth.user.id).with_for_update())
     db.expire(auth.user)
     if (not auth.user.enabled or db.get(AccountRetirement, auth.user.id)
-            or not uses_service_directory(auth.user) or has_effective_access(auth)):
-        raise HTTPException(403, "Service requests are available during organizational sign-in onboarding")
+            or has_effective_access(auth)):
+        raise HTTPException(403, "Service requests are available to accounts awaiting access")
     if db.scalar(select(Service.id).where(Service.id == service_id, active_service_predicate()).with_for_update()) is None:
         raise HTTPException(404, "Service is unavailable")
     key = (auth.user.id, service_id)
@@ -96,7 +96,7 @@ def request_service(service_id: int = Form(gt=0), db: Session = Depends(get_db),
 
 def register_pending_request(db: Session, auth: AuthContext):
     """Caller commits together with session/login changes; duplicate calls are safe."""
-    if (uses_service_directory(auth.user) or not auth.user.enabled or db.get(AccountRetirement, auth.user.id)
+    if (not supports_group_request(auth.user) or not auth.user.enabled or db.get(AccountRetirement, auth.user.id)
             or has_effective_access(auth)):
         return None
     current = db.get(AccountAccessRequest, auth.user.id)
@@ -131,7 +131,8 @@ def list_pending_requests(db: Session, auth: AuthContext) -> list[dict]:
         return []
     rows = db.execute(select(AccountAccessRequest, User).join(User, User.id == AccountAccessRequest.user_id)
                       .where(AccountAccessRequest.status == "pending", User.enabled.is_(True),
-                             User.auth_source != "oidc", User.external_subject.is_(None))
+                             User.auth_source == "local", User.external_subject.is_(None),
+                             ~select(ServiceAccessRequest.user_id).where(ServiceAccessRequest.user_id == User.id).exists())
                       .order_by(AccountAccessRequest.created_at, User.id)).all()
     legacy = [{"user_id": user.id, "username": user.username, "display_name": user.display_name,
              "created_at": request.created_at.isoformat()}
@@ -190,7 +191,8 @@ def claim_access_request(db: Session, auth: AuthContext, user_id: int, group_id:
         if group_id is not None:
             raise HTTPException(422, "Choose only the requested service")
         return _claim_service(db, fresh, target, service_id, role)
-    if uses_service_directory(target):
+    if (not supports_group_request(target) or db.scalar(select(ServiceAccessRequest.user_id)
+            .where(ServiceAccessRequest.user_id == user_id).limit(1)) is not None):
         raise HTTPException(409, "Select a pending service request for this account")
     if has_effective_access(AuthContext(target, auth.session)):
         raise HTTPException(409, "Account already has access")

@@ -35,38 +35,34 @@
       {% endif %}
     </details>
   {% endif %}
-  {% if services is none %}
-    <p>{{ contact_message }}</p>
+  <h1>Request service access</h1>
+  {% if services %}
+    <p>Select the services you need. Cybersecurity reviews each request for Assessor access.</p>
+    <ul>
+      {% for service in services %}
+        <li>
+          <span>{{ service.name }}</span>
+          {% if service.pending %}
+            <span class="pending">Pending review</span>
+          {% else %}
+            <form method="post" action="/account/access/service">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="service_id" value="{{ service.id }}">
+              <button type="submit" aria-label="Request access to {{ service.name }}">Request access</button>
+            </form>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
   {% else %}
-    <h1>Request service access</h1>
-    {% if services %}
-      <p>Select the services you need. Cybersecurity reviews each request for Assessor access.</p>
-      <ul>
-        {% for service in services %}
-          <li>
-            <span>{{ service.name }}</span>
-            {% if service.pending %}
-              <span class="pending">Pending review</span>
-            {% else %}
-              <form method="post" action="/account/access/service">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                <input type="hidden" name="service_id" value="{{ service.id }}">
-                <button type="submit" aria-label="Request access to {{ service.name }}">Request access</button>
-              </form>
-            {% endif %}
-          </li>
-        {% endfor %}
-      </ul>
-    {% else %}
-      <p>No active services are available to request.</p>
-    {% endif %}
-    <footer>
-      <a href="/account/access">Refresh access status</a>
-      <form method="post" action="/logout">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit">Sign out</button>
-      </form>
-    </footer>
+    <p>No active services are available to request. Contact your cybersecurity POC for access.</p>
   {% endif %}
+  <footer>
+    <a href="/account/access">Refresh access status</a>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </footer>
 </main></body>
 </html>

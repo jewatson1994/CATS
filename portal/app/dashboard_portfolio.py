@@ -202,7 +202,7 @@ def compute_rows(db, services, configs, configuration, now):
     return rows
 
 
-def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50, *, cve="", lifecycle="active", source=None):
+def portfolio(db, auth, q="", status="all", attention="all", severity="all", component="", since="", page=1, page_size=50, *, cve="", lifecycle="active", source=None, pending_ids=None):
     from . import main as m
     try:
         since_date = datetime.fromisoformat(since).date() if since else None
@@ -221,9 +221,8 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     configs = {sid: configs[sid] for sid in ids}
 
     from .service_posture import cyber_rows
-    rows_by_id, posture = cyber_rows(db, services, configs, configuration, now)
-    # Services whose posture is still being prepared are not listed (no
-    # invented values); the page states how many and that totals exclude them.
+    assessed = [s for s in services if s.id not in pending_ids] if pending_ids else services
+    rows_by_id, posture = cyber_rows(db, assessed, configs, configuration, now)
     rows = [{**rows_by_id[service.id], "service": service} for service in services if service.id in rows_by_id]
     latest = select(Execution.id.label("id"), Execution.service_id.label("service_id"),
                     func.row_number().over(partition_by=Execution.service_id,
@@ -250,7 +249,37 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     metrics = {key: sum(row[key] for row in rows) for key in (*levels, "unknown", "vulnerabilities", "kev", "patchable", "watchlist", "poam", "poam_overdue", "missing", "attention")}
     metrics.update(services=len(rows), scanned=sum(row["last_scan"] is not None for row in rows), critical_high=metrics["critical"] + metrics["high"], sbom_coverage=sum(row["sbom"] for row in rows), kind_failed=sum(row["kind"] in failed_statuses for row in rows))
     metrics.update({color.lower(): sum(row["status"] == color for row in rows) for color in ("GREEN", "YELLOW", "RED")})
-    filtered = [row for row in rows if (not q or q.casefold() in row["service"].name.casefold() or q.casefold() in row["service"].service_key.casefold()) and (status == "all" or row["status"] == status) and (cve_ids is None or row["service"].id in cve_ids) and (severity_ids is None or row["service"].id in severity_ids) and (component_ids is None or row["service"].id in component_ids) and (not since_date or row["last_scan"] and m.aware(row["last_scan"]).date() >= since_date) and (attention == "all" or (attention in {"kev", "watchlist", "poam", "missing"} and row[attention]) or (attention == "kind" and row["kind"] in failed_statuses))]
+    # Only the Services directory includes identity-only rows. Search, evidence
+    # filters and pagination still apply. A missing posture cannot match a
+    # compliance or attention filter.
+    pending = set(ids) - rows_by_id.keys() if pending_ids is not None else set()
+    pending_scans = {}
+    if since_date and pending:
+        pending_scans = dict(db.execute(select(Execution.service_id, func.max(Execution.scanned_at))
+            .where(member_of(Execution.service_id, pending, numeric=True)).group_by(Execution.service_id)).all())
+    filtered = []
+    needle = q.casefold()
+    for service in services:
+        sid = service.id
+        if needle and needle not in service.name.casefold() and needle not in service.service_key.casefold():
+            continue
+        if any(matches is not None and sid not in matches for matches in (cve_ids, severity_ids, component_ids)):
+            continue
+        row = rows_by_id.get(sid)
+        if row is None:
+            if sid not in pending or status != "all" or attention != "all":
+                continue
+            row = {"posture_pending": True}
+        else:
+            if status != "all" and row["status"] != status:
+                continue
+            if attention != "all" and not ((attention in {"kev", "watchlist", "poam", "missing"} and row[attention])
+                                         or (attention == "kind" and row["kind"] in failed_statuses)):
+                continue
+        scanned = row.get("last_scan") if sid not in pending else pending_scans.get(sid)
+        if since_date and (not scanned or m.aware(scanned).date() < since_date):
+            continue
+        filtered.append({**row, "service": service})
     total = len(filtered)
     pages = max(1, ceil(total / page_size))
     page = min(page, pages)
@@ -259,5 +288,5 @@ def portfolio(db, auth, q="", status="all", attention="all", severity="all", com
     data["services"] = [{"service_key": service.service_key, "name": service.name} for service in services]
     data["pagination"] = {"page": page, "page_size": page_size, "total": total, "pages": pages, "has_previous": page > 1, "has_next": page < pages}
     data["posture_refreshing"] = posture["refreshing"]
-    data["posture_preparing"] = posture.get("preparing", 0)
+    data["posture_preparing"] = len(pending) if pending_ids is not None else posture.get("preparing", 0)
     return data

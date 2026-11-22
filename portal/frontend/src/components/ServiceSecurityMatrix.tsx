@@ -7,11 +7,17 @@ import {EmptyState, Icon, StatusBadge} from './ui';
 import '../features/cybersecurity.css';
 
 interface SecurityRow {
+  posture_pending?: false;
   service: {service_key: string; name: string}; status: string;
   critical: number; high: number; medium: number; low: number; kev: number; watchlist: number; patchable: number;
   poam: number; poam_overdue: number; missing: boolean; sbom: boolean; kind: string;
   last_scan?: string | null; last_scan_display: string; warning_reasons?: string[];
 }
+interface PendingRow {
+  service: SecurityRow['service'];
+  posture_pending: true;
+}
+type MatrixRow = SecurityRow | PendingRow;
 
 const title = (value: string) => value[0].toUpperCase() + value.slice(1).toLowerCase();
 const attentionLabels: Record<string, string> = {kev: 'KEV', watchlist: 'Watchlist', poam: 'POA&M', missing: 'Missing evidence', kind: 'Deployment validation (Kind)'};
@@ -71,9 +77,8 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
   const select = (name: string, label: string, options: string[], labels: Record<string, string> = {}) => <label>{label}
     <select name={name} defaultValue={data[name] || 'all'}><option value="all">All</option>{options.map(value => <option key={value} value={value}>{labels[value] || title(value)}</option>)}</select></label>;
 
-  const columns = useMemo<GridColumn<SecurityRow>[]>(() => [
-    {key: 'service', header: 'Service', identifier: true, hideable: false, width: 220, minWidth: 140, value: row => row.service.name,
-      render: row => <a className="matrix-service" href={`/services/${encodeURIComponent(row.service.service_key)}?overview=true`}>{row.service.name}</a>},
+  const columns = useMemo<GridColumn<MatrixRow>[]>(() => {
+    const evidence: GridColumn<SecurityRow>[] = [
     {key: 'status', header: 'Status', hideable: false, width: 160, minWidth: 130, wrap: true,
       value: row => ({RED: 2, YELLOW: 1, GREEN: 0} as Record<string, number>)[row.status] ?? -1, type: 'number', align: 'start',
       description: 'Compliance follows the configured CATS policy; a warning icon marks compliant services with warnings.',
@@ -103,14 +108,29 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
     {key: 'kind', header: 'Kind', width: 150, value: row => row.kind, description: 'Deployment validation (Kind) result', wrap: true,
       render: row => <a className="status-link" href={`/services/${encodeURIComponent(row.service.service_key)}?validation=true`}><StatusBadge value={row.kind} size="sm"/></a>},
     {key: 'last_scan', header: 'Last scan', type: 'date', width: 130, value: row => row.last_scan, render: row => row.last_scan_display || '—'},
-  ], []);
+    ];
+    return [
+      {key: 'service', header: 'Service', identifier: true, hideable: false, width: 220, minWidth: 140, value: row => row.service.name,
+        render: row => <a className="matrix-service" href={`/services/${encodeURIComponent(row.service.service_key)}?overview=true`}>{row.service.name}</a>},
+      ...evidence.map((column): GridColumn<MatrixRow> => ({
+        ...column,
+        value: row => row.posture_pending ? null : column.value?.(row),
+        render: (row, index) => {
+          if (!row.posture_pending) return column.render(row, index);
+          return column.key === 'status'
+            ? <StatusBadge value="pending" label="Posture pending" tone="neutral"/>
+            : <span aria-label="Posture pending" title="Posture pending">—</span>;
+        },
+      })),
+    ];
+  }, []);
 
-  const rows: SecurityRow[] = data.rows || [];
-  const pending = Number(data.posture_preparing || 0) > 0 && rows.length === 0;
+  const rows: MatrixRow[] = data.rows || [];
   const filtered = filters.length > 0;
+  const pending = !filtered && Number(data.posture_preparing || 0) > 0 && rows.length === 0;
 
 
-  return <DataGrid<SecurityRow> id="service-security-matrix" label="Service Security Matrix" className="matrix-grid"
+  return <DataGrid<MatrixRow> id="service-security-matrix" label="Service Security Matrix" className="matrix-grid"
     title="Service Security Matrix"
     description={lifecycle === 'archived' ? 'Historical records do not affect active compliance totals.' : lifecycle === 'staged' ? 'Staged records are excluded from the active service snapshot.' : 'Per-service evidence, risk and workflow counts.'}
     actions={<>
@@ -132,7 +152,7 @@ export function ServiceSecurityMatrix({data}: {data: any}) {
     // The backend pages this dataset in a fixed order and offers no sort
     // parameter, so headers sort only when every matching row is on screen.
     sort={pageCount <= 1 ? {mode: 'client'} : {mode: 'none'}}
-    rowClassName={row => row.status === 'RED' ? 'row-noncompliant' : undefined}
+    rowClassName={row => !row.posture_pending && row.status === 'RED' ? 'row-noncompliant' : undefined}
     empty={<EmptyState kind={filtered ? 'filtered' : 'empty'} title={pending ? 'Service posture is being prepared.' : filtered ? 'No services match these filters.' : `No ${lifecycleLabels[lifecycle]?.label.toLowerCase() || ''} services.`}
       action={filtered ? <a className="secondary-button" href={`/?lifecycle=${lifecycle}`}>Clear filters</a> : undefined}/>}
     footer={pending ? undefined : <Pager label="Service pages" page={page} pageCount={pageCount} total={total} pageSize={pageSize} hrefFor={pageHref} unit="services" pageSizes={[10, 25, 50, 100]}/>}

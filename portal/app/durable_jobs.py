@@ -69,6 +69,10 @@ class JobError(Exception):
     """Handler-authored safe diagnostic, never raw external exception text."""
 
 
+class JobDeferred(Exception):
+    """A prerequisite is busy. Return the lease without spending a failure attempt."""
+
+
 class LeaseLost(Exception):
     pass
 
@@ -280,6 +284,18 @@ class JobContext:
             row.lease_until = now() + timedelta(seconds=setting("CATS_JOB_LEASE_SECONDS", 120))
             db.commit()
 
+    def defer(self, stage):
+        with self.session_factory() as db:
+            row = self._owned(db)
+            if row.cancel_requested:
+                raise JobCancelled()
+            row.status, row.stage = "queued", sanitize(stage)[:160]
+            row.attempts = max(0, row.attempts - 1)
+            row.available_at = now() + timedelta(minutes=1)
+            row.error = None
+            row.lease_token, row.lease_until = None, None
+            db.commit()
+
     def finish(self, result=None, error=None, cancelled=False, retry=False, diagnostic=None):
         with self.session_factory() as db:
             row = self._owned(db)
@@ -342,7 +358,11 @@ def execute(job, handler, session_factory=None):
         with session_factory() as db:
             if imported_mutation(db, job.kind, job.service_id, job.payload):
                 raise JobError("Imported service evidence is managed by its OCI publisher")
-        result = handler(ctx, job.payload)
+        try:
+            result = handler(ctx, job.payload)
+        except JobDeferred as exc:
+            ctx.defer(str(exc))
+            return
         ctx.finish(result or {})
     except LeaseLost:
         pass

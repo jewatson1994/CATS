@@ -10,6 +10,31 @@ const row = (key: string, name: string, critical: number, extra: Record<string, 
 });
 
 describe('Services security matrix', () => {
+  it('lists known pending identities with an overview link and no speculative evidence or compliance totals', () => {
+    render(<Page data={{rows: [{service: {service_key: 'demo', name: 'Demo'}, posture_pending: true}],
+      lifecycle_counts: {active: 1}, total_count: 1, posture_preparing: 1, posture_assessed: 0,
+      compliant_count: null, noncompliant_count: null, poam_active_count: null}}/>);
+    const summary = within(screen.getByRole('region', {name: 'Service summary'}));
+    expect(summary.getByText('1')).toBeInTheDocument();
+    expect(summary.getAllByText('Pending')).toHaveLength(3);
+    expect(summary.queryByText('0')).not.toBeInTheDocument();
+    const overview = screen.getByRole('link', {name: 'Demo'});
+    expect(overview).toHaveAttribute('href', '/services/demo?overview=true');
+    const pending = within(overview.closest('tr')!);
+    expect(pending.getAllByRole('link')).toHaveLength(1);
+    expect(pending.getByText('Posture pending')).toBeInTheDocument();
+    expect(pending.getAllByText('—')).toHaveLength(13);
+    expect(pending.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('keeps known services and evidence-filter matches as separate counts', () => {
+    render(<Page data={{lifecycle_counts: {active: 2}, total_count: 0, rows: [], severity: 'High',
+      posture_preparing: 1, posture_assessed: 1, compliant_count: 1, noncompliant_count: 0, poam_active_count: 0}}/>);
+    expect(within(screen.getByRole('region', {name: 'Service summary'})).getByText('2')).toBeInTheDocument();
+    expect(screen.getByText('No services match these filters.')).toBeInTheDocument();
+    expect(screen.queryByText('Service posture is being prepared.')).not.toBeInTheDocument();
+  });
+
   it('shows pending posture without empty-service or zero-compliance claims, then displays refreshed results', () => {
     const initial = {rows: [], total_count: 0, compliant_count: 0, noncompliant_count: 0, poam_active_count: 0, posture_preparing: 7};
     const {rerender} = render(<Page data={initial}/>);

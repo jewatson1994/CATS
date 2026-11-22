@@ -35,11 +35,15 @@ def cybersecurity_data(context, format_date=None):
     data["rows"] = []
     for source in context.get("rows", []):
         service = _value(source, "service")
+        identity = {key: _scalar(_value(service, key)) for key in ("service_key", "name")}
+        if _value(source, "posture_pending"):
+            data["rows"].append({"service": identity, "posture_pending": True})
+            continue
         row = {key: _scalar(_value(source, key)) for key in
             ("status", "critical", "high", "medium", "low", "kev", "watchlist", "patchable", "poam",
              "poam_overdue", "missing", "sbom", "kind")}
         row["warning_reasons"] = [reason for reason in (_value(source, "warning_reasons", []) or []) if isinstance(reason, str)]
-        row["service"] = {key: _scalar(_value(service, key)) for key in ("service_key", "name")}
+        row["service"] = identity
         scanned = _value(source, "last_scan")
         if scanned is None:
             row["last_scan"] = None

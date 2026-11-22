@@ -289,7 +289,7 @@ def page_data(request, name, context, deployed_version=None, formatters=None):
         data.update(_fields(context, (
             "now_display", "compliant_count", "noncompliant_count", "showing_archived", "lifecycle",
             "query", "sort", "page", "page_size", "total_count", "total_pages", "pagination_base",
-            "overdue_days", "poam_active_count", "poam_pending_count", "poam_overdue_count", "posture_refreshing", "posture_preparing")))
+            "overdue_days", "poam_active_count", "poam_pending_count", "poam_overdue_count", "posture_refreshing", "posture_preparing", "posture_assessed")))
         data.update(_fields(context, ("q", "status", "attention", "severity", "component", "cve", "since")))
         data["rows"] = context.get("rows", [])
         data["lifecycle_counts"] = _fields(context.get("lifecycle_counts", {}), ("active", "staged", "archived"))

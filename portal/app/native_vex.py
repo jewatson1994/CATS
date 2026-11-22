@@ -28,11 +28,13 @@ def _inject_intelligence_token(execution):
                for node in visitors.iterate(execution.statement)):
         return
     from .intelligence_generation import current_generation, guard_generation, GenerationUnavailable
-    try:
-        token = current_generation(execution.session)
-        guard_generation(execution.session, token)
-    except GenerationUnavailable:
-        token = ''  # No valid generation can equal the unavailable sentinel.
+    token = ''  # No valid generation can equal the unavailable sentinel.
+    if not execution.session.info.get('posture_without_native_exclusions'):
+        try:
+            token = current_generation(execution.session)
+            guard_generation(execution.session, token)
+        except GenerationUnavailable:
+            pass
     parameters = execution.parameters
     if isinstance(parameters, list):
         execution.parameters = [{**item, '_native_vex_intelligence_token': token} for item in parameters]
@@ -221,7 +223,7 @@ def excluded_finding_ids(db, service_id, now):
         Finding.active.is_(True), finding_excluded(Finding.id, now)))) if db is not None else set()
 
 
-def cache_token(db):
+def cache_token(db, *, posture=False):
     """Global invalidation without visiting the intelligence corpus."""
     row = db.execute(select(Policy.enabled, Policy.generation, Policy.policy_version).where(Policy.id == 1)).first()
     from . import database
@@ -230,7 +232,14 @@ def cache_token(db):
         from .intelligence_generation import current_generation, guard_generation, GenerationUnavailable
         try:
             token = current_generation(db)
-            guard_generation(db, token)
+            # Disabled native exclusions cannot change an effective posture decision.
+            # The committed generation still invalidates rows after an import. A read
+            # that can exclude a finding must fence the generation through commit.
+            disabled_posture = posture and (row is None or not row.enabled)
+            if not disabled_posture:
+                guard_generation(db, token)
+            if 'posture_without_native_exclusions' in db.info:
+                db.info['posture_without_native_exclusions'] = disabled_posture
             mode = ':split:' + token
         except GenerationUnavailable:
             # An outage must never reuse a previously effective cached result.

@@ -5,16 +5,16 @@ import {useDashboard} from '../hooks/useDashboard';
 import {ErrorState, MetricCard, MetricGrid, PageHeader} from '../components/ui';
 
 export function Page({data: pageData}: {data: any}) {
-  const {data, error, retry} = useDashboard(pageData);
+  const {data, error, retry} = useDashboard(pageData, {pollPending: true});
   if (!data) return <><PageHeader title="Services"/>
     {error ? <section className="panel"><ErrorState title="Dashboard data could not be loaded" onRetry={retry} retryLabel="Retry dashboard">{error}</ErrorState></section>
       : <section aria-busy="true"><p className="sr-only" role="status">Loading dashboard data…</p>
         <div className="metric-grid skeleton-metrics" aria-hidden="true">{[0, 1, 2, 3].map(index => <div key={index} className="metric"><span className="skeleton-bar skeleton-short"/><span className="skeleton-bar skeleton-value"/></div>)}</div>
         <div className="panel skeleton-panel" aria-hidden="true">{Array.from({length: 8}, (_, index) => <span key={index} className="skeleton-bar"/>)}</div></section>}</>;
-  return <Dashboard data={data}/>;
+  return <Dashboard data={data} error={error} retry={retry}/>;
 }
 
-function Dashboard({data}: {data: any}) {
+function Dashboard({data, error, retry}: {data: any; error?: string; retry: () => void}) {
   const replica = useReplica();
   const dialog = useRef<HTMLDialogElement>(null);
   const lifecycle = data.lifecycle || 'active';
@@ -22,18 +22,21 @@ function Dashboard({data}: {data: any}) {
   const groups = data.stage_groups || [];
   const canStage = !replica && lifecycle === 'active' && groups.length > 0;
   const preparing = Number(data.posture_preparing || 0);
-  const pending = preparing > 0 && !data.rows?.length && !Number(data.total_count || 0);
+  const legacyPending = preparing > 0 && data.posture_assessed == null && !data.rows?.length && !data.total_count;
+  const noAssessed = preparing > 0 && (data.posture_assessed === 0 || legacyPending);
   return <>
     <PageHeader eyebrow="Production service cyber hygiene" title={labels.title} description={labels.description}
       actions={<><span className="stamp">As of {data.now_display}</span><LifecycleTabs data={data}/>{canStage && <button type="button" className="secondary-button" onClick={() => dialog.current?.showModal()}>Stage Service</button>}</>}/>
-    {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is still being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}; {preparing === 1 ? 'it is' : 'they are'} not listed yet and totals exclude {preparing === 1 ? 'it' : 'them'}. Refresh shortly.</p>
+    {error && <div className="page-refresh-notice" role="alert"><p>Unable to refresh the dashboard. {error}</p>
+      <button type="button" className="secondary-button" onClick={retry}>Retry dashboard</button></div>}
+    {preparing > 0 ? <p className="page-refresh-notice" role="status">Posture is being prepared for {preparing} {preparing === 1 ? 'service' : 'services'}. Compliance and POA&amp;M totals include services with available posture.{data.dashboard_url && !error && ' This page refreshes automatically.'}</p>
       : data.posture_refreshing && <p className="page-refresh-notice" role="status">Service posture is being refreshed after a portfolio-wide change; some rows may briefly show their previous values.</p>}
     {replica && <p role="note">These assessment results were captured by the publishing system. Release expiration, revocation and local Cyber overrides are evaluated separately. <a href="/approved-releases">Review current OCI enforcement and release history</a>.</p>}
     <MetricGrid label="Service summary" className="metric-grid-compact">
-      <MetricCard label="Services" value={pending ? 'Pending' : data.total_count ?? 0}/>
-      <MetricCard label={replica ? 'Captured compliant' : 'Compliant'} value={pending ? 'Pending' : data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
-      <MetricCard label={replica ? 'Captured non-compliant' : 'Non-compliant'} value={pending ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
-      <MetricCard label="Active POA&Ms" value={pending ? 'Pending' : data.poam_active_count} hint={pending ? undefined : `${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
+      <MetricCard label="Services" value={data.lifecycle_counts?.[lifecycle] ?? (legacyPending ? 'Pending' : data.total_count ?? 0)}/>
+      <MetricCard label={replica ? 'Captured compliant' : 'Compliant'} value={noAssessed ? 'Pending' : data.compliant_count} tone={data.compliant_count ? 'success' : undefined}/>
+      <MetricCard label={replica ? 'Captured non-compliant' : 'Non-compliant'} value={noAssessed ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
+      <MetricCard label="Active POA&Ms" value={noAssessed ? 'Pending' : data.poam_active_count} hint={noAssessed ? undefined : `${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
     </MetricGrid>
     <section className="panel cyber-matrix" aria-label="Service Security Matrix">
       <ServiceSecurityMatrix data={data}/>
