@@ -119,6 +119,29 @@ def missing_evidence_entry(value: Any, default_type: str, reason_override: Any =
     return result
 
 
+def overview_image_references(overview) -> list[tuple[str | None, str | None]]:
+    """Image references a scan's service overview declares, with any digest."""
+    overview = overview if isinstance(overview, dict) else {}
+    references = []
+    for raw_image in [*(overview.get("images") or []), *(overview.get("container_images") or [])]:
+        if isinstance(raw_image, dict):
+            references.append((raw_image.get("image") or raw_image.get("reference") or raw_image.get("name"),
+                               raw_image.get("digest") or raw_image.get("image_digest")))
+        else:
+            references.append((str(raw_image), None))
+    for artifact in overview.get("artifacts") or []:
+        if isinstance(artifact, dict) and str(artifact.get("type") or "").lower() == "image":
+            registry = str(artifact.get("registry") or "").strip()
+            repository = str(artifact.get("repository") or "").strip("/")
+            name = str(artifact.get("artifact") or "").strip()
+            version = str(artifact.get("version") or "").strip()
+            reference = "/".join(part for part in (registry, repository, name) if part and part != "—")
+            if version and version != "—":
+                reference = f"{reference}:{version}"
+            references.append((reference, artifact.get("digest")))
+    return references
+
+
 def parse_image_reference(reference: Any) -> dict[str, str]:
     raw = _text(reference)
     digest = ""

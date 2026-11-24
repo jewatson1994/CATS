@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event
 from types import SimpleNamespace
@@ -154,6 +155,7 @@ def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monk
     monkeypatch.setenv("CATS_SCAN_WORKER_TOKEN", WORKER_TOKEN)
     monkeypatch.setenv("CATS_SCAN_WORKER_ID", WORKER)
     monkeypatch.delenv("CATS_SCAN_WORKER_CREDENTIALS", raising=False)
+    monkeypatch.setenv("CATS_PUBLIC_JOB_ROOT", str(tmp_path / "jobs"))
     monkeypatch.setattr(main, "PUBLIC_JOB_ROOT", tmp_path / "jobs")
     monkeypatch.setattr(discovery_gitlab.request, "build_opener", lambda *handlers: gitlab)
     with SessionLocal.begin() as db:
@@ -204,7 +206,13 @@ def test_polled_project_reuses_evidence_and_keeps_its_owner_across_versions(monk
     def discover():
         run_queued("topic_intake_process", topic_intake_processing.handler)
         run_queued("discovery", discovery_worker.handle)
-        topic_intake_processing.advance_ready()
+        # The standalone polling process must admit the scan with its own transaction open.
+        # Importing the portal application here starts a second schema-migration transaction.
+        import app
+        with monkeypatch.context() as worker:
+            worker.delattr(app, "main")
+            worker.setitem(sys.modules, "app.main", None)
+            topic_intake_processing.advance_ready()
 
     poll()
     discover()

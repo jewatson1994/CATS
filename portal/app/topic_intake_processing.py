@@ -22,7 +22,9 @@ from .discovery_limits import limit
 from .discovery_models import DiscoveryConfirmation, DiscoveryInventory, DiscoveryScan
 from .discovery_sources import encrypted_writer
 from .discovery_worker import upload_root
-from .models import Execution, Service, ServiceGroup, ServiceVersion, User
+from .models import Execution, Service, ServiceGroup, ServiceVersion, User, utcnow
+from .overview import overview_image_references
+from .scan_artifacts import pack_scan_input, prepare_scan_input, public_job_root
 from .scan_coordination import ScanJob, TERMINAL, enqueue_job
 from .replica_models import reserve_sqlite_writer
 from .topic_intake_models import GitLabTopicSource, TopicProject, TopicRevision
@@ -364,7 +366,6 @@ def _scan_binding(source, project, revision, inventory, confirmation, group_id):
 
 
 def _admit_scan(db, source, project, revision, discovery):
-    from . import main
     from .trusted_ca import configured_certificates
     inventory = db.scalar(select(DiscoveryInventory).where(DiscoveryInventory.job_id == discovery.id))
     service = db.get(Service, project.service_id)
@@ -384,20 +385,20 @@ def _admit_scan(db, source, project, revision, discovery):
     confirm = DiscoveryConfirmation(id=uuid4().hex, inventory_id=inventory.id, service_id=service.id,
                                    confirmed_by=source.authorized_by_id, root_ids=root_ids, acknowledge_partial=False)
     key = uuid5(NAMESPACE_URL, "cats:topic-scan:" + revision.processing_job_id).hex
-    root = Path(main.PUBLIC_JOB_ROOT)
+    root = public_job_root()
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=root, prefix=".topic-scan-") as temporary:
         directory = Path(temporary) / key
         directory.mkdir()
-        skipped, checksum = main._stage_scan_inputs(directory, key, images, [], None, [], {},
-                                                    configured_certificates(db), [])
+        job_input = prepare_scan_input(directory, configured_certificates(db))
+        checksum = pack_scan_input(job_input, key, images)
         binding = _scan_binding(source, project, revision, inventory, confirm, group_id)
         enqueue_job(db, key, {"job_id": key, "job_kind": "scan", "phase": "queued", "status": "queued",
             "topic_intake": binding, "ingest_service_db_id": service.id, "ingest_service_id": service.service_key,
             "ingest_service_version": _version(inventory, revision.commit_sha), "ingest_scope": "service", "credential_policy": "topic",
             "owner_user_id": None, "sbom_formats": ["syft-json"], "input_digest": checksum,
             "chart_url": "", "chart_names": [], "archive_names": [], "image_list": "\n".join(images),
-            "skipped_charts": skipped, "summary": {}, "created_at": main.utcnow().isoformat()})
+            "skipped_charts": [], "summary": {}, "created_at": utcnow().isoformat()})
         db.add(confirm)
         db.flush()
         db.add(DiscoveryScan(confirmation_id=confirm.id, scan_job_id=key))
@@ -482,9 +483,8 @@ def bind_result(data, payload, summary):
     data["scan_scope"] = "service" if data["complete"] else "evidence"
     data.pop("scope_image", None)
     data["commit_sha"] = payload["topic_intake"]["commit_sha"]
-    from .main import _overview_image_references
     overview = {**(data.get("service_overview") or {}), "topic_intake": payload["topic_intake"]}
-    documented = {ref for ref, _ in _overview_image_references(overview)}
+    documented = {ref for ref, _ in overview_image_references(overview)}
     # Images with no findings or packages still belong in service inventory when
     # the scanner actually produced their SBOM. Preserve any observed digests.
     overview["container_images"] = [*(overview.get("container_images") or []), *sorted((expected & seen) - documented)]

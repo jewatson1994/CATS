@@ -107,7 +107,8 @@ from .schemas import ExecutionPayload
 from .pipeline_api import (AmendmentReceipt, PipelineReceipt, bound_project_payload, pipeline_openapi,
                            require_pipeline, router as pipeline_router)
 from .policy_data import epss_scores, intelligence_status, kev_cves, observation_risk, risk_metadata
-from .overview import normalize_overview
+from .overview import normalize_overview, overview_image_references
+from .scan_artifacts import pack_scan_input, prepare_scan_input, public_job_root
 from .service_export import build_service_workbook, service_export_filename
 from .export_jobs import queued_export
 from .purpose_exports import CATALOG as PURPOSE_CATALOG, NAMES as PURPOSE_NAMES, default_template as purpose_default_template, template_for as purpose_template_for, template_policy as purpose_template_policy, template_for_service as purpose_template_for_service, policy_key as purpose_policy_key, validate_template as validate_purpose_template, setting_key as purpose_setting_key, workbook_for as purpose_workbook_for
@@ -123,7 +124,7 @@ from .patching import PATCH_PHASES, advance_patch_stages, initial_patch_stages, 
 from .secrets import encrypt_secret, decrypt_secret, secret_configured
 from . import signing, release_validity
 from .admin_config import OS_DEFINITIONS, PACKAGE_MANAGERS, certificate_bundle_metadata, merge_certificate_metadata, normalize_policy, parse_json, policy_bool, test_repository, validate_os_definition, validate_policy
-from .trusted_ca import ephemeral_trust, write_additive_bundle
+from .trusted_ca import ephemeral_trust
 from .runtime_version import deployed_version
 from .remediation import build_plan, candidate_files, classify_policy_finding, plan_yaml, static_validation, versioned_charts, summarize_grype_reports, summarize_configuration_report, resolve_decisions, plan_digest
 from .remediation_summary import build_summary as build_remediation_summary, artifacts as remediation_summary_artifacts
@@ -662,7 +663,7 @@ async def unexpected_error(request: Request, exc: Exception):
 
 # Public scan jobs retain immutable artifacts in a persistent directory.
 # PostgreSQL owns durable execution and recovery state.
-PUBLIC_JOB_ROOT = Path(os.getenv("CATS_PUBLIC_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-public-jobs"))
+PUBLIC_JOB_ROOT = public_job_root()
 PUBLIC_JOBS = scan_coordination.DurableJobs()
 PUBLIC_PROCESSES: dict[str, subprocess.Popen] = {}
 PUBLIC_JOB_LOCK = threading.Lock()
@@ -3213,29 +3214,6 @@ def _reconcile_image_scope(db: Session, service: Service, target_image: str, obs
         finding.resolved_at = scanned_at
 
 
-def _overview_image_references(overview) -> list[tuple[str | None, str | None]]:
-    """Image references a scan's service overview declares, with any digest."""
-    overview = overview if isinstance(overview, dict) else {}
-    references = []
-    for raw_image in [*(overview.get("images") or []), *(overview.get("container_images") or [])]:
-        if isinstance(raw_image, dict):
-            references.append((raw_image.get("image") or raw_image.get("reference") or raw_image.get("name"),
-                               raw_image.get("digest") or raw_image.get("image_digest")))
-        else:
-            references.append((str(raw_image), None))
-    for artifact in overview.get("artifacts") or []:
-        if isinstance(artifact, dict) and str(artifact.get("type") or "").lower() == "image":
-            registry = str(artifact.get("registry") or "").strip()
-            repository = str(artifact.get("repository") or "").strip("/")
-            name = str(artifact.get("artifact") or "").strip()
-            version = str(artifact.get("version") or "").strip()
-            reference = "/".join(part for part in (registry, repository, name) if part and part != "—")
-            if version and version != "—":
-                reference = f"{reference}:{version}"
-            references.append((reference, artifact.get("digest")))
-    return references
-
-
 def backfill_incomplete_scan_findings() -> None:
     """Surface findings that earlier releases hid until a complete scan arrived.
 
@@ -3293,7 +3271,7 @@ def backfill_incomplete_scan_findings() -> None:
                                                 .where(FindingObservation.execution_id == execution.id).distinct()):
                     _ensure_service_image(db, service, image, digest)
                 raw = execution.raw_payload if isinstance(execution.raw_payload, dict) else {}
-                for reference, digest in _overview_image_references(raw.get("service_overview")):
+                for reference, digest in overview_image_references(raw.get("service_overview")):
                     _ensure_service_image(db, service, reference, digest)
                 if raw.get("policy_findings"):
                     sync_policy_findings(db, service, raw["policy_findings"], execution.scanned_at, complete=False)
@@ -3588,7 +3566,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
             evidence=evidence,
         ))
         ensure_ingest_image(item.image, item.image_digest)
-    for reference, digest in _overview_image_references(payload.service_overview):
+    for reference, digest in overview_image_references(payload.service_overview):
         ensure_ingest_image(reference, digest)
     if effective_complete and current_ingest:
         if scan_scope == "image":
@@ -4248,9 +4226,7 @@ async def _prepare_public_scan(*args, **kwargs):
 def _stage_scan_inputs(directory, job_id, lines, chart_archives, image_archive, compose_uploads,
                        compose_variables, trusted_ca_certificates, definition_skipped, *, project_submission=False):
     from .compose_ingestion import ComposeInputError
-    job_input = directory / "input"
-    job_input.mkdir(parents=True, exist_ok=True)
-    write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
+    job_input = prepare_scan_input(directory, trusted_ca_certificates)
     skipped_charts: list[str] = list(definition_skipped or [])
     for archive, filename in chart_archives:
         try:
@@ -4296,10 +4272,7 @@ def _stage_scan_inputs(directory, job_id, lines, chart_archives, image_archive, 
             from .compose_scan import COMPOSE_VARIABLES_FILE
             # Keep values in the private input envelope, never public job metadata.
             (job_input / COMPOSE_VARIABLES_FILE).write_text(json.dumps(compose_variables, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    from .scan_artifacts import pack, digest
-    (job_input / "images.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    envelope = job_input.parent / "input.tar.gz"
-    pack(job_input, envelope, {"job_id": job_id})
+    checksum = pack_scan_input(job_input, job_id, lines)
     # The checked envelope now owns uploaded image and Compose bytes. Retain only small
     # request metadata and immutable chart sources for subsequent ingestion.
     if (job_input / "image-archives").exists():
@@ -4312,7 +4285,7 @@ def _stage_scan_inputs(directory, job_id, lines, chart_archives, image_archive, 
         shutil.rmtree(compose_root)
     if compose_variables:
         (job_input / COMPOSE_VARIABLES_FILE).unlink(missing_ok=True)
-    return skipped_charts, digest(envelope)
+    return skipped_charts, checksum
 
 
 def _start_public_scan(image_list: str, chart_archives: list[tuple[bytes, str]] | None = None, chart_urls: list[str] | None = None, image_archive: tuple[bytes, str] | None = None, ingest_service_id: str | None = None, job_kind: str = "scan", sbom_formats: list[str] | None = None, cyclonedx_spec_version: str = "1.5", trusted_ca_certificates: list[dict] | None = None, definition_context: dict | None = None, definition_sources: list[str] | None = None, definition_skipped: list[str] | None = None, definition_summary: dict | None = None, ingest_service_version: str = "", definition_component: dict | None = None, definition_components: list[dict] | None = None, owner_user_id: int | None = None, capability_token: str | None = None, ingest_scope: str = "auto", compose_uploads: list[tuple[Any, str]] | None = None, compose_files: list[str] | None = None, compose_profiles: list[str] | None = None, compose_preview: bool = False, proposal_context: dict | None = None, schedule_context: dict | None = None, compose_variables: dict[str, str] | None = None) -> str:

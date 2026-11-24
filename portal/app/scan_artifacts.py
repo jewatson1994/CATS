@@ -4,7 +4,27 @@ import json
 import os
 import stat
 import tarfile
+import tempfile
 from pathlib import Path, PurePosixPath
+
+
+def public_job_root():
+    return Path(os.getenv("CATS_PUBLIC_JOB_ROOT", Path(tempfile.gettempdir()) / "cats-public-jobs"))
+
+
+def prepare_scan_input(directory, trusted_ca_certificates):
+    from .trusted_ca import write_additive_bundle
+    job_input = directory / "input"
+    job_input.mkdir(parents=True, exist_ok=True)
+    write_additive_bundle(job_input / ".cats-trust" / "ca-bundle.pem", trusted_ca_certificates)
+    return job_input
+
+
+def pack_scan_input(job_input, job_id, images):
+    (job_input / "images.txt").write_text("\n".join(images) + "\n", encoding="utf-8")
+    envelope = job_input.parent / "input.tar.gz"
+    pack(job_input, envelope, {"job_id": job_id})
+    return digest(envelope)
 
 
 def digest(path):
