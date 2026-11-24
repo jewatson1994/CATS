@@ -21,6 +21,7 @@ def is_replica() -> bool:
 
 
 REPLICA_PERMISSIONS = frozenset({
+    "runtime.view", "runtime.manage", "runtime.map_import",
     "service.view", "metadata.view", "template.view",
     "audit.view", "user.manage", "role.manage", "config.manage",
     "release.destination.manage", "replica.admin", "replica.sync", "evidence.view",
@@ -35,6 +36,12 @@ def permission_available(permission: str) -> bool:
 # Use exact methods and full-path matches. Never allow an entire administrative
 # prefix: many existing admin routes edit authoritative service evidence.
 _LOCAL_WRITES = (
+    ("POST", r"/api/runtime/(?:environments|link|reports)"),
+    ("POST", r"/api/runtime/reports/pages"),
+    ("POST", r"/api/runtime/applications/\d+/assignment"),
+    ("PUT", r"/api/runtime/environments/\d+"),
+    ("POST", r"/api/runtime/environments/\d+/link-tokens"),
+    ("POST", r"/api/runtime/agents/[0-9a-f-]{36}/revoke"),
     ("POST", r"/(?:login|logout|account/password|account/appearance)"),
     ("POST", r"/account/access/service"),
     ("POST", r"/admin/(?:users|roles|assignments|audit-policy)"),

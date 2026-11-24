@@ -2,6 +2,7 @@ import {useReplica} from '../operatingMode';
 import {useRef} from 'react';
 import {LifecycleTabs, lifecycleLabels, ServiceSecurityMatrix} from '../components/ServiceSecurityMatrix';
 import {useDashboard} from '../hooks/useDashboard';
+import {RuntimeApplications} from './RuntimeApplications';
 import {ErrorState, MetricCard, MetricGrid, PageHeader} from '../components/ui';
 
 export function Page({data: pageData}: {data: any}) {
@@ -38,6 +39,7 @@ function Dashboard({data, error, retry}: {data: any; error?: string; retry: () =
       <MetricCard label={replica ? 'Captured non-compliant' : 'Non-compliant'} value={noAssessed ? 'Pending' : data.noncompliant_count} tone={data.noncompliant_count ? 'danger' : undefined}/>
       <MetricCard label="Active POA&Ms" value={noAssessed ? 'Pending' : data.poam_active_count} hint={noAssessed ? undefined : `${data.poam_pending_count ?? 0} pending · ${data.poam_overdue_count ?? 0} overdue`} tone={data.poam_overdue_count ? 'warning' : undefined}/>
     </MetricGrid>
+    {lifecycle === 'active' && <RuntimeApplications csrf={data.csrf_token || ''} replica={replica}/>}
     <section className="panel cyber-matrix" aria-label="Service Security Matrix">
       <ServiceSecurityMatrix data={data}/>
     </section>

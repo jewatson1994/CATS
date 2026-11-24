@@ -23,6 +23,14 @@ it('shows evidence without decision controls for a reader', async () => {
   expect(screen.queryByRole('button',{name:'Activate revision'})).not.toBeInTheDocument();
 });
 
+it('uses the scoped release decision from the server for runtime revision controls', async () => {
+  vi.mocked(requestJson).mockResolvedValue({...revision, can_manage:false});
+  render(<ReleaseRevision data={{can:{'approval.decide':{'9':true}}}} approvalId="8" serviceId={9}/>);
+  await screen.findByText('Review frozen revision manifest');
+  expect(screen.queryByRole('button',{name:'Activate revision'})).not.toBeInTheDocument();
+  expect(screen.queryByRole('button',{name:'Revoke revision'})).not.toBeInTheDocument();
+});
+
 it('shows the saved distribution from the revision manifest', async () => {
   vi.mocked(requestJson).mockResolvedValue({...revision, manifest:{distribution:{id:'d', name:'Partition A', inventory_id:'archive',
     selection_digest:'sha256:selection', charts:[], enabled_chart_ids:[], disabled_chart_ids:[], images:['example/gateway:v3']}}});

@@ -15,7 +15,7 @@ from sqlalchemy import ForeignKey, JSON, String, Text, event, select, update
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
-from .cyber_approvals import CyberApproval, digest, root
+from .cyber_approvals import CyberApproval, can_review_release, digest, root
 from . import release_signing, release_validity
 
 PURPOSE = 'cats.approved-release-revision.v1'
@@ -113,6 +113,11 @@ def _manifest(db, approval):
 def propose(db, auth, approval_id, *, decision_context=False):
     approval = _approval(db, approval_id)
     _permission(auth, approval.service_id, 'approval.decide' if decision_context else 'approval.request')
+    if approval.snapshot.get('runtime_evidence'):
+        if decision_context and not can_review_release(auth, approval):
+            raise PermissionError('Runtime revision requires an independent Cyber reviewer')
+        if not decision_context:
+            _permission(auth, approval.service_id, 'runtime.prepare_release')
     if approval.status not in {'approved', 'denied'} or approval.revoked_at:
         raise ValueError('Approval cannot support a proposal')
     manifest = _manifest(db, approval)
@@ -134,6 +139,9 @@ def _rows(db, auth, revision_id):
     if revision is None:
         raise ValueError('Revision unavailable')
     _permission(auth, revision.service_id, 'approval.decide')
+    approval = db.get(CyberApproval, revision.approval_id, populate_existing=True)
+    if approval is not None and not can_review_release(auth, approval):
+        raise PermissionError('Runtime revision requires an independent Cyber reviewer')
     state = db.scalar(select(ReleaseRevisionState).where(
         ReleaseRevisionState.revision_id == revision_id).with_for_update()
         .execution_options(populate_existing=True))
@@ -181,6 +189,9 @@ def validate_current_revision(db, revision, now=None):
         raise ValueError('Revision evidence changed')
     if approval.status != 'approved' or approval.revoked_at or not approval.decided_by_id:
         raise ValueError('Cyber approval is not current')
+    if approval.snapshot.get('runtime_evidence') and (
+            not approval.requested_by_id or approval.requested_by_id == approval.decided_by_id):
+        raise ValueError('Runtime release requires an independent Cyber decision')
     release_validity.require_current(approval, now)
     manifest = revision.manifest
     specification = approval.snapshot.get('release_revision')
@@ -220,6 +231,8 @@ def validate_activation(db, revision, now=None):
     """Activate Cyber's signed decision with its exact inventory and bindings."""
     validate_current_revision(db, revision, now)
     approval = _approval(db, revision.approval_id)
+    if approval.snapshot.get('runtime_evidence') and approval.publish_status != 'published':
+        raise ValueError('Complete publication of the signed runtime release before activation')
     if _manifest(db, approval) != revision.manifest:
         raise ValueError('Revision evidence changed')
 

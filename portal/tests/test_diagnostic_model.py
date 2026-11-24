@@ -56,6 +56,13 @@ def test_unavailable_disk_measurement_does_not_claim_capacity_exhaustion():
     assert item["cause"] is None
 
 
+def test_runtime_enrollment_and_agent_credentials_are_redacted():
+    data = {"linkingKey": "one-time-value", "linking_key": "another-value",
+            "message": "enroll cats-link-abc_123 or report with cats-agent-xyz_567"}
+    result = json.dumps(sanitize(data))
+    assert all(secret not in result for secret in ["one-time-value", "another-value", "abc_123", "xyz_567"])
+
+
 def test_redaction_covers_headers_nested_fields_cli_urls_and_tokens():
     item = {"Authorization": "Basic hidden1", "nested": {"client_secret": "hidden2"},
             "message": 'https://user:hidden3@registry.invalid/v2?auth=hidden4 Bearer hidden5 --password "hidden6" token=hidden7',

@@ -389,6 +389,11 @@ def provision_oidc_user(db: Session, claims: dict, configuration: dict | None = 
 
 
 PERMISSIONS = {
+    "runtime.view": "View runtime environments and observed container compliance",
+    "runtime.manage": "Manage runtime environments and link or revoke agents",
+    "runtime.prepare_release": "Assign runtime applications and submit prepared service releases",
+    "runtime.review_release": "Review and activate signed runtime releases for a service",
+    "runtime.map_import": "Associate local production observations with a publisher-managed service",
     "replica.admin": "Administer local replica sources and trust",
     "replica.sync": "Synchronize approved releases from local registries",
     "evidence.view": "View imported authoritative release evidence",
@@ -445,11 +450,13 @@ PERMISSIONS = {
 }
 
 SYSTEM_ROLES = {
-    "Administrator": [permission for permission in PERMISSIONS if permission != "scan.ingest" and not permission.startswith("local_override.")],
+    "Administrator": [permission for permission in PERMISSIONS if permission not in {
+        "scan.ingest", "runtime.prepare_release", "runtime.review_release", "runtime.map_import"} and not permission.startswith("local_override.")],
     "Local Cyber": ["service.view", "service.export", "evidence.view", "audit.view", "local_override.create", "local_override.revoke", "local_override.view_audit"],
     "Assessor": ["service.view", "service.export", "evidence.view", "audit.view"],
-    "Service Manager": ["approval.request", "service.view", "service.export", "evidence.view", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
+    "Service Manager": ["runtime.prepare_release", "runtime.map_import", "approval.request", "service.view", "service.export", "evidence.view", "service.edit", "exception.request", "poam.request", "archive.request", "scan.ingest", "remediation.execute"],
     "Cybersecurity": [
+        "runtime.review_release",
         "evidence.view", "local_override.create", "local_override.revoke", "local_override.view_audit",
         "approval.request", "approval.decide", "risk.recommend",
         "validator.view", "validator.create", "validator.provision", "validator.test",
@@ -465,12 +472,13 @@ SYSTEM_ROLES = {
 
 # These operate on shared application state, never one service. config.manage
 # has a separate can_manage_group boundary for explicitly group-owned settings.
-APPLICATION_PERMISSIONS = {"replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
+APPLICATION_PERMISSIONS = {"runtime.view", "runtime.manage", "replica.admin", "replica.sync", "release.destination.manage", "user.manage", "role.manage", "audit.view", "template.manage", "service.delete"} | {
     permission for permission in PERMISSIONS if permission.startswith("validator.")}
 
 # Imported signed evidence belongs to its publisher even in a full deployment.
 # Reading/exporting and separately audited local Cyber exceptions remain allowed.
 SERVICE_EVIDENCE_WRITES = frozenset({
+    "runtime.prepare_release", "runtime.review_release",
     "approval.request", "approval.decide", "risk.recommend", "risk.decide", "risk.authorize",
     "artifact.publish", "artifact.sign", "service.edit", "service.delete", "service.restore",
     "exception.request", "exception.review", "exception.revoke", "poam.request", "poam.review",

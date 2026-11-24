@@ -1,0 +1,44 @@
+.runtime-workspace { display: grid; gap: var(--space-5); }
+.runtime-workspace .heading { margin-bottom: 0; }
+.runtime-layout { display: grid; grid-template-columns: minmax(210px, 260px) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.runtime-detail { min-width: 0; display: grid; gap: var(--space-5); }
+.runtime-section-heading { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.runtime-section-heading h2, .runtime-section-heading h3 { margin-top: 0; }
+.runtime-section-heading p { margin-top: 0; }
+.runtime-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.runtime-view-nav, .runtime-issue-filters { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
+.runtime-view-nav button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.runtime-issue-filters { margin-bottom: var(--space-4); }
+.runtime-issue-filters label { display: grid; gap: var(--space-1); }
+.runtime-linking pre { overflow-x: auto; padding: var(--space-3); background: var(--surface-raised); }
+.runtime-environment small { margin-top: var(--space-1); color: var(--text-muted); }
+.runtime-environment { display: flex; flex-direction: column; align-items: start; width: 100%; margin-block: var(--space-2); padding: var(--space-3); text-align: left; background: var(--surface-raised); color: var(--text); border: 1px solid var(--border); }
+.runtime-environment[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.runtime-environment span { color: var(--text-muted); font-size: var(--text-sm); }
+.runtime-form form { display: grid; gap: var(--space-4); max-width: 760px; }
+.runtime-form form > p, .runtime-form fieldset p { margin: 0; }
+.runtime-form fieldset { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.runtime-services { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.runtime-services label { display: inline-flex; align-items: center; gap: var(--space-2); }
+.runtime-services input { width: auto; }
+.runtime-notice { padding: var(--space-3) var(--space-4); border-left: 3px solid var(--warning); background: color-mix(in srgb, var(--warning) 8%, var(--surface)); border-radius: var(--radius-sm); }
+.runtime-linking textarea { min-height: 80px; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.runtime-linking .runtime-actions { margin-top: var(--space-3); }
+.runtime-agent-list { display: grid; gap: var(--space-4); }
+.runtime-agent { padding-block: var(--space-4); border-top: 1px solid var(--border); }
+.runtime-agent-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+.runtime-agent-facts dt { color: var(--text-muted); font-size: var(--text-sm); }
+.runtime-agent-facts dd { margin: 0; overflow-wrap: anywhere; }
+.runtime-revoke { margin-top: var(--space-3); }
+.runtime-table { overflow-x: auto; }
+.runtime-table table { width: 100%; min-width: 850px; }
+.runtime-table caption { text-align: left; color: var(--text-muted); padding-block: var(--space-3); }
+.runtime-table td, .runtime-table th { vertical-align: top; }
+.runtime-table td > span, .runtime-table th > span, .runtime-table td > code { display: block; margin-bottom: var(--space-2); }
+.runtime-table td > .badge { display: inline-flex; }
+.runtime-table code { overflow-wrap: anywhere; max-width: 290px; }
+.runtime-table th > span { font-weight: normal; color: var(--text-muted); }
+@media (max-width: 900px) {
+  .runtime-layout { grid-template-columns: minmax(0, 1fr); }
+  .runtime-agent-facts { grid-template-columns: minmax(0, 1fr); }
+}

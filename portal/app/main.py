@@ -133,6 +133,7 @@ from . import oci_models, oci_lifecycle, oci_admin
 from . import artifact_catalog, artifact_catalog_routes, release_revisions, patch_campaigns, proposal_assessments
 from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
+from . import runtime_models, runtime_routes, runtime_report_pages, runtime_candidates
 from . import diagnostic_store, diagnostic_routes
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
@@ -155,6 +156,7 @@ from .preview_cleanup import preview_cleanup_lifespan
 # upgrade-safe without touching or deleting evidence.
 with migration_transaction(engine) as connection:
     Base.metadata.create_all(bind=connection, tables=portal_tables())
+    runtime_models.upgrade_connection(connection)
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     scan_coordination.upgrade_connection(connection)
@@ -500,6 +502,8 @@ app.include_router(oci_service_access_router)
 from .oci_pull_instructions import router as oci_pull_router
 app.include_router(oci_pull_router)
 app.include_router(replica_routes.router)
+app.include_router(runtime_routes.router)
+app.include_router(runtime_report_pages.router)
 app.include_router(local_cyber_overrides.router)
 app.include_router(oci_lifecycle.router)
 app.include_router(artifact_catalog_routes.router)
@@ -1480,7 +1484,10 @@ def page_context(auth: AuthContext, **values):
                 requester = item["display_name"] or item["username"]
                 name = f"{requester} · {item['service_name']}" if item.get("service_name") else requester
                 access_notifications.append({"label": "Access requested", "service": name, "href": "/admin#access-requests"})
-            actionable_notifications = access_notifications + artifact_catalog_routes.replacement_notifications(nav_db, auth) + actionable_notifications
+            from .runtime_application_routes import discovery_notifications
+            actionable_notifications = (access_notifications + cyber_approvals.runtime_review_notifications(nav_db, auth)
+                + discovery_notifications(nav_db, auth) + artifact_catalog_routes.replacement_notifications(nav_db, auth)
+                + actionable_notifications)
             pending_request_count = len(actionable_notifications)
             # The pending rows already use the same status and service scope
             # as the navigation count, so counting them in memory avoids a
@@ -2771,6 +2778,11 @@ def readiness():
     return JSONResponse({"status": "ready"}, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/runtime", response_class=HTMLResponse)
+def runtime_page(request: Request, auth: AuthContext = Depends(require_permission("runtime.view"))):
+    return templates.TemplateResponse(request, "runtime.html", page_context(auth))
+
+
 @app.get("/admin/replica", response_class=HTMLResponse)
 def replica_admin_page(request: Request, auth: AuthContext = Depends(require_user)):
     if not (auth.has("replica.admin") or auth.has("replica.sync")):
@@ -3385,7 +3397,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         return {"accepted": True, "duplicate": True, "execution_id": existing.id}
 
     service = db.scalar(select(Service).where(Service.service_key == payload.service.id))
-    from .service_ownership import ingest_owner
+    from .service_ownership import create_owned_service, ingest_owner
     try:
         owning_group = ingest_owner(db, service, payload.service.groups)
     except ValueError as exc:
@@ -3394,9 +3406,7 @@ def ingest_payload(payload: ExecutionPayload, db: Session, *, commit: bool = Tru
         failure.diagnostic_context = {"failed_stage": "Service ownership validation"}
         raise failure from exc
     if not service:
-        service = Service(service_key=payload.service.id, name=payload.service.name, lifecycle_status="active", groups=[owning_group])
-        db.add(service)
-        db.flush()
+        service = create_owned_service(db, payload.service.id, payload.service.name, owning_group)
     elif archive_state(service):
         raise HTTPException(status_code=409, detail="Service is archived; restore it before accepting new evidence")
     staged_name_before_ingest = service.name
@@ -5138,7 +5148,7 @@ def ingest_public_scan(
         if project_job:
             # Each build submits one artifact. Completeness describes that artifact only.
             # Evidence scope adds observations without resolving absent service/image findings.
-            data["scan_scope"] = "evidence"
+            data["scan_scope"] = "distribution" if job.get("runtime_candidate_artifact") else "evidence"
             data.pop("scope_image", None)
             summary = json.loads((result_path.parent / "scan-summary.json").read_text(encoding="utf-8"))
             data["complete"] = (data.get("complete") is True and job.get("returncode") == 0
@@ -10789,6 +10799,7 @@ def delete_service(
         db.execute(delete(PolicyFinding).where(PolicyFinding.id.in_(policy_finding_ids)))
     db.execute(delete(access_requests.ServiceAccessRequest).where(access_requests.ServiceAccessRequest.service_id == service.id))
     db.execute(delete(project_credentials.ProjectCredential).where(project_credentials.ProjectCredential.service_id == service.id))
+    runtime_models.forget_service(db, service.id)
     db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.service_id == service.id))
     db.execute(delete(RemediationExecution).where(RemediationExecution.service_id == service.id))
     db.execute(delete(PatchExecution).where(PatchExecution.service_id == service.id))

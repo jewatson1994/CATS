@@ -39,6 +39,7 @@ const loaders: Record<string, () => Promise<any>> = {
   './features/exchange': () => import('./features/exchange'),
   './features/general_policy': () => import('./features/general_policy'),
   './features/discovery': () => import('./features/discovery'),
+  './features/runtime': () => import('./features/runtime'),
   './features/patch': () => import('./features/patch'),
   './features/patch_results': () => import('./features/patch_results'),
   './features/poam': () => import('./features/poam'),
@@ -82,6 +83,7 @@ const ArtifactCatalog = lazyPage('./features/artifact_catalog', 'Page');
 const ArtifactRecommendations = lazyPage('./features/artifact_catalog', 'Recommendations');
 const RiskIntelligence = lazyPage('./features/risk_intelligence', 'Page');
 const Discovery = lazyPage('./features/discovery', 'Page');
+const Runtime = lazyPage('./features/runtime', 'Page');
 const Patch = lazyPage('./features/patch', 'Page');
 const CyberApprovals = lazyPage('./features/cyber_approvals', 'Page');
 const ApprovedReleases = lazyPage('./features/cyber_approvals', 'Releases');
@@ -126,7 +128,7 @@ export function preloadPages() {
   return Promise.all(Object.keys(loaders).map(module => load(module).catch(() => undefined)));
 }
 
-const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/sbom', '/patch', '/cybersecurity',
+const routes = new Set(['/patch-campaigns', '/artifact-catalog', '/admin/risk-policy', '/risk-intelligence', '/', '/home', '/login', '/account/password', '/account/appearance', '/scan', '/discovery', '/runtime', '/sbom', '/patch', '/cybersecurity',
   '/cyber-approvals', '/approved-releases', '/imported-releases', '/admin/approved-release-destinations',
   '/jobs', '/poam', '/remediations', '/requests', '/admin', '/admin/staging', '/admin/audit', '/admin/configuration', '/admin/diagnostics',
   '/admin/validators', '/admin/general-policy', '/admin/evidence-policy', '/admin/workflow-policy', '/admin/compliance',
@@ -145,7 +147,7 @@ const pages: Record<string, ComponentType<{data: PageData}>> = {
   cyber_approvals: CyberApprovals, approved_releases: ({data}) => data.cats_mode === 'replica' ? <ReplicaReleases data={data}/> : <ApprovedReleases data={data}/>, approved_release_destinations: ApprovedReleaseDestinations,
   home: Home, login: Login, dashboard: Dashboard, password: Password, appearance: Appearance,
   patch_campaigns: PatchCampaigns, artifact_catalog: ArtifactCatalog, artifact_recommendations: ArtifactRecommendations,
-  self_service: SelfService, discovery: Discovery, patch: Patch, cybersecurity: Cybersecurity,
+  self_service: SelfService, discovery: Discovery, runtime: Runtime, patch: Patch, cybersecurity: Cybersecurity,
   service: Service, service_simplified: Service,
   public_results: PublicResults, patch_results: PatchResults, finding: Finding, watchlist_match: Watchlist,
   poam: Poam, poam_service: ServicePoam, poam_entry: PoamEntry,
@@ -170,7 +172,7 @@ const pageNames: Record<string, string> = {
   dashboard: 'Services', home: 'Overview', login: 'Sign in', password: 'Change password', appearance: 'Appearance',
   cybersecurity: 'Cybersecurity dashboard', cyber_approvals: 'Approvals', approved_releases: 'Approved Releases',
   approved_release_destinations: 'Release Destinations', patch_campaigns: 'Patch campaigns', artifact_catalog: 'Artifact catalog',
-  artifact_recommendations: 'Recommendations', discovery: 'Discovery', patch: 'Patch', patch_results: 'Patch results',
+  artifact_recommendations: 'Recommendations', discovery: 'Discovery', runtime: 'Clusters & agents', patch: 'Patch', patch_results: 'Patch results',
   public_results: 'Scan results', service: 'Findings', service_simplified: 'Findings', finding: 'Finding', watchlist_match: 'Watchlist match',
   poam: 'POA&M', poam_service: 'POA&M', poam_entry: 'POA&M entry', service_overview: 'Overview', service_activity: 'Activity',
   service_history: 'Version history', service_dependencies: 'Dependencies', service_artifacts: 'Artifacts', service_validation: 'Deployment Validation',

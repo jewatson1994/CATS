@@ -21,8 +21,9 @@ ACCEPT = ', '.join(('application/vnd.oci.image.manifest.v1+json', 'application/v
 CHUNK = 1024 * 1024
 
 class RegistryError(ValueError):
-    def __init__(self, message='Registry request failed', status=502):
+    def __init__(self, message='Registry request failed', status=502, *, category=None):
         self.status = status
+        self.category = category
         super().__init__(message)
 
 def _digest(value):
@@ -158,7 +159,7 @@ class RegistryClient:
         for _ in range(6):
             current = _origin(url)
             if current not in allowed:
-                raise RegistryError('Registry redirect is outside approved origins')
+                raise RegistryError('Registry redirect is outside approved origins', category='configuration')
             if current != previous:
                 authorization = ''
             headers = {'Accept': ACCEPT, 'Accept-Encoding': 'identity'}
@@ -178,8 +179,10 @@ class RegistryClient:
                     status = exc.code; exc.close()
                     raise RegistryError('Registry redirected request failed', status) from None
                 raise
-            except (OSError, ValueError):
-                raise RegistryError('Registry connection failed') from None
+            except (OSError, ValueError, http.client.HTTPException) as exc:
+                cause = getattr(exc, 'reason', exc)
+                category = 'tls' if isinstance(cause, ssl.SSLError) else 'transport'
+                raise RegistryError('Registry connection failed', category=category) from None
         raise RegistryError('Registry redirect limit exceeded')
 
     def _token(self, repository, challenge):
@@ -189,22 +192,28 @@ class RegistryClient:
         fields = urllib.request.parse_keqv_list(urllib.request.parse_http_list(parameters))
         realm = fields.get('realm', '')
         if _origin(realm) not in self.auth_origins:
-            raise RegistryError('Registry token service is outside approved origins')
+            raise RegistryError('Registry token service is outside approved origins', category='authentication')
         p = urlsplit(realm)
         query = [(k, v) for k, v in parse_qsl(p.query) if k not in ('scope', 'service', 'account')]
         query.append(('scope', f'repository:{repository}:pull'))
         if fields.get('service'):
             query.append(('service', fields['service']))
         url = urlunsplit((p.scheme, p.netloc, p.path, urlencode(query), ''))
-        with self._open(url, self.basic, self.auth_origins) as response:
-            raw = self._read(response, CHUNK)
+        try:
+            with self._open(url, self.basic, self.auth_origins) as response:
+                raw = self._read(response, CHUNK)
+        except urllib.error.HTTPError as exc:
+            status = exc.code
+            exc.close()
+            category = 'authentication' if 400 <= status < 500 and status != 429 else 'transport'
+            raise RegistryError('Registry request rejected', status, category=category) from None
         try:
             data = json.loads(raw)
             token = data.get('token') or data.get('access_token')
             if not isinstance(token, str) or not token or any(ord(c) < 33 or ord(c) > 126 for c in token):
                 raise ValueError()
         except (ValueError, AttributeError):
-            raise RegistryError('Registry token service returned invalid credentials') from None
+            raise RegistryError('Registry token service returned invalid credentials', category='authentication') from None
         return 'Bearer ' + token
 
     def _request(self, repository, suffix):
@@ -232,7 +241,7 @@ class RegistryClient:
         except (OSError, http.client.HTTPException):
             raise RegistryError('Registry response was interrupted') from None
         if len(raw) > limit:
-            raise RegistryError('Registry metadata exceeds size limit', 413)
+            raise RegistryError('Registry metadata exceeds size limit', 413, category='integrity')
         return raw
 
     def fetch_manifest(self, repository, reference):
@@ -244,7 +253,7 @@ class RegistryClient:
             claimed = response.headers.get('Docker-Content-Digest')
         digest = 'sha256:' + hashlib.sha256(raw).hexdigest()
         if (DIGEST.fullmatch(reference) and reference != digest) or (claimed and claimed != digest):
-            raise RegistryError('Registry manifest digest verification failed')
+            raise RegistryError('Registry manifest digest verification failed', category='integrity')
         return raw, media_type, digest
 
     def fetch_blob(self, repository, digest, cache):

@@ -87,11 +87,22 @@ def _identity(reference, digest=None):
     return repository + '@' + digest, digest
 
 
-def _charts(files):
+def _charts(files, *, original_archive=None):
     """Validate every retained root and require vendored exact dependencies."""
     result = []
     with tempfile.TemporaryDirectory(prefix='cats-approval-chart-') as temporary:
-        root = Path(temporary)
+        root = Path(temporary) / 'text'
+        original_root = None
+        if original_archive is not None:
+            from .helm_archives import extract_chart
+            extracted = Path(temporary) / 'package'
+            with original_archive.open('rb') as archive:
+                extract_chart(archive, 'chart.tgz', extracted)
+            markers = {marker.parent for marker in extracted.rglob('Chart.yaml')}
+            top = [directory for directory in markers if not markers.intersection(directory.parents)]
+            if len(top) != 1:
+                raise ValueError('The original Helm archive must contain one chart.')
+            original_root = top[0]
         for name, content in files.items():
             target = root / safe_path(name)
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -109,9 +120,17 @@ def _charts(files):
             chart_name = str(metadata['name'])
             if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', chart_name):
                 raise ValueError('Invalid retained chart name')
-            dependencies = dependency_inventory(root / directory, strict=True)
             sources = {str(PurePosixPath(key).relative_to(directory)): value for key, value in files.items()
                        if PurePosixPath(key).is_relative_to(directory)}
+            if original_root is not None:
+                for path, retained in sources.items():
+                    member = original_root / path
+                    if not member.is_file():
+                        raise ValueError('Retained Helm scan source differs from the original chart archive.')
+                    content = member.read_bytes()
+                    if (content if isinstance(retained, bytes) else content.decode('utf-8-sig')) != retained:
+                        raise ValueError('Retained Helm scan source differs from the original chart archive.')
+            dependencies = dependency_inventory(original_root or root / directory, strict=True)
             result.append({'kind': 'chart', 'name': chart_name, 'version': str(metadata['version']),
                            'source_root': str(directory), 'sources': sources, 'dependencies': dependencies})
     return result
@@ -144,7 +163,8 @@ def _distribution_assessment(db, service, distribution_id, blockers):
     return selection, execution
 
 
-def readiness(db, service, variant='current_service', remediation_id=None, *, _proposal_execution=None, distribution_id=None):
+def readiness(db, service, variant='current_service', remediation_id=None, *, _proposal_execution=None, distribution_id=None,
+              _proposal_charts=None):
     db.refresh(service)
     blockers = []
     review_notes = []
@@ -286,7 +306,7 @@ def readiness(db, service, variant='current_service', remediation_id=None, *, _p
             blockers.append('Missing retained scan values file: ' + str(name))
     charts = []
     try:
-        charts = _charts(files)
+        charts = _proposal_charts if _proposal_execution is not None and _proposal_charts is not None else _charts(files)
     except (ValueError, OSError, yaml.YAMLError, tarfile.TarError) as exc:
         blockers.append(str(exc))
     # Charts discovered by the scanner must be represented, never quietly omitted.
@@ -447,6 +467,10 @@ def freeze(db, service, auth, readiness, folder: Path):
         raise ValueError('Approval evidence is not ready')
     # Recheck mutable source state at the moment the snapshot is made.
     def refresh_evidence():
+        if readiness.get('runtime_candidate_id') is not None:
+            from .runtime_candidates import RuntimeReleaseCandidate, assessment_for_review
+            candidate = db.get(RuntimeReleaseCandidate, readiness['runtime_candidate_id'])
+            return assessment_for_review(db, candidate, service)
         if readiness.get('proposal_id') is not None:
             from .proposal_assessments import assess
             return assess(db, service, readiness['proposal_id'])
@@ -454,7 +478,8 @@ def freeze(db, service, auth, readiness, folder: Path):
             readiness['remediation'].id if readiness['remediation'] else None,
             distribution_id=(readiness.get('distribution') or {}).get('id'))
     fresh = refresh_evidence()
-    if not fresh['ready'] or fresh['execution'].id != readiness['execution'].id:
+    if (not fresh['ready'] or fresh['execution'].id != readiness['execution'].id
+            or fresh.get('runtime_evidence') != readiness.get('runtime_evidence')):
         raise ValueError('Approval evidence changed; refresh readiness')
     readiness = fresh
     folder = Path(folder)
@@ -475,6 +500,8 @@ def freeze(db, service, auth, readiness, folder: Path):
         'exceptions': exceptions, 'remediation': _row(record) if record else None, 'artifacts': []}
     if readiness.get('distribution'):
         snapshot.update(distribution=readiness['distribution'], evidence_scope='service-distribution-scan')
+    if readiness.get('runtime_candidate_id') is not None:
+        snapshot.update(runtime_evidence=readiness['runtime_evidence'], evidence_scope='runtime-release-candidate')
     if readiness.get('proposal_id') is not None:
         snapshot.update(amendment_proposal_id=readiness['proposal_id'],
             proposal_assessment_id=readiness['proposal_assessment_id'],
@@ -485,10 +512,18 @@ def freeze(db, service, auth, readiness, folder: Path):
     snapshot = json.loads(_json(snapshot))
     snapshot['source_payload_digest'] = payload_digest(readiness['payload'])
     for index, item in enumerate(readiness['artifacts']):
-        artifact = {key: value for key, value in item.items() if key != 'sources'}
+        artifact = {key: value for key, value in item.items() if key not in ('sources', 'runtime_archive_path', 'runtime_archive_digest')}
         if item['kind'] == 'chart':
             path = folder / f'chart-{index}.tgz'
-            _package_chart(item, path)
+            if readiness.get('runtime_candidate_id') is not None:
+                source = Path(item['runtime_archive_path'])
+                if source.is_symlink() or not source.is_file():
+                    raise ValueError('Retained runtime chart archive unavailable')
+                shutil.copyfile(source, path)
+                if file_digest(path) != item['runtime_archive_digest']:
+                    raise ValueError('Retained runtime chart archive digest changed')
+            else:
+                _package_chart(item, path)
             artifact.update(path=str(path.resolve()), digest=file_digest(path))
         if item.get('archive_path'):
             path = folder / f'image-{index}.tar'
@@ -501,7 +536,28 @@ def freeze(db, service, auth, readiness, folder: Path):
     from .service_exports import write_all
     evidence = folder / 'all.zip'
     baseline = folder / 'current-service-all.zip' if record else evidence
-    if readiness.get('distribution'):
+    if readiness.get('runtime_candidate_id') is not None:
+        with ZipFile(evidence, 'w', ZIP_DEFLATED) as archive:
+            archive.writestr('runtime-candidate.json', _json(readiness['runtime_evidence']))
+            archive.writestr('sbom-components.json', _json(readiness['payload'].get('sbom_components', [])))
+            from .service_exports import _execution_evidence_zip
+            retained_ids = set()
+            for source in readiness['runtime_evidence'].get('assessments', []):
+                source_id = source.get('execution_id')
+                if source_id is None or source_id in retained_ids:
+                    continue
+                retained_ids.add(source_id)
+                assessment = db.get(Execution, source_id)
+                if not assessment or assessment.service_id != service.id or not assessment.complete:
+                    raise ValueError('A component assessment is no longer available in this service')
+                payload = assessment.raw_payload or {}
+                archive.writestr(f'assessments/{source_id}/source-scan.json', _json(payload))
+                for category in ('scanner', 'sbom'):
+                    if any(doc.get('category') == category for doc in payload.get('evidence_documents', [])):
+                        archive.writestr(f'assessments/{source_id}/{category}.zip',
+                                         _execution_evidence_zip(service.service_key, assessment, category))
+        exported = {'entries': []}
+    elif readiness.get('distribution'):
         from .service_exports import _execution_evidence_zip
         with ZipFile(evidence, 'w', ZIP_DEFLATED) as archive:
             archive.writestr('distribution.json', _json(readiness['distribution']))
@@ -522,7 +578,7 @@ def freeze(db, service, auth, readiness, folder: Path):
     if unavailable:
         raise ValueError('Export All evidence unavailable: ' + ', '.join(unavailable))
     context_evidence = None
-    if readiness.get('distribution') or readiness.get('proposal_id') is not None:
+    if readiness.get('distribution') or readiness.get('proposal_id') is not None or readiness.get('runtime_candidate_id') is not None:
         # The selected scan is the approval evidence. A newly discovered service
         # may have no current-service baseline; retain the contextual export's
         # explicit unavailable entries instead of requiring an unrelated scan.
@@ -578,9 +634,11 @@ def freeze(db, service, auth, readiness, folder: Path):
     final = refresh_evidence()
     if (not final['ready'] or final['execution'].id != execution.id
             or payload_digest(final['payload']) != payload_digest(readiness['payload'])
+            or final.get('runtime_evidence') != readiness.get('runtime_evidence')
             or (record and file_digest(readiness['candidate_path']) != record.artifact_digest)):
         raise ValueError('Service evidence changed while freezing; retry the request')
     snapshot['evidence'] = {'path': str(evidence.resolve()), 'digest': file_digest(evidence),
-                            'format': 'cats-distribution-evidence-v1' if readiness.get('distribution') else 'cats-export-all-v1',
+                            'format': ('cats-runtime-evidence-v1' if readiness.get('runtime_candidate_id') is not None
+                                else 'cats-distribution-evidence-v1' if readiness.get('distribution') else 'cats-export-all-v1'),
                             'evidence_scope': snapshot['evidence_scope']}
     return snapshot

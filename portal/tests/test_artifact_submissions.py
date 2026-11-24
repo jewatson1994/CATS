@@ -1,5 +1,6 @@
 """Exercise project bearer, immutable retry identity and real scan queue admission over HTTP."""
 import io
+import hashlib
 import json
 import tarfile
 from concurrent.futures import ThreadPoolExecutor
@@ -62,7 +63,7 @@ def _tar(files):
     content = io.BytesIO()
     with tarfile.open(fileobj=content, mode='w:gz') as archive:
         for name, text in files.items():
-            raw = text.encode()
+            raw = text if isinstance(text, bytes) else text.encode()
             info = tarfile.TarInfo(name)
             info.size = len(raw)
             archive.addfile(info, io.BytesIO(raw))
@@ -130,6 +131,54 @@ def test_streamed_upload_auto_detects_and_binds_bytes(portal, file, content, kin
     assert client.post(PATH, files={'file':(file, content+b'x')}, headers=HEADERS).status_code == 409
     assert not (root / job_id / 'submission-input').exists()
     assert (root / job_id / 'input.tar.gz').is_file()
+    if kind == 'helm-chart':
+        assert (root / job_id / 'retained-chart.tgz').read_bytes() == content
+        with sessions() as db:
+            assert db.get(ScanJob, job_id).payload['chart_archive_digest'] == 'sha256:' + hashlib.sha256(content).hexdigest()
+
+
+def test_runtime_draft_joins_original_scoped_ci_chart_and_image(portal):
+    from app.runtime_candidates import reconcile
+    from app.runtime_candidate_assessment import chart_key, claim_allowed, process
+    from app.runtime_models import RuntimeEnvironment
+    from test_runtime_candidates import PIN, application, complete
+    client, sessions, root = portal
+    source = {'api/Chart.yaml': 'apiVersion: v2\nname: api\nversion: 1.3.0\n'}
+    content = _tar(source)
+    chart = client.post(PATH, files={'file': ('api.tgz', content)}, data={'version': '1.2'}, headers=HEADERS)
+    assert chart.status_code == 202, chart.text
+    image = client.post(PATH, json={'version': '1.2', 'reference': PIN},
+                        headers={**HEADERS, 'Idempotency-Key': 'chart-build-image'})
+    assert image.status_code == 202, image.text
+    with sessions() as db:
+        service = db.scalar(select(Service).where(Service.service_key == 'alpha'))
+        job = db.get(ScanJob, chart.json()['id'])
+        chart_scan = complete(db, job, service, artifact_type='helm', helm_source_files=source, findings=[],
+                              sbom_components=[], evidence_documents=[])
+        complete(db, db.get(ScanJob, image.json()['id']), service)
+        env = RuntimeEnvironment(name='staging', cluster_role='validation', kind='kubernetes', service_scope='all')
+        db.add(env)
+        db.flush()
+        observed = application(PIN, chart_name='api', chart_version='1.3.0', helm_release='api',
+                               helm_namespace='default', chart_digest=job.payload['chart_archive_digest'])
+        row = reconcile(db, env, service, [observed], 'default')
+        result = process(db, row)
+        assert result['ready'], result['blockers']
+        artifact = next(a for a in result['artifacts'] if a['kind'] == 'chart')
+        assert artifact['runtime_archive_digest'] == job.payload['chart_archive_digest']
+        assert db.scalar(select(func.count()).select_from(ScanJob)) == 2
+        (root / job.id / 'retained-chart.tgz').write_bytes(b'changed')
+        assert not process(db, row)['ready']
+        (root / job.id / 'retained-chart.tgz').write_bytes(content)
+        job.finished_at = utcnow() - timedelta(days=400)
+        chart_scan.scanned_at = job.finished_at
+        db.flush()
+        assert not process(db, row)['ready']
+        retry = db.get(ScanJob, row.jobs[chart_key(row.inventory['charts'][0])])
+        assert retry.id != job.id and retry.payload['runtime_project_source'] == job.id and claim_allowed(db, retry)
+        assert retry.payload['credential_policy'] == 'public'
+        assert (root / retry.id / 'retained-chart.tgz').read_bytes() == content
+        assert retry.payload['chart_url'] == '' and retry.payload['image_list'] == ''
 
 
 def test_rejects_unscoped_credentials_unknown_fields_and_oversize_inputs(portal, monkeypatch):

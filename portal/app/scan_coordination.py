@@ -271,6 +271,14 @@ def claim(worker_id):
                                "error": "The bound project service or version is unavailable"}
                 db.commit()
                 return None
+        if row.payload.get("runtime_candidate_artifact"):
+            from .runtime_candidate_assessment import claim_allowed
+            if not claim_allowed(db, row):
+                row.status, row.finished_at = "cancelled", now()
+                row.payload = {**row.payload, "status": "cancelled", "phase": "cancelled",
+                               "error": "Runtime assignment or trusted registry mapping changed"}
+                db.commit()
+                return None
         if row.payload.get("schedule_context"):
             from .service_scan_schedule import claim_error
             reason = claim_error(db, row, now())

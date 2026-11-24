@@ -107,6 +107,27 @@ def candidate_service_ids(db, mapping, digest):
     return owners
 
 
+def _runtime_execution_matches(approval, active, execution):
+    """Bind a signed candidate to its reviewed aggregate, even after validation observes a newer version."""
+    from .runtime_candidate_assessment import aggregate_execution_key
+
+    if active is None or active.approval_id != approval.id or not execution or execution.scan_scope != 'distribution':
+        return False
+    try:
+        snapshot = approval.snapshot
+        evidence = snapshot['runtime_evidence']
+        receipts = evidence['assessments']
+        raw = execution.raw_payload
+        return ('distribution' not in snapshot and evidence['ready'] is True
+                and type(evidence['candidate_id']) is int and evidence['candidate_id'] > 0
+                and isinstance(receipts, list) and bool(receipts) and all(r['status'] == 'complete' for r in receipts)
+                and execution.execution_key == aggregate_execution_key(evidence['candidate_id'], receipts)
+                and raw['execution_id'] == execution.execution_key and raw['scan_scope'] == 'distribution'
+                and raw['complete'] is True and execution.payload_digest == snapshot['source_payload_digest'])
+    except (AttributeError, TypeError, KeyError, ValueError):
+        return False
+
+
 def _distribution_execution(db, service, approval):
     """Validate the approved selection and its exact retained scan admission.
 
@@ -304,7 +325,10 @@ def _authorize_approved_release(db, mapping, digest, now=None):
             continue
         execution = db.get(Execution, approval.source_execution_id, populate_existing=True)
         distribution = _distribution_snapshot(snapshot) or (execution is not None and execution.scan_scope == 'distribution')
-        if distribution:
+        if snapshot.get('evidence_scope') == 'runtime-release-candidate':
+            if not _runtime_execution_matches(approval, active, execution):
+                return deny('approval_evidence_changed', approval)
+        elif distribution:
             execution = _distribution_execution(db, service, approval)
         if execution is None:
             return deny('approval_evidence_changed' if distribution else 'scan_missing', approval)

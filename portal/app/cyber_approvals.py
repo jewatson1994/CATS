@@ -6,14 +6,15 @@ import hmac
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, select, update
+from sqlalchemy import Boolean, DateTime, ForeignKey, JSON, String, Text, or_, select, update
 from sqlalchemy.orm import Mapped, Session, mapped_column
 from .database import Base, get_db
-from .models import Service, Group, User, PortalSetting, RemediationExecution, utcnow
+from .models import AuditEvent, Service, Group, User, PortalSetting, RemediationExecution, utcnow
 from .auth import AuthContext, require_user, record_audit
 from .durable_jobs import DurableJob, submit, JobError
 from .service_oci import validate_destination, _csrf
@@ -22,6 +23,48 @@ from . import signing, release_validity, additional_release_delivery as addition
 from .imported_services import imported_service_predicate, is_imported_service
 
 router = APIRouter()
+
+
+def _json_body(schema, examples):
+    return {'requestBody': {'required': True, 'content': {'application/json': {
+        'schema': schema, 'examples': {name: {'value': body} for name, body in examples.items()}}}}}
+
+
+SUBMISSION_BODY = _json_body({
+    'type': 'object', 'required': ['service_key'],
+    'properties': {
+        'service_key': {'type': 'string'},
+        'variant': {'type': 'string', 'enum': ['current_service', 'cats_remediated'], 'default': 'current_service'},
+        'runtime_candidate_id': {'type': 'integer', 'minimum': 1, 'description':
+            'Service-scoped runtime candidate. Submit it with the review digest returned by its readiness endpoint.'},
+        'review_digest': {'type': 'string', 'pattern': '^sha256:[0-9a-f]{64}$'},
+        'remediation_id': {'type': 'integer'}, 'distribution_id': {'type': 'string', 'maxLength': 32},
+        'expected_source_execution_id': {'type': 'integer'}, 'amendment_proposal_id': {'type': 'integer'},
+        'release_revision': {'type': 'object'}, 'renews_approval_id': {'type': 'integer'},
+        'reassessment_event_id': {'type': 'string'}, 'destination_id': {'type': 'integer'},
+        'additional_destination_id': {'type': ['string', 'integer']}, 'rationale': {'type': 'string'},
+    },
+    'dependentRequired': {'runtime_candidate_id': ['review_digest'], 'distribution_id': ['expected_source_execution_id']},
+}, {
+    'Runtime candidate': {'service_key': 'payments', 'runtime_candidate_id': 12, 'review_digest': 'sha256:' + 'a' * 64},
+    'Current service': {'service_key': 'payments', 'variant': 'current_service'},
+    'Retained remediation': {'service_key': 'payments', 'variant': 'cats_remediated', 'remediation_id': 31},
+    'Saved distribution': {'service_key': 'payments', 'distribution_id': 'mobile', 'expected_source_execution_id': 37},
+})
+
+DECISION_BODY = _json_body({
+    'type': 'object', 'required': ['decision', 'rationale'],
+    'properties': {
+        'decision': {'type': 'string', 'enum': ['approved', 'denied', 'returned'],
+                     'description': 'Return for changes is available for runtime submissions.'},
+        'rationale': {'type': 'string', 'minLength': 3, 'maxLength': 10000},
+        'destination_id': {'type': 'integer', 'description': 'Select an eligible destination if the request has none.'},
+    },
+}, {
+    'Approve': {'decision': 'approved', 'rationale': 'Reviewed the retained scan and component inventory.'},
+    'Reject': {'decision': 'denied', 'rationale': 'The retained image exceeds the approved risk threshold.'},
+    'Return runtime candidate': {'decision': 'returned', 'rationale': 'Provide the missing component assessment.'},
+})
 
 
 class ApprovedReleaseDestination(Base):
@@ -88,7 +131,7 @@ def _service(db, auth, key):
 
 def _record(db, auth, identity):
     row = db.get(CyberApproval, identity)
-    if not row or not auth.has('service.view', row.service_id):
+    if not row or not auth.has('service.view', row.service_id) or not _visible_review(auth, row):
         raise HTTPException(404, 'Approval not found')
     return row
 
@@ -128,6 +171,10 @@ def _signing_ready(db):
 def _readiness(db, service, variant, remediation_id, distribution_id=None):
     from .cyber_approval_evidence import readiness
     result = readiness(db, service, variant, remediation_id, distribution_id=distribution_id)
+    return _with_destinations(db, service, result)
+
+
+def _with_destinations(db, service, result):
     destinations = [public_destination(row) for row in _eligible_destinations(db, service)]
     notes = list(result.get('review_notes', []))
     if not destinations:
@@ -137,13 +184,129 @@ def _readiness(db, service, variant, remediation_id, distribution_id=None):
     return {**result, 'review_notes': notes, 'destinations': destinations}
 
 
+def _runtime_candidate(db, service, identity):
+    from .runtime_candidates import RuntimeReleaseCandidate
+    row = db.get(RuntimeReleaseCandidate, identity) if type(identity) is int else None
+    if row is None or row.service_id != service.id:
+        raise HTTPException(404, 'Runtime candidate not found')
+    return row
+
+
+def _runtime_assessment(db, service, candidate):
+    from .runtime_candidates import assessment_for_review
+    try:
+        return _with_destinations(db, service, assessment_for_review(db, candidate, service))
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from None
+
+
+def _runtime_token(result, candidate):
+    from .cyber_approval_evidence import payload_digest
+    return digest({'candidate_id': candidate.id, 'version': candidate.version,
+                   'previous_approval': candidate.approval_id, 'inventory': candidate.fingerprint,
+                   'evidence': result['runtime_evidence'], 'payload': payload_digest(result.get('payload') or {})})
+
+
+def _historical_inventory(db, candidate):
+    from .runtime_candidates import checksum
+    if checksum(candidate.inventory) != candidate.fingerprint:
+        raise HTTPException(409, 'Retained candidate inventory integrity check failed')
+    events = db.scalars(select(AuditEvent).where(
+        AuditEvent.target_type == 'runtime_candidate', AuditEvent.target_id == str(candidate.id)
+    ).order_by(AuditEvent.created_at, AuditEvent.id))
+    return {
+        **_public(candidate.inventory), 'revision': candidate.version, 'proposed_version': candidate.proposed_version,
+        'fingerprint': candidate.fingerprint, 'created_at': release_validity.utc(candidate.created_at).isoformat(),
+        'history': [{'action': event.action, 'recorded_at': release_validity.utc(event.created_at).isoformat(),
+                     'actor': event.detail.get('actor_display_name') or event.detail.get('actor_username')
+                         or ('Retained account' if event.actor_user_id else 'System'),
+                     'detail': {key: event.detail[key] for key in ('job_id', 'reference', 'previous', 'status')
+                                if key in event.detail}} for event in events],
+    }
+
+
+def _runtime_manager(auth, service_id):
+    return all(auth.has(permission, service_id) for permission in (
+        'service.edit', 'service.export', 'approval.request', 'runtime.prepare_release'))
+
+
+def _runtime_reviewer(auth, service_id):
+    return auth.has('approval.decide', service_id) and auth.has('runtime.review_release', service_id)
+
+
+def can_review_release(auth, approval):
+    if not approval.snapshot.get('runtime_evidence'):
+        return auth.has('approval.decide', approval.service_id)
+    return (_runtime_reviewer(auth, approval.service_id) and auth.user.id is not None
+            and auth.user.id != approval.requested_by_id)
+
+
+def _visible_review(auth, approval):
+    return (approval.status == 'approved' or not approval.snapshot.get('runtime_evidence')
+            or _runtime_manager(auth, approval.service_id) or _runtime_reviewer(auth, approval.service_id))
+
+
+def _require_reviewer(auth, approval):
+    if not can_review_release(auth, approval):
+        raise HTTPException(403, 'Release review permission denied')
+
+
+def _runtime_revision(db, service, snapshot):
+    from .artifact_catalog import GlobalArtifact, ServiceArtifactAssignment, register_artifact, assign_artifact
+    from .release_revisions import ServiceActiveRelease
+    identities = set()
+    for item in snapshot['artifacts']:
+        matches = db.scalars(select(GlobalArtifact).join(ServiceArtifactAssignment).where(
+            ServiceArtifactAssignment.service_id == service.id, GlobalArtifact.digest == item['digest'])).unique().all()
+        known = matches[0] if len(matches) == 1 else None
+        artifact = register_artifact(db, digest=item['digest'], reference=item.get('reference'),
+            media_type=item.get('media_type') or (known.media_type if known else 'application/octet-stream'),
+            platform=item.get('platform') or (known.platform if known else 'unknown'),
+            provenance={'runtime_candidate_id': snapshot['runtime_evidence']['candidate_id'],
+                        'execution_id': snapshot['source_execution_id']})
+        assign_artifact(db, service_id=service.id, artifact_id=artifact.id, role='release')
+        identities.add(artifact.id)
+    active = db.get(ServiceActiveRelease, service.id)
+    return {'artifact_ids': sorted(identities), 'base_revision_id': active.revision_id if active else None}
+
+
+def _candidate_transition(db, candidate, status, approval_id):
+    from .runtime_candidates import RuntimeReleaseCandidate
+    change = update(RuntimeReleaseCandidate).where(
+        RuntimeReleaseCandidate.id == candidate.id, RuntimeReleaseCandidate.status == candidate.status,
+        RuntimeReleaseCandidate.approval_id == candidate.approval_id
+    )
+    if status == 'submitted':
+        change = change.where(RuntimeReleaseCandidate.current.is_(True))
+    changed = db.execute(change.values(status=status, approval_id=approval_id)).rowcount
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(409, 'Candidate review changed. Reload before continuing.')
+
 
 @router.get('/api/services/{key}/cyber-approval-readiness')
 def readiness_api(key: str, variant: str = 'current_service', remediation_id: int | None = None,
                   distribution_id: str | None = None,
-                  db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
+                  db: Session = Depends(get_db), auth: AuthContext = Depends(require_user),
+                  runtime_candidate_id: int | None = None):
     service = _service(db, auth, key)
-    result = _readiness(db, service, variant, remediation_id, distribution_id)
+    runtime = {}
+    if runtime_candidate_id is not None:
+        candidate = _runtime_candidate(db, service, runtime_candidate_id)
+        if not _runtime_manager(auth, service.id):
+            raise HTTPException(403, 'Runtime release preparation permission denied')
+        prior = db.get(CyberApproval, candidate.approval_id) if candidate.approval_id else None
+        runtime['runtime_candidate'] = {'id': candidate.id, 'revision': candidate.version, 'status': candidate.status,
+            'approval_id': candidate.approval_id, 'decision_rationale': prior.decision_rationale if prior else None}
+        if not candidate.current and candidate.approval_id is None:
+            return {**runtime, 'historical_inventory': _historical_inventory(db, candidate),
+                    'ready': False, 'can_request': False, 'service_id': service.id}
+        if candidate.status not in ('draft', 'returned'):
+            return {**runtime, 'ready': False, 'can_request': False, 'service_id': service.id}
+        result = _runtime_assessment(db, service, candidate)
+        runtime.update(runtime_evidence=_public(result['runtime_evidence']), review_digest=_runtime_token(result, candidate))
+    else:
+        result = _readiness(db, service, variant, remediation_id, distribution_id)
     execution = result.get('execution')
     can_select = additional.selectable(auth, service.id)
     return {key: value for key, value in result.items() if key in ('ready', 'blockers', 'destinations', 'version', 'scan_date', 'variant', 'review_notes', 'distribution')} | {
@@ -155,7 +318,8 @@ def readiness_api(key: str, variant: str = 'current_service', remediation_id: in
             RemediationExecution.service_id == service.id,
             RemediationExecution.source_execution_id == execution.id if execution else False,
             RemediationExecution.source_version_id == service.current_version_id).order_by(RemediationExecution.id.desc()))],
-        'can_request': auth.has('approval.request', service.id) and auth.has('service.export', service.id)}
+        'can_request': (_runtime_manager(auth, service.id) if runtime else
+                        auth.has('approval.request', service.id) and auth.has('service.export', service.id)), **runtime}
 
 
 def _public(value):
@@ -169,6 +333,8 @@ def _public(value):
 
 def dto(db, row, auth, detail=False):
     service = db.get(Service, row.service_id)
+    runtime = row.snapshot.get('runtime_evidence')
+    reviewer = can_review_release(auth, row)
     requested_by = db.get(User, row.requested_by_id) if row.requested_by_id else None
     approved_by_id = row.decided_by_id if row.status == 'approved' else None
     approved_by = db.get(User, approved_by_id) if approved_by_id else None
@@ -181,18 +347,24 @@ def dto(db, row, auth, detail=False):
         requested_at=row.requested_at.isoformat(), decided_at=row.decided_at.isoformat() if row.decided_at else None,
         approved_by=approved_by_name, approved_by_id=approved_by_id,
         requested_by=requested_by.display_name if requested_by else 'Retained account', destination=row.destination,
-        publication=_public(row.publication), can_decide=row.status == 'pending' and auth.has('approval.decide', row.service_id),
-        can_retry=row.status == 'approved' and row.publish_status == 'failed' and not row.revoked_at and auth.has('approval.decide', row.service_id),
+        publication=_public(row.publication), can_decide=row.status == 'pending' and reviewer,
+        can_retry=row.status == 'approved' and row.publish_status == 'failed' and not row.revoked_at and reviewer,
         can_revoke=row.status == 'approved' and not row.revoked_at
-            and row.publish_status not in ('queued', 'publishing') and auth.has('approval.decide', row.service_id),
+            and row.publish_status not in ('queued', 'publishing') and reviewer,
         revoked=bool(row.revoked_at), revoked_at=row.revoked_at.isoformat() if row.revoked_at else None, release_id=row.id)
     result.update(release_validity.summary(row))
+    if runtime:
+        result.update(label='Runtime candidate', runtime_candidate_id=runtime['candidate_id'])
     result['can_retry'] = ((result['can_retry'] and result['validity_status'] in ('valid', 'expiring_soon'))
         or bool(row.revoked_at and row.publish_status == 'failed'
                 and (row.publication or {}).get('revocation', {}).get('portable')
-                and auth.has('approval.decide', row.service_id)))
+                and reviewer))
     if detail:
         result['snapshot'] = _public(row.snapshot)
+        if runtime and row.status == 'returned':
+            candidate = _runtime_candidate(db, service, runtime['candidate_id'])
+            result['can_resubmit'] = (candidate.current and candidate.status == 'returned'
+                and candidate.approval_id == row.id and _runtime_manager(auth, row.service_id))
         result['additional_destination'] = row.snapshot.get('additional_destination')
         result['additional_deliveries'] = additional.details(db, auth, row)
         if row.status == 'pending' and not row.destination_id:
@@ -201,12 +373,14 @@ def dto(db, row, auth, detail=False):
             result['destinations'] = [public_destination(item) for item in choices]
         if auth.has('service.export', row.service_id):
             result['evidence_url'] = f'/api/cyber-approvals/{row.id}/download/evidence'
+            if runtime:
+                result['submission_url'] = f'/api/cyber-approvals/{row.id}/download/submission'
             if row.publish_status == 'published':
                 result['offline_bundle_url'] = f'/api/cyber-approvals/{row.id}/download/offline'
     return result
 
 
-@router.post('/api/cyber-approvals')
+@router.post('/api/cyber-approvals', openapi_extra=SUBMISSION_BODY)
 async def request_approval(request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     _csrf(request, auth)
     data = await request.json()
@@ -215,6 +389,17 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     _permission(auth, 'service.export', service.id)
     if service.lifecycle_status != 'active':
         raise HTTPException(409, 'Only active services can request approval')
+    runtime_candidate = None
+    if data.get('runtime_candidate_id') is not None:
+        _permission(auth, 'service.edit', service.id)
+        _permission(auth, 'runtime.prepare_release', service.id)
+        if auth.user.id is None:
+            raise HTTPException(403, 'A service manager account is required to submit a runtime candidate')
+        if data.get('variant', 'current_service') != 'current_service' or any(
+                data.get(key) is not None for key in ('amendment_proposal_id', 'distribution_id', 'release_revision',
+                                                     'renews_approval_id', 'reassessment_event_id', 'remediation_id')):
+            raise HTTPException(422, 'Runtime review uses the selected candidate inventory')
+        runtime_candidate = _runtime_candidate(db, service, data['runtime_candidate_id'])
     if data.get('amendment_proposal_id') is not None:
         if data.get('renews_approval_id') is not None:
             raise HTTPException(422, 'An amendment is a separate approval, not an unchanged-inventory renewal')
@@ -232,7 +417,13 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
         raise HTTPException(422, 'Select a saved distribution')
     if variant not in ('current_service', 'cats_remediated'):
         raise HTTPException(422, 'Select Current Service or CATS Remediated')
-    if data.get('amendment_proposal_id') is not None:
+    if runtime_candidate is not None:
+        result = _runtime_assessment(db, service, runtime_candidate)
+        if runtime_candidate.status not in ('draft', 'returned'):
+            raise HTTPException(409, 'This candidate already has a Cyber review')
+        if data.get('review_digest') != _runtime_token(result, runtime_candidate):
+            raise HTTPException(409, 'The candidate or its evidence changed. Review it again before submitting.')
+    elif data.get('amendment_proposal_id') is not None:
         if variant != 'current_service' or data.get('remediation_id') is not None or distribution_id is not None:
             raise HTTPException(422, 'Amendment review uses its retained proposed assessment')
         from .proposal_assessments import assess
@@ -300,6 +491,11 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     snapshot.update(variant=variant, destination=frozen_destination, signing_fingerprint=fingerprint)
     if extra:
         snapshot['additional_destination'] = extra
+    if runtime_candidate is not None:
+        try:
+            data['release_revision'] = _runtime_revision(db, service, snapshot)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
     if 'release_revision' in data:
         from . import release_revisions
         snapshot['release_revision'] = data['release_revision']
@@ -317,15 +513,62 @@ async def request_approval(request: Request, db: Session = Depends(get_db), auth
     from .oci_lifecycle import retain_public_key
     retain_public_key(db, signing.configuration(_settings(db)))
     snapshot['review_notes'] = list(dict.fromkeys(snapshot.get('review_notes', []) + result.get('review_notes', [])))
+    requested_at = utcnow()
+    if runtime_candidate is not None:
+        from .release_revisions import canonical
+        snapshot['previous_review_id'] = runtime_candidate.approval_id
+        snapshot['submission'] = {'requested_by_id': auth.user.id, 'requested_at': requested_at.isoformat()}
+        submission = canonical(_public(snapshot))
+        with (folder / 'submitted-snapshot.json').open('xb') as output:
+            output.write(submission)
+        snapshot['submission_digest'] = 'sha256:' + hashlib.sha256(submission).hexdigest()
     row = CyberApproval(release_key=release_key, service_id=service.id, source_execution_id=result['execution'].id,
         remediation_id=result['remediation'].id if result.get('remediation') else None, requested_by_id=auth.user.id,
+        requested_at=requested_at,
         destination_id=destination.id if destination else None, variant=variant, snapshot=snapshot, snapshot_digest=digest(snapshot),
         destination=frozen_destination, rationale=str(data.get('rationale') or '')[:10000])
     db.add(row)
     db.flush()
+    if runtime_candidate is not None:
+        _candidate_transition(db, runtime_candidate, 'submitted', row.id)
     record_audit(db, auth, 'cyber_approval.request', 'cyber_approval', row.id, snapshot_digest=row.snapshot_digest)
     db.commit()
     return dto(db, row, auth, True)
+
+
+def runtime_review_notifications(db, auth, limit=10):
+    from .runtime_candidates import RuntimeReleaseCandidate as Candidate
+    roles = ('runtime.review_release', 'runtime.prepare_release')
+    allowed = auth.accessible_service_ids('service.view')
+    query = select(Candidate.id, Candidate.status, Candidate.current, Service.id, Service.service_key, Service.name,
+        CyberApproval.id, CyberApproval.requested_by_id).select_from(Candidate).join(Service, Service.id == Candidate.service_id).join(
+        CyberApproval, CyberApproval.id == Candidate.approval_id).where(
+        or_(Candidate.current.is_(True), Candidate.status == 'submitted',
+            CyberApproval.decided_at >= utcnow() - timedelta(days=7)),
+        Candidate.status.in_(('submitted', 'returned', 'denied', 'approved'))
+    ).order_by((Candidate.status == 'submitted').desc(), CyberApproval.id.desc())
+    if allowed is not None:
+        query = query.where(Service.id.in_(allowed))
+    scoped = [auth.accessible_service_ids(permission) for permission in roles]
+    if all(ids is not None for ids in scoped):
+        query = query.where(Service.id.in_(set().union(*scoped)))
+    items = []
+    for candidate_id, status, current, service_id, service_key, service_name, approval_id, submitter_id in db.execute(query):
+        pending = status == 'submitted'
+        if pending:
+            if not _runtime_reviewer(auth, service_id) or auth.user.id is None or auth.user.id == submitter_id:
+                continue
+        elif not _runtime_manager(auth, service_id):
+            continue
+        href = f'/cyber-approvals?id={approval_id}'
+        if status == 'returned' and current:
+            href = '/cyber-approvals?' + urlencode({'service': service_key, 'runtime_candidate_id': candidate_id})
+        label = {'submitted': 'Runtime release awaiting Cyber review', 'returned': 'Runtime release returned for changes',
+                 'denied': 'Runtime release rejected', 'approved': 'Runtime release approved'}[status]
+        items.append({'label': label, 'service': service_name, 'href': href})
+        if len(items) >= limit:
+            break
+    return items
 
 
 def _list(db, auth, service=None, status=None, approved=False):
@@ -340,7 +583,8 @@ def _list(db, auth, service=None, status=None, approved=False):
     elif status:
         query = query.where(CyberApproval.status == status)
     rows = db.scalars(query.order_by(CyberApproval.id.desc())).all()
-    return {'items': [dto(db, row, auth) for row in rows], 'total': len(rows)}
+    items = [dto(db, row, auth) for row in rows if _visible_review(auth, row)]
+    return {'items': items, 'total': len(items)}
 
 
 @router.get('/api/cyber-approvals')
@@ -361,17 +605,31 @@ def _enqueue(db, row, actor, revocation=None):
     row.job_id, row.publish_status = job.id, 'queued'
 
 
-@router.post('/api/cyber-approvals/{identity}/decision')
+@router.post('/api/cyber-approvals/{identity}/decision', openapi_extra=DECISION_BODY)
 async def decide(identity: int, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     _csrf(request, auth)
     row = _record(db, auth, identity)
-    _permission(auth, 'approval.decide', row.service_id)
+    _require_reviewer(auth, row)
     data = await request.json()
-    decision, rationale = data.get('decision'), str(data.get('rationale') or '').strip()
-    if decision not in ('approved', 'denied') or not 3 <= len(rationale) <= 10000:
-        raise HTTPException(422, 'Choose approve or deny and provide a rationale (3–10000 characters)')
+    decision = data.get('decision')
+    rationale = data['rationale'].strip() if isinstance(data.get('rationale'), str) else ''
+    runtime = row.snapshot.get('runtime_evidence')
+    outcomes = ('approved', 'denied', 'returned') if runtime else ('approved', 'denied')
+    if decision not in outcomes or not 3 <= len(rationale) <= 10000:
+        raise HTTPException(422, 'Choose a Cyber decision and provide a rationale (3–10000 characters)')
     if not hmac.compare_digest(row.snapshot_digest, digest(row.snapshot)):
         raise HTTPException(409, 'Snapshot integrity check failed')
+    if runtime:
+        service = db.get(Service, row.service_id)
+        candidate = _runtime_candidate(db, service, runtime['candidate_id'])
+        if row.status != 'pending' or candidate.status != 'submitted' or candidate.approval_id != row.id:
+            raise HTTPException(409, 'This candidate review already has a decision')
+        submitted = _public(row.snapshot)
+        expected = submitted.pop('submission_digest', '')
+        path = root() / row.release_key / 'submitted-snapshot.json'
+        if (not path.is_file() or path.is_symlink() or digest(submitted) != expected
+                or 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest() != expected):
+            raise HTTPException(409, 'Submitted runtime snapshot integrity check failed')
     bound = {}
     decided_at = utcnow()
     if decision == 'approved' and row.status == 'pending':
@@ -408,7 +666,9 @@ async def decide(identity: int, request: Request, db: Session = Depends(get_db),
         db.rollback()
         raise HTTPException(409, 'This request already has a decision')
     db.refresh(row)
-    if row.snapshot.get('release_revision') is not None:
+    if runtime:
+        _candidate_transition(db, candidate, decision, row.id)
+    if decision != 'returned' and row.snapshot.get('release_revision') is not None:
         from . import release_revisions
         try:
             revision = release_revisions.propose(db, auth, row.id, decision_context=True)
@@ -440,7 +700,7 @@ def release(identity: int, db: Session = Depends(get_db), auth: AuthContext = De
 def retry(identity: int, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     _csrf(request, auth)
     row = _record(db, auth, identity)
-    _permission(auth, 'approval.decide', row.service_id)
+    _require_reviewer(auth, row)
     if row.revoked_at:
         metadata = (row.publication or {}).get('revocation', {}).get('portable')
         changed = db.execute(update(CyberApproval).where(CyberApproval.id == row.id,
@@ -474,6 +734,8 @@ def retry(identity: int, request: Request, db: Session = Depends(get_db), auth: 
 def retry_additional(identity: int, kind: str, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     _csrf(request, auth)
     row = _record(db, auth, identity)
+    if row.snapshot.get('runtime_evidence'):
+        _require_reviewer(auth, row)
     if not (auth.has('approval.decide', row.service_id) or additional.selectable(auth, row.service_id)):
         raise HTTPException(403, 'Permission denied')
     model = additional.AdditionalReleaseDelivery
@@ -495,7 +757,7 @@ def retry_additional(identity: int, kind: str, request: Request, db: Session = D
 async def revoke(identity: int, request: Request, db: Session = Depends(get_db), auth: AuthContext = Depends(require_user)):
     _csrf(request, auth)
     row = _record(db, auth, identity)
-    _permission(auth, 'approval.decide', row.service_id)
+    _require_reviewer(auth, row)
     rationale = str((await request.json()).get('rationale') or '').strip()
     if len(rationale) < 3:
         raise HTTPException(409, 'Provide a rationale after publication has completed or failed')
@@ -525,6 +787,8 @@ def download(identity: int, kind: str, db: Session = Depends(get_db), auth: Auth
     row = _record(db, auth, identity)
     _permission(auth, 'service.export', row.service_id)
     entry = row.snapshot.get('evidence', {}) if kind == 'evidence' else {}
+    if kind == 'submission' and row.snapshot.get('submission_digest'):
+        entry = {'path': root() / row.release_key / 'submitted-snapshot.json', 'digest': row.snapshot['submission_digest']}
     if kind == 'offline' and row.publish_status == 'published':
         entry = {'path': row.publication.get('bundle_path'), 'digest': row.publication.get('bundle_digest')}
     if not entry.get('path'):
@@ -536,6 +800,8 @@ def download(identity: int, kind: str, db: Session = Depends(get_db), auth: Auth
         checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
     if entry.get('digest', '').removeprefix('sha256:') != checksum:
         raise HTTPException(409, 'Retained download integrity check failed')
+    if kind == 'submission':
+        return FileResponse(path, filename='submitted-snapshot.json', media_type='application/json')
     return FileResponse(path, filename='all.zip' if kind == 'evidence' else 'offline-bundle.zip', media_type='application/zip')
 
 
@@ -736,7 +1002,7 @@ def release_revision(identity: int, db: Session = Depends(get_db), auth: AuthCon
     state = db.get(ReleaseRevisionState, revision.id)
     pointer = db.get(ServiceActiveRelease, revision.service_id)
     return dict(id=revision.id, approval_id=approval.id, manifest=revision.manifest,
-        manifest_digest=revision.manifest_digest, decision=state.decision,
+        manifest_digest=revision.manifest_digest, decision=state.decision, can_manage=can_review_release(auth, approval),
         suspended=state.suspended, revoked=state.revoked, version=state.version,
         active_revision_id=pointer.revision_id if pointer else None,
         pointer_version=pointer.version if pointer else None,
@@ -749,7 +1015,7 @@ async def release_revision_action(identity: int, action: str, request: Request,
     from . import release_revisions
     _csrf(request, auth)
     approval = _record(db, auth, identity)
-    _permission(auth, 'approval.decide', approval.service_id)
+    _require_reviewer(auth, approval)
     data = await request.json()
     version = data.get('expected_version')
     if type(version) is not int or version < 0:

@@ -1,0 +1,159 @@
+name: Package CATS runtime agent
+
+on:
+  pull_request:
+    paths:
+      - "runtime-agent/**"
+      - "portal/app/runtime*.py"
+      - "portal/tests/test_runtime*.py"
+      - ".github/workflows/publish-runtime-agent.yml"
+  push:
+    branches: [main]
+    paths:
+      - "runtime-agent/**"
+      - ".github/workflows/publish-runtime-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    outputs:
+      app_version: ${{ steps.release.outputs.app_version }}
+      chart_version: ${{ steps.release.outputs.chart_version }}
+      publish_image: ${{ steps.release.outputs.publish_image }}
+      publish_chart: ${{ steps.release.outputs.publish_chart }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: python -m pip install -r portal/requirements-dev.txt
+      - name: Verify chart and release versions
+        id: release
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        shell: python
+        run: |
+          import os, pathlib, subprocess, sys, yaml
+          root = pathlib.Path("runtime-agent")
+          chart = root / "helm/cats-runtime/Chart.yaml"
+          meta = yaml.safe_load(chart.read_text())
+          sys.path.insert(0, str(root))
+          from cats_runtime import __version__
+          if meta["appVersion"] != __version__:
+              sys.exit("Chart.appVersion must match the collector __version__")
+          image_changed = chart_changed = True
+          base = os.getenv("BASE_SHA", "")
+          if base and base != "0" * 40:
+              changes = subprocess.check_output(["git", "diff", "--name-only", base, "HEAD", "--", str(root)], text=True).splitlines()
+              image_changed = any(p.startswith("runtime-agent/cats_runtime/") or p in ("runtime-agent/Dockerfile", "runtime-agent/.dockerignore") for p in changes)
+              chart_changed = any(p.startswith("runtime-agent/helm/cats-runtime/") for p in changes) or image_changed
+              previous = subprocess.run(["git", "show", f"{base}:{chart}"], capture_output=True, text=True)
+              if previous.returncode == 0:
+                  old = yaml.safe_load(previous.stdout)
+                  if image_changed and old["appVersion"] == meta["appVersion"]:
+                      sys.exit("Bump the collector version for a changed runtime image")
+                  if chart_changed and old["version"] == meta["version"]:
+                      sys.exit("Bump Chart.version for a changed release package")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              print(f"app_version={__version__}", f"chart_version={meta['version']}",
+                    f"publish_image={str(image_changed).lower()}", f"publish_chart={str(chart_changed).lower()}", sep="\n", file=out)
+      - name: Test standalone collector and Helm installation
+        run: |
+          python -m pytest --noconftest -q portal/tests/test_runtime_collector.py
+          python runtime-agent/tests/test_chart.py
+      - name: Verify portal enrollment, runtime discovery and release approval
+        working-directory: portal
+        run: |
+          python -m pytest -q tests/test_runtime_routes.py tests/test_runtime_policy.py \
+            tests/test_runtime_report_pages.py tests/test_runtime_release_expiration.py tests/test_runtime_integration.py \
+            tests/test_runtime_discovery_collector.py tests/test_runtime_applications.py tests/test_runtime_candidates.py \
+            tests/test_runtime_assessment_catalog.py tests/test_runtime_resolution_diagnostics.py tests/test_runtime_release_review.py \
+            tests/test_runtime_production_components.py
+      - name: Smoke test container entrypoint and UID
+        run: |
+          docker build -t cats-runtime:check runtime-agent
+          docker run --rm --network none --read-only --cap-drop ALL cats-runtime:check run --help
+          docker run --rm --network none --read-only --cap-drop ALL --entrypoint python cats-runtime:check -c 'import os; assert os.getuid() == 10001'
+      - uses: helm/kind-action@v1.12.0
+        with:
+          version: v0.27.0
+          kubectl_version: v1.32.2
+          cluster_name: cats-runtime-smoke
+          wait: 180s
+      - name: Verify live enrollment, runtime observations and PVC identity
+        timeout-minutes: 15
+        run: python runtime-agent/tests/kind_smoke.py
+      - name: Show collector status if the live check fails
+        if: failure()
+        run: |
+          kubectl --context kind-cats-runtime-smoke -n cats-runtime get pods,pvc --ignore-not-found || true
+          kubectl --context kind-cats-runtime-smoke -n cats-runtime logs deployment/cats-runtime --tail=20 | grep -E '^cats-runtime: [a-z][a-z0-9_]{1,80}$' || true
+      - name: Package chart with the publishing repository's image default
+        shell: bash
+        run: |
+          chart="$RUNNER_TEMP/cats-runtime"
+          cp -R runtime-agent/helm/cats-runtime "$chart"
+          sed -i "s|repository: ghcr.io/jewatson1994/cats-runtime|repository: ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/cats-runtime|" "$chart/values.yaml"
+          helm package "$chart" --destination dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cats-runtime-chart
+          path: dist/cats-runtime-*.tgz
+
+  publish:
+    needs: verify
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.verify.outputs.publish_chart == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: runtime-release-${{ needs.verify.outputs.chart_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: docker/setup-qemu-action@v3
+        if: needs.verify.outputs.publish_image == 'true'
+      - uses: docker/setup-buildx-action@v3
+        if: needs.verify.outputs.publish_image == 'true'
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Resolve registry namespace
+        shell: bash
+        run: echo "OWNER=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+      - name: Publish version and commit image tags
+        if: needs.verify.outputs.publish_image == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: runtime-agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/cats-runtime:${{ needs.verify.outputs.app_version }}
+            ghcr.io/${{ env.OWNER }}/cats-runtime:${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: cats-runtime-chart
+          path: dist
+      - name: Publish chart to GHCR
+        env:
+          HELM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CHART_VERSION: ${{ needs.verify.outputs.chart_version }}
+        run: |
+          echo "$HELM_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push "dist/cats-runtime-$CHART_VERSION.tgz" "oci://ghcr.io/$OWNER/charts"

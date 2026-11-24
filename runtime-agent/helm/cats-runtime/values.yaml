@@ -1,0 +1,29 @@
+# An HTTPS portal URL or a host/IP with optional port. Bare addresses use HTTPS.
+catsUrl: ""
+# Defaults to the Helm release name.
+agentName: ""
+# Use exactly one bootstrap source for a new agent.
+# Inline keys are stored in Helm release history. Prefer an existing Secret
+# (key: linking-key) when credentials must be managed outside Helm.
+linkingKey: ""
+linkingKeySecret: ""
+# Optional existing Secret containing ca.crt for the CATS endpoint.
+caSecret: ""
+image:
+  repository: ghcr.io/jewatson1994/cats-runtime
+  # Defaults to Chart.appVersion. Set digest to pin a mirrored image by SHA-256.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+persistence:
+  existingClaim: ""
+  size: 1Gi
+  storageClass: ""
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
