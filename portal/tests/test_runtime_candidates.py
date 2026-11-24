@@ -67,7 +67,8 @@ def complete(db, job, service, pin=PIN, **changes):
         db.add(version)
         db.flush()
     scope = 'distribution' if job.payload.get('runtime_candidate_artifact') else 'evidence'
-    raw = dict(execution_id='public:' + job.id, complete=True, scan_scope=scope, scanned_at=now().isoformat(),
+    scanned_at = now()
+    raw = dict(execution_id='public:' + job.id, complete=True, scan_scope=scope, scanned_at=scanned_at.isoformat(),
         service={'id': service.service_key, 'version': version.version, 'name': service.name}, fixable_only=True,
         artifact_type='image', service_overview={'images': [{'image': pin, 'digest': pin.split('@')[1]}]},
         sbom_components=[{'name': 'test-lib', 'version': '1', 'image': pin}], findings=[
@@ -75,7 +76,7 @@ def complete(db, job, service, pin=PIN, **changes):
         evidence_documents=[document('sbom', 'syft-json', pin), document('scanner', 'grype-json', pin)])
     raw.update(changes)
     execution = Execution(service_id=service.id, service_version_id=version.id, execution_key='public:' + job.id,
-        scanned_at=now(), complete=True, scan_scope=scope, raw_payload=raw, payload_digest=payload_digest(raw))
+        scanned_at=scanned_at, complete=True, scan_scope=scope, raw_payload=raw, payload_digest=payload_digest(raw))
     db.add(execution)
     db.flush()
     job.status, job.finished_at = 'complete', now()

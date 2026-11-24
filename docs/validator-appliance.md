@@ -17,15 +17,15 @@ Supply these environment variables through your deployment secret mechanism or a
 - `CATS_DEPLOYMENT_KIND_NODE_IMAGE`: an approved Kind-compatible image with an actual verified `@sha256:` digest. Match its Kubernetes version to the bundled kubectl; do not use the engine's placeholder default. Preload it on the VM for strict/offline operation.
 - `CATS_VALIDATOR_CLIENT_FINGERPRINTS`: comma-separated SHA256 fingerprints of explicitly trusted production client certificates, each 64 hexadecimal characters.
 - `CATS_VALIDATOR_ADMIN_USERNAME` and `CATS_VALIDATOR_ADMIN_PASSWORD`: local bootstrap credentials required on first startup; use a unique password of at least 14 characters. The administrator listener uses HTTPS and local password authentication, without requiring a client certificate. Credentials are passed through the environment, never command arguments. Docker administrators can inspect container environments. Account password hashes persist in the state volume; this Compose file requires the bootstrap values to remain supplied on subsequent launches.
-- `CATS_VALIDATOR_DOCKER_SHA256`: independently verified SHA256 of the Docker 27.5.1 amd64 static archive from `https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz`. The build fails if it is missing or mismatched. Verify this artifact against your approved supply-chain source before deployment.
+- Set `CATS_IMAGE` to the same full Linux amd64 CATS release image used by main. Load it onto the validator host or pull it from your approved registry before startup. The image includes the Docker CLI, Kind, kubectl and Helm.
 
-Build and launch from the repository root:
+Launch the preloaded image from the repository root.
 
 ```sh
-docker compose --env-file /secure/validator.env -p cats-validator -f templates/compose.validator.yaml up -d --build
+docker compose --env-file /secure/validator.env -p cats-validator -f templates/compose.validator.yaml up -d --pull never
 ```
 
-The image pins Docker CLI 27.5.1, Kind 0.27.0, kubectl 1.32.2, and Helm 3.17.1. All downloads undergo SHA256 verification; Kind, Kubernetes, and Helm checksums come from their official release endpoints. Build-time internet access is needed for these tools, OS packages, and Python dependencies. Review and update version pins as part of appliance maintenance.
+The template selects `CATS_ROLE=validator-appliance` to launch both listeners. For an offline upgrade, transfer the new shared CATS image and the approved Kind node image to the validator host before recreating the appliance. Existing environment files that explicitly set `CATS_VALIDATOR_IMAGE` continue to select that image until `CATS_IMAGE` is set.
 
 ## Network boundaries
 

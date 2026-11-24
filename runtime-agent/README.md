@@ -10,12 +10,12 @@ The cluster needs a working persistent volume, outbound HTTPS to the CATS portal
 
 ### Connected install with two settings
 
-Use Bash on a machine with Helm, kubectl and a kubeconfig for the target cluster. From the source tree the chart is `runtime-agent/helm/cats-runtime`. For a published release it is `oci://ghcr.io/jewatson1994/charts/cats-runtime`. The default collector image is `ghcr.io/jewatson1994/cats-runtime:0.2.0`. Check that the publishing run for your version succeeded and that the operator can read the chart and the cluster nodes can pull the image. The workflow packages the chart and builds collector images for Linux amd64 and arm64. The disconnected procedure also works with a locally built collector. [Runtime agent packaging workflow](../.github/workflows/publish-runtime-agent.yml)
+Use Bash on a machine with Helm, kubectl and a kubeconfig for the target cluster. The `cats-runtime` chart runs `ghcr.io/jewatson1994/cats-tool` with `CATS_ROLE=runtime-agent`. The published chart pins the release image by digest. Linux amd64 nodes use the same image layers as the portal and workers. Linux arm64 nodes use the runtime collector from the same multi-platform image. [CATS image and chart publishing](../.github/workflows/build-cats-tool.yml)
 
 ```bash
 kubectl config current-context
 CATS_URL=https://cats.example.org
-CHART=runtime-agent/helm/cats-runtime
+CHART=oci://ghcr.io/jewatson1994/charts/cats-runtime
 umask 077
 keyfile=$(mktemp)
 trap 'rm -f "$keyfile"' EXIT
@@ -23,12 +23,12 @@ read -rsp 'Paste the CATS linking key: ' key
 printf '\n'
 printf '%s' "$key" > "$keyfile"
 unset key
-helm upgrade --install cats-runtime "$CHART" \
+helm upgrade --install cats-runtime "$CHART" --version 0.2.1 \
   --namespace cats-runtime --create-namespace \
   --set-string catsUrl="$CATS_URL" --set-file linkingKey="$keyfile"
 ```
 
-The only required settings for a new standard installation are the portal URL and the linking key. With a published chart, set `CHART=oci://ghcr.io/jewatson1994/charts/cats-runtime` and add `--version 0.2.0` to the Helm command. The Deployment enrolls itself, receives its environment assignment, persists its reporting identity, and starts submitting inventory. The portal uses the environment name you chose, even if the Helm release or Kubernetes context has a different name.
+The published chart needs the portal URL and linking key. The portal’s **Link agent** panel includes its configured image reference when available. To use that same release from an internal registry, pass `--set-string image.reference="$CATS_IMAGE"` with the pullable reference used by the portal. The source chart at `runtime-agent/helm/cats-runtime` defaults to `cats-tool:latest` when no image reference is supplied. After enrollment, the Deployment retains its reporting identity on the PVC and reports under the environment name you chose in CATS.
 
 The `--set-file` form keeps the key out of shell arguments, but Helm stores the supplied value in release history. To keep it outside Helm values, have your secret manager provision a Secret in the release namespace with data key `linking-key`. Use `--set-string linkingKeySecret=NAME` **in place of** `--set-file linkingKey=...`. To create the Secret from the protected key file, run the following commands.
 
@@ -36,43 +36,41 @@ The `--set-file` form keeps the key out of shell arguments, but Helm stores the 
 kubectl create namespace cats-runtime --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n cats-runtime create secret generic cats-runtime-link \
   --from-file=linking-key="$keyfile"
-helm upgrade --install cats-runtime "$CHART" --namespace cats-runtime \
+helm upgrade --install cats-runtime "$CHART" --version 0.2.1 --namespace cats-runtime \
   --set-string catsUrl="$CATS_URL" --set-string linkingKeySecret=cats-runtime-link
 ```
 
 ### Disconnected install
 
-Transfer a packaged chart and the collector image for the **target node architecture**. On a build machine with the source checkout and access to the Dockerfile's base image, prepare the two artifacts:
+Transfer the packaged chart and the same CATS release image used by the portal. If that release is already in a registry the cluster can read, transfer only the chart. To carry a published multi-platform image across a disconnected boundary, run the following on a connected machine with Helm and Skopeo. Set `SOURCE_IMAGE` to the full release image reference, preferably its index digest.
 
 ```bash
 mkdir -p dist
-helm package runtime-agent/helm/cats-runtime --destination dist
-docker build --tag cats-runtime:0.2.0 runtime-agent
-docker save --output dist/cats-runtime-image.tar cats-runtime:0.2.0
+helm pull oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.1 --destination dist
+skopeo copy --all "docker://${SOURCE_IMAGE:?Set SOURCE_IMAGE to the CATS release image}" oci:dist/cats-tool:release
 ```
 
-If using a published release, the matching packaged chart and collector image can be mirrored instead. On a machine with access to the internal registry, load the image and push it to a repository the cluster nodes can read:
+Transfer `dist` to the disconnected side. Copy the image into the internal registry, then use the destination digest for both Compose and Helm. For a locally built amd64 release, the existing CATS image can also be loaded and pushed to that registry. [Build and export the shared image](../README.md#build-from-source)
 
 ```bash
-INTERNAL_IMAGE=registry.internal.example.org/platform/cats-runtime
-docker load --input dist/cats-runtime-image.tar
-docker tag cats-runtime:0.2.0 "$INTERNAL_IMAGE:0.2.0"
-docker push "$INTERNAL_IMAGE:0.2.0"
+INTERNAL_REPOSITORY=registry.internal.example.org/platform/cats-tool
+skopeo copy --all --digestfile dist/cats-tool.digest oci:dist/cats-tool:release "docker://$INTERNAL_REPOSITORY:release"
+export CATS_IMAGE="$INTERNAL_REPOSITORY@$(cat dist/cats-tool.digest)"
 ```
 
-Use your internal chart package and image repository when installing. Create the namespace and bootstrap Secret using the previous section. For a portal signed by a private CA, create a Secret containing its public CA bundle and add `caSecret`. The following example assumes the registry pull Secret `internal-registry` already exists in the same namespace. Omit the option for a registry the kubelet can already read.
+Use that `CATS_IMAGE` in your deployment environment. Create the namespace and bootstrap Secret as above. For a private portal CA and an authenticated registry, provide the CA Secret and a registry pull Secret available in that namespace.
 
 ```bash
 kubectl -n cats-runtime create secret generic cats-runtime-ca --from-file=ca.crt=site-ca.pem
-helm upgrade --install cats-runtime ./dist/cats-runtime-0.2.0.tgz --namespace cats-runtime \
+helm upgrade --install cats-runtime ./dist/cats-runtime-0.2.1.tgz --namespace cats-runtime \
   --set-string catsUrl=https://cats.internal.example.org \
   --set-string linkingKeySecret=cats-runtime-link \
   --set-string caSecret=cats-runtime-ca \
-  --set-string image.repository="$INTERNAL_IMAGE" --set-string image.tag=0.2.0 \
+  --set-string image.reference="$CATS_IMAGE" \
   --set-string 'imagePullSecrets[0].name=internal-registry'
 ```
 
-Pin the collector to the actual manifest digest from your internal registry using `image.digest=sha256:...`. The chart gives the digest precedence over `image.tag`. For a registry with a private CA, configure trust in the **node's container runtime** so the kubelet can pull the agent image. The chart's `caSecret` configures the collector's HTTPS connection to **CATS**. The Kubernetes API uses the service account's own CA and token. A disconnected deployment needs only local DNS, the local source of the collector image, the cluster API and the receiving CATS instance.
+The node’s container runtime must trust the internal registry CA. The chart’s `caSecret` supplies the CA for HTTPS to the CATS portal. The collector uses the Kubernetes service account’s CA and token for the cluster API.
 
 ### Verify enrollment and the first report
 
@@ -88,7 +86,7 @@ The chart uses one nonroot replica, a read-only root filesystem, dropped capabil
 
 ### Discovery, upgrades and interrupted connectivity
 
-Install the discovery-capable portal before upgrading the Helm chart to 0.2.0. Keep the same release, namespace, endpoint and persistent volume. The chart updates the existing read-only role and reuses the enrolled credential. Use `helm history cats-runtime -n cats-runtime` to find the previous revision. If a rollback is needed, first allow queued reports to drain, then run `helm rollback cats-runtime REVISION -n cats-runtime`. A previous Pod-only collector can report container inventory to the upgraded portal. It cannot confirm removal of a discovered controller.
+Upgrade the portal to a unified release that contains the runtime agent before installing chart 0.2.1. If an earlier installation set a custom collector image, supply the new CATS image with `image.reference` during the upgrade. Keep the same release, namespace, endpoint and persistent volume. The chart updates the existing read-only role and reuses the enrolled credential. Use `helm history cats-runtime -n cats-runtime` to find the previous revision. If a rollback is needed, first allow queued reports to drain, then run `helm rollback cats-runtime REVISION -n cats-runtime`. A previous Pod-only collector can report container inventory to the upgraded portal. It cannot confirm removal of a discovered controller.
 
 The collector watches Kubernetes metadata for changes, coalesces bursts, then lists fresh snapshots. Its regular reporting interval also triggers a full reconciliation. A watch failure falls back to periodic lists. An expired resource version starts another list. Snapshot collection projects only names, identities, ownership, selected app/Helm labels, release annotations, the numeric `cats.io/service-id` hint, an optional lowercase SHA-256 `cats.io/chart-digest` annotation, requested images and runtime status. Namespaced owner UIDs connect ReplicaSets to Deployments and Jobs to CronJobs. Template components remain visible at zero replicas. An empty namespace contributes no application.
 
@@ -98,31 +96,25 @@ If CATS becomes unreachable, the collector keeps the exact pending report on its
 
 ## Linux Docker host
 
-From the repository root on the target host, install the collector and service. The supplied unit runs `python3` and expects the system Docker socket and `docker` group. Use Python 3.12 and a supported Linux host. Adjust `--docker-socket` and service account permissions for a rootless daemon. Docker socket access grants host-level privileges even though the collector uses read-only API calls.
+On a monitored Linux Docker host, run the collector from the same `CATS_IMAGE` as the portal. The Compose file starts `CATS_ROLE=runtime-agent` with the Docker inventory source. It gives the process access to the host Docker socket. The collector issues read-only inventory requests, but access to this socket carries host-level privileges.
+
+Set `CATS_IMAGE` to your pullable or preloaded shared release image. From the repository root, prepare the state directory and the protected linking key for a **Docker** environment. Run the commands as an operator with Docker access.
 
 ```sh
-sudo useradd --system --home /var/lib/cats-runtime --shell /usr/sbin/nologin cats-runtime
-sudo install -d -m 0755 /opt/cats-runtime
-sudo cp -R runtime-agent/cats_runtime /opt/cats-runtime/
-sudo install -d -m 0700 -o cats-runtime -g cats-runtime /var/lib/cats-runtime
-sudo install -d -m 0750 -o root -g cats-runtime /etc/cats-runtime
-sudo install -m 0644 runtime-agent/systemd/cats-runtime.service /etc/systemd/system/
-sudo tee /etc/cats-runtime/agent.env >/dev/null <<'EOF'
-CATS_URL=https://cats.example.org
-CATS_AGENT_NAME="Production Docker host"
-CATS_LINKING_KEY_FILE=/etc/cats-runtime/linking-key
-EOF
-sudo chmod 0640 /etc/cats-runtime/agent.env
-sudo chown root:cats-runtime /etc/cats-runtime/agent.env
+export CATS_IMAGE="${CATS_IMAGE:?Set CATS_IMAGE to the portal release tag or digest}"
+export CATS_URL=https://cats.example.org
+export CATS_AGENT_NAME="$(hostname)"
+export CATS_DOCKER_SOCKET_GID="$(stat -c '%g' /var/run/docker.sock)"
+sudo install -d -m 0700 -o 10001 -g 10001 /var/lib/cats-runtime
+sudo install -d -m 0750 -o root -g 10001 /etc/cats-runtime
 sudo sh -c 'umask 077; cat > /etc/cats-runtime/linking-key'
-# Paste a fresh Docker environment linking key, press Enter, then Ctrl-D.
-sudo chown cats-runtime:cats-runtime /etc/cats-runtime/linking-key
-sudo systemctl daemon-reload
-sudo systemctl enable --now cats-runtime
-sudo journalctl -u cats-runtime -n 40
+# Paste the new linking key, press Enter, then Ctrl-D.
+sudo chown 10001:10001 /etc/cats-runtime/linking-key
+docker compose -f runtime-agent/compose.docker.yaml up -d
+docker compose -f runtime-agent/compose.docker.yaml logs --tail=40 runtime-agent
 ```
 
-For a private portal CA, install the readable public CA bundle and add `CATS_CA_FILE=/etc/cats-runtime/ca.crt` to `agent.env` before starting the unit. After the first successful report the agent uses its protected state under `/var/lib/cats-runtime/state`. The used bootstrap key file can then be removed.
+For an existing systemd installation, stop and disable the old unit before switching. Keep its state and key directory ownership, set `CATS_AGENT_UID` and `CATS_AGENT_GID` to the numeric IDs of the existing `cats-runtime` account, and start Compose with the same portal URL. Its enrolled identity stays in `/var/lib/cats-runtime/state`. For a private portal CA, place its public CA bundle in `/etc/cats-runtime/ca.crt` and set `CATS_CA_FILE=/etc/cats-runtime/ca.crt`. For a rootless engine, set `CATS_DOCKER_SOCKET` to the socket path and use its numeric group ID.
 
 ## Troubleshooting and recovery
 
@@ -142,5 +134,5 @@ To revoke, select the linked agent in CATS and confirm revocation. Its credentia
 
 - Kubernetes paginates cluster-wide Pods and reads regular, init and ephemeral container status. Pod UID, container kind and name identify an observation. The direct controller, namespace, node and selected Helm labels add context. For a running container, the agent uses the qualified repository and digest from status when available. A runtime that returns only `sha256:…` can still be matched when the Pod explicitly requests `registry.example.org/team/web@sha256:…` and the two digests are identical. CATS independently checks manifest membership for that repository and service before it can establish release approval. A mutable tag, a runtime-scheme-prefixed ID such as `containerd://sha256:…`, or a digest present only in the Pod spec leaves the running identity unverified. Waiting and terminated containers retain their observed states.
 - Docker lists running and stopped containers. It looks up metadata by the inspected immutable image configuration ID. One unambiguous repository digest can supply manifest identity. Missing or conflicting digests leave the image unverified.
-- Collection failures, limits, or a race with container removal can make a snapshot incomplete. The default interval is 60 seconds with a 120-second collection budget. Short-lived containers can start and stop between observations. For a one-shot check on a Docker host, stop the unit first and run the collector as its service account with the same URL, CA, state directory and `run --source docker --once`.
+- Collection failures, limits, or a race with container removal can make a snapshot incomplete. The default interval is 60 seconds with a 120-second collection budget. Short-lived containers can start and stop between observations. For a one-shot check on a Docker host, stop the running collector and use `docker compose -f runtime-agent/compose.docker.yaml run --rm runtime-agent run --source docker --once` with the same environment and state directory.
 - Reports contain inventory metadata. The collector does not fetch workload logs, application environment variables, Kubernetes Secret contents, CPU/memory metrics or admission events. Kubernetes returns whole Pod objects when listed. The collector selects the inventory fields it sends to CATS.

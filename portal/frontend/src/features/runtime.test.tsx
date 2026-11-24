@@ -160,17 +160,34 @@ it('lists all linked agents across clusters and opens the selected host', async 
   expect(within(screen.getByRole('region', {name:'Environment details'})).getByRole('heading', {name:'Edge Docker'})).toBeVisible();
 });
 
-it('includes a Helm enrollment command with a protected key file and no embedded credential', async () => {
+const deploymentImage = 'harbor.internal:5443/team/cats-tool@sha256:' + 'b'.repeat(64);
+
+it.each([undefined, deploymentImage])('uses the deployed image or release default for Helm enrollment (%s)', async image => {
   await ready();
-  vi.mocked(requestJson).mockResolvedValueOnce({environment_id:1, expires_at:new Date(Date.now() + 3600000).toISOString(), linking_key:'key-plaintext-example'});
+  vi.mocked(requestJson).mockResolvedValueOnce({environment_id:1, expires_at:new Date(Date.now() + 3600000).toISOString(),
+    linking_key:'key-plaintext-example', image_reference: image});
   fireEvent.click(screen.getByRole('button', {name:'Link agent'}));
   const panel = within(await screen.findByRole('region', {name:'Link an agent'}));
   expect(panel.getByLabelText('Linking key')).toHaveValue('key-plaintext-example');
   const example = panel.getByText(/helm upgrade --install/);
+  expect(example).toHaveTextContent('cats-runtime-0.2.1.tgz');
+  if (image) expect(example).toHaveTextContent(`--set-string image.reference='${image}'`);
+  else expect(example).not.toHaveTextContent('image.reference');
   expect(example).toHaveTextContent('--set-string catsUrl="$CATS_URL"');
   expect(example).toHaveTextContent('--set-file linkingKey=./linking-key');
   expect(example).not.toHaveTextContent('key-plaintext-example');
   expect(panel.getByText('--set-string linkingKeySecret=SECRET_NAME')).toBeVisible();
+});
+
+it('uses the portal image in the Docker host installation', async () => {
+  current.environments[0].kind = 'docker';
+  await ready();
+  vi.mocked(requestJson).mockResolvedValueOnce({environment_id:1, expires_at:new Date(Date.now() + 3600000).toISOString(),
+    linking_key:'key-plaintext-example', image_reference: deploymentImage});
+  fireEvent.click(screen.getByRole('button', {name:'Link agent'}));
+  const panel = within(await screen.findByRole('region', {name:'Link an agent'}));
+  expect(panel.getByText(`export CATS_IMAGE='${deploymentImage}'`)).toBeVisible();
+  expect(panel.getByText('runtime-agent/README.md#linux-docker-host')).toBeVisible();
 });
 
 it('pages cluster observations and fleet issues independently', async () => {

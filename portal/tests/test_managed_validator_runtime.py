@@ -18,15 +18,35 @@ def test_hq_refuses_host_socket():
     assert "app.main:app" in entrypoint().command({}, socket_present=False)
 
 
-def test_validator_only_server_and_tools(monkeypatch):
+@pytest.mark.parametrize("variant", ["", "runtime-arm64"])
+def test_runtime_agent_forwards_cli_and_defaults_to_kubernetes(variant):
+    module = entrypoint()
+    env = {"CATS_ROLE": "runtime-agent", "CATS_IMAGE_VARIANT": variant}
+    prefix = [module.sys.executable, "-B", "-u", "-m", "cats_runtime"]
+    assert module.command(env) == [*prefix, "run", "--source", "kubernetes"]
+    arguments = ["link", "--state-dir", "/var/lib/cats-runtime/test"]
+    assert module.command(env, arguments=arguments) == prefix + arguments
+
+
+@pytest.mark.parametrize("role", ["hq", "validator", "validator-appliance"])
+def test_runtime_only_platform_reports_supported_role(role):
+    with pytest.raises(RuntimeError, match="linux/arm64.*CATS_ROLE=runtime-agent"):
+        entrypoint().command({"CATS_ROLE": role, "CATS_IMAGE_VARIANT": "runtime-arm64"})
+
+
+@pytest.mark.parametrize(("role", "script"), [
+    ("validator", "validator_server.py"),
+    ("validator-appliance", "validator_appliance.py"),
+])
+def test_validator_only_server_and_tools(monkeypatch, role, script):
     module = entrypoint()
     monkeypatch.setattr(module.shutil, "which", lambda name: "/usr/bin/" + name)
-    assert module.command({"CATS_ROLE": "validator"}, socket_present=True)[-1] == "/app/validator_server.py"
+    assert module.command({"CATS_ROLE": role}, socket_present=True)[-1] == f"/app/{script}"
     with pytest.raises(RuntimeError, match="requires"):
-        module.command({"CATS_ROLE": "validator"}, socket_present=False)
+        module.command({"CATS_ROLE": role}, socket_present=False)
     monkeypatch.setattr(module.shutil, "which", lambda name: None if name == "kind" else name)
     with pytest.raises(RuntimeError, match="kind"):
-        module.command({"CATS_ROLE": "validator"}, socket_present=True)
+        module.command({"CATS_ROLE": role}, socket_present=True)
 
 
 def test_selftest_is_v2_runtime_upload(tmp_path):

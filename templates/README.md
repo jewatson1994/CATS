@@ -169,13 +169,13 @@ Once healthy, use **Replica administration** to configure the local registry, in
 
 ## Validator sandbox
 
-Use a dedicated **Linux amd64 VM** with Docker; this host-networked template is not a Docker Desktop deployment. It builds `portal/Dockerfile.validator` from the checkout. Its build context is `..`, relative to the template directory.
+Use a dedicated **Linux amd64 VM** with Docker and host networking. Load the same full CATS release image used by main, then set `CATS_IMAGE` in the validator environment file to that tag or digest. The template starts the image in its `validator-appliance` role.
 
 ```sh
 cp templates/validator.env.example /secure/validator.env
 # Edit and protect /secure/validator.env before running:
 docker compose --env-file /secure/validator.env -f templates/compose.validator.yaml -p cats-validator config --quiet
-docker compose --env-file /secure/validator.env -f templates/compose.validator.yaml -p cats-validator up -d --build --wait
+docker compose --env-file /secure/validator.env -f templates/compose.validator.yaml -p cats-validator up -d --pull never --wait
 ```
 
 Supply:
@@ -183,10 +183,10 @@ Supply:
 - A TLS directory containing `server.crt`, `server.key`, and `client-ca.crt`.
 - A shared PEM CA bundle at the configured absolute path.
 - Trusted production client-certificate SHA256 fingerprints.
-- A unique local administrator password and the verified Docker archive checksum.
+- A unique local administrator password.
 - An approved digest-pinned Kind image available to the sandbox.
 
-The validation API uses mTLS on `CATS_VALIDATOR_PORT` (default 8443); administration uses HTTPS on `CATS_VALIDATOR_ADMIN_PORT` (default 8444). These ports are configurable and used directly through host networking. `CATS_VALIDATOR_IMAGE` selects the locally built image tag. The commands select project `cats-validator`, separate from main CATS. For an existing validator, retain its original project name so its state volume remains attached.
+The validation API uses mTLS on `CATS_VALIDATOR_PORT` (default 8443). Administration uses HTTPS on `CATS_VALIDATOR_ADMIN_PORT` (default 8444). Both listeners use host networking. Existing deployments can continue using their explicitly configured `CATS_VALIDATOR_IMAGE` until they set `CATS_IMAGE`. The commands select project `cats-validator`. For an existing validator, retain its original project name so its state volume remains attached.
 
 The Docker socket grants control of the sandbox host. Restrict the validation API to main CATS and administration to your management network. Prevent submitted workloads from reaching production networks. A started container is not proof of validation readiness: configure endpoint, client trust, and server CA in CATS administration, then perform the connection and readiness checks.
 

@@ -16,9 +16,21 @@ import urllib.request
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 DIGEST = re.compile(r'sha256:[0-9a-f]{64}\Z')
-REPOSITORY = re.compile(r'[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*\Z')
+_IMAGE_HOST = r'(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[A-Fa-f0-9:]+\])(?::[0-9]{1,5})?'
+_IMAGE_COMPONENT = r'[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*'
+_REPOSITORY_PATH = rf'{_IMAGE_COMPONENT}(?:/{_IMAGE_COMPONENT})*'
+REPOSITORY = re.compile(_REPOSITORY_PATH + r'\Z')
+_IMAGE_REFERENCE = re.compile(
+    rf'(?:{_IMAGE_HOST}/)?{_REPOSITORY_PATH}'
+    r'(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?'
+)
 ACCEPT = ', '.join(('application/vnd.oci.image.manifest.v1+json', 'application/vnd.oci.image.index.v1+json', 'application/vnd.docker.distribution.manifest.v2+json', 'application/vnd.docker.distribution.manifest.list.v2+json'))
 CHUNK = 1024 * 1024
+
+
+def valid_image_reference(reference):
+    """Registry name with an optional tag and/or SHA-256 digest, without credentials or a URL scheme."""
+    return isinstance(reference, str) and len(reference) <= 512 and _IMAGE_REFERENCE.fullmatch(reference) is not None
 
 class RegistryError(ValueError):
     def __init__(self, message='Registry request failed', status=502, *, category=None):

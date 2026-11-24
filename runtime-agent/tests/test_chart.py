@@ -1,6 +1,7 @@
 """Render the real chart with Helm and verify the objects CATS installs."""
 import base64
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -61,22 +62,50 @@ class RuntimeChartTest(unittest.TestCase):
         self.assertEqual(binding["roleRef"]["name"], objects["ClusterRole"]["metadata"]["name"])
         self.assertEqual(binding["subjects"], [{"kind":"ServiceAccount", "name":spec["serviceAccountName"], "namespace":"runtime"}])
         container = spec["containers"][0]
-        self.assertEqual(container["image"], "ghcr.io/jewatson1994/cats-runtime:" + META["appVersion"])
+        self.assertEqual(container["image"], "ghcr.io/jewatson1994/cats-tool:latest")
+        self.assertNotIn("command", container)
         self.assertEqual(container["args"], ["run","--source","kubernetes","--state-dir","/var/lib/cats-runtime/state"])
         env = {entry["name"]: entry["value"] for entry in container["env"]}
-        self.assertEqual(env, {"CATS_URL":PORTAL, "CATS_AGENT_NAME":"cluster-a", "CATS_LINKING_KEY_FILE":"/run/cats-link/linking-key"})
+        self.assertEqual(env, {"CATS_ROLE":"runtime-agent", "CATS_URL":PORTAL, "CATS_AGENT_NAME":"cluster-a",
+                               "CATS_LINKING_KEY_FILE":"/run/cats-link/linking-key"})
         self.assertTrue(spec["securityContext"]["runAsNonRoot"])
+        self.assertEqual(spec["securityContext"]["runAsUser"], 10001)
         self.assertEqual(spec["securityContext"]["seccompProfile"]["type"], "RuntimeDefault")
         self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
         self.assertFalse(container["securityContext"]["allowPrivilegeEscalation"])
         self.assertEqual(container["securityContext"]["capabilities"]["drop"], ["ALL"])
         self.assertIn("agent_id", container["readinessProbe"]["exec"]["command"][-1])
+        self.assertEqual(container["readinessProbe"]["exec"]["command"][0], "/opt/cats-venv/bin/python")
         volumes = {v["name"]: v for v in spec["volumes"]}
         self.assertEqual(volumes["link"]["secret"]["secretName"], secret["metadata"]["name"])
         self.assertEqual(volumes["link"]["secret"]["defaultMode"], 0o440)
         pvc = objects["PersistentVolumeClaim"]
         self.assertEqual(volumes["state"]["persistentVolumeClaim"]["claimName"], pvc["metadata"]["name"])
         self.assertEqual(pvc["metadata"]["annotations"]["helm.sh/resource-policy"], "keep")
+
+    def test_release_chart_pins_unified_image_and_preserves_site_overrides(self):
+        published = "sha256:" + "c" * 64
+        mirrored = "sha256:" + "d" * 64
+        site = "registry.internal:5443/cyber/cats"
+        with tempfile.TemporaryDirectory() as directory:
+            chart = Path(directory) / "cats-runtime"
+            shutil.copytree(CHART, chart)
+            metadata = {**META, "annotations": {"cats.io/image-digest": published}}
+            (chart / "Chart.yaml").write_text(yaml.safe_dump(metadata), encoding="utf-8")
+            helm("package", chart, "--destination", directory)
+            archive = Path(directory) / f"cats-runtime-{META['version']}.tgz"
+            for overrides, expected in [
+                ([], "ghcr.io/jewatson1994/cats-tool@" + published),
+                (["image.repository=" + site], site + "@" + published),
+                (["image.repository=" + site, "image.tag=release"], site + ":release"),
+                (["image.repository=" + site, "image.tag=release", "image.digest=" + mirrored], site + "@" + mirrored),
+                (["image.reference=" + site + ":local", "image.digest=" + mirrored], site + ":local"),
+                (["image.reference=" + site + "@" + mirrored], site + "@" + mirrored),
+            ]:
+                with self.subTest(overrides=overrides):
+                    flags = [arg for setting in overrides for arg in ("--set-string", setting)]
+                    objects = render("--set-string", "linkingKey=key", *flags, chart=archive)
+                    self.assertEqual(pod(objects)["containers"][0]["image"], expected)
 
     def test_external_secrets_offline_registry_and_existing_volume(self):
         digest = "sha256:" + "e" * 64
@@ -129,6 +158,8 @@ class RuntimeChartTest(unittest.TestCase):
             (["catsUrl=https://user:pw@cats","linkingKey=key"], "HTTPS portal URL"),
             ([f"catsUrl={PORTAL}", "linkingKey=key", "linkingKeySecret=other"], "Choose either"),
             ([f"catsUrl={PORTAL}", "linkingKey=key", "image.digest=latest"], "sha256 manifest digest"),
+            ([f"catsUrl={PORTAL}", "linkingKey=key", "image.reference=registry.local:5000/cats"], "explicit tag or sha256 digest"),
+            ([f"catsUrl={PORTAL}", "linkingKey=key", "image.reference=repo/cats@sha256:1234"], "explicit tag or sha256 digest"),
         ]:
             flags = [arg for value in values for arg in ("--set-string", value)]
             result = helm("template","demo",CHART,*flags,check=False)

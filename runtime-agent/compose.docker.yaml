@@ -1,0 +1,37 @@
+name: cats-runtime-agent
+
+services:
+  runtime-agent:
+    image: ${CATS_IMAGE:?Set CATS_IMAGE to your portal release image}
+    command: ["run", "--source", "docker", "--state-dir", "/var/lib/cats-runtime/state"]
+    user: "${CATS_AGENT_UID:-10001}:${CATS_AGENT_GID:-10001}"
+    group_add:
+      - "${CATS_DOCKER_SOCKET_GID:?Set the GID of the Docker socket}"
+    environment:
+      CATS_ROLE: runtime-agent
+      CATS_URL: ${CATS_URL:?Set the HTTPS URL of the receiving CATS portal}
+      CATS_AGENT_NAME: ${CATS_AGENT_NAME:-Docker host}
+      CATS_LINKING_KEY_FILE: /etc/cats-runtime/linking-key
+      CATS_CA_FILE: ${CATS_CA_FILE:-}
+    volumes:
+      - type: bind
+        source: ${CATS_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/cats-runtime
+        target: /etc/cats-runtime
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /var/lib/cats-runtime
+        target: /var/lib/cats-runtime
+        bind:
+          create_host_path: false
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped

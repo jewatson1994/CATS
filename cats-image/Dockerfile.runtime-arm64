@@ -1,0 +1,16 @@
+# ARM64 member of the CATS release image. The HQ scanner and validator
+# toolchain is pinned for amd64; ARM cluster nodes run the reporting agent.
+FROM python:3.12-slim
+ARG CATS_VERSION=""
+LABEL org.opencontainers.image.title="CATS" \
+      org.opencontainers.image.version="${CATS_VERSION}" \
+      org.opencontainers.image.description="Continuous Assessment & Tracking System ARM64 runtime collector"
+ENV CATS_VERSION="${CATS_VERSION}" CATS_IMAGE_VARIANT=runtime-arm64 PYTHONPATH=/app
+WORKDIR /app
+COPY runtime-agent/cats_runtime ./cats_runtime
+COPY cats-image/cats-entrypoint.py /usr/local/bin/cats-entrypoint.py
+RUN test "$(dpkg --print-architecture)" = arm64 \
+    && python -m venv --without-pip /opt/cats-venv \
+    && install -d -m 0700 -o 10001 -g 10001 /var/lib/cats-runtime
+USER 10001:10001
+ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]

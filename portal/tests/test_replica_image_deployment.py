@@ -48,6 +48,7 @@ def test_shared_image_and_legacy_settings_keep_replica_isolated(tmp_path, compos
     result = resolve_compose(tmp_path, compose_file, settings)
     assert result.returncode == 0, result.stderr
     services = json.loads(result.stdout)["services"]
+    assert services["portal"]["environment"]["CATS_IMAGE"] == expected
     assert set(services) == ({"portal", "oci-proxy", "db", "nginx"}
                              if compose_file == "templates/compose.replica.yaml" else {"portal", "oci-proxy", "db"})
     for name, module in (("portal", "app.main:app"), ("oci-proxy", "app.oci_proxy:app")):

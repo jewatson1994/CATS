@@ -611,6 +611,7 @@ services:
 
     environment:
       <<: *portal_environment
+      CATS_IMAGE: ${CATS_IMAGE:-cats:local}
       CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
       CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
 

@@ -67,11 +67,12 @@ RUN sh /tmp/install-backup-runtime.sh && rm /tmp/install-backup-runtime.sh
 COPY deploy/backup/backup.py /opt/backup/backup.py
 
 COPY portal/app ./app
+COPY runtime-agent/cats_runtime ./cats_runtime
 COPY LICENSE /app/LICENSE
 # Fail the connected image build if its offline intelligence payload is missing or altered.
 RUN /opt/cats-venv/bin/python -m app.embedded_intelligence --verify
 COPY portal/requirements.txt ./requirements.txt
-COPY portal/validator_server.py ./validator_server.py
+COPY portal/validator_server.py portal/validator_admin_server.py portal/validator_appliance.py ./
 COPY cats-image/cats-entrypoint.py /usr/local/bin/cats-entrypoint.py
 COPY --from=frontend /build/app/static/frontend ./app/static/frontend
 COPY cats-image/policy /app/policy
@@ -147,6 +148,7 @@ RUN addgroup -g 10001 cats-scan \
     && addgroup -g 10002 cats-scanner \
     && adduser -D -u 10002 -G cats-scanner -h /var/lib/cats-scan cats-scanner \
     && mkdir -p /var/lib/cats-scan/tmp /run/cats-scan-control \
+    && install -d -m 0700 -o 10001 -g 10001 /var/lib/cats-runtime \
     && chmod 0700 /run/cats-scan-control \
     && chown 0:0 /run/cats-scan-control \
     && chmod 0711 /var/lib/cats-scan \
@@ -164,5 +166,5 @@ COPY deploy/verify-worker-tools.py /tmp/verify-worker-tools.py
 RUN for tool in syft grype; do if [ ! -x "/usr/local/bin/$tool" ]; then ln -s "/usr/bin/$tool" "/usr/local/bin/$tool"; fi; done
 RUN /opt/cats-venv/bin/python /tmp/verify-worker-tools.py "${HELM_VERSION}" "${KUBECTL_VERSION}" "${COMPOSE_VERSION}" \
     && rm /tmp/verify-worker-tools.py
-EXPOSE 8000 8443
+EXPOSE 8000 8443 8444
 ENTRYPOINT ["/opt/cats-venv/bin/python", "/usr/local/bin/cats-entrypoint.py"]

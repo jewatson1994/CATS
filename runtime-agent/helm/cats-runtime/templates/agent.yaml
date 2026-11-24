@@ -13,8 +13,20 @@
 {{- if and .Release.IsInstall (not $key) (not .Values.linkingKeySecret) (not .Values.persistence.existingClaim) -}}
 {{- fail "Set linkingKey or linkingKeySecret to enroll a new agent" -}}
 {{- end -}}
-{{- if and .Values.image.digest (not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.image.digest)) -}}
+{{- $image := trim (default "" .Values.image.reference) -}}
+{{- if and $image (or (contains "://" $image) (not (regexMatch "^[^[:space:]@]+(:[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}|@sha256:[a-f0-9]{64})$" $image))) -}}
+{{- fail "image.reference must include an explicit tag or sha256 digest" -}}
+{{- end -}}
+{{- if and (not $image) .Values.image.digest (not (regexMatch "^sha256:[a-f0-9]{64}$" .Values.image.digest)) -}}
 {{- fail "image.digest must be a sha256 manifest digest" -}}
+{{- end -}}
+{{- if not $image -}}
+{{- $publishedDigest := index (default dict .Chart.Annotations) "cats.io/image-digest" -}}
+{{- if or .Values.image.digest (and $publishedDigest (not .Values.image.tag)) -}}
+{{- $image = printf "%s@%s" .Values.image.repository (default $publishedDigest .Values.image.digest) -}}
+{{- else -}}
+{{- $image = printf "%s:%s" .Values.image.repository (default "latest" .Values.image.tag) -}}
+{{- end -}}
 {{- end -}}
 {{- $linkSecret := .Values.linkingKeySecret -}}
 {{- if $key -}}
@@ -117,14 +129,14 @@ spec:
       {{- end }}
       containers:
         - name: collector
-          {{- if .Values.image.digest }}
-          image: {{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}
-          {{- else }}
-          image: {{ printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) | quote }}
+          image: {{ $image | quote }}
+          {{- with .Values.image.pullPolicy }}
+          imagePullPolicy: {{ . }}
           {{- end }}
-          imagePullPolicy: {{ .Values.image.pullPolicy }}
           args: ["run", "--source", "kubernetes", "--state-dir", "/var/lib/cats-runtime/state"]
           env:
+            - name: CATS_ROLE
+              value: runtime-agent
             - name: CATS_URL
               value: {{ $url | quote }}
             - name: CATS_AGENT_NAME
@@ -145,7 +157,7 @@ spec:
           readinessProbe:
             exec:
               command:
-                - python
+                - /opt/cats-venv/bin/python
                 - -c
                 - |
                   import json, pathlib, sys

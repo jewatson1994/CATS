@@ -1,6 +1,7 @@
 """Named environments, one-use enrollment and bounded monitoring-only reports."""
 import hashlib
 import json
+import os
 import re
 import secrets
 from datetime import timedelta
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session, defer
 from .auth import AuthContext, record_audit, require_permission
 from .database import get_db
 from .models import Group, Service
+from .oci_transport import valid_image_reference
 from . import runtime_applications as applications
 from .release_validity import utc
 from .runtime_models import RuntimeAgent, RuntimeEnvironment, RuntimeEnrollmentReceipt, RuntimeLinkToken, expire_link_keys, now
@@ -401,8 +403,13 @@ async def create_link_token(identity: int, request: Request, db: Session = Depen
     db.add(RuntimeLinkToken(environment_id=identity, token_hash=hashed(secret), expires_at=expiry))
     record_audit(db, auth, 'runtime.link_key.created', 'runtime_environment', identity, expires_at=iso(expiry))
     commit(db)
-    return reply({'linking_key': secret, 'expires_at': iso(expiry), 'environment_id': identity,
-                  'environment_name': env.name, 'kind': env.kind, 'service_ids': env.service_ids, 'service_scope': env.service_scope})
+    result = {'linking_key': secret, 'expires_at': iso(expiry), 'environment_id': identity,
+              'environment_name': env.name, 'kind': env.kind, 'service_ids': env.service_ids, 'service_scope': env.service_scope}
+    image = os.getenv('CATS_IMAGE')
+    if valid_image_reference(image):
+        # Compose implicitly selects latest for an untagged repository. Helm requires an explicit selector.
+        result['image_reference'] = image if ':' in image.rsplit('/', 1)[-1] else image + ':latest'
+    return reply(result)
 
 
 @router.post('/link')

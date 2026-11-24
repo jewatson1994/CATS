@@ -10,11 +10,15 @@ linkingKeySecret: ""
 # Optional existing Secret containing ca.crt for the CATS endpoint.
 caSecret: ""
 image:
-  repository: ghcr.io/jewatson1994/cats-runtime
-  # Defaults to Chart.appVersion. Set digest to pin a mirrored image by SHA-256.
+  # Use the same fully qualified image:tag or image@sha256:digest as CATS_IMAGE in Compose.
+  reference: ""
+  repository: ghcr.io/jewatson1994/cats-tool
+  # An explicit digest takes priority over tag. Published charts pin the shared image index.
+  # A source checkout uses the shared latest tag when neither value is supplied.
   tag: ""
   digest: ""
-  pullPolicy: IfNotPresent
+  # Kubernetes defaults to Always for latest and IfNotPresent for a digest or other tag.
+  pullPolicy: ""
 imagePullSecrets: []
 persistence:
   existingClaim: ""

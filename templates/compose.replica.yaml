@@ -17,6 +17,7 @@ services:
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--ssl-certfile", "/app/certs/tls.crt", "--ssl-keyfile", "/app/certs/tls.key"]
     # The OCI proxy below reuses these settings through *replica_environment.
     environment: &replica_environment
+      CATS_IMAGE: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
       # Fixed replica runtime settings.
       CATS_MODE: replica
       CATS_OCI_HOSTNAME: ${CATS_OCI_HOSTNAME:?Set CATS_OCI_HOSTNAME to your registry DNS name}

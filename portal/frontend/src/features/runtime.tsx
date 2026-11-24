@@ -21,7 +21,7 @@ export type RuntimeOverview = {groups?: {id: number; name: string}[]; environmen
   permissions: {manage: boolean}; inventory_truncated?: boolean; total_workloads?: number; next_offset?: number | null; total_issues?: number; next_issue_offset?: number | null; issues?: RuntimeIssue[];
   namespaces?: {environment_id: number; name: string; workload_count: number; issue_count: number}[];
   clusters?: {id: number; coverage: Coverage | 'unlinked'; workload_count: number; agent_count: number; namespace_count: number; issue_count: number; inventory_truncated?: boolean}[]};
-type LinkingKey = {linking_key: string; expires_at: string; environment_id: number};
+type LinkingKey = {linking_key: string; expires_at: string; environment_id: number; image_reference?: string};
 const coverageLabels: Record<DisplayCoverage, string> = {never_reported: 'Never reported', fresh: 'Fresh report', stale: 'Stale report', incomplete: 'Incomplete report', revoked: 'Revoked', checking: 'Checking coverage', unchecked: 'Coverage unchecked'};
 const coverageTones: Record<DisplayCoverage, Tone> = {never_reported: 'neutral', fresh: 'info', stale: 'warning', incomplete: 'warning', revoked: 'neutral', checking: 'neutral', unchecked: 'warning'};
 const STALE_MS = 5 * 60 * 1000;
@@ -81,6 +81,7 @@ function EnvironmentForm({environment, services, groups, busy, save, cancel}: {
 
 function LinkingInstructions({token, environment, close}: {token: LinkingKey; environment: Environment; close: () => void}) {
   const [copyMessage, setCopyMessage] = useState('');
+  const quotedImage = token.image_reference && `'${token.image_reference.replaceAll("'", "'\"'\"'")}'`;
   useEffect(() => {
     const remaining = new Date(token.expires_at).getTime() - Date.now();
     const timer = window.setTimeout(close, Math.max(0, Math.min(remaining, 2147483647)));
@@ -99,11 +100,16 @@ function LinkingInstructions({token, environment, close}: {token: LinkingKey; en
     {environment.kind === 'kubernetes' ? <>
       <h4>Install the Kubernetes agent</h4>
       <p>Save the key in a private file named <code>linking-key</code>. Set <code>CATS_URL</code> to the portal HTTPS address reachable from the cluster, then run this command with the packaged chart.</p>
-      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.2.0.tgz', '  --namespace cats-runtime --create-namespace',
-        '  --set-string catsUrl="$CATS_URL"', '  --set-file linkingKey=./linking-key'].join(' \\\n')}</code></pre>
-      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.0</code>.</p>
+      <pre><code>{['helm upgrade --install cats-runtime ./cats-runtime-0.2.1.tgz', '  --namespace cats-runtime --create-namespace',
+        '  --set-string catsUrl="$CATS_URL"', ...(quotedImage ? [`  --set-string image.reference=${quotedImage}`] : []),
+        '  --set-file linkingKey=./linking-key'].join(' \\\n')}</code></pre>
+      <p>For a published chart, replace the chart file with <code>oci://ghcr.io/jewatson1994/charts/cats-runtime --version 0.2.1</code>.</p>
+      {quotedImage && <p>The command uses this portal’s CATS image. If your cluster pulls from a mirror, set <code>image.reference</code> to the mirrored release.</p>}
       <p>To keep the key out of Helm release history, provision a Secret in the release namespace with the field <code>linking-key</code> and replace the last flag with <code>--set-string linkingKeySecret=SECRET_NAME</code>. For private portal certificates, set <code>caSecret</code> to a Secret containing <code>ca.crt</code>.</p>
-    </> : <p>On the Docker host, follow the systemd install in <code>runtime-agent/README.md</code> with the portal HTTPS address and this linking key.</p>}
+    </> : <>
+      <p>On the Docker host, follow the shared-image installation in <code>runtime-agent/README.md#linux-docker-host</code> with the portal HTTPS address and this linking key.</p>
+      {quotedImage && <pre><code>{`export CATS_IMAGE=${quotedImage}`}</code></pre>}
+    </>}
     <p className="muted">After installation, the agent and its first report appear under this environment.</p>
   </section>;
 }

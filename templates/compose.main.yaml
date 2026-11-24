@@ -357,6 +357,7 @@ services:
 
     environment:
       <<: *portal_environment
+      CATS_IMAGE: ${CATS_IMAGE:?Set CATS_IMAGE to the built release image}
       CATS_DISCOVERY_GITLAB_SOURCES: ${CATS_DISCOVERY_GITLAB_SOURCES:-}
       CATS_DISCOVERY_GITLAB_CA_FILE: ${CATS_DISCOVERY_GITLAB_CA_FILE:-}
       SESSION_COOKIE_SECURE: "true"

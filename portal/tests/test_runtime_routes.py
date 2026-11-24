@@ -47,6 +47,25 @@ def post(client, path, data=None):
     return client.post('/api/runtime/' + path, json=data or {}, headers={'X-CSRF-Token': 'csrf'})
 
 
+@pytest.mark.parametrize(('configured', 'expected'), [
+    ('harbor.dev:5443/cyber/cats-tool:release-56', 'harbor.dev:5443/cyber/cats-tool:release-56'),
+    ('harbor.dev:5443/cyber/cats-tool@sha256:' + 'a' * 64, 'harbor.dev:5443/cyber/cats-tool@sha256:' + 'a' * 64),
+    ('harbor.dev:5443/cyber/cats-tool', 'harbor.dev:5443/cyber/cats-tool:latest'),
+    (None, None),
+    ('https://user:private@registry.internal/cats:release', None),
+])
+def test_linking_instructions_identify_the_deployed_image(context, monkeypatch, configured, expected):
+    client, _, _ = context
+    if configured is None:
+        monkeypatch.delenv('CATS_IMAGE', raising=False)
+    else:
+        monkeypatch.setenv('CATS_IMAGE', configured)
+    env_id = post(client, 'environments', {'name': 'Cluster', 'kind': 'kubernetes', 'service_ids': [1]}).json()['id']
+    result = post(client, f'environments/{env_id}/link-tokens')
+    assert result.is_success
+    assert result.json().get('image_reference') == expected
+
+
 def enroll(client, name='Core Cluster 01', source='stable-source', kind='kubernetes'):
     env = post(client, 'environments', {'name': name, 'kind': kind, 'service_ids': [1]})
     assert env.status_code == 200, env.text

@@ -13,6 +13,7 @@ from sqlalchemy import select
 from .compose_ingestion import PRIMARY_NAMES
 from .helm_sources import normalize_chart_reference
 from .models import Service, ServiceGroup
+from .oci_transport import valid_image_reference
 from .scan_coordination import enqueue_job
 from .service_ownership import active_service_predicate
 from .trusted_ca import configured_certificates
@@ -31,12 +32,7 @@ def active_owner_id(db, service_id, *, lock=False):
 
 
 def _image(reference):
-    # A name (optional registry/port), tag and/or immutable SHA-256 digest. No URI/userinfo/query.
-    if not isinstance(reference, str) or not 1 <= len(reference) <= 512:
-        _invalid("Invalid OCI image reference")
-    component = r"[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*"
-    host = r"(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\[[A-Fa-f0-9:]+\])(?::[0-9]{1,5})?"
-    if not re.fullmatch(rf"(?:{host}/)?(?:{component}/)*{component}(?::[A-Za-z0-9_][A-Za-z0-9_.-]{{0,127}})?(?:@sha256:[a-f0-9]{{64}})?", reference):
+    if not valid_image_reference(reference):
         _invalid("Invalid OCI image reference")
     return reference
 

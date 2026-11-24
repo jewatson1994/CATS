@@ -1,8 +1,9 @@
 """Live smoke for a dedicated kind-cats-runtime-smoke cluster on a Linux Docker host.
 
-Build cats-runtime:check and create the cluster first. The workflow provisions
-and removes it; this script deliberately refuses a different Kubernetes context.
+Pass the tagged, locally built unified CATS image and create the cluster first.
+The workflow provisions and removes the cluster.
 """
+import argparse
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import ipaddress
@@ -20,7 +21,6 @@ import time
 
 import httpx
 import uvicorn
-import yaml
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -191,13 +191,14 @@ def collector_uid():
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("image", help="Unified CATS image already in Docker, including its release tag")
+    image = parser.parse_args().image
+    if "@" in image or ":" not in image.rsplit("/", 1)[-1]:
+        parser.error("Pass a local image reference with an explicit tag")
     if command("kubectl", "config", "current-context", capture=True).strip() != CONTEXT:
         raise RuntimeError(f"Run in the disposable {CONTEXT} context")
     os.umask(0o077)
-    version = yaml.safe_load((CHART / "Chart.yaml").read_text())["appVersion"]
-    repository = yaml.safe_load((CHART / "values.yaml").read_text())["image"]["repository"]
-    image = f"{repository}:{version}"
-    command("docker", "tag", "cats-runtime:check", image)
     command("kind", "load", "docker-image", "--name", CLUSTER, image)
     networks = json.loads(command("docker", "network", "inspect", "kind", capture=True))
     address = next(item["Gateway"] for item in networks[0]["IPAM"]["Config"]
@@ -205,7 +206,7 @@ def main():
     kube("create", "namespace", NAMESPACE)
     kube("create", "namespace", WITNESS_NS)
     kube("-n", WITNESS_NS, "run", "witness", "--image="+image, "--image-pull-policy=Never",
-         "--restart=Never", "--command", "--", "python", "-c", "import time; time.sleep(1800)")
+         "--restart=Never", "--command", "--", "/opt/cats-venv/bin/python", "-c", "import time; time.sleep(1800)")
     kube("-n", WITNESS_NS, "wait", "--for=condition=Ready", "pod/witness", "--timeout=180s")
     witness = json.loads(kube("-n", WITNESS_NS, "get", "pod", "witness", "-o", "json", capture=True))
 
@@ -217,7 +218,11 @@ def main():
             env_id, keyfile = create_key(client, work)
             command("helm", "install", "cats-runtime", CHART, "--kube-context", CONTEXT, "-n", NAMESPACE,
                     "--set-string", f"catsUrl={url.removeprefix('https://')}", "--set-file", f"linkingKey={keyfile}",
+                    "--set-string", f"image.reference={image}", "--set-string", "image.pullPolicy=Never",
                     "--set-string", "caSecret=portal-ca", "--wait", "--timeout", "4m")
+            kube("-n", NAMESPACE, "exec", "deployment/cats-runtime", "--", "/opt/cats-venv/bin/python", "-c",
+                 "import os; assert os.geteuid() == os.getegid() == 10001; "
+                 "assert os.statvfs('/').f_flag & os.ST_RDONLY")
             original_uid = collector_uid()
             deployment_uid = kube("-n", NAMESPACE, "get", "deployment/cats-runtime",
                                   "-o", "jsonpath={.metadata.uid}", capture=True).strip()
