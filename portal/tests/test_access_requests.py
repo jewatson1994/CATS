@@ -164,6 +164,12 @@ def test_selected_service_role_is_scoped_audited_and_cannot_be_replayed(setup, n
     assert recipient.has(permission, service.id)
     assert not recipient.has(permission, sibling.id) and not recipient.has(permission)
     assert not recipient.has("role.manage") and not recipient.has("validator.provision", service.id)
+    for action in ("runtime.prepare_release", "runtime.map_import"):
+        assert not auth.has(action, service.id)
+        assert recipient.has(action, service.id) == (name == "Service Manager")
+        assert not recipient.has(action, sibling.id) and not recipient.has(action)
+    assert auth.has("runtime.review_release", service.id)
+    assert recipient.has("runtime.review_release", service.id) == (name == "Cybersecurity")
     assert not db.get(ServiceAccessRequest, (target.id, service.id))
     event = db.scalars(select(AuditEvent).where(AuditEvent.action == "account.service_access_claimed")).one()
     assert event.actor_user_id == auth.user.id

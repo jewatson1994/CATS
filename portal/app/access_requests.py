@@ -37,15 +37,26 @@ def is_cybersecurity(auth: AuthContext) -> bool:
     return bool(cyber_assignments(auth))
 
 
+def is_canonical_role(role: Role, name: str) -> bool:
+    return role.system and role.name == name and set(role.permissions or ()) == set(SYSTEM_ROLES[name])
+
+
+def may_delegate_scoped_permissions(role: Role, assignments: list[UserRoleAssignment], *, to_self: bool = False) -> bool:
+    available = {permission for assignment in assignments for permission in (assignment.role.permissions or ())}
+    missing = set(role.permissions or ()) - APPLICATION_PERMISSIONS - available
+    if not missing:
+        return True
+    # Cyber approves other users for the built-in preparation role while runtime reviews stay independent.
+    return (not to_self and is_canonical_role(role, "Service Manager")
+            and missing <= {"runtime.prepare_release", "runtime.map_import"}
+            and any(is_canonical_role(assignment.role, "Cybersecurity") for assignment in assignments))
+
+
 def claim_roles(db: Session, auth: AuthContext) -> list[Role]:
-    # The same system Cybersecurity role backs every authorized group. Check
-    # its current permissions so a modified reviewer role cannot delegate more.
-    available = {permission for assignment in cyber_assignments(auth)
-                 for permission in (assignment.role.permissions or [])}
+    reviewers = cyber_assignments(auth)
     roles = db.scalars(select(Role).where(Role.system.is_(True), Role.name.in_(CLAIM_ROLE_NAMES)))
     canonical = {role.name: role for role in roles
-                 if set(role.permissions or []) == set(SYSTEM_ROLES[role.name])
-                 and set(role.permissions) - APPLICATION_PERMISSIONS <= available}
+                 if is_canonical_role(role, role.name) and may_delegate_scoped_permissions(role, reviewers)}
     return [canonical[name] for name in CLAIM_ROLE_NAMES if name in canonical]
 
 

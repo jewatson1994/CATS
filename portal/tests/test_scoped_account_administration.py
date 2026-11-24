@@ -79,6 +79,27 @@ def test_scope_and_delegation_rejections(setup, change):
     assert exc.value.status_code in (403, 422)
 
 
+@pytest.mark.parametrize("case", ["self", "clone", "changed_manager", "changed_cyber"])
+def test_manager_runtime_permissions_cannot_be_delegated_outside_builtin_roles(setup, case):
+    db, auth, target, _, _, _, manager = setup
+    if case == "self":
+        target = auth.user
+    elif case == "clone":
+        manager = Role(name="Manager copy", permissions=list(manager.permissions), system=False)
+        db.add(manager)
+    elif case == "changed_manager":
+        manager.permissions = [p for p in manager.permissions if p != "service.export"]
+    else:
+        cyber = auth.effective_assignments[0].role
+        cyber.permissions = [p for p in cyber.permissions if p != "runtime.review_release"]
+    db.commit()
+    with pytest.raises(HTTPException) as denied:
+        assign(setup, user_id=target.id, role_id=manager.id)
+    assert denied.value.status_code == 403
+    assert not db.scalar(select(UserRoleAssignment).where(
+        UserRoleAssignment.user_id == target.id, UserRoleAssignment.role_id == manager.id))
+
+
 def test_global_permissions_and_group_visibility(setup):
     db, auth, target, group, other, assessor, manager = setup
     assert scoped_role_allowed(auth, assessor, group.id)

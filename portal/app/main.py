@@ -1710,18 +1710,14 @@ def scoped_assignment_visible(assignment: UserRoleAssignment, group_ids: set[int
                 and {g.id for g in assignment.service.groups} <= group_ids)
 
 
-def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int) -> bool:
-    from .auth import SYSTEM_ROLES
+def scoped_role_allowed(auth: AuthContext, role: Role, group_id: int, *, to_self: bool = False) -> bool:
     permissions = set(role.permissions or [])
     if permissions & APPLICATION_PERMISSIONS:
-        if not (role.system and role.name in {"Assessor", "Cybersecurity"}
-                and permissions == set(SYSTEM_ROLES[role.name])):
+        if role.name not in {"Assessor", "Cybersecurity"} or not access_requests.is_canonical_role(role, role.name):
             return False
-    available = set()
-    for assignment in auth.effective_assignments:
-        if assignment.service_id is None and assignment.group_id in (None, group_id):
-            available.update(assignment.role.permissions or [])
-    return bool(permissions) and permissions <= PERMISSIONS.keys() and (permissions - APPLICATION_PERMISSIONS) <= available
+    assignments = [a for a in auth.effective_assignments if a.service_id is None and a.group_id in (None, group_id)]
+    return (bool(permissions) and permissions <= PERMISSIONS.keys()
+            and access_requests.may_delegate_scoped_permissions(role, assignments, to_self=to_self))
 
 
 def may_remove_scoped_assignment(auth: AuthContext, assignment: UserRoleAssignment, group_ids: set[int]) -> bool:
@@ -12593,7 +12589,7 @@ def assign_role(
             raise HTTPException(403, detail="Select an authorized group for a local grant")
         if not any(scoped_assignment_visible(a, group_ids) for a in AuthContext(user, auth.session).effective_assignments):
             raise HTTPException(403, detail="Account is outside your managed groups")
-        if not scoped_role_allowed(auth, role, group_scope):
+        if not scoped_role_allowed(auth, role, group_scope, to_self=user.id == auth.user.id):
             raise HTTPException(403, detail="Role exceeds your delegation authority")
         group = db.get(Group, group_scope)
         if any(sid not in {service.id for service in group.services} for sid in selected_service_ids):
