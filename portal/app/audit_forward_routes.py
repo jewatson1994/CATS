@@ -14,6 +14,7 @@ from .audit_forward_store import (
 from .audit_forward_transports import validate_config
 from .auth import AuthContext, record_audit, require_user
 from .database import get_db
+from .operating_mode import is_replica
 from .secrets import encrypt_secret, secret_configured
 
 
@@ -26,7 +27,7 @@ _RECIPIENT_FIELDS = {
 
 
 def may_manage_log_forwarding(auth):
-    return bool(auth and auth.can_manage_group(None) and auth.has("audit.view"))
+    return bool(not is_replica() and auth and auth.can_manage_group(None) and auth.has("audit.view"))
 
 
 def administrator(auth: AuthContext = Depends(require_user)):
@@ -53,7 +54,7 @@ async def destination_input(request: Request, auth=Depends(authorize_change)):
         value = json.loads(buffer)
     except (ValueError, UnicodeError, RecursionError):
         raise HTTPException(422, "Supply a JSON object") from None
-    allowed = {"name", "kind", "config", "secret", "enabled", "audit", "diagnostics"}
+    allowed = {"name", "kind", "config", "secret", "enabled", "audit", "diagnostics", "operational"}
     if not isinstance(value, dict) or value.keys() - allowed:
         raise HTTPException(422, "Unexpected destination fields")
     name = value.get("name")
@@ -63,11 +64,11 @@ async def destination_input(request: Request, auth=Depends(authorize_change)):
     kind = value.get("kind")
     if not isinstance(kind, str) or kind not in _RECIPIENT_FIELDS or not isinstance(value.get("config"), dict):
         raise HTTPException(422, "Supply a supported destination kind and configuration")
-    for flag, default in (("enabled", False), ("audit", True), ("diagnostics", False)):
+    for flag, default in (("enabled", False), ("audit", True), ("diagnostics", False), ("operational", False)):
         if not isinstance(value.setdefault(flag, default), bool):
             raise HTTPException(422, f"{flag} must be true or false")
-    if value["enabled"] and not (value["audit"] or value["diagnostics"]):
-        raise HTTPException(422, "Select audit events or diagnostics before enabling forwarding")
+    if value["enabled"] and not any(value[flag] for flag in ("audit", "diagnostics", "operational")):
+        raise HTTPException(422, "Select at least one event category before enabling forwarding")
     if "secret" in value:
         secret = value["secret"]
         if (kind == "syslog" or not isinstance(secret, str) or not secret.strip()
@@ -100,8 +101,10 @@ def _public(row, pending):
     return {
         "id": row.id, "name": row.name, "kind": row.kind, "config": row.config,
         "enabled": row.enabled, "audit": row.include_audit, "diagnostics": row.include_diagnostics,
+        "operational": row.include_operational,
         "has_secret": secret_configured(row.secret_ciphertext),
         "pending": pending, "last_sent_at": last_sent, "last_error": row.last_error,
+        "dropped_operational": row.dropped_operational,
         "replay_pending": row.backfill_limit is not None,
     }
 
@@ -124,6 +127,7 @@ def _save(db, auth, row, values, creating):
             raise HTTPException(503, str(exc)) from None
     row.name, row.kind, row.config = values["name"], kind, config
     row.enabled, row.include_audit, row.include_diagnostics = values["enabled"], values["audit"], values["diagnostics"]
+    row.include_operational = values["operational"]
     db.add(row)
     db.flush()
     action = "log_forwarding.created" if creating else "log_forwarding.updated"
@@ -131,6 +135,7 @@ def _save(db, auth, row, values, creating):
     record_audit(db, auth, action, "log_destination", row.id, name=row.name, kind=kind,
                  recipient={field: config.get(field) for field in _RECIPIENT_FIELDS[kind]},
                  enabled=row.enabled, audit=row.include_audit, diagnostics=row.include_diagnostics,
+                 operational=row.include_operational,
                  ca_bundle_sha256=sha256(ca.encode()).hexdigest() if ca else None,
                  sourcetype=config.get("sourcetype"),
                  credential_supplied="secret" in values)

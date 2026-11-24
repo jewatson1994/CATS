@@ -135,6 +135,7 @@ from . import service_oci
 from . import replica_models, local_cyber_overrides, replica_routes
 from . import runtime_models, runtime_routes, runtime_report_pages, runtime_candidates
 from . import diagnostic_store, diagnostic_routes, audit_forward_routes, audit_forward_store
+from . import component_log_history, component_log_ingest, replica_audit_reporter
 from .diagnostic_http import error_response, request_diagnostic, DiagnosticMiddleware
 from .diagnostics import public_diagnostic, sanitize, capture_failure
 from .service_evidence import view_executions
@@ -160,6 +161,7 @@ with migration_transaction(engine) as connection:
     from .diagnostic_migrations import upgrade_connection as upgrade_diagnostics
     upgrade_diagnostics(connection)
     audit_forward_store.upgrade_connection(connection)
+    component_log_ingest.upgrade_connection(connection)
     scan_coordination.upgrade_connection(connection)
     service_scan_schedule.upgrade_connection(connection)
     upgrade_connection(connection)
@@ -522,6 +524,9 @@ app.include_router(jobs_router)
 app.include_router(export_jobs_router)
 app.include_router(diagnostic_routes.router)
 app.include_router(audit_forward_routes.router)
+app.include_router(component_log_ingest.router)
+app.include_router(component_log_history.router)
+app.include_router(replica_audit_reporter.router)
 from .upload_limits import UploadLimitMiddleware
 app.add_middleware(UploadLimitMiddleware)
 # Registered once, inside GZip: it measures uncompressed response bytes (the
@@ -11089,6 +11094,7 @@ def audit_page(request: Request, group_id: str = "", show: int = 10, page: int =
     return templates.TemplateResponse(request, "audit.html", page_context(
         auth, **values, groups=groups, selected_group_id=selected_group_id,
         may_manage_log_forwarding=audit_forward_routes.may_manage_log_forwarding(auth),
+        may_view_log_relay=replica_audit_reporter.may_view_log_relay(auth),
         configuration=configuration, saved=request.query_params.get("saved") == "1",
         pagination_base=pagination_base,
     ))
@@ -11114,6 +11120,7 @@ def general_policy_page(request: Request, group_id: str = "", db: Session = Depe
     return templates.TemplateResponse(request, "general_policy.html", page_context(
         auth, events=events, groups=groups, selected_group_id=selected_group_id,
         may_manage_log_forwarding=audit_forward_routes.may_manage_log_forwarding(auth),
+        may_view_log_relay=replica_audit_reporter.may_view_log_relay(auth),
         selected_group=db.get(Group, selected_group_id) if selected_group_id is not None else None,
         export_templates=[{"kind": kind, "name": PURPOSE_NAMES[kind],
                            "source": purpose_template_policy(db, kind, selected_group_id)[1],

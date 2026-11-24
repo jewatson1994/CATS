@@ -14,16 +14,23 @@ WORKERS = ("discovery-worker", "scan-worker", "patch-worker", "remediation-worke
 ])
 def test_audit_forwarder_starts_after_portal_and_only_receives_forwarding_credentials(template):
     services = yaml.safe_load((ROOT / "templates" / template).read_text(encoding="utf-8"))["services"]
-    forwarder = services["audit-forward-worker"]
+    replica = "replica" in template
+    name = "replica-audit-reporter" if replica else "audit-forward-worker"
+    forwarder = services[name]
     assert forwarder["image"] == services["portal"]["image"]
     assert forwarder["entrypoint"] == []
-    assert forwarder["command"] == ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+    module = "app.replica_audit_reporter" if replica else "app.audit_forward_worker"
+    assert forwarder["command"] == ["python", "-B", "-u", "-m", module]
     assert forwarder["depends_on"] == {"portal": {"condition": "service_healthy"}}
     assert forwarder["restart"] == "unless-stopped"
-    expected_env = {"DATABASE_URL", "PGPASSWORD", "CATS_CONFIG_ENCRYPTION_KEY"}
-    if "replica" in template:
-        expected_env.add("CATS_MODE")
+    expected_env = {"DATABASE_URL", "PGPASSWORD", "PGAPPNAME", "CATS_OPERATIONAL_LOG_RETENTION_DAYS",
+                    "CATS_OPERATIONAL_LOG_MAX_ROWS", "CATS_OPERATIONAL_QUEUE_MAX_ROWS"}
+    if replica:
+        expected_env.update({"CATS_MODE", "CATS_AUDIT_HQ_URL", "CATS_AUDIT_HQ_TOKEN", "CATS_AUDIT_HQ_CA_B64"})
         assert forwarder["environment"]["CATS_MODE"] == "replica"
+        assert "audit-forward-worker" not in services
+    else:
+        expected_env.add("CATS_CONFIG_ENCRYPTION_KEY")
     assert set(forwarder["environment"]) == expected_env
     assert forwarder["environment"]["DATABASE_URL"] == services["portal"]["environment"]["DATABASE_URL"]
     assert forwarder["user"] == "65534:65534"

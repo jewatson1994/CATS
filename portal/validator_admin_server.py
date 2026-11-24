@@ -20,5 +20,7 @@ if __name__ == "__main__":
     configuration = uvicorn.Config("app.validator_admin:app", host=os.getenv("CATS_VALIDATOR_ADMIN_LISTEN", "0.0.0.0"),
         port=int(os.getenv("CATS_VALIDATOR_ADMIN_PORT", "8444")), proxy_headers=False, **tls_configuration())
     configuration.load()
+    from app.validator_logging import attach_server_logging
+    attach_server_logging()
     configuration.ssl.minimum_version = ssl.TLSVersion.TLSv1_2
     uvicorn.Server(configuration).run()

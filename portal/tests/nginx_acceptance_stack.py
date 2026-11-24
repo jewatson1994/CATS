@@ -171,6 +171,8 @@ def composition(canonical: dict, args, values: dict) -> dict:
         service = copy.deepcopy(canonical["services"][name])
         service.pop("build", None)
         service.pop("x-shared-environment", None)
+        # This isolated acceptance stack has no collector; keep its test logs inside the stack.
+        service["logging"] = {"driver": "local"}
         service["restart"] = "no"
         if "security_opt" in service:
             service["security_opt"] = [

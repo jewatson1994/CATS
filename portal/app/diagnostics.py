@@ -25,6 +25,7 @@ def _redact_text(value):
     value = re.sub(r"(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+(?::[^\s/@]*)?@", r"\1[REDACTED]@", value)
     value = re.sub(r"(?i)\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", "[REDACTED AUTHORIZATION]", value)
     value = re.sub(r"cats_project_[A-Za-z0-9_.~-]+", "[REDACTED PROJECT TOKEN]", value)
+    value = re.sub(r"cats-log-[A-Za-z0-9_-]+", "[REDACTED LOG SOURCE TOKEN]", value)
     value = re.sub(r"cats-(?:link|agent)-[A-Za-z0-9_-]+", "[REDACTED RUNTIME CREDENTIAL]", value)
     value = re.sub(r"(?i)([\"']?(?:password|passwd|secret|access[_-]?token|refresh[_-]?token|id[_-]?token|token|api[_-]?key|client[_-]?secret|authorization|cookie|credential|x-amz-signature|x-amz-security-token)[\"']?\s*[=:]\s*)(?:\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|[^\s&,;\]}]+)", r"\1[REDACTED]", value)
     value = re.sub(r"(?i)(--(?:password|passwd|token|secret|api-key|client-secret|registry-password)\s+)(?:\"[^\"]*(?:\"|$)|'[^']*(?:'|$)|\S+)", r"\1[REDACTED]", value)

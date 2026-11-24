@@ -8,8 +8,9 @@ from sqlalchemy import create_engine, delete, func, insert, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.audit_forward_store import (
-    ForwardDelivery, ForwardDestination, backfill_page, delete_destination, pending_count,
-    queue_test, request_backfill, upgrade_connection, utcnow,
+    ComponentOperationalEvent, ForwardDelivery, ForwardDestination, backfill_page,
+    delete_destination, maintain_operational_logs, pending_count, queue_test,
+    record_operational_log, request_backfill, upgrade_connection, utcnow,
 )
 from app.audit_forward_worker import LEASE_SECONDS, claim_one, deliver_one, finish, prune_receipts
 from app.diagnostic_store import DiagnosticEvent
@@ -191,3 +192,66 @@ def test_postgres_reversed_commit_order_and_parallel_claims(sessions):
         finish(worker, visible, None, now)
     with sessions.begin() as worker:
         assert claim_one(worker, now).event["data"]["action"] == "uncommitted"
+
+
+def test_separate_operational_channel_source_binding_retention_and_overflow(sessions):
+    now = utcnow()
+    def log(db, seq, *, source_id="host-A"):
+        record_operational_log(db, source_id=source_id, source_name="scan-worker", event={
+            "category": "operational", "event_id": str(seq), "timestamp": now.isoformat(),
+            "data": {"message": f"log {seq}", "token": "sensitive", "source_id": "untrusted-reporter-label"},
+        })
+    with sessions.begin() as db:
+        audit_only = destination(db, "security")
+        ops = destination(db, "ops", include_audit=True, include_operational=True)
+        diag = destination(db, "diagnostic", include_audit=False, include_diagnostics=True)
+        for seq in range(4):
+            log(db, seq)
+        log(db, 3)
+        log(db, 3, source_id="host-B")
+        audit(db, "security.audit")
+    with sessions.begin() as db:
+        assert pending_count(db, audit_only.id) == 1 and pending_count(db, diag.id) == 0
+        assert pending_count(db, ops.id) == 6
+        maintain_operational_logs(db, now, history_days=7, history_limit=1, pending_limit=2)
+        assert db.scalar(select(func.count()).select_from(ComponentOperationalEvent)) == 1
+        assert pending_count(db, ops.id) == 3
+        assert db.get(ForwardDestination, ops.id).dropped_operational == 3
+        assert db.get(ForwardDestination, ops.id).last_operational_drop_at is not None
+    sent = []
+    while deliver_one(sessions, lambda *args: sent.append(args[-1])):
+        pass
+    ops_data = [event["data"] for event in sent if event["category"] == "operational"]
+    assert {entry["source_id"] for entry in ops_data} == {"host-A", "host-B"}
+    assert all(entry["reported"]["token"] == "[REDACTED]" and
+               entry["source_name"] == "scan-worker" and entry["event_id"] == "3" for entry in ops_data)
+    assert sum(event["category"] == "audit" for event in sent) == 2
+
+
+def test_only_hq_forwards_external_and_replicas_use_internal_portal_transport(sessions, monkeypatch):
+    with sessions.begin() as db:
+        external = destination(db)
+        internal = ForwardDestination(name="HQ", kind="portal", config={}, enabled=True,
+                                      include_audit=True, include_operational=True)
+        db.add(internal)
+        db.flush()
+        audit(db, "event.at.site")
+        queue_test(db, external)
+        queue_test(db, internal)
+    sent = []
+    def sender(kind, config, secret, event):
+        sent.append(kind)
+    monkeypatch.setenv("CATS_MODE", "replica")
+    with pytest.raises(RuntimeError, match="External forwarding"):
+        deliver_one(sessions, sender)
+    with pytest.raises(RuntimeError, match="authenticated HQ"):
+        deliver_one(sessions, portal_only=True)
+    while deliver_one(sessions, sender, portal_only=True):
+        pass
+    assert sent == ["portal", "portal"]
+    monkeypatch.setenv("CATS_MODE", "full")
+    with pytest.raises(RuntimeError, match="External forwarding"):
+        deliver_one(sessions, sender, portal_only=True)
+    while deliver_one(sessions, sender):
+        pass
+    assert sent == ["portal", "portal", "syslog", "syslog"]

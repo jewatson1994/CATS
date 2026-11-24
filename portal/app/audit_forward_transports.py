@@ -158,7 +158,12 @@ def _syslog(config, event):
     if not re.fullmatch(r"[!-~]{1,255}", hostname):
         hostname = "-"
     # local0 facility, with info for audit/test events and the recorded severity for diagnostics.
-    severity = str(event["data"].get("severity", "info")).lower() if event["category"] == "diagnostic" else "info"
+    details = event["data"]
+    for _ in range(3):
+        if "severity" in details or not isinstance(details.get("reported"), dict):
+            break
+        details = details["reported"]
+    severity = str(details.get("severity", "info")).lower()
     priority = 128 + {"critical": 2, "error": 3, "warning": 4, "notice": 5, "debug": 7}.get(severity, 6)
     message = f"<{priority}>1 {timestamp} {hostname} CATS - cats-event - ".encode("ascii") + _json(event)
     address = (config["host"], config["port"])
@@ -290,7 +295,7 @@ def send_event(kind: str, config: dict, secret: str, event: dict) -> None:
         else:
             _azure(config, secret, event)
     except (URLError, OSError, http.client.HTTPException) as error:
-        cause = getattr(error, "reason", error)
+        cause = error.reason if isinstance(error, URLError) else error
         if isinstance(cause, ssl.SSLCertVerificationError):
             raise DeliveryError("Collector TLS certificate verification failed") from None
         if isinstance(cause, TimeoutError):

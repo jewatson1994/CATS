@@ -27,9 +27,11 @@ from .deployment_validation import (CommandResult, KindDeploymentValidator,
 from .validator_protocol import SCHEMA_VERSION, validate_package, validate_request, strict_json_loads
 from .validator_settings import fingerprints, execution_settings
 from .runtime_diagnostics import startup_message
+from . import validator_logging
 
 
 app = FastAPI(title="CATS Deployment Validation Sandbox", version="1.0")
+validator_logging.register(app)
 STATE_DIR = Path(os.getenv("CATS_VALIDATOR_STATE_DIR", str(Path(tempfile.gettempdir()) / "cats-validator")))
 if STATE_DIR.is_symlink():
     raise RuntimeError("Validator state directory cannot be a symlink")
@@ -69,6 +71,9 @@ def _persist(record: dict) -> None:
         os.fsync(stream.fileno())
         staged = Path(stream.name)
     os.replace(staged, path)
+    validator_logging.event("audit", "validation_state", job_id=record["validation_id"],
+                            client=record.get("client_identity"), status=record.get("status"),
+                            phase=record.get("phase"), cancel_requested=bool(record.get("cancel_requested")))
 
 
 def _update(job_id: str, **values) -> None:
@@ -403,6 +408,10 @@ async def require_tls(request: Request, call_next):
         return JSONResponse({"detail": "mTLS is required"}, status_code=403)
     request.state.client_identity = identity
     return await call_next(request)
+
+
+# Outside the TLS middleware so refused requests are also accounted for.
+validator_logging.audit_request(app, "api")
 
 
 @app.on_event("startup")

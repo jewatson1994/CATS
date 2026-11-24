@@ -90,6 +90,25 @@ def report(client, linked, value):
     return client.post('/api/runtime/reports', json=value, headers={'Authorization': 'Bearer ' + linked['agent_token']})
 
 
+def test_runtime_logs_bound_to_linked_identity_with_atomic_replay(context):
+    from app.audit_forward_store import ComponentOperationalEvent
+    client, db, _ = context
+    linked, _ = enroll(client)
+    headers = {'Authorization': 'Bearer ' + linked['agent_token']}
+    entry = {'event_id': 'abc', 'category': 'operational', 'timestamp': now().isoformat(),
+             'data': {'code': 'report_accepted', 'password': 'discard-me'}}
+    def send(*entries):
+        return client.post('/api/runtime/logs', json={'events': entries}, headers=headers)
+    assert send(entry).json() == send(entry).json() == {'event_ids': ['abc']}
+    row, = db.scalars(select(ComponentOperationalEvent)).all()
+    assert row.source_id == 'runtime:' + linked['agent_id']
+    assert 'discard-me' not in str(row.data)
+    assert send({**entry, 'event_id': 'next'}, {**entry, 'category': 'audit'}).status_code == 422
+    assert list(db.scalars(select(ComponentOperationalEvent.event_id))) == ['abc']
+    assert post(client, 'agents/' + linked['agent_id'] + '/revoke').is_success
+    assert send(entry).status_code == 401
+
+
 def test_named_environment_link_secret_lifecycle_and_revoke(context):
     client, db, _ = context
     linked, key = enroll(client)

@@ -1,13 +1,18 @@
 """Transactional capture and durable, per-destination delivery of CATS events."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text
-from sqlalchemy import UniqueConstraint, delete, func, select, text
+from sqlalchemy import UniqueConstraint, delete, func, inspect, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
+from .diagnostic_store import bounded_setting
+from .diagnostics import redact_audit_value
 from .models import AuditEvent
+from .operating_mode import is_replica
 
 
 def utcnow():
@@ -24,6 +29,9 @@ class ForwardDestination(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     include_audit: Mapped[bool] = mapped_column(Boolean, default=True)
     include_diagnostics: Mapped[bool] = mapped_column(Boolean, default=False)
+    include_operational: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    dropped_operational: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_operational_drop_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(300))
@@ -42,6 +50,8 @@ class ForwardDelivery(Base):
               sqlite_where=text("delivered_at IS NULL"), postgresql_where=text("delivered_at IS NULL")),
         Index("ix_forward_category_ready", "category", "id",
               sqlite_where=text("delivered_at IS NULL"), postgresql_where=text("delivered_at IS NULL")),
+        Index("ix_forward_ops_dest", "destination_id", "id", sqlite_where=text("category = 'operational'"),
+              postgresql_where=text("category = 'operational'")),
         Index("ix_forward_active", "destination_id", "available_at",
               sqlite_where=text("lease_token IS NOT NULL"), postgresql_where=text("lease_token IS NOT NULL")),
         Index("ix_forward_receipt_cursor", "id", sqlite_where=text("delivered_at IS NOT NULL"),
@@ -67,11 +77,95 @@ class ForwardIdentity(Base):
     source: Mapped[str] = mapped_column(String(36))
 
 
+class ComponentOperationalEvent(Base):
+    """Portal-owned copy of a component log, independent of diagnostics and audit retention."""
+    __tablename__ = "component_operational_events"
+    __table_args__ = (
+        UniqueConstraint("source_id", "event_id"),
+        Index("ix_component_log_source_time", "source_id", "timestamp"),
+        Index("ix_component_log_source_receipt", "source_id", "received_at"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(100))
+    source_name: Mapped[str] = mapped_column(String(160))
+    event_id: Mapped[str] = mapped_column(String(200))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    data: Mapped[dict] = mapped_column(JSON)
+
+
+def record_operational_log(db, *, source_id, source_name, event):
+    """Store an authenticated source's event and enqueue its copies in this transaction."""
+    event_id = event.get("event_id")
+    if (event.get("category") != "operational" or not isinstance(event_id, str)
+            or not 0 < len(event_id) <= 200 or not isinstance(event.get("data"), dict)):
+        raise ValueError("Invalid component operational event")
+    timestamp = event.get("timestamp")
+    if isinstance(timestamp, str):
+        timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    if not isinstance(timestamp, datetime) or timestamp.tzinfo is None:
+        raise ValueError("Component timestamp must include its timezone")
+    if not source_id or len(source_id) > 100 or not source_name or len(source_name) > 160:
+        raise ValueError("Invalid component identity")
+    table = ComponentOperationalEvent.__table__
+    insert = pg_insert if db.get_bind().dialect.name == "postgresql" else sqlite_insert
+    db.execute(insert(table).values(source_id=source_id, source_name=source_name, event_id=event_id,
+        timestamp=timestamp.astimezone(timezone.utc), received_at=utcnow(), data=redact_audit_value(event["data"]))
+        .on_conflict_do_nothing(index_elements=[table.c.source_id, table.c.event_id]))
+    return event_id
+
+
+def operational_limits():
+    return {
+        "history_days": bounded_setting("CATS_OPERATIONAL_LOG_RETENTION_DAYS", 7, 1, 365),
+        "history_limit": bounded_setting("CATS_OPERATIONAL_LOG_MAX_ROWS", 50000, 100, 2000000),
+        "pending_limit": bounded_setting("CATS_OPERATIONAL_QUEUE_MAX_ROWS", 50000, 100, 2000000),
+    }
+
+
+def maintain_operational_logs(db, now, *, history_days, history_limit, pending_limit):
+    """Keep operational history/queues bounded without touching audit or diagnostic rows."""
+    event = ComponentOperationalEvent
+    delivery = ForwardDelivery
+    batch = 2000
+    cutoff = now - timedelta(days=history_days)
+    floor = db.scalar(select(event.id).order_by(event.id.desc()).offset(history_limit - 1).limit(1))
+    expired = event.received_at < cutoff
+    if floor is not None:
+        expired = or_(expired, event.id < floor)
+    old = select(event.id).where(expired).order_by(event.id).limit(batch)
+    more = db.execute(delete(event).where(event.id.in_(old))
+                      .execution_options(synchronize_session=False)).rowcount == batch
+    for dest_id in db.scalars(select(ForwardDestination.id)):
+        pending = (delivery.destination_id == dest_id, delivery.category == "operational",
+                   delivery.delivered_at.is_(None))
+        floor = db.scalar(select(delivery.id).where(*pending).order_by(delivery.id.desc())
+                          .offset(pending_limit).limit(1))
+        if floor is None:
+            continue
+        # Lock in the same order as claim/delete. Skip busy recipients rather than
+        # block an administrator or a concurrent delivery on maintenance.
+        locked = db.scalar(select(ForwardDestination.id).where(ForwardDestination.id == dest_id)
+                           .with_for_update(skip_locked=True, key_share=True))
+        if locked is None:
+            continue
+        idle = or_(delivery.lease_token.is_(None), delivery.available_at <= now)
+        excess = select(delivery.id).where(*pending, delivery.id <= floor, idle).order_by(delivery.id).limit(batch)
+        removed = db.execute(delete(delivery).where(*pending, delivery.id.in_(excess), idle)
+                             .execution_options(synchronize_session=False)).rowcount
+        if removed:
+            db.execute(update(ForwardDestination).where(ForwardDestination.id == dest_id)
+                .values(dropped_operational=ForwardDestination.dropped_operational + removed,
+                        last_operational_drop_at=now))
+            more = more or removed == batch
+    return more
+
+
 def _capture_sql(dialect, category, row, recipients, extra_from="", where=""):
     """Shared projection keeps live and replay event IDs identical on each DB."""
     pg = dialect == "postgresql"
     audit = category == "audit"
-    key = f"{row}.id" if audit else f"{row}.error_id"
+    key = f"{row}.error_id" if category == "diagnostic" else f"{row}.id"
     dt = f"{row}.created_at" if audit else f"{row}.timestamp"
     timestamp = (f"""to_char({dt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')"""
                  if pg else f"replace({dt}, ' ', 'T')")
@@ -88,6 +182,13 @@ def _capture_sql(dialect, category, row, recipients, extra_from="", where=""):
                    f"'actor_username', {actor('username')}, 'actor_display_name', {actor('display_name')}, "
                    f"'action', {row}.action, 'target_type', {row}.target_type, "
                    f"'target_id', {row}.target_id, 'detail', {detail})")
+    elif category == "operational":
+        obj = "json_build_object" if pg else "json_object"
+        reported = f"{row}.data" if pg else f"json({row}.data)"
+        received = (f"""to_char({row}.received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')"""
+                    if pg else f"replace({row}.received_at, ' ', 'T') || 'Z'")
+        payload = (f"{obj}('source_id', {row}.source_id, 'source_name', {row}.source_name, "
+                   f"'event_id', {row}.event_id, 'received_at', {received}, 'reported', {reported})")
     else:
         payload = f"{row}.diagnostic"
     return f"""
@@ -103,8 +204,21 @@ def _capture_sql(dialect, category, row, recipients, extra_from="", where=""):
 def upgrade_connection(connection):
     """Install capture on the database so all writers participate, including bulk SQL."""
     # Called from the portal's serialized startup migration, following diagnostics.
-    for model in (ForwardIdentity, ForwardDestination, ForwardDelivery):
+    for model in (ForwardIdentity, ForwardDestination, ForwardDelivery, ComponentOperationalEvent):
         model.__table__.create(connection, checkfirst=True)
+    for index in ForwardDelivery.__table__.indexes:
+        if index.name == "ix_forward_ops_dest":
+            index.create(connection, checkfirst=True)
+    columns = {c["name"] for c in inspect(connection).get_columns(ForwardDestination.__tablename__)}
+    if "include_operational" not in columns:
+        connection.exec_driver_sql("ALTER TABLE audit_forward_destinations ADD COLUMN "
+                                   "include_operational BOOLEAN NOT NULL DEFAULT FALSE")
+    if "dropped_operational" not in columns:
+        connection.exec_driver_sql("ALTER TABLE audit_forward_destinations ADD COLUMN "
+                                   "dropped_operational INTEGER NOT NULL DEFAULT 0")
+    if "last_operational_drop_at" not in columns:
+        dt_type = "TIMESTAMP WITH TIME ZONE" if connection.dialect.name == "postgresql" else "DATETIME"
+        connection.exec_driver_sql(f"ALTER TABLE audit_forward_destinations ADD COLUMN last_operational_drop_at {dt_type}")
     connection.execute(text("""
         INSERT INTO audit_forward_identity (id, source) VALUES (1, :source)
         ON CONFLICT (id) DO NOTHING
@@ -113,7 +227,8 @@ def upgrade_connection(connection):
     if dialect not in {"sqlite", "postgresql"}:
         raise ValueError("CATS audit forwarding requires SQLite or PostgreSQL")
     for category, table, preference in (("audit", "audit_events", "include_audit"),
-                                        ("diagnostic", "diagnostic_events", "include_diagnostics")):
+                                        ("diagnostic", "diagnostic_events", "include_diagnostics"),
+                                        ("operational", "component_operational_events", "include_operational")):
         sql = _capture_sql(dialect, category, "NEW", f"dest.enabled AND dest.{preference}")
         name = f"cats_forward_{category}"
         if dialect == "sqlite":
@@ -136,6 +251,9 @@ def upgrade_connection(connection):
                 CREATE TRIGGER {name} AFTER INSERT ON {table}
                 FOR EACH ROW EXECUTE FUNCTION {name}()
             """)
+    if is_replica():
+        from .replica_audit_reporter import install_portal_relay
+        install_portal_relay(connection)
 
 
 def pending_count(db, destination_id):
@@ -158,9 +276,10 @@ def request_backfill(db, destination):
         destination.backfill_limit = db.scalar(select(func.max(AuditEvent.id))) or 0
 
 
-def backfill_page(db, batch_size=200):
+def backfill_page(db, batch_size=200, *, portal_only=False):
     """Snapshot an indexed page locally; live capture and repeated replays deduplicate."""
     dest = db.scalar(select(ForwardDestination).where(
+        ForwardDestination.kind == "portal" if portal_only else ForwardDestination.kind != "portal",
         ForwardDestination.enabled.is_(True), ForwardDestination.include_audit.is_(True),
         ForwardDestination.backfill_limit.is_not(None)
     ).order_by(ForwardDestination.id).limit(1).with_for_update(skip_locked=True, key_share=True))

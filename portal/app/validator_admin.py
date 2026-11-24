@@ -15,8 +15,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 import os
 
 from .validator_settings import state_dir, read_settings, write_settings, fingerprints, execution_settings
+from .validator_logging import audit_request
 
 app = FastAPI(title="CATSchrödinger Administration", docs_url=None, redoc_url=None, openapi_url=None)
+audit_request(app, "admin")
 SESSIONS = OrderedDict()
 ATTEMPTS = OrderedDict()
 LOCK = threading.Lock()

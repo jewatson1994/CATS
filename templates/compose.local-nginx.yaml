@@ -4,6 +4,18 @@
 # Requires Docker Compose 2.24.4+ and certificates for both hostnames.
 # Set CATS_PORTAL_HOSTNAME and CATS_OCI_HOSTNAME; there are no hostname defaults.
 # Deployment, migration and rollback: docs/nginx-ingress.md
+# The Docker daemon writes service output to this deployment's local Unix socket.
+x-cats-component-logging: &cats_component_logging
+  driver: fluentd
+  options:
+    fluentd-address: "unix://${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats}}/ingest.sock"
+    fluentd-async: "true"
+    fluentd-request-ack: "true"
+    fluentd-sub-second-precision: "true"
+    fluentd-buffer-limit: "8192"
+    tag: cats.compose
+    labels: "com.docker.compose.service,com.docker.compose.project"
+
 services:
   portal:
     # Nginx owns host port 443. !reset also removes a customized 443:8000 mapping.
@@ -63,6 +75,7 @@ services:
       timeout: 6s
 
   nginx:
+    logging: *cats_component_logging
     # Pinned official stable-alpine image, including stream + ssl_preread support.
     image: ${CATS_NGINX_IMAGE:-nginx:stable-alpine@sha256:0e52bd054126cdc040b1276c0af347aeb02a41b9cfe305d6094767ac30e97949}
     entrypoint: ["/bin/sh", "/etc/nginx/start-cats.sh"]

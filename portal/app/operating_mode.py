@@ -36,7 +36,7 @@ def permission_available(permission: str) -> bool:
 # Use exact methods and full-path matches. Never allow an entire administrative
 # prefix: many existing admin routes edit authoritative service evidence.
 _LOCAL_WRITES = (
-    ("POST", r"/api/runtime/(?:environments|link|reports)"),
+    ("POST", r"/api/runtime/(?:environments|link|reports|logs)"),
     ("POST", r"/api/runtime/reports/pages"),
     ("POST", r"/api/runtime/applications/\d+/assignment"),
     ("PUT", r"/api/runtime/environments/\d+"),
@@ -51,10 +51,6 @@ _LOCAL_WRITES = (
     ("POST", r"/admin/configuration/announcements(?:/\d+/withdraw)?"),
     ("POST", r"/account/announcements/\d+/read"),
     ("POST", r"/api/admin/accounts/(?:preview|apply)"),
-    ("POST", r"/api/admin/log-forwarding/destinations"),
-    ("PUT", r"/api/admin/log-forwarding/destinations/\d+"),
-    ("DELETE", r"/api/admin/log-forwarding/destinations/\d+"),
-    ("POST", r"/api/admin/log-forwarding/destinations/\d+/(?:test|replay)"),
     ("POST", r"/api/accounts/access-requests/\d+/claim"),
     ("POST", r"/api/oci/(?:upstreams|repositories|principals)"),
     ("PUT", r"/api/oci/(?:upstreams|repositories|principals)/\d+"),
@@ -74,6 +70,8 @@ _FULL_ONLY_PAGES = frozenset({"/scan", "/patch", "/sbom", "/discovery", "/patch-
 def request_available(method: str, path: str) -> bool:
     if not is_replica():
         return True
+    if path.startswith(("/api/admin/log-forwarding/", "/api/v1/component-logs/")):
+        return path == "/api/admin/log-forwarding/relay" and method in {"GET", "HEAD", "OPTIONS"}
     if path in _FULL_ONLY_PAGES or re.fullmatch(r"(?:/api/public/(?:jobs|patch-jobs)/.*|/exports/.*|/poam/(?:services/[^/]+/)?export\.xlsx|/services/[^/]+/(?:exports/.*|export\.xlsx|bundle\.zip|helm-diagram\.svg))", path):
         return False
     if method in {"GET", "HEAD", "OPTIONS"}:

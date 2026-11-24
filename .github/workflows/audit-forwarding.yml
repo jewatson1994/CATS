@@ -7,6 +7,16 @@ on:
     paths:
       - "portal/app/audit_forward*.py"
       - "portal/tests/test_audit_forward*.py"
+      - "portal/app/component_log*.py"
+      - "portal/app/compose_log_collector.py"
+      - "portal/app/replica_audit_reporter.py"
+      - "portal/app/validator_log*.py"
+      - "portal/tests/test_component*.py"
+      - "portal/tests/test_remote_log_reporting.py"
+      - "portal/tests/test_replica_audit_reporter.py"
+      - "runtime-agent/cats_runtime/local_logs.py"
+      - "scanning-main/scripts/phase_logs.py"
+      - "templates/compose*.yaml"
       - "portal/tests/test_local_login_audit.py"
       - ".github/workflows/audit-forwarding.yml"
 
@@ -40,4 +50,10 @@ jobs:
         env:
           CATS_TEST_POSTGRES_URL: postgresql+psycopg://postgres:cats_test@localhost:5432/cats_forwarding_test
           CATS_TEST_RECEIVERS: "1"
-        run: python -m pytest -q tests/test_audit_forward*.py tests/test_local_login_audit.py
+        run: |
+          python -m pytest -q tests/test_audit_forward*.py tests/test_local_login_audit.py \
+            tests/test_component_log_ingest.py tests/test_remote_log_reporting.py \
+            tests/test_component_forwarding_e2e.py tests/test_replica_audit_reporter.py \
+            tests/test_replica_image_deployment.py tests/test_worker_isolation_deployment.py
+      - name: Verify the standalone scanner phase journal
+        run: python -m pytest -q scanning-main/tests/test_phase_logs.py scanning-main/tests/test_cats_cli_contract.py

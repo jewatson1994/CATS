@@ -6,9 +6,22 @@
 # Keep this project separate from the full CATS Compose stack.
 name: cats-replica
 
+# The Docker daemon writes service output to this deployment's local Unix socket.
+x-cats-component-logging: &cats_component_logging
+  driver: fluentd
+  options:
+    fluentd-address: "unix://${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats-replica}}/ingest.sock"
+    fluentd-async: "true"
+    fluentd-request-ack: "true"
+    fluentd-sub-second-precision: "true"
+    fluentd-buffer-limit: "8192"
+    tag: cats.compose
+    labels: "com.docker.compose.service,com.docker.compose.project"
+
 services:
   # 1. Portal — browse retained evidence and administer replica synchronization.
   portal:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
@@ -68,6 +81,7 @@ services:
 
   # 2. OCI access — enforce release approval and serve verified local content.
   oci-proxy:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
     command: ["uvicorn", "app.oci_proxy:app", "--host", "0.0.0.0", "--port", "5000", "--no-proxy-headers"]
@@ -93,15 +107,22 @@ services:
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
-  audit-forward-worker:
+  replica-audit-reporter:
+    logging: *cats_component_logging
     image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
     entrypoint: []
-    command: ["python", "-B", "-u", "-m", "app.audit_forward_worker"]
+    command: ["python", "-B", "-u", "-m", "app.replica_audit_reporter"]
     environment:
+      PGAPPNAME: cats-log-forwarder
+      CATS_OPERATIONAL_LOG_RETENTION_DAYS: ${CATS_OPERATIONAL_LOG_RETENTION_DAYS:-7}
+      CATS_OPERATIONAL_LOG_MAX_ROWS: ${CATS_OPERATIONAL_LOG_MAX_ROWS:-50000}
+      CATS_OPERATIONAL_QUEUE_MAX_ROWS: ${CATS_OPERATIONAL_QUEUE_MAX_ROWS:-50000}
       CATS_MODE: replica
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
-      CATS_CONFIG_ENCRYPTION_KEY: ${CATS_CONFIG_ENCRYPTION_KEY:?Set CATS_CONFIG_ENCRYPTION_KEY}
+      CATS_AUDIT_HQ_URL: ${CATS_AUDIT_HQ_URL:-}
+      CATS_AUDIT_HQ_TOKEN: ${CATS_AUDIT_HQ_TOKEN:-}
+      CATS_AUDIT_HQ_CA_B64: ${CATS_AUDIT_HQ_CA_B64:-}
     depends_on:
       portal:
         condition: service_healthy
@@ -113,7 +134,9 @@ services:
 
   # 3. Database — local accounts, replica state, and authorization records.
   db:
+    logging: *cats_component_logging
     image: postgres:16
+    command: ["postgres", "-c", "log_line_prefix=%m [%p] %a %u@%d "]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-cats}
       POSTGRES_USER: ${POSTGRES_USER:-cats}
@@ -129,7 +152,33 @@ services:
 
 # Persistent storage belongs to the cats-replica project, separate from main CATS.
 # Preserve these volumes and the encryption key during upgrades.
+
+  component-log-collector:
+    image: ${CATS_IMAGE:-${CATS_REPLICA_IMAGE:?Set CATS_IMAGE to the full CATS image}}
+    entrypoint: []
+    command: ["python", "-B", "-u", "-m", "app.compose_log_collector"]
+    environment:
+      CATS_MODE: replica
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cats}@db:5432/${POSTGRES_DB:-cats}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      PGAPPNAME: cats-log-collector
+      CATS_COMPONENT_LOG_SPOOL_MIB: ${CATS_COMPONENT_LOG_SPOOL_MIB:-512}
+    volumes:
+      - type: bind
+        source: "${CATS_COMPONENT_LOG_SOCKET_DIR:-/run/cats-logs-${COMPOSE_PROJECT_NAME:-cats-replica}}"
+        target: /run/cats-log-input
+      - component_log_spool:/var/lib/cats-component-logs
+    # The receiver cannot send its own stdout back through its input socket.
+    logging:
+      driver: local
+    user: "0:0"
+    cap_drop: [ALL]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
 volumes:
+  component_log_spool:
   # PostgreSQL data.
   replica_db:
   # Imported releases, evidence, and replica files.

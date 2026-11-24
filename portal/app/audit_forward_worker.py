@@ -8,10 +8,13 @@ import uuid
 from sqlalchemy import delete, exists, or_, select, update
 from sqlalchemy.orm import aliased, sessionmaker
 
-from .audit_forward_store import ForwardDelivery, ForwardDestination, backfill_page, utcnow
+from .audit_forward_store import (
+    ForwardDelivery, ForwardDestination, backfill_page, maintain_operational_logs, operational_limits, utcnow,
+)
 from .database import background_engine
 from .diagnostics import redact_audit_value
 from .models import AuditEvent
+from .operating_mode import is_replica
 from .secrets import decrypt_secret
 
 
@@ -32,9 +35,10 @@ class Claim:
     event: dict
 
 
-def claim_one(db, now):
+def claim_one(db, now, *, portal_only=False):
     delivery = ForwardDelivery
     dest = ForwardDestination
+    authority = dest.kind == "portal" if portal_only else dest.kind != "portal"
     active = aliased(ForwardDelivery)
     due = or_(delivery.available_at.is_(None), delivery.available_at <= now)
     idle = ~exists(select(active.id).where(active.destination_id == dest.id,
@@ -42,7 +46,7 @@ def claim_one(db, now):
     # Test messages can run for disabled destinations. Use their dedicated index
     # instead of sorting every pending audit event to prioritize a rare test.
     item = db.execute(select(delivery.id, dest).join(dest, dest.id == delivery.destination_id)
-        .where(delivery.category == "test", delivery.delivered_at.is_(None), due, idle)
+        .where(authority, delivery.category == "test", delivery.delivered_at.is_(None), due, idle)
         .order_by(delivery.id).limit(1)
         .with_for_update(skip_locked=True, of=dest, key_share=True)).first()
     if item is None:
@@ -50,7 +54,7 @@ def claim_one(db, now):
         # a failed collector's backlog when other collectors are healthy.
         oldest = select(delivery.id).where(delivery.destination_id == dest.id,
                  delivery.delivered_at.is_(None), due).order_by(delivery.id).limit(1).correlate(dest).scalar_subquery()
-        item = db.execute(select(oldest, dest).where(dest.enabled.is_(True), idle,
+        item = db.execute(select(oldest, dest).where(authority, dest.enabled.is_(True), idle,
             or_(dest.retry_at.is_(None), dest.retry_at <= now), oldest.is_not(None))
             .order_by(oldest).limit(1).with_for_update(skip_locked=True, of=dest, key_share=True)).first()
         if item is None:
@@ -105,10 +109,18 @@ def finish(db, claim, error, now):
         db.delete(row)
 
 
-def deliver_one(session_factory=BackgroundSession, sender=None, clock=utcnow):
+def require_delivery_authority(portal_only, sender, *, deliver=True):
+    if is_replica() != portal_only:
+        raise RuntimeError("External forwarding runs on HQ; replicas may only report to HQ")
+    if portal_only and deliver and sender is None:
+        raise RuntimeError("Replica delivery requires its authenticated HQ reporting transport")
+
+
+def deliver_one(session_factory=BackgroundSession, sender=None, clock=utcnow, *, portal_only=False):
     from .audit_forward_transports import DeliveryError, send_event
+    require_delivery_authority(portal_only, sender)
     with session_factory.begin() as db:
-        claim = claim_one(db, clock())
+        claim = claim_one(db, clock(), portal_only=portal_only)
     if claim is None:
         return False
     # Release DB locks and the connection before DNS, TLS and collector I/O.
@@ -138,21 +150,36 @@ def prune_receipts(db, cursor=0):
     return ids[-1] if len(ids) == 500 else 0
 
 
-def main():
+def run_worker(*, portal_only=False, sender=None, deliver=True):
+    require_delivery_authority(portal_only, sender, deliver=deliver)
     maintenance_at = time.monotonic()
+    operational_maintenance_at = maintenance_at
+    limits = operational_limits()
     receipt_cursor = 0
     while True:
         try:
+            more_ops = False
             with BackgroundSession.begin() as db:
-                replaying = backfill_page(db)
+                replaying = backfill_page(db, portal_only=portal_only)
                 if time.monotonic() >= maintenance_at:
                     receipt_cursor = prune_receipts(db, receipt_cursor)
                     maintenance_at = time.monotonic() + (10 if receipt_cursor else 300)
-            if not deliver_one() and not replaying:
+                if time.monotonic() >= operational_maintenance_at:
+                    more_ops = maintain_operational_logs(db, utcnow(), **limits)
+                    operational_maintenance_at = time.monotonic() + (0 if more_ops else 30)
+            delivered = deliver and deliver_one(sender=sender, portal_only=portal_only)
+            if not delivered and not replaying and not more_ops:
                 time.sleep(2)
         except Exception as exc:
             logger.warning("Audit forwarding worker retrying (%s)", type(exc).__name__)
             time.sleep(5)
+
+
+def main():
+    require_delivery_authority(False, None)
+    from .validator_log_poll import start_validator_log_poll
+    start_validator_log_poll()
+    run_worker()
 
 
 if __name__ == "__main__":
